@@ -12,3 +12,8 @@ Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42
 - Keyboard support
 - Add support for clipboard contents
 - Graphical frontend (gtk?)
+
+## Security
+Sending key and mouse event data over the local network might not be the biggest security concern but in any public network it's QUITE a problem to basically broadcast your keystrokes.
+- There should probably be an encryption layer using DTLS below the application to enable a secure link
+- The keys could be generated via the graphical frontend
