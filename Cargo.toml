@@ -1,0 +1,18 @@
+[package]
+name = "lan-mouse"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
+wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
+wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
+tempfile = "3.2"
+
+[[bin]]
+name = "client"
+
+[[bin]]
+name = "server"
