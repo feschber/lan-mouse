@@ -7,10 +7,11 @@ The protocol used for the virtual mouse driver is currently unstable and only su
 
 Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42069.
 
-## TODOS:
+## TODO
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
 - [x] Mouse grabbing
 - [x] Window with absolute position (wlr\_layer\_shell?)
+- [ ] DNS resolving
 - [ ] Keyboard support
 - [ ] Scrollwheel support
 - [ ] Button support

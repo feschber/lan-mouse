@@ -1,7 +1,8 @@
 use std::{
+    env,
     fs::File,
     io::{BufWriter, Write},
-    net::UdpSocket,
+    net::{UdpSocket, IpAddr, SocketAddr},
     os::unix::prelude::AsRawFd,
 };
 
@@ -21,6 +22,7 @@ use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum,
 };
 
+use trust_dns_resolver::Resolver;
 use tempfile;
 
 struct App {
@@ -32,11 +34,11 @@ struct App {
     top_level: Option<xdg_toplevel::XdgToplevel>,
     xdg_surface: Option<xdg_surface::XdgSurface>,
     socket: UdpSocket,
-    surface_coords: (f64, f64),
     pointer_constraints: Option<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1>,
     rel_pointer_manager: Option<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>,
     pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
     rel_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
+    ip: Option<IpAddr>,
 }
 
 fn main() {
@@ -59,15 +61,22 @@ fn main() {
         buffer: None,
         wm_base: None,
         surface: None,
-        xdg_surface: None,
         top_level: None,
+        xdg_surface: None,
         socket: UdpSocket::bind("0.0.0.0:42070").expect("couldn't bind to address"),
-        surface_coords: (0.0, 0.0),
         pointer_constraints: None,
         rel_pointer_manager: None,
         pointer_lock: None,
         rel_pointer: None,
+        ip: None,
     };
+
+    let args: Vec<String> = env::args().collect();
+    let host = match args.get(1) {
+        Some(s) => s.as_str(),
+        None => "localhost",
+    };
+    app.resolve_host(host);
 
     // use roundtrip to process this event synchronously
     event_queue.roundtrip(&mut app).unwrap();
@@ -104,6 +113,16 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 }
 
 impl App {
+    fn resolve_host(&mut self, host: &str) {
+        let resolver = Resolver::from_system_conf().unwrap();
+        let response = resolver.lookup_ip(host).expect(format!("couldn't resolve {}", host).as_str());
+        self.ip = response.iter().next();
+        if let None = self.ip {
+            panic!("couldn't resolve host: {}!", host)
+        }
+        println!("Client: {} {}", host, self.ip.unwrap());
+    }
+
     fn send_motion_event(&self, time: u32, x: f64, y: f64) {
         let time_bytes = time.to_ne_bytes();
         let x_bytes = x.to_ne_bytes();
@@ -112,7 +131,7 @@ impl App {
         buf[0..4].copy_from_slice(&time_bytes);
         buf[4..12].copy_from_slice(&x_bytes);
         buf[12..20].copy_from_slice(&y_bytes);
-        self.socket.send_to(&buf, "192.168.178.114:42069").unwrap();
+        self.socket.send_to(&buf, SocketAddr::new(self.ip.unwrap(), 42069)).unwrap();
     }
 }
 
@@ -344,10 +363,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
             wl_pointer::Event::Enter {
                 serial: _,
                 surface: _,
-                surface_x,
-                surface_y,
+                surface_x: _,
+                surface_y: _,
             } => {
-                app.surface_coords = (surface_x, surface_y);
                 if app.pointer_lock.is_none() {
                     app.pointer_lock = Some(app.pointer_constraints.as_ref().unwrap().lock_pointer(
                         &app.surface.as_ref().unwrap(),

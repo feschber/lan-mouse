@@ -10,6 +10,7 @@ wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
 wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
 wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
 tempfile = "3.2"
+trust-dns-resolver = "0.22"
 
 [[bin]]
 name = "client"
