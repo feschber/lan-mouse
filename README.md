@@ -9,10 +9,12 @@ Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42
 
 ## TODOS:
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
-- [ ] Mouse grabbing on some 1 pixel wide transparent window server side
-- [ ] Merge server and client
+- [x] Mouse grabbing
+- [x] Window with absolute position (wlr\_layer\_shell?)
 - [ ] Keyboard support
-- [ ] Scrollwheel and button support
+- [ ] Scrollwheel support
+- [ ] Button support
+- [ ] Merge server and client
 - [ ] Clipboard support
 - [ ] Graphical frontend (gtk?)
 

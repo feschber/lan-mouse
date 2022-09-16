@@ -138,7 +138,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 }
                 "wl_shm" => {
                     let shm = registry.bind::<wl_shm::WlShm, _, _>(name, 1, qh, ());
-                    let (width, height) = (64, 64);
+                    let (width, height) = (64, 1440);
                     let mut file = tempfile::tempfile().unwrap();
                     draw(&mut file, (width, height));
                     let pool =
