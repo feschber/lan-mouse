@@ -1,5 +1,4 @@
-use std::io::{self, Write};
-use std::{f64::consts::PI, net::UdpSocket};
+use std::net::UdpSocket;
 
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,

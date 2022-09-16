@@ -5,7 +5,13 @@ use std::{
     os::unix::prelude::AsRawFd,
 };
 
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::{
+    wp::{
+        pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
+        relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
+    },
+    xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base},
+};
 
 use wayland_client::{
     protocol::{
@@ -27,6 +33,10 @@ struct App {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     socket: UdpSocket,
     surface_coords: (f64, f64),
+    pointer_constraints: Option<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1>,
+    rel_pointer_manager: Option<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>,
+    pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
+    rel_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
 }
 
 fn main() {
@@ -51,8 +61,12 @@ fn main() {
         surface: None,
         xdg_surface: None,
         top_level: None,
-        socket: UdpSocket::bind("127.0.0.1:42070").expect("couldn't bind to address"),
+        socket: UdpSocket::bind("0.0.0.0:42070").expect("couldn't bind to address"),
         surface_coords: (0.0, 0.0),
+        pointer_constraints: None,
+        rel_pointer_manager: None,
+        pointer_lock: None,
+        rel_pointer: None,
     };
 
     // use roundtrip to process this event synchronously
@@ -79,10 +93,10 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for y in 0..height {
         for x in 0..width {
-            let color: u32 = if (x + y / 32 * 32) % 64 < 32 {
-                0x0
+            let color: u32 = if (x + y / 8 * 8) % 16 < 8 {
+                0xFF8EC07C
             } else {
-                0xFF000000
+                0xFFFbF1C7
             };
             buf.write_all(&color.to_ne_bytes()).unwrap();
         }
@@ -98,7 +112,7 @@ impl App {
         buf[0..4].copy_from_slice(&time_bytes);
         buf[4..12].copy_from_slice(&x_bytes);
         buf[12..20].copy_from_slice(&y_bytes);
-        self.socket.send_to(&buf, "127.0.0.1:42069").unwrap();
+        self.socket.send_to(&buf, "192.168.178.114:42069").unwrap();
     }
 }
 
@@ -121,11 +135,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 "wl_compositor" => {
                     app.compositor =
                         Some(registry.bind::<wl_compositor::WlCompositor, _, _>(name, 4, qh, ()));
-                    // get the vp manager
                 }
                 "wl_shm" => {
                     let shm = registry.bind::<wl_shm::WlShm, _, _>(name, 1, qh, ());
-                    let (width, height) = (512, 512);
+                    let (width, height) = (64, 64);
                     let mut file = tempfile::tempfile().unwrap();
                     draw(&mut file, (width, height));
                     let pool =
@@ -147,6 +160,26 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 "xdg_wm_base" => {
                     app.wm_base =
                         Some(registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, &qh, ()));
+                }
+                "zwp_pointer_constraints_v1" => {
+                    app.pointer_constraints = Some(
+                        registry.bind::<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1, _, _>(
+                            name,
+                            1,
+                            &qh,
+                            (),
+                        ),
+                    );
+                }
+                "zwp_relative_pointer_manager_v1" => {
+                    app.rel_pointer_manager = Some(
+                        registry.bind::<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1, _, _>(
+                            name,
+                            1,
+                            &qh,
+                            (),
+                        ),
+                    );
                 }
                 _ => {}
             }
@@ -301,11 +334,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
 impl Dispatch<wl_pointer::WlPointer, ()> for App {
     fn event(
         app: &mut Self,
-        _: &wl_pointer::WlPointer,
+        pointer: &wl_pointer::WlPointer,
         event: <wl_pointer::WlPointer as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         match event {
             wl_pointer::Event::Enter {
@@ -315,15 +348,22 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_y,
             } => {
                 app.surface_coords = (surface_x, surface_y);
-            }
-            wl_pointer::Event::Motion {
-                time,
-                surface_x,
-                surface_y,
-            } => {
-                let (last_x, last_y) = app.surface_coords;
-                app.send_motion_event(time, surface_x - last_x, surface_y - last_y);
-                app.surface_coords = (surface_x, surface_y);
+                if app.pointer_lock.is_none() {
+                    app.pointer_lock = Some(app.pointer_constraints.as_ref().unwrap().lock_pointer(
+                        &app.surface.as_ref().unwrap(),
+                        pointer,
+                        None,
+                        zwp_pointer_constraints_v1::Lifetime::Persistent,
+                        qh,
+                        (),
+                    ));
+                }
+                if app.rel_pointer.is_none() {
+                    app.rel_pointer = Some(app.rel_pointer_manager
+                        .as_ref()
+                        .unwrap()
+                        .get_relative_pointer(pointer, qh, ()));
+                }
             }
             _ => (),
         }
@@ -342,8 +382,80 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         if let wl_keyboard::Event::Key { key, .. } = event {
             if key == 1 {
                 // ESC key
-                state.running = false;
+                if let Some(pointer_lock) = state.pointer_lock.as_ref() {
+                    pointer_lock.destroy();
+                    state.pointer_lock = None;
+                }
+                if let Some(rel_pointer) = state.rel_pointer.as_ref() {
+                    rel_pointer.destroy();
+                    state.rel_pointer = None;
+                }
             }
+        }
+    }
+}
+
+impl Dispatch<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwp_pointer_constraints_v1::ZwpPointerConstraintsV1,
+        _: <zwp_pointer_constraints_v1::ZwpPointerConstraintsV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        //
+    }
+}
+
+impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwp_locked_pointer_v1::ZwpLockedPointerV1,
+        event: <zwp_locked_pointer_v1::ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_locked_pointer_v1::Event::Locked => {}
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
+        _: <zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        //
+    }
+}
+
+impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
+    fn event(
+        app: &mut Self,
+        _: &zwp_relative_pointer_v1::ZwpRelativePointerV1,
+        event: <zwp_relative_pointer_v1::ZwpRelativePointerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwp_relative_pointer_v1::Event::RelativeMotion {
+            utime_hi,
+            utime_lo,
+            dx: _,
+            dy: _,
+            dx_unaccel,
+            dy_unaccel,
+        } = event {
+            let time = ((utime_hi as u64) << 32 | utime_lo as u64) / 1000;
+            app.send_motion_event(time as u32, dx_unaccel, dy_unaccel);
         }
     }
 }
