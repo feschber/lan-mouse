@@ -10,14 +10,15 @@ Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42
 ## TODO
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
 - [x] Mouse grabbing
-- [x] Window with absolute position (wlr\_layer\_shell?)
-- [ ] DNS resolving
+- [ ] Window with absolute position (wlr\_layer\_shell?)
+- [x] DNS resolving
 - [ ] Keyboard support
 - [ ] Scrollwheel support
-- [ ] Button support
+- [x] Button support
 - [ ] Merge server and client
 - [ ] Clipboard support
 - [ ] Graphical frontend (gtk?)
+- [ ] *Encrytion*
 
 ## Security
 Sending key and mouse event data over the local network might not be the biggest security concern but in any public network it's QUITE a problem to basically broadcast your keystrokes.

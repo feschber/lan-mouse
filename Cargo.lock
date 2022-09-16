@@ -202,6 +202,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-lifetimes"
+version = "1.0.0-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f65dae1d3aa98e6877917ab4e6fdbfdfb00e95885ea7c4f4f29e3a5dfc08fdf"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,6 +237,7 @@ dependencies = [
  "trust-dns-resolver",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
  "wayland-protocols-wlr",
 ]
 
@@ -729,11 +740,12 @@ checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
 
 [[package]]
 name = "wayland-backend"
-version = "0.1.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.1.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "cc",
  "downcast-rs",
+ "io-lifetimes",
  "nix",
  "scoped-tls",
  "smallvec",
@@ -742,8 +754,8 @@ dependencies = [
 
 [[package]]
 name = "wayland-client"
-version = "0.30.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.30.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "bitflags",
  "futures-channel",
@@ -756,8 +768,8 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols"
-version = "0.30.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.30.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "bitflags",
  "wayland-backend",
@@ -767,9 +779,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wayland-protocols-misc"
+version = "0.1.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
+dependencies = [
+ "bitflags",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
 name = "wayland-protocols-wlr"
-version = "0.1.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.1.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "bitflags",
  "wayland-backend",
@@ -781,8 +806,8 @@ dependencies = [
 
 [[package]]
 name = "wayland-scanner"
-version = "0.30.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.30.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "proc-macro2",
  "quick-xml",
@@ -792,8 +817,8 @@ dependencies = [
 
 [[package]]
 name = "wayland-server"
-version = "0.30.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.30.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "bitflags",
  "downcast-rs",
@@ -805,8 +830,8 @@ dependencies = [
 
 [[package]]
 name = "wayland-sys"
-version = "0.30.0-beta.9"
-source = "git+https://github.com/Smithay/wayland-rs.git#fa4be85e8f3b57c8b6e8dd2476d6b4734b810e59"
+version = "0.30.0-beta.10"
+source = "git+https://github.com/Smithay/wayland-rs.git#2cd2b5857b476238eb7d2e7e3bb2b1c308bcd16c"
 dependencies = [
  "dlib",
  "log",

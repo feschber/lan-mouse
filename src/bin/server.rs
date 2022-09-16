@@ -1,8 +1,10 @@
+use lan_mouse::protocol;
 use std::{
     env,
     fs::File,
     io::{BufWriter, Write},
-    net::{UdpSocket, IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, UdpSocket},
+    str::FromStr,
     os::unix::prelude::AsRawFd,
 };
 
@@ -16,14 +18,14 @@ use wayland_protocols::{
 
 use wayland_client::{
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
+        wl_buffer, wl_compositor, wl_keyboard, wl_pointer::{self, Axis, ButtonState}, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
 
-use trust_dns_resolver::Resolver;
 use tempfile;
+use trust_dns_resolver::Resolver;
 
 struct App {
     running: bool,
@@ -72,11 +74,16 @@ fn main() {
     };
 
     let args: Vec<String> = env::args().collect();
-    let host = match args.get(1) {
+    let arg = match args.get(1) {
         Some(s) => s.as_str(),
         None => "localhost",
     };
-    app.resolve_host(host);
+    if let Ok(ip) = IpAddr::from_str(arg) {
+        app.ip = Some(ip);
+        println!("{} ", ip);
+    } else {
+        app.resolve_host(arg);
+    }
 
     // use roundtrip to process this event synchronously
     event_queue.roundtrip(&mut app).unwrap();
@@ -115,7 +122,9 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 impl App {
     fn resolve_host(&mut self, host: &str) {
         let resolver = Resolver::from_system_conf().unwrap();
-        let response = resolver.lookup_ip(host).expect(format!("couldn't resolve {}", host).as_str());
+        let response = resolver
+            .lookup_ip(host)
+            .expect(format!("couldn't resolve {}", host).as_str());
         self.ip = response.iter().next();
         if let None = self.ip {
             panic!("couldn't resolve host: {}!", host)
@@ -123,15 +132,25 @@ impl App {
         println!("Client: {} {}", host, self.ip.unwrap());
     }
 
+    fn send_event(&self, e: &protocol::Event) {
+        let buf = e.encode();
+        self.socket
+            .send_to(&buf, SocketAddr::new(self.ip.unwrap(), 42069))
+            .unwrap();
+    }
+
     fn send_motion_event(&self, time: u32, x: f64, y: f64) {
-        let time_bytes = time.to_ne_bytes();
-        let x_bytes = x.to_ne_bytes();
-        let y_bytes = y.to_ne_bytes();
-        let mut buf: [u8; 20] = [0u8; 20];
-        buf[0..4].copy_from_slice(&time_bytes);
-        buf[4..12].copy_from_slice(&x_bytes);
-        buf[12..20].copy_from_slice(&y_bytes);
-        self.socket.send_to(&buf, SocketAddr::new(self.ip.unwrap(), 42069)).unwrap();
+        let e = protocol::Event::Mouse { t: (time), x: (x), y: (y) };
+        self.send_event(&e);
+    }
+
+    fn send_button_event(&self, t: u32, b: u32, s: ButtonState) {
+        let e = protocol::Event::Button { t, b, s };
+        self.send_event(&e);
+    }
+    fn send_axis_event(&self, t: u32, a: Axis, v: f64) {
+        let e = protocol::Event::Axis { t, a, v };
+        self.send_event(&e);
     }
 }
 
@@ -367,21 +386,30 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_y: _,
             } => {
                 if app.pointer_lock.is_none() {
-                    app.pointer_lock = Some(app.pointer_constraints.as_ref().unwrap().lock_pointer(
-                        &app.surface.as_ref().unwrap(),
-                        pointer,
-                        None,
-                        zwp_pointer_constraints_v1::Lifetime::Persistent,
-                        qh,
-                        (),
-                    ));
+                    app.pointer_lock =
+                        Some(app.pointer_constraints.as_ref().unwrap().lock_pointer(
+                            &app.surface.as_ref().unwrap(),
+                            pointer,
+                            None,
+                            zwp_pointer_constraints_v1::Lifetime::Persistent,
+                            qh,
+                            (),
+                        ));
                 }
                 if app.rel_pointer.is_none() {
-                    app.rel_pointer = Some(app.rel_pointer_manager
-                        .as_ref()
-                        .unwrap()
-                        .get_relative_pointer(pointer, qh, ()));
+                    app.rel_pointer = Some(
+                        app.rel_pointer_manager
+                            .as_ref()
+                            .unwrap()
+                            .get_relative_pointer(pointer, qh, ()),
+                    );
                 }
+            }
+            wl_pointer::Event::Button { serial:_, time, button, state } => {
+                app.send_button_event(time, button, state.into_result().unwrap());
+            }
+            wl_pointer::Event::Axis { time, axis, value } => {
+                app.send_axis_event(time, axis.into_result().unwrap(), value);
             }
             _ => (),
         }
@@ -390,24 +418,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
     fn event(
-        state: &mut Self,
+        app: &mut Self,
         _: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key { key, .. } = event {
+        if let wl_keyboard::Event::Key { serial: _, time, key, state } = event {
             if key == 1 {
                 // ESC key
-                if let Some(pointer_lock) = state.pointer_lock.as_ref() {
+                if let Some(pointer_lock) = app.pointer_lock.as_ref() {
                     pointer_lock.destroy();
-                    state.pointer_lock = None;
+                    app.pointer_lock = None;
                 }
-                if let Some(rel_pointer) = state.rel_pointer.as_ref() {
+                if let Some(rel_pointer) = app.rel_pointer.as_ref() {
                     rel_pointer.destroy();
-                    state.rel_pointer = None;
+                    app.rel_pointer = None;
                 }
+            } else {
+                app.send_event(&protocol::Event::Key{ t: (time), k: (key), s: (state.into_result().unwrap()) });
             }
         }
     }
@@ -465,13 +495,13 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         if let zwp_relative_pointer_v1::Event::RelativeMotion {
-            utime_hi,
-            utime_lo,
-            dx: _,
-            dy: _,
-            dx_unaccel,
-            dy_unaccel,
-        } = event {
+                            utime_hi,
+                            utime_lo,
+                            dx: _,
+                            dy: _,
+                            dx_unaccel,
+                            dy_unaccel,
+                        } = event {
             let time = ((utime_hi as u64) << 32 | utime_lo as u64) / 1000;
             app.send_motion_event(time as u32, dx_unaccel, dy_unaccel);
         }
