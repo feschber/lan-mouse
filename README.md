@@ -8,10 +8,13 @@ The protocol used for the virtual mouse driver is currently unstable and only su
 Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42069.
 
 ## TODOS:
-- Capture the actual mouse events on the server side and send them to the client. Ideally via some 1 pixel wide transparent window that captures the mouse on the server side and then sends its events to the client.
-- Keyboard support
-- Add support for clipboard contents
-- Graphical frontend (gtk?)
+- [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
+- [ ] Mouse grabbing on some 1 pixel wide transparent window server side
+- [ ] Merge server and client
+- [ ] Keyboard support
+- [ ] Scrollwheel and button support
+- [ ] Clipboard support
+- [ ] Graphical frontend (gtk?)
 
 ## Security
 Sending key and mouse event data over the local network might not be the biggest security concern but in any public network it's QUITE a problem to basically broadcast your keystrokes.
