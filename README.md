@@ -7,8 +7,6 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1)
 [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
 
-Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42069.
-
 In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.
 
 ## TODO
@@ -40,9 +38,9 @@ So in total there is 49 * 1000 Bytes/s for a 1000Hz gaming mouse.
 This makes for a bandwidth requirement of 392 kbit/s in total _even_ for a high end gaming mouse.
 So bandwidth is a non-issue.
 
-In the future to support clipboard contents the easiest solution to not block
-mouse events while receiving e.g. a large file is probably to send these via tcp simultaneously.
+Larger data chunks, like the keymap are offered by the server via tcp listening on the same port.
 This way we dont need to implement any congestion control and leave this up to tcp.
+In the future this can be used for e.g. clipboard contents as well.
 
 
 ## Security
