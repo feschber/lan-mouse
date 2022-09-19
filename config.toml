@@ -1,0 +1,9 @@
+[client.left]
+host_name = "iridium"
+ip = "192.168.178.141"
+port = 42069
+
+[client.right]
+host_name = "Osmium"
+ip = "192.168.2.182"
+port = 42069

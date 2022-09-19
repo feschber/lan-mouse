@@ -12,4 +12,8 @@ wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", featu
 wayland-protocols-misc = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
 tempfile = "3.2"
 trust-dns-resolver = "0.22"
-
+memmap = "0.7"
+toml = "0.5"
+serde = "1.0"
+serde_derive = "1.0"
+threadpool = "1.8"
