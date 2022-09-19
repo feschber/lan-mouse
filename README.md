@@ -9,6 +9,19 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 
 In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.
 
+## Build and run
+Run Server (sending key events):
+```sh
+cargo run --bin server
+```
+
+Run Client (receiving key events):
+```sh
+cargo run --bin client
+```
+
+As mentioned the server will only work on sway compiled from source with the above mentioned patch applied.
+
 ## TODO
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
 - [x] Mouse grabbing
