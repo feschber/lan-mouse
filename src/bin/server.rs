@@ -17,7 +17,7 @@ use wayland_protocols::{
 
 use wayland_client::{
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer::{self, Axis, ButtonState}, wl_registry, wl_seat, wl_shm,
+        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, QueueHandle, WEnum,
@@ -119,7 +119,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
             name, interface, ..
         } = event
         {
-            // println!("[{}] {} (v{})", name, interface, version);
             match &interface[..] {
                 "wl_compositor" => {
                     app.compositor =
@@ -364,10 +363,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 let e = protocol::Event::Axis { t: time, a: (axis.into_result().unwrap()), v: value };
                 app.connection.send_event(&e);
             }
-            wl_pointer::Event::Frame {} => {
+            wl_pointer::Event::Frame => {
                 app.connection.send_event(&protocol::Event::Frame{});
             }
-            _ => (),
+            _ => {},
         }
     }
 }

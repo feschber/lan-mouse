@@ -41,7 +41,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
             name, interface, ..
         } = event
         {
-            // println!("[{}] {} (v{})", name, interface, version);
             match &interface[..] {
                 "wl_keyboard" => {
                     registry.bind::<wl_keyboard::WlKeyboard, _, _>(name, 1, qh, ());
@@ -114,11 +113,11 @@ fn udp_loop(connection: &protocol::Connection, pointer: &Vp, keyboard: &Vk, q: E
     loop {
         if let Some(event) = connection.receive_event() {
             match event {
-                protocol::Event::Mouse { t, x, y } => { pointer.motion(t, x, y); }
-                protocol::Event::Button { t, b, s } => { pointer.button(t, b, s); }
-                protocol::Event::Axis { t, a, v } => { pointer.axis(t, a, v); }
+                protocol::Event::Mouse { t, x, y } => { pointer.motion(t, x, y); pointer.frame(); }
+                protocol::Event::Button { t, b, s } => { pointer.button(t, b, s); pointer.frame(); }
+                protocol::Event::Axis { t, a, v } => { pointer.axis(t, a, v); pointer.frame(); }
                 protocol::Event::Frame {  } => { pointer.frame(); },
-                protocol::Event::Key { t, k, s } => { keyboard.key(t, k, u32::from(s)); pointer.frame(); },
+                protocol::Event::Key { t, k, s } => { keyboard.key(t, k, u32::from(s)); },
                 protocol::Event::KeyModifier { mods_depressed, mods_latched, mods_locked, group } => {
                     keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
                 },
