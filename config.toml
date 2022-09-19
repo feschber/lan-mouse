@@ -1,6 +1,6 @@
 [client.left]
-host_name = "iridium"
-ip = "192.168.178.141"
+host_name = "rubinium"
+ip = "192.168.2.182"
 port = 42069
 
 [client.right]

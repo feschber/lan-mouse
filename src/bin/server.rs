@@ -105,24 +105,6 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     }
 }
 
-impl App {
-
-
-    fn send_motion_event(&self, time: u32, x: f64, y: f64) {
-        let e = protocol::Event::Mouse { t: (time), x: (x), y: (y) };
-        self.connection.send_event(&e);
-    }
-
-    fn send_button_event(&self, t: u32, b: u32, s: ButtonState) {
-        let e = protocol::Event::Button { t, b, s };
-        self.connection.send_event(&e);
-    }
-    fn send_axis_event(&self, t: u32, a: Axis, v: f64) {
-        let e = protocol::Event::Axis { t, a, v };
-        self.connection.send_event(&e);
-    }
-}
-
 impl Dispatch<wl_registry::WlRegistry, ()> for App {
     fn event(
         app: &mut Self,
@@ -375,10 +357,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 }
             }
             wl_pointer::Event::Button { serial:_, time, button, state } => {
-                app.send_button_event(time, button, state.into_result().unwrap());
+                let e = protocol::Event::Button { t: (time), b: button, s: (state.into_result().unwrap()) };
+                app.connection.send_event(&e);
             }
             wl_pointer::Event::Axis { time, axis, value } => {
-                app.send_axis_event(time, axis.into_result().unwrap(), value);
+                let e = protocol::Event::Axis { t: time, a: (axis.into_result().unwrap()), v: value };
+                app.connection.send_event(&e);
             }
             _ => (),
         }
@@ -482,7 +466,8 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
                             dy_unaccel,
                         } = event {
             let time = ((utime_hi as u64) << 32 | utime_lo as u64) / 1000;
-            app.send_motion_event(time as u32, dx_unaccel, dy_unaccel);
+            let e = protocol::Event::Mouse { t: (time as u32), x: (dx_unaccel), y: (dy_unaccel) };
+            app.connection.send_event(&e);
         }
     }
 }

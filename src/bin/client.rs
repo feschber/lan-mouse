@@ -114,10 +114,10 @@ fn udp_loop(connection: &protocol::Connection, pointer: &Vp, keyboard: &Vk, q: E
     loop {
         if let Some(event) = connection.receive_event() {
             match event {
-                protocol::Event::Mouse { t, x, y } => { pointer.motion(t, x, y); }
-                protocol::Event::Button { t, b, s } => { pointer.button(t, b, s); }
-                protocol::Event::Axis { t, a, v } => { pointer.axis(t, a, v); }
-                protocol::Event::Key { t, k, s } => { keyboard.key(t, k, u32::from(s)); },
+                protocol::Event::Mouse { t, x, y } => { pointer.motion(t, x, y); pointer.frame(); }
+                protocol::Event::Button { t, b, s } => { pointer.button(t, b, s); pointer.frame(); }
+                protocol::Event::Axis { t, a, v } => { pointer.axis(t, a, v); pointer.frame(); }
+                protocol::Event::Key { t, k, s } => { keyboard.key(t, k, u32::from(s)); pointer.frame(); },
                 protocol::Event::KeyModifier { mods_depressed, mods_latched, mods_locked, group } => {
                     keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
                 },
