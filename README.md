@@ -9,10 +9,12 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 
 Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42069.
 
+In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.
+
 ## TODO
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
 - [x] Mouse grabbing
-- [ ] Window with absolute position (wlr\_layer\_shell?)
+- [x] Window with absolute position (wlr\_layer\_shell?)
 - [x] DNS resolving
 - [ ] Multiple IP addresses -> check which one is reachable
 - [x] Keyboard support

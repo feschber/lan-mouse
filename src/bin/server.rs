@@ -7,18 +7,20 @@ use std::{
     os::unix::prelude::{AsRawFd, FromRawFd},
 };
 
-use wayland_protocols::{
-    wp::{
-        pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
-        relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
-    },
-    xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base},
+use wayland_protocols::wp::{
+    pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
+    relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
+};
+
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1,
+    zwlr_layer_surface_v1,
 };
 
 use wayland_client::{
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_shm_pool, wl_surface, wl_region,
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
@@ -29,10 +31,9 @@ struct App {
     running: bool,
     compositor: Option<wl_compositor::WlCompositor>,
     buffer: Option<wl_buffer::WlBuffer>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
     surface: Option<wl_surface::WlSurface>,
-    top_level: Option<xdg_toplevel::XdgToplevel>,
-    xdg_surface: Option<xdg_surface::XdgSurface>,
+    layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    layer_surface: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
     pointer_constraints: Option<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1>,
     rel_pointer_manager: Option<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>,
     pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
@@ -60,10 +61,9 @@ fn main() {
         running: true,
         compositor: None,
         buffer: None,
-        wm_base: None,
         surface: None,
-        top_level: None,
-        xdg_surface: None,
+        layer_shell: None,
+        layer_surface: None,
         pointer_constraints: None,
         rel_pointer_manager: None,
         pointer_lock: None,
@@ -74,18 +74,26 @@ fn main() {
     // use roundtrip to process this event synchronously
     event_queue.roundtrip(&mut app).unwrap();
 
-    //
     let compositor = app.compositor.as_ref().unwrap();
     app.surface = Some(compositor.create_surface(&qh, ()));
-    let wm_base = app.wm_base.as_ref().unwrap();
-    app.xdg_surface = Some(wm_base.get_xdg_surface(&app.surface.as_mut().unwrap(), &qh, ()));
-    app.top_level = Some(app.xdg_surface.as_ref().unwrap().get_toplevel(&qh, ()));
-    app.top_level
-        .as_ref()
-        .unwrap()
-        .set_title("LAN Mouse Share".into());
-    app.surface.as_ref().unwrap().commit();
 
+    let layer_shell = app.layer_shell.as_ref().unwrap();
+    let layer_surface = layer_shell.get_layer_surface(
+        &app.surface.as_ref().unwrap(),
+        None,
+        zwlr_layer_shell_v1::Layer::Top,
+        "LAN Mouse Sharing".into(),
+        &qh,
+        ()
+    );
+    app.layer_surface = Some(layer_surface);
+    let layer_surface = app.layer_surface.as_ref().unwrap();
+    layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::Right);
+    layer_surface.set_size(1, 1440);
+    layer_surface.set_exclusive_zone(1);
+    layer_surface.set_margin(0, 0, 0, 0);
+    app.surface.as_ref().unwrap().set_input_region(None);
+    app.surface.as_ref().unwrap().commit();
     while app.running {
         event_queue.blocking_dispatch(&mut app).unwrap();
     }
@@ -93,14 +101,9 @@ fn main() {
 
 fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
-    for y in 0..height {
-        for x in 0..width {
-            let color: u32 = if (x + y / 8 * 8) % 16 < 8 {
-                0xFF8EC07C
-            } else {
-                0xFFFbF1C7
-            };
-            buf.write_all(&color.to_ne_bytes()).unwrap();
+    for _ in 0..height {
+        for _ in 0..width {
+            buf.write_all(&0x88FbF1C7u32.to_ne_bytes()).unwrap();
         }
     }
 }
@@ -126,7 +129,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                 }
                 "wl_shm" => {
                     let shm = registry.bind::<wl_shm::WlShm, _, _>(name, 1, qh, ());
-                    let (width, height) = (64, 1440);
+                    let (width, height) = (1, 1440);
                     let mut file = tempfile::tempfile().unwrap();
                     draw(&mut file, (width, height));
                     let pool =
@@ -143,11 +146,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     app.buffer = Some(buffer);
                 }
                 "wl_seat" => {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, 1, qh, ());
-                }
-                "xdg_wm_base" => {
-                    app.wm_base =
-                        Some(registry.bind::<xdg_wm_base::XdgWmBase, _, _>(name, 1, &qh, ()));
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, 8, qh, ());
                 }
                 "zwp_pointer_constraints_v1" => {
                     app.pointer_constraints = Some(
@@ -168,6 +167,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                             (),
                         ),
                     );
+                }
+                "zwlr_layer_shell_v1" => {
+                    app.layer_shell = Some(registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
+                        name,
+                        4, &qh, (),
+                    ));
                 }
                 _ => {}
             }
@@ -240,62 +245,6 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for App {
     }
 }
 
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for App {
-    fn event(
-        _: &mut Self,
-        proxy: &xdg_wm_base::XdgWmBase,
-        event: <xdg_wm_base::XdgWmBase as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            xdg_wm_base::Event::Ping { serial } => {
-                proxy.pong(serial);
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for App {
-    fn event(
-        app: &mut Self,
-        xdg_surface: &xdg_surface::XdgSurface,
-        event: <xdg_surface::XdgSurface as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        match event {
-            xdg_surface::Event::Configure { serial } => {
-                xdg_surface.ack_configure(serial);
-                let surface = app.surface.as_ref().unwrap();
-                if let Some(ref buffer) = app.buffer {
-                    surface.attach(Some(buffer), 0, 0);
-                    surface.commit();
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for App {
-    fn event(
-        app: &mut Self,
-        _: &xdg_toplevel::XdgToplevel,
-        event: <xdg_toplevel::XdgToplevel as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        if let xdg_toplevel::Event::Close {} = event {
-            app.running = false;
-        }
-    }
-}
-
 impl Dispatch<wl_seat::WlSeat, ()> for App {
     fn event(
         _: &mut Self,
@@ -335,13 +284,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_x: _,
                 surface_y: _,
             } => {
+                if let Some(s) = app.layer_surface.as_ref() {
+                    s.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+                    app.surface.as_ref().unwrap().commit();
+                }
                 if app.pointer_lock.is_none() {
                     app.pointer_lock =
                         Some(app.pointer_constraints.as_ref().unwrap().lock_pointer(
                             &app.surface.as_ref().unwrap(),
                             pointer,
                             None,
-                            zwp_pointer_constraints_v1::Lifetime::Persistent,
+                            zwp_pointer_constraints_v1::Lifetime::Oneshot,
                             qh,
                             (),
                         ));
@@ -353,6 +306,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                             .unwrap()
                             .get_relative_pointer(pointer, qh, ()),
                     );
+                }
+            }
+            wl_pointer::Event::Leave {..} => {
+                if let Some(s) = app.layer_surface.as_ref() {
+                    s.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+                    app.surface.as_ref().unwrap().commit();
                 }
             }
             wl_pointer::Event::Button {..} => {
@@ -415,7 +374,6 @@ impl Dispatch<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
     }
 }
 
@@ -423,15 +381,11 @@ impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
     fn event(
         _: &mut Self,
         _: &zwp_locked_pointer_v1::ZwpLockedPointerV1,
-        event: <zwp_locked_pointer_v1::ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
+        _: <zwp_locked_pointer_v1::ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        match event {
-            zwp_locked_pointer_v1::Event::Locked => {}
-            _ => {}
-        }
     }
 }
 
@@ -469,4 +423,45 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
             app.connection.send_event(wl_pointer::Event::Motion{ time, surface_x, surface_y });
         }
     }
+}
+
+impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: <zwlr_layer_shell_v1::ZwlrLayerShellV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        //
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for App {
+    fn event(
+        app: &mut Self,
+        surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: <zwlr_layer_surface_v1::ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
+            app.surface.as_ref().unwrap().commit();
+            surface.ack_configure(serial);
+            app.surface.as_ref().unwrap().attach(Some(app.buffer.as_ref().unwrap()), 0, 0);
+        }
+    }
+}
+
+impl Dispatch<wl_region::WlRegion, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: <wl_region::WlRegion as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) { }
 }
