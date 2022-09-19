@@ -12,7 +12,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
-    protocol::{wl_registry, wl_seat, wl_keyboard},
+    protocol::{wl_registry, wl_seat, wl_pointer, wl_keyboard},
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
@@ -113,14 +113,35 @@ fn udp_loop(connection: &protocol::Connection, pointer: &Vp, keyboard: &Vk, q: E
     loop {
         if let Some(event) = connection.receive_event() {
             match event {
-                protocol::Event::Mouse { t, x, y } => { pointer.motion(t, x, y); pointer.frame(); }
-                protocol::Event::Button { t, b, s } => { pointer.button(t, b, s); pointer.frame(); }
-                protocol::Event::Axis { t, a, v } => { pointer.axis(t, a, v); pointer.frame(); }
-                protocol::Event::Frame {  } => { pointer.frame(); },
-                protocol::Event::Key { t, k, s } => { keyboard.key(t, k, u32::from(s)); },
-                protocol::Event::KeyModifier { mods_depressed, mods_latched, mods_locked, group } => {
-                    keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                },
+                protocol::Event::Pointer(e) => {
+                    match e {
+                        wl_pointer::Event::Motion { time, surface_x, surface_y } => {
+                            pointer.motion(time, surface_x, surface_y);
+                            pointer.frame();
+                        }
+                        wl_pointer::Event::Button { serial: _, time: t, button: b, state: s } => {
+                            pointer.button( t, b, s.into_result().unwrap());
+                            pointer.frame();
+                        }
+                        wl_pointer::Event::Axis { time: t, axis: a, value: v } => {
+                            pointer.axis(t, a.into_result().unwrap(), v);
+                            pointer.frame();
+                        }
+                        wl_pointer::Event::Frame {} => {}
+                        _ => todo!(),
+                    }
+                }
+                protocol::Event::Keyboard(e) => {
+                    match e {
+                        wl_keyboard::Event::Key { serial: _, time: t, key: k, state: s } => {
+                            keyboard.key(t, k, u32::from(s));
+                        },
+                        wl_keyboard::Event::Modifiers { serial: _, mods_depressed, mods_latched, mods_locked, group } => {
+                            keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
+                        },
+                        _ => todo!(),
+                    }
+                }
             }
         }
         q.flush().unwrap();

@@ -3,10 +3,10 @@ use crate::config::{self, Config};
 use std::{io::prelude::*, net::TcpListener, thread, sync::{Arc, RwLock}, collections::HashMap};
 use crate::dns;
 
-use wayland_client::protocol::{
-    wl_pointer::{Axis, ButtonState},
-    wl_keyboard::KeyState,
-};
+use wayland_client::{protocol::{
+    wl_pointer,
+    wl_keyboard,
+}, WEnum};
 
 use std::net::{SocketAddr, UdpSocket, TcpStream};
 
@@ -41,91 +41,111 @@ pub struct Connection {
     offer_data: Arc<RwLock<HashMap<DataRequest, Mmap>>>,
 }
 
-pub enum Event {
-    Mouse{t: u32, x: f64, y: f64},
-    Button{t: u32, b: u32, s: ButtonState},
-    Axis{t: u32, a: Axis, v: f64},
-    Frame{},
-    Key{t: u32, k: u32, s: KeyState},
-    KeyModifier{mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32},
+pub trait Encode {
+    fn encode(&self) -> Vec<u8>;
 }
 
-impl From<Vec<u8>> for Event {
-    fn from(buf: Vec<u8>) -> Self {
-        match buf[0] {
-            0 => Self::Mouse {
-                t: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
-                x: f64::from_ne_bytes(buf[5..13].try_into().unwrap()),
-                y: f64::from_ne_bytes(buf[13..21].try_into().unwrap()),
-            },
-            1 => Self::Button {
-                t: (u32::from_ne_bytes(buf[1..5].try_into().unwrap())),
-                b: (u32::from_ne_bytes(buf[5..9].try_into().unwrap())),
-                s: (ButtonState::try_from(buf[9] as u32).unwrap())
-            },
-            2 => Self::Axis {
-                t: (u32::from_ne_bytes(buf[1..5].try_into().unwrap())),
-                a: (Axis::try_from(buf[5] as u32).unwrap()),
-                v: (f64::from_ne_bytes(buf[6..14].try_into().unwrap())),
-            },
-            3 => Self::Frame {},
-            4 => Self::Key {
-                t: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
-                k: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
-                s: KeyState::try_from(buf[9] as u32).unwrap(),
-            },
-            5 => Self::KeyModifier {
-                mods_depressed: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
-                mods_latched: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
-                mods_locked: u32::from_ne_bytes(buf[9..13].try_into().unwrap()),
-                group: u32::from_ne_bytes(buf[13..17].try_into().unwrap()),
-            },
-            _ => panic!("protocol violation"),
-        }
-    }
+pub trait Decode {
+    fn decode(buf: Vec<u8>) -> Self;
 }
 
-impl From<&Event> for Vec<u8> {
-    fn from(e: &Event) -> Self {
+impl Encode for wl_pointer::Event {
+    fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        match e {
-            Event::Mouse { t, x, y } => {
+        match *self {
+            Self::Motion { time: t, surface_x: x, surface_y: y } => {
                 buf.push(0u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(x.to_ne_bytes().as_ref());
                 buf.extend_from_slice(y.to_ne_bytes().as_ref());
             }
-            Event::Button { t, b, s } => {
+            Self::Button { serial: _, time: t, button: b, state: s } => {
                 buf.push(1u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(b.to_ne_bytes().as_ref());
-                buf.push(u32::from(*s) as u8);
+                buf.push(u32::from(s) as u8);
             }
-            Event::Axis{t, a, v} => {
+            Self::Axis{ time: t, axis: a, value: v } => {
                 buf.push(2u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
-                buf.push(u32::from(*a) as u8);
+                buf.push(u32::from(a) as u8);
                 buf.extend_from_slice(v.to_ne_bytes().as_ref());
             }
-            Event::Frame{} => {
+            Self::Frame{} => {
                 buf.push(3u8);
             }
-            Event::Key{t, k, s } => {
+            _ => todo!(),
+        }
+        buf
+    }
+}
+
+impl Encode for wl_keyboard::Event {
+    fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        match self {
+            Self::Key{ serial:_, time: t, key: k, state: s } => {
                 buf.push(4u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(k.to_ne_bytes().as_ref());
                 buf.push(u32::from(*s) as u8);
             }
-            Event::KeyModifier{ mods_depressed, mods_latched, mods_locked, group } => {
+            Self::Modifiers{ serial:_, mods_depressed, mods_latched, mods_locked, group } => {
                 buf.push(5u8);
                 buf.extend_from_slice(mods_depressed.to_ne_bytes().as_ref());
                 buf.extend_from_slice(mods_latched.to_ne_bytes().as_ref());
                 buf.extend_from_slice(mods_locked.to_ne_bytes().as_ref());
                 buf.extend_from_slice(group.to_ne_bytes().as_ref());
             }
+            _ => todo!(),
         }
         buf
     }
+}
+
+pub enum Event {
+    Pointer(wl_pointer::Event),
+    Keyboard(wl_keyboard::Event),
+}
+
+impl Decode for Event {
+    fn decode(buf: Vec<u8>) -> Self {
+        match buf[0] {
+            0 => Self::Pointer(wl_pointer::Event::Motion {
+                time: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
+                surface_x: f64::from_ne_bytes(buf[5..13].try_into().unwrap()),
+                surface_y: f64::from_ne_bytes(buf[13..21].try_into().unwrap()),
+            }),
+            1 => Self::Pointer(wl_pointer::Event::Button {
+                serial: 0,
+                time: (u32::from_ne_bytes(buf[1..5].try_into().unwrap())),
+                button: (u32::from_ne_bytes(buf[5..9].try_into().unwrap())),
+                state: (WEnum::Value(wl_pointer::ButtonState::try_from(buf[9] as u32).unwrap())),
+            }),
+            2 => Self::Pointer(wl_pointer::Event::Axis {
+                time: (u32::from_ne_bytes(buf[1..5].try_into().unwrap())),
+                axis: (WEnum::Value(wl_pointer::Axis::try_from(buf[5] as u32).unwrap())),
+                value: (f64::from_ne_bytes(buf[6..14].try_into().unwrap())),
+            }),
+            3 => Self::Pointer(wl_pointer::Event::Frame {}),
+            4 => Self::Keyboard(wl_keyboard::Event::Key {
+                serial: 0,
+                time: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
+                key: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
+                state: WEnum::Value(wl_keyboard::KeyState::try_from(buf[9] as u32).unwrap()),
+            }),
+            5 => Self::Keyboard(wl_keyboard::Event::Modifiers {
+                serial: 0,
+                mods_depressed: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
+                mods_latched: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
+                mods_locked: u32::from_ne_bytes(buf[9..13].try_into().unwrap()),
+                group: u32::from_ne_bytes(buf[13..17].try_into().unwrap()),
+            }),
+            _ => panic!("protocol violation")
+        }
+    }
+
+
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -142,17 +162,17 @@ impl From<u32> for DataRequest {
     }
 }
 
+impl From<[u8;4]> for DataRequest {
+    fn from(buf: [u8;4]) -> Self {
+        DataRequest::from(u32::from_ne_bytes(buf))
+    }
+}
+
 impl From<DataRequest> for u32 {
     fn from(d: DataRequest) -> Self {
         match d {
             DataRequest::KeyMap => 0,
         }
-    }
-}
-
-impl From<[u8;4]> for DataRequest {
-    fn from(buf: [u8;4]) -> Self {
-        DataRequest::from(u32::from_ne_bytes(buf))
     }
 }
 
@@ -224,18 +244,17 @@ impl Connection {
         Some(data)
     }
 
-    pub fn send_event(&self, e: &Event) {
+    pub fn send_event<E: Encode>(&self, e: E) {
         // TODO check which client
         if let Some(addr) = self.client.right {
-            let buf: Vec<u8> = e.into();
-            self.udp_socket.send_to(&buf, addr).unwrap();
+            self.udp_socket.send_to(&e.encode(), addr).unwrap();
         }
     }
 
     pub fn receive_event(&self) -> Option<Event> {
         let mut buf = vec![0u8; 21];
         if let Ok((_amt, _src)) = self.udp_socket.recv_from(&mut buf) {
-            Some(Event::from(buf))
+            Some(Event::decode(buf))
         } else {
             None
         }

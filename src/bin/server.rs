@@ -355,16 +355,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                     );
                 }
             }
-            wl_pointer::Event::Button { serial:_, time, button, state } => {
-                let e = protocol::Event::Button { t: (time), b: button, s: (state.into_result().unwrap()) };
-                app.connection.send_event(&e);
+            wl_pointer::Event::Button {..} => {
+                app.connection.send_event(event);
             }
-            wl_pointer::Event::Axis { time, axis, value } => {
-                let e = protocol::Event::Axis { t: time, a: (axis.into_result().unwrap()), v: value };
-                app.connection.send_event(&e);
+            wl_pointer::Event::Axis {..} => {
+                app.connection.send_event(event);
             }
-            wl_pointer::Event::Frame => {
-                app.connection.send_event(&protocol::Event::Frame{});
+            wl_pointer::Event::Frame {..} => {
+                app.connection.send_event(event);
             }
             _ => {},
         }
@@ -381,7 +379,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { serial: _, time, key, state } => {
+            wl_keyboard::Event::Key { serial: _, time: _, key, state: _ } => {
                 if key == 1 {
                     // ESC key
                     if let Some(pointer_lock) = app.pointer_lock.as_ref() {
@@ -393,11 +391,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                         app.rel_pointer = None;
                     }
                 } else {
-                    app.connection.send_event(&protocol::Event::Key{ t: (time), k: (key), s: (state.into_result().unwrap()) });
+                    app.connection.send_event(event);
                 }
             }
-            wl_keyboard::Event::Modifiers { serial: _, mods_depressed, mods_latched, mods_locked, group } => {
-                app.connection.send_event(&protocol::Event::KeyModifier{ mods_depressed, mods_latched, mods_locked, group });
+            wl_keyboard::Event::Modifiers {..} => {
+                app.connection.send_event(event);
             }
             wl_keyboard::Event::Keymap { format:_ , fd, size:_ } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
@@ -464,12 +462,11 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
                             utime_lo,
                             dx: _,
                             dy: _,
-                            dx_unaccel,
-                            dy_unaccel,
+                            dx_unaccel: surface_x,
+                            dy_unaccel: surface_y,
                         } = event {
-            let time = ((utime_hi as u64) << 32 | utime_lo as u64) / 1000;
-            let e = protocol::Event::Mouse { t: (time as u32), x: (dx_unaccel), y: (dy_unaccel) };
-            app.connection.send_event(&e);
+            let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
+            app.connection.send_event(wl_pointer::Event::Motion{ time, surface_x, surface_y });
         }
     }
 }
