@@ -364,6 +364,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 let e = protocol::Event::Axis { t: time, a: (axis.into_result().unwrap()), v: value };
                 app.connection.send_event(&e);
             }
+            wl_pointer::Event::Frame {} => {
+                app.connection.send_event(&protocol::Event::Frame{});
+            }
             _ => (),
         }
     }

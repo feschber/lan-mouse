@@ -45,6 +45,7 @@ pub enum Event {
     Mouse{t: u32, x: f64, y: f64},
     Button{t: u32, b: u32, s: ButtonState},
     Axis{t: u32, a: Axis, v: f64},
+    Frame{},
     Key{t: u32, k: u32, s: KeyState},
     KeyModifier{mods_depressed: u32, mods_latched: u32, mods_locked: u32, group: u32},
 }
@@ -67,12 +68,13 @@ impl From<Vec<u8>> for Event {
                 a: (Axis::try_from(buf[5] as u32).unwrap()),
                 v: (f64::from_ne_bytes(buf[6..14].try_into().unwrap())),
             },
-            3 => Self::Key {
+            3 => Self::Frame {},
+            4 => Self::Key {
                 t: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
                 k: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
                 s: KeyState::try_from(buf[9] as u32).unwrap(),
             },
-            4 => Self::KeyModifier {
+            5 => Self::KeyModifier {
                 mods_depressed: u32::from_ne_bytes(buf[1..5].try_into().unwrap()),
                 mods_latched: u32::from_ne_bytes(buf[5..9].try_into().unwrap()),
                 mods_locked: u32::from_ne_bytes(buf[9..13].try_into().unwrap()),
@@ -105,14 +107,17 @@ impl From<&Event> for Vec<u8> {
                 buf.push(u32::from(*a) as u8);
                 buf.extend_from_slice(v.to_ne_bytes().as_ref());
             }
-            Event::Key{t, k, s } => {
+            Event::Frame{} => {
                 buf.push(3u8);
+            }
+            Event::Key{t, k, s } => {
+                buf.push(4u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(k.to_ne_bytes().as_ref());
                 buf.push(u32::from(*s) as u8);
             }
             Event::KeyModifier{ mods_depressed, mods_latched, mods_locked, group } => {
-                buf.push(4u8);
+                buf.push(5u8);
                 buf.extend_from_slice(mods_depressed.to_ne_bytes().as_ref());
                 buf.extend_from_slice(mods_latched.to_ne_bytes().as_ref());
                 buf.extend_from_slice(mods_locked.to_ne_bytes().as_ref());
