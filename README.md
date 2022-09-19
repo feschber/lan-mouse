@@ -1,6 +1,6 @@
 # Lan Mouse Share
 Goal of this project is to be an open-source replacement for tools like [Synergy](https://symless.com/synergy) or [Share Mouse](https://www.sharemouse.com/de/).
-Currently on wayland is supported but I will take a look at xorg, windows & MacOS in the future.
+Currently only wayland is supported but I will take a look at xorg, windows & MacOS in the future.
 
 ## Very much alpha state
 The protocols used for the virtual mouse and virtual keyboard drivers are currently unstable and only supported by wlroots:
