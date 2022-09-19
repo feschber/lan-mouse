@@ -15,15 +15,14 @@ Currently the mouse moves in a circle when receiving a(ny) udp packet on port 42
 - [ ] Window with absolute position (wlr\_layer\_shell?)
 - [x] DNS resolving
 - [ ] Multiple IP addresses -> check which one is reachable
-- [ ] [WIP] Keyboard support
-- [ ] [WIP] Scrollwheel support
+- [x] Keyboard support
+- [x] Scrollwheel support
 - [x] Button support
 - [ ] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
 - [ ] Liveness tracking (automatically ungrab mouse when client unreachable)
 - [ ] Clipboard support
 - [ ] Graphical frontend (gtk?)
 - [ ] *Encrytion* -> likely DTLS
-- [ ]
 
 ## Protocol considerations
 Currently UDP is used exclusively for all events sent and / or received.
