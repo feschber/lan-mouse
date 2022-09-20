@@ -2,7 +2,7 @@
 Goal of this project is to be an open-source replacement for tools like [Synergy](https://symless.com/synergy) or [Share Mouse](https://www.sharemouse.com/de/).
 Currently only wayland is supported but I will take a look at xorg, windows & MacOS in the future.
 
-## Very much alpha state
+## Very much unstable
 The protocols used for the virtual mouse and virtual keyboard drivers are currently unstable and only supported by wlroots:
 [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1)
 [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
@@ -29,19 +29,19 @@ cargo run --bin client
 As mentioned the server will only work on sway compiled from source with the above mentioned patch applied.
 
 ## TODO
-- [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
-- [x] Mouse grabbing
-- [x] Window with absolute position (wlr\_layer\_shell?)
-- [x] DNS resolving
-- [ ] Multiple IP addresses -> check which one is reachable
-- [x] Keyboard support
-- [x] Scrollwheel support
-- [x] Button support
-- [ ] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
-- [ ] Liveness tracking (automatically ungrab mouse when client unreachable)
-- [ ] Clipboard support
-- [ ] Graphical frontend (gtk?)
-- [ ] *Encrytion* -> likely DTLS
+- :white_check_mark: Capture the actual mouse events on the server side via a wayland client and send them to the client
+- :white_check_mark: Mouse grabbing
+- :white_check_mark: Window with absolute position -> wlr\_layer\_shell
+- :white_check_mark: DNS resolving
+- :white_check_mark: Keyboard support
+- :white_check_mark: Scrollwheel support
+- :white_check_mark: Button support
+- :white_large_square: Multiple IP addresses -> check which one is reachable
+- :white_large_square: Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
+- :white_large_square: Liveness tracking (automatically ungrab mouse when client unreachable)
+- :white_large_square: Clipboard support
+- :white_large_square: Graphical frontend (gtk?)
+- :white_large_square: *Encrytion* -> likely DTLS
 
 ## Protocol considerations
 Currently UDP is used exclusively for all events sent and / or received.
@@ -63,6 +63,6 @@ In the future this can be used for e.g. clipboard contents as well.
 
 
 ## Security
-Sending key and mouse event data over the local network might not be the biggest security concern but in any public network it's QUITE a problem to basically broadcast your keystrokes.
+Sending key and mouse event data over the local network might not be the biggest security concern but in any public network or business environment it's *QUITE* a problem to basically broadcast your keystrokes.
 - There should probably be an encryption layer using DTLS below the application to enable a secure link
 - The keys could be generated via the graphical frontend
