@@ -360,9 +360,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { serial: _, time: _, key, state: _ } => {
-                if key == 1 {
-                    // ESC key
+            wl_keyboard::Event::Key {..} => {
+                app.connection.send_event(event);
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, ..} => {
+                app.connection.send_event(event);
+                if mods_depressed == 77 {  // ctrl shift super alt
                     if let Some(pointer_lock) = app.pointer_lock.as_ref() {
                         pointer_lock.destroy();
                         app.pointer_lock = None;
@@ -375,12 +378,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                         shortcut_inhibitor.destroy();
                         app.shortcut_inhibitor = None;
                     }
-                } else {
-                    app.connection.send_event(event);
                 }
-            }
-            wl_keyboard::Event::Modifiers {..} => {
-                app.connection.send_event(event);
             }
             wl_keyboard::Event::Keymap { format:_ , fd, size:_ } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
