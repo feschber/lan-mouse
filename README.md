@@ -7,6 +7,21 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 - [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1)
 - [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
 
+## Wayland compositor support
+|  Required Protocols  (Event Emitting)  | Sway               | Kwin                 | Gnome                |
+|----------------------------------------|--------------------|----------------------|----------------------|
+| pointer-constraints-unstable-v1        | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
+| relative-pointer-unstable-v1           | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
+| keyboard-shortcuts-inhibit-unstable-v1 | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
+| wlr-layer-shell-unstable-v1            | :white_check_mark: | :white_check_mark:   | :white_large_square: |
+
+|  Required Protocols  (Event Receiving) | Sway               | Kwin                 | Gnome                |
+|----------------------------------------|--------------------|----------------------|----------------------|
+| wlr-virtual-pointer-unstable-v1        | :white_check_mark: | :white_large_square: | :white_large_square: |
+| virtual-keyboard-unstable-v1           | :white_check_mark: | :white_large_square: | :white_large_square: |
+
+
+
 Also the [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1) is currently not available on Gnome and may very well [never be](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141) so Gnome support probably requires some sort of Gome-Shell-Extension.
 
 In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.
