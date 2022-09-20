@@ -4,8 +4,10 @@ Currently only wayland is supported but I will take a look at xorg, windows & Ma
 
 ## Very much unstable
 The protocols used for the virtual mouse and virtual keyboard drivers are currently unstable and only supported by wlroots:
-[zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1)
-[virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
+- [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1)
+- [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
+
+Also the [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1) is currently not available on Gnome and may very well [never be](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141) so Gnome support probably requires some sort of Gome-Shell-Extension.
 
 In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.
 
@@ -36,12 +38,15 @@ As mentioned the server will only work on sway compiled from source with the abo
 - :white_check_mark: Keyboard support
 - :white_check_mark: Scrollwheel support
 - :white_check_mark: Button support
+- :white_large_square: Latency measurement + logging
+- :white_large_square: Bandwidth usage approximation + logging
 - :white_large_square: Multiple IP addresses -> check which one is reachable
 - :white_large_square: Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
 - :white_large_square: Liveness tracking (automatically ungrab mouse when client unreachable)
 - :white_large_square: Clipboard support
 - :white_large_square: Graphical frontend (gtk?)
 - :white_large_square: *Encrytion* -> likely DTLS
+- :white_large_square: Gnome Shell Extension (layer shell is not supported)
 
 ## Protocol considerations
 Currently UDP is used exclusively for all events sent and / or received.
@@ -52,6 +57,7 @@ A mouse Event consists of 21 Bytes:
 - 4 Bytes (u32) for the timestamp,
 - 8 Bytes (f64) for dx,
 - 8 Bytes (f64) for dy.
+
 Additionally the IP header with 20 Bytes and the udp header with 8 Bytes take up another 28 Byte.
 So in total there is 49 * 1000 Bytes/s for a 1000Hz gaming mouse.
 This makes for a bandwidth requirement of 392 kbit/s in total _even_ for a high end gaming mouse.
