@@ -1,5 +1,11 @@
-use std::{os::unix::prelude::AsRawFd, io::{Write, BufWriter}};
-use lan_mouse::{protocol::{self, DataRequest}, config::Config};
+use lan_mouse::{
+    config::Config,
+    protocol::{self, DataRequest},
+};
+use std::{
+    io::{BufWriter, Write},
+    os::unix::prelude::AsRawFd,
+};
 
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
@@ -12,7 +18,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
-    protocol::{wl_registry, wl_seat, wl_pointer, wl_keyboard},
+    protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
@@ -85,7 +91,6 @@ fn main() {
     // use roundtrip to process this event synchronously
     event_queue.roundtrip(&mut app).unwrap();
 
-
     let vpm = app.vpm.as_ref().unwrap();
     let vkm = app.vkm.as_ref().unwrap();
     let seat = app.seat.as_ref().unwrap();
@@ -94,7 +99,7 @@ fn main() {
     let connection = protocol::Connection::new(config);
     let data = loop {
         match connection.receive_data(DataRequest::KeyMap) {
-            Some(data) => { break data }
+            Some(data) => break data,
             None => {}
         }
     };
@@ -109,39 +114,64 @@ fn main() {
 }
 
 /// main loop handling udp packets
-fn udp_loop(connection: &protocol::Connection, pointer: &Vp, keyboard: &Vk, q: EventQueue<App>) -> std::io::Result<()> {
+fn udp_loop(
+    connection: &protocol::Connection,
+    pointer: &Vp,
+    keyboard: &Vk,
+    q: EventQueue<App>,
+) -> std::io::Result<()> {
     loop {
         if let Some(event) = connection.receive_event() {
             match event {
-                protocol::Event::Pointer(e) => {
-                    match e {
-                        wl_pointer::Event::Motion { time, surface_x, surface_y } => {
-                            pointer.motion(time, surface_x, surface_y);
-                            pointer.frame();
-                        }
-                        wl_pointer::Event::Button { serial: _, time: t, button: b, state: s } => {
-                            pointer.button( t, b, s.into_result().unwrap());
-                            pointer.frame();
-                        }
-                        wl_pointer::Event::Axis { time: t, axis: a, value: v } => {
-                            pointer.axis(t, a.into_result().unwrap(), v);
-                            pointer.frame();
-                        }
-                        wl_pointer::Event::Frame {} => {}
-                        _ => todo!(),
+                protocol::Event::Pointer(e) => match e {
+                    wl_pointer::Event::Motion {
+                        time,
+                        surface_x,
+                        surface_y,
+                    } => {
+                        pointer.motion(time, surface_x, surface_y);
+                        pointer.frame();
                     }
-                }
-                protocol::Event::Keyboard(e) => {
-                    match e {
-                        wl_keyboard::Event::Key { serial: _, time: t, key: k, state: s } => {
-                            keyboard.key(t, k, u32::from(s));
-                        },
-                        wl_keyboard::Event::Modifiers { serial: _, mods_depressed, mods_latched, mods_locked, group } => {
-                            keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                        },
-                        _ => todo!(),
+                    wl_pointer::Event::Button {
+                        serial: _,
+                        time: t,
+                        button: b,
+                        state: s,
+                    } => {
+                        pointer.button(t, b, s.into_result().unwrap());
+                        pointer.frame();
                     }
-                }
+                    wl_pointer::Event::Axis {
+                        time: t,
+                        axis: a,
+                        value: v,
+                    } => {
+                        pointer.axis(t, a.into_result().unwrap(), v);
+                        pointer.frame();
+                    }
+                    wl_pointer::Event::Frame {} => {}
+                    _ => todo!(),
+                },
+                protocol::Event::Keyboard(e) => match e {
+                    wl_keyboard::Event::Key {
+                        serial: _,
+                        time: t,
+                        key: k,
+                        state: s,
+                    } => {
+                        keyboard.key(t, k, u32::from(s));
+                    }
+                    wl_keyboard::Event::Modifiers {
+                        serial: _,
+                        mods_depressed,
+                        mods_latched,
+                        mods_locked,
+                        group,
+                    } => {
+                        keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
+                    }
+                    _ => todo!(),
+                },
             }
         }
         q.flush().unwrap();

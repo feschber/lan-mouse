@@ -1,14 +1,21 @@
-use memmap::Mmap;
 use crate::config::{self, Config};
-use std::{io::prelude::*, net::TcpListener, thread, sync::{Arc, RwLock}, collections::HashMap};
 use crate::dns;
+use memmap::Mmap;
+use std::{
+    collections::HashMap,
+    io::prelude::*,
+    net::TcpListener,
+    process::exit,
+    sync::{Arc, RwLock},
+    thread,
+};
 
-use wayland_client::{protocol::{
-    wl_pointer,
-    wl_keyboard,
-}, WEnum};
+use wayland_client::{
+    protocol::{wl_keyboard, wl_pointer},
+    WEnum,
+};
 
-use std::net::{SocketAddr, UdpSocket, TcpStream};
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 
 trait Resolve {
     fn resolve(&self) -> Option<SocketAddr>;
@@ -22,7 +29,7 @@ impl Resolve for Option<config::Client> {
         };
         let ip = match client.ip {
             Some(ip) => ip,
-            None => dns::resolve(&client.host_name).unwrap()
+            None => dns::resolve(&client.host_name).unwrap(),
         };
         Some(SocketAddr::new(ip, client.port.unwrap_or(42069)))
     }
@@ -53,25 +60,38 @@ impl Encode for wl_pointer::Event {
     fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         match *self {
-            Self::Motion { time: t, surface_x: x, surface_y: y } => {
+            Self::Motion {
+                time: t,
+                surface_x: x,
+                surface_y: y,
+            } => {
                 buf.push(0u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(x.to_ne_bytes().as_ref());
                 buf.extend_from_slice(y.to_ne_bytes().as_ref());
             }
-            Self::Button { serial: _, time: t, button: b, state: s } => {
+            Self::Button {
+                serial: _,
+                time: t,
+                button: b,
+                state: s,
+            } => {
                 buf.push(1u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(b.to_ne_bytes().as_ref());
                 buf.push(u32::from(s) as u8);
             }
-            Self::Axis{ time: t, axis: a, value: v } => {
+            Self::Axis {
+                time: t,
+                axis: a,
+                value: v,
+            } => {
                 buf.push(2u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.push(u32::from(a) as u8);
                 buf.extend_from_slice(v.to_ne_bytes().as_ref());
             }
-            Self::Frame{} => {
+            Self::Frame {} => {
                 buf.push(3u8);
             }
             _ => todo!(),
@@ -84,13 +104,24 @@ impl Encode for wl_keyboard::Event {
     fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         match self {
-            Self::Key{ serial:_, time: t, key: k, state: s } => {
+            Self::Key {
+                serial: _,
+                time: t,
+                key: k,
+                state: s,
+            } => {
                 buf.push(4u8);
                 buf.extend_from_slice(t.to_ne_bytes().as_ref());
                 buf.extend_from_slice(k.to_ne_bytes().as_ref());
                 buf.push(u32::from(*s) as u8);
             }
-            Self::Modifiers{ serial:_, mods_depressed, mods_latched, mods_locked, group } => {
+            Self::Modifiers {
+                serial: _,
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            } => {
                 buf.push(5u8);
                 buf.extend_from_slice(mods_depressed.to_ne_bytes().as_ref());
                 buf.extend_from_slice(mods_latched.to_ne_bytes().as_ref());
@@ -141,11 +172,9 @@ impl Decode for Event {
                 mods_locked: u32::from_ne_bytes(buf[9..13].try_into().unwrap()),
                 group: u32::from_ne_bytes(buf[13..17].try_into().unwrap()),
             }),
-            _ => panic!("protocol violation")
+            _ => panic!("protocol violation"),
         }
     }
-
-
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -162,8 +191,8 @@ impl From<u32> for DataRequest {
     }
 }
 
-impl From<[u8;4]> for DataRequest {
-    fn from(buf: [u8;4]) -> Self {
+impl From<[u8; 4]> for DataRequest {
+    fn from(buf: [u8; 4]) -> Self {
         DataRequest::from(u32::from_ne_bytes(buf))
     }
 }
@@ -217,8 +246,19 @@ impl Connection {
                 }
             }
         });
+        let sock = UdpSocket::bind(listen_addr);
+        let sock = match sock {
+            Ok(sock) => sock,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::AddrInUse => {
+                    eprintln!("Server already running on port {}", port);
+                    exit(1);
+                }
+                _ => panic!("{}", e),
+            },
+        };
         let c = Connection {
-            udp_socket: UdpSocket::bind(listen_addr).unwrap(),
+            udp_socket: sock,
             client: clients,
             offer_data: data,
         };
@@ -233,7 +273,7 @@ impl Connection {
         let mut sock = TcpStream::connect(self.client.left.unwrap()).unwrap();
         sock.write(&u32::from(req).to_ne_bytes()).unwrap();
         sock.flush().unwrap();
-        let mut buf = [0u8;8];
+        let mut buf = [0u8; 8];
         sock.read_exact(&mut buf[..]).unwrap();
         let len = usize::from_ne_bytes(buf);
         if len == 0 {

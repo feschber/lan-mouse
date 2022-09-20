@@ -8,23 +8,19 @@ use std::{
 };
 
 use wayland_protocols::wp::{
+    keyboard_shortcuts_inhibit::zv1::client::{
+        zwp_keyboard_shortcuts_inhibit_manager_v1, zwp_keyboard_shortcuts_inhibitor_v1,
+    },
     pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
     relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
-    keyboard_shortcuts_inhibit::zv1::client::{
-        zwp_keyboard_shortcuts_inhibit_manager_v1,
-        zwp_keyboard_shortcuts_inhibitor_v1,
-    },
 };
 
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1,
-    zwlr_layer_surface_v1,
-};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use wayland_client::{
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface, wl_region,
+        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry,
+        wl_seat, wl_shm, wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
@@ -42,8 +38,10 @@ struct App {
     rel_pointer_manager: Option<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>,
     pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
     rel_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
-    shortcut_inhibit_manager: Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,
-    shortcut_inhibitor: Option<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1>,
+    shortcut_inhibit_manager:
+        Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,
+    shortcut_inhibitor:
+        Option<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1>,
     connection: protocol::Connection,
     seat: Option<wl_seat::WlSeat>,
 }
@@ -94,7 +92,7 @@ fn main() {
         zwlr_layer_shell_v1::Layer::Top,
         "LAN Mouse Sharing".into(),
         &qh,
-        ()
+        (),
     );
     app.layer_surface = Some(layer_surface);
     let layer_surface = app.layer_surface.as_ref().unwrap();
@@ -156,7 +154,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     app.buffer = Some(buffer);
                 }
                 "wl_seat" => {
-                    app.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 8, qh, ()));
+                    app.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 7, qh, ()));
                 }
                 "zwp_pointer_constraints_v1" => {
                     app.pointer_constraints = Some(
@@ -179,10 +177,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     );
                 }
                 "zwlr_layer_shell_v1" => {
-                    app.layer_shell = Some(registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
-                        name,
-                        4, &qh, (),
-                    ));
+                    app.layer_shell = Some(
+                        registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
+                            name,
+                            3,
+                            &qh,
+                            (),
+                        ),
+                    );
                 }
                 "zwp_keyboard_shortcuts_inhibit_manager_v1" => {
                     app.shortcut_inhibit_manager = Some(registry.bind::<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, _, _>(
@@ -217,7 +219,7 @@ impl Dispatch<wl_surface::WlSurface, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        todo!()
+        //
     }
 }
 
@@ -294,13 +296,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
     ) {
         match event {
             wl_pointer::Event::Enter {
-                serial: _,
+                serial,
                 surface: _,
                 surface_x: _,
                 surface_y: _,
             } => {
+                pointer.set_cursor(serial, None, 0, 0);
                 if let Some(s) = app.layer_surface.as_ref() {
-                    s.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+                    s.set_keyboard_interactivity(
+                        zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
+                    );
                     app.surface.as_ref().unwrap().commit();
                 }
                 if app.pointer_lock.is_none() {
@@ -323,29 +328,37 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                     );
                 }
                 if app.shortcut_inhibitor.is_none() {
-                    app.shortcut_inhibitor = Some(app.shortcut_inhibit_manager.as_ref().unwrap().inhibit_shortcuts(
-                            app.surface.as_ref().unwrap(),
-                            app.seat.as_ref().unwrap(),
-                            qh, (),
-                    ));
+                    app.shortcut_inhibitor = Some(
+                        app.shortcut_inhibit_manager
+                            .as_ref()
+                            .unwrap()
+                            .inhibit_shortcuts(
+                                app.surface.as_ref().unwrap(),
+                                app.seat.as_ref().unwrap(),
+                                qh,
+                                (),
+                            ),
+                    );
                 }
             }
-            wl_pointer::Event::Leave {..} => {
+            wl_pointer::Event::Leave { .. } => {
                 if let Some(s) = app.layer_surface.as_ref() {
-                    s.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+                    s.set_keyboard_interactivity(
+                        zwlr_layer_surface_v1::KeyboardInteractivity::None,
+                    );
                     app.surface.as_ref().unwrap().commit();
                 }
             }
-            wl_pointer::Event::Button {..} => {
+            wl_pointer::Event::Button { .. } => {
                 app.connection.send_event(event);
             }
-            wl_pointer::Event::Axis {..} => {
+            wl_pointer::Event::Axis { .. } => {
                 app.connection.send_event(event);
             }
-            wl_pointer::Event::Frame {..} => {
+            wl_pointer::Event::Frame { .. } => {
                 app.connection.send_event(event);
             }
-            _ => {},
+            _ => {}
         }
     }
 }
@@ -360,12 +373,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key {..} => {
+            wl_keyboard::Event::Key { .. } => {
                 app.connection.send_event(event);
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, ..} => {
+            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 app.connection.send_event(event);
-                if mods_depressed == 77 {  // ctrl shift super alt
+                if mods_depressed == 77 {
+                    // ctrl shift super alt
                     if let Some(pointer_lock) = app.pointer_lock.as_ref() {
                         pointer_lock.destroy();
                         app.pointer_lock = None;
@@ -380,9 +394,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                     }
                 }
             }
-            wl_keyboard::Event::Keymap { format:_ , fd, size:_ } => {
+            wl_keyboard::Event::Keymap {
+                format: _,
+                fd,
+                size: _,
+            } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
-                app.connection.offer_data(protocol::DataRequest::KeyMap, mmap);
+                app.connection
+                    .offer_data(protocol::DataRequest::KeyMap, mmap);
             }
             _ => (),
         }
@@ -422,7 +441,6 @@ impl Dispatch<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1, ()> 
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
     }
 }
 
@@ -436,15 +454,20 @@ impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         if let zwp_relative_pointer_v1::Event::RelativeMotion {
-                            utime_hi,
-                            utime_lo,
-                            dx: _,
-                            dy: _,
-                            dx_unaccel: surface_x,
-                            dy_unaccel: surface_y,
-                        } = event {
+            utime_hi,
+            utime_lo,
+            dx: _,
+            dy: _,
+            dx_unaccel: surface_x,
+            dy_unaccel: surface_y,
+        } = event
+        {
             let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-            app.connection.send_event(wl_pointer::Event::Motion{ time, surface_x, surface_y });
+            app.connection.send_event(wl_pointer::Event::Motion {
+                time,
+                surface_x,
+                surface_y,
+            });
         }
     }
 }
@@ -458,7 +481,6 @@ impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
     }
 }
 
@@ -474,7 +496,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for App {
         if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
             app.surface.as_ref().unwrap().commit();
             surface.ack_configure(serial);
-            app.surface.as_ref().unwrap().attach(Some(app.buffer.as_ref().unwrap()), 0, 0);
+            app.surface
+                .as_ref()
+                .unwrap()
+                .attach(Some(app.buffer.as_ref().unwrap()), 0, 0);
+            app.surface.as_ref().unwrap().commit();
         }
     }
 }
@@ -487,10 +513,13 @@ impl Dispatch<wl_region::WlRegion, ()> for App {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
-impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, ()> for App {
+impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, ()>
+    for App
+{
     fn event(
         _: &mut Self,
         _: &zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
@@ -498,7 +527,8 @@ impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInh
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
 impl Dispatch<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1, ()> for App {
@@ -509,5 +539,6 @@ impl Dispatch<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitor
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }

@@ -1,4 +1,4 @@
-use std::{net::IpAddr, error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, net::IpAddr};
 
 use trust_dns_resolver::Resolver;
 
@@ -6,10 +6,9 @@ use trust_dns_resolver::Resolver;
 struct InvalidConfigError;
 
 #[derive(Debug, Clone)]
-struct DnsError{
+struct DnsError {
     host: String,
 }
-
 
 impl Error for InvalidConfigError {}
 
@@ -35,6 +34,6 @@ pub fn resolve(host: &Option<String>) -> Result<IpAddr, Box<dyn Error>> {
     let response = Resolver::from_system_conf()?.lookup_ip(host)?;
     match response.iter().next() {
         Some(ip) => Ok(ip),
-        None => Err(DnsError{host: host.clone()}.into()),
+        None => Err(DnsError { host: host.clone() }.into()),
     }
 }

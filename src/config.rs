@@ -1,15 +1,15 @@
-use toml;
+use serde_derive::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::{fs, error::Error};
-use serde_derive::{Serialize, Deserialize};
+use std::{error::Error, fs};
+use toml;
 
-#[derive(Serialize,Deserialize,Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     pub client: Clients,
     pub port: Option<u16>,
 }
 
-#[derive(Serialize,Deserialize,Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Clients {
     pub left: Option<Client>,
     pub right: Option<Client>,
@@ -27,6 +27,6 @@ pub struct Client {
 impl Config {
     pub fn new(path: &str) -> Result<Config, Box<dyn Error>> {
         let config = fs::read_to_string(path)?;
-        Ok(toml::from_str::<_>(&config).unwrap())
+        Ok(toml::from_str::<_>(&config)?)
     }
 }
