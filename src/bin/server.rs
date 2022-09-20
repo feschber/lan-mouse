@@ -22,7 +22,7 @@ use wayland_protocols::wp::{
     },
 };
 
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1::{ZwlrLayerShellV1, Layer}, zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1, Anchor, KeyboardInteractivity}};
 
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
@@ -42,7 +42,7 @@ struct Globals {
     shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1,
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
-    layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1,
+    layer_shell: ZwlrLayerShellV1,
 }
 
 struct App {
@@ -65,7 +65,7 @@ struct Windows {
 struct Window {
     buffer: wl_buffer::WlBuffer,
     surface: wl_surface::WlSurface,
-    layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    layer_surface: ZwlrLayerSurfaceV1,
 }
 
 impl Window {
@@ -90,13 +90,13 @@ impl Window {
         let layer_surface = g.layer_shell.get_layer_surface(
             &surface,
             None,
-            zwlr_layer_shell_v1::Layer::Top,
+            Layer::Top,
             "LAN Mouse Sharing".into(),
             &qh,
             (),
         );
 
-        layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::Right);
+        layer_surface.set_anchor(Anchor::Right);
         layer_surface.set_size(1, 1440);
         layer_surface.set_exclusive_zone(0);
         layer_surface.set_margin(0, 0, 0, 0);
@@ -119,7 +119,7 @@ fn main() {
 
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=5, ()).unwrap();
     let shm: wl_shm::WlShm = globals.bind::<wl_shm::WlShm, _, _>(&qh, 1..=1, ()).unwrap();
-    let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 = globals.bind(&qh, 3..=4, ()).unwrap();
+    let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 3..=4, ()).unwrap();
     let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
     let pointer_constraints: ZwpPointerConstraintsV1 = globals.bind(&qh, 1..=1, ()).unwrap();
     let relative_pointer_manager: ZwpRelativePointerManagerV1 =
@@ -173,7 +173,7 @@ impl App {
         pointer.set_cursor(serial, None, 0, 0);
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
         layer_surface
-            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+            .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if self.pointer_lock.is_none() {
@@ -207,7 +207,7 @@ impl App {
     fn ungrab(&mut self) {
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
         layer_surface
-            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+            .set_keyboard_interactivity(KeyboardInteractivity::None);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if let Some(pointer_lock) = &self.pointer_lock {
@@ -381,8 +381,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 size: _,
             } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
-                app.connection
-                    .offer_data(protocol::DataRequest::KeyMap, mmap);
+                app.connection.offer_data(protocol::DataRequest::KeyMap, mmap);
             }
             _ => (),
         }
@@ -453,11 +452,11 @@ impl Dispatch<ZwpRelativePointerV1, ()> for App {
     }
 }
 
-impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for App {
+impl Dispatch<ZwlrLayerShellV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
-        _: <zwlr_layer_shell_v1::ZwlrLayerShellV1 as wayland_client::Proxy>::Event,
+        _: &ZwlrLayerShellV1,
+        _: <ZwlrLayerShellV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -465,11 +464,11 @@ impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for App {
     }
 }
 
-impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for App {
+impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
     fn event(
         app: &mut Self,
-        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        event: <zwlr_layer_surface_v1::ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
+        layer_surface: &ZwlrLayerSurfaceV1,
+        event: <ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
