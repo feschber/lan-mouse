@@ -10,15 +10,15 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 ## Wayland compositor support
 |  Required Protocols  (Event Emitting)  | Sway               | Kwin                 | Gnome                |
 |----------------------------------------|--------------------|----------------------|----------------------|
-| pointer-constraints-unstable-v1        | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
-| relative-pointer-unstable-v1           | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
-| keyboard-shortcuts-inhibit-unstable-v1 | :white_check_mark: | :white_check_mark:   | :white_check_mark:   |
-| wlr-layer-shell-unstable-v1            | :white_check_mark: | :white_check_mark:   | :white_large_square: |
+| pointer-constraints-unstable-v1        | :heavy_check_mark: | :heavy_check_mark:   | :heavy_check_mark:   |
+| relative-pointer-unstable-v1           | :heavy_check_mark: | :heavy_check_mark:   | :heavy_check_mark:   |
+| keyboard-shortcuts-inhibit-unstable-v1 | :heavy_check_mark: | :heavy_check_mark:   | :heavy_check_mark:   |
+| wlr-layer-shell-unstable-v1            | :heavy_check_mark: | :heavy_check_mark:   | :x:                  |
 
 |  Required Protocols  (Event Receiving) | Sway               | Kwin                 | Gnome                |
 |----------------------------------------|--------------------|----------------------|----------------------|
-| wlr-virtual-pointer-unstable-v1        | :white_check_mark: | :white_large_square: | :white_large_square: |
-| virtual-keyboard-unstable-v1           | :white_check_mark: | :white_large_square: | :white_large_square: |
+| wlr-virtual-pointer-unstable-v1        | :heavy_check_mark: | :x:                  | :x:                  |
+| virtual-keyboard-unstable-v1           | :heavy_check_mark: | :x:                  | :x:                  |
 
 
 
