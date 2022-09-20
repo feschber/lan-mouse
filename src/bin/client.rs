@@ -20,7 +20,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
-    Connection, Dispatch, EventQueue, QueueHandle,
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
 };
 
 use tempfile;
@@ -127,65 +127,11 @@ fn receive_event(
     Ok(())
 }
 
-impl Dispatch<VpManager, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &VpManager,
-        _: <VpManager as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<Vp, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &Vp,
-        _: <Vp as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<VkManager, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &VkManager,
-        _: <VkManager as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<Vk, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &Vk,
-        _: <Vk as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_seat::WlSeat, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_seat::WlSeat,
-        _: <wl_seat::WlSeat as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
+delegate_noop!(App: Vp);
+delegate_noop!(App: Vk);
+delegate_noop!(App: VpManager);
+delegate_noop!(App: VkManager);
+delegate_noop!(App: wl_seat::WlSeat);
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     fn event(

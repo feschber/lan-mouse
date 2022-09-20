@@ -25,6 +25,7 @@ use wayland_protocols::wp::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1::{ZwlrLayerShellV1, Layer}, zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1, Anchor, KeyboardInteractivity}};
 
 use wayland_client::{
+    delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
@@ -225,66 +226,6 @@ impl App {
     }
 }
 
-impl Dispatch<wl_compositor::WlCompositor, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_compositor::WlCompositor,
-        _: <wl_compositor::WlCompositor as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_surface::WlSurface, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_surface::WlSurface,
-        _: <wl_surface::WlSurface as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_shm::WlShm, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_shm::WlShm,
-        _: <wl_shm::WlShm as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_shm_pool::WlShmPool, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_shm_pool::WlShmPool,
-        _: <wl_shm_pool::WlShmPool as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        todo!()
-    }
-}
-
-impl Dispatch<wl_buffer::WlBuffer, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_buffer::WlBuffer,
-        _: <wl_buffer::WlBuffer as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
 
 impl Dispatch<wl_seat::WlSeat, ()> for App {
     fn event(
@@ -388,42 +329,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
     }
 }
 
-impl Dispatch<ZwpPointerConstraintsV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwpPointerConstraintsV1,
-        _: <ZwpPointerConstraintsV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<ZwpLockedPointerV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwpLockedPointerV1,
-        _: <ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<ZwpRelativePointerManagerV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwpRelativePointerManagerV1,
-        _: <ZwpRelativePointerManagerV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<ZwpRelativePointerV1, ()> for App {
     fn event(
         app: &mut Self,
@@ -452,18 +357,6 @@ impl Dispatch<ZwpRelativePointerV1, ()> for App {
     }
 }
 
-impl Dispatch<ZwlrLayerShellV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwlrLayerShellV1,
-        _: <ZwlrLayerShellV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
     fn event(
         app: &mut Self,
@@ -483,42 +376,6 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
     }
 }
 
-impl Dispatch<wl_region::WlRegion, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_region::WlRegion,
-        _: <wl_region::WlRegion as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<ZwpKeyboardShortcutsInhibitManagerV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwpKeyboardShortcutsInhibitManagerV1,
-        _: <ZwpKeyboardShortcutsInhibitManagerV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<ZwpKeyboardShortcutsInhibitorV1, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &ZwpKeyboardShortcutsInhibitorV1,
-        _: <ZwpKeyboardShortcutsInhibitorV1 as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     fn event(
         _: &mut App,
@@ -530,3 +387,19 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     ) {
     }
 }
+
+// don't emit any events
+delegate_noop!(App: wl_region::WlRegion);
+delegate_noop!(App: wl_shm_pool::WlShmPool);
+delegate_noop!(App: wl_compositor::WlCompositor);
+delegate_noop!(App: ZwlrLayerShellV1);
+delegate_noop!(App: ZwpRelativePointerManagerV1);
+delegate_noop!(App: ZwpKeyboardShortcutsInhibitManagerV1);
+delegate_noop!(App: ZwpPointerConstraintsV1);
+
+// ignore events
+delegate_noop!(App: ignore wl_shm::WlShm);
+delegate_noop!(App: ignore wl_buffer::WlBuffer);
+delegate_noop!(App: ignore wl_surface::WlSurface);
+delegate_noop!(App: ignore ZwpKeyboardShortcutsInhibitorV1);
+delegate_noop!(App: ignore ZwpLockedPointerV1);
