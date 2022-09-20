@@ -18,9 +18,10 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
+    delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
-    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
+    Connection, Dispatch, EventQueue, QueueHandle,
 };
 
 use tempfile;

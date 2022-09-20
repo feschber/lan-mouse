@@ -22,7 +22,10 @@ use wayland_protocols::wp::{
     },
 };
 
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1::{ZwlrLayerShellV1, Layer}, zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1, Anchor, KeyboardInteractivity}};
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
+    zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
+};
 
 use wayland_client::{
     delegate_noop,
@@ -53,7 +56,7 @@ struct App {
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
     connection: protocol::Connection,
-    globals: Globals,
+    g: Globals,
 }
 
 struct Windows {
@@ -115,20 +118,19 @@ fn main() {
     let config = lan_mouse::config::Config::new("config.toml").unwrap();
     let connection = protocol::Connection::new(config);
     let conn = Connection::connect_to_env().unwrap();
-    let (globals, mut queue) = registry_queue_init::<App>(&conn).unwrap();
+    let (g, mut queue) = registry_queue_init::<App>(&conn).unwrap();
     let qh = queue.handle();
 
-    let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=5, ()).unwrap();
-    let shm: wl_shm::WlShm = globals.bind::<wl_shm::WlShm, _, _>(&qh, 1..=1, ()).unwrap();
-    let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 3..=4, ()).unwrap();
-    let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-    let pointer_constraints: ZwpPointerConstraintsV1 = globals.bind(&qh, 1..=1, ()).unwrap();
-    let relative_pointer_manager: ZwpRelativePointerManagerV1 =
-        globals.bind(&qh, 1..=1, ()).unwrap();
+    let compositor: wl_compositor::WlCompositor = g.bind(&qh, 4..=5, ()).unwrap();
+    let shm: wl_shm::WlShm = g.bind(&qh, 1..=1, ()).unwrap();
+    let layer_shell: ZwlrLayerShellV1 = g.bind(&qh, 3..=4, ()).unwrap();
+    let seat: wl_seat::WlSeat = g.bind(&qh, 7..=8, ()).unwrap();
+    let pointer_constraints: ZwpPointerConstraintsV1 = g.bind(&qh, 1..=1, ()).unwrap();
+    let relative_pointer_manager: ZwpRelativePointerManagerV1 = g.bind(&qh, 1..=1, ()).unwrap();
     let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 =
-        globals.bind(&qh, 1..=1, ()).unwrap();
+        g.bind(&qh, 1..=1, ()).unwrap();
 
-    let globals = Globals {
+    let g = Globals {
         compositor,
         shm,
         layer_shell,
@@ -140,14 +142,14 @@ fn main() {
 
     let windows: Windows = Windows {
         _left: None,
-        right: Some(Window::new(&globals, qh)),
+        right: Some(Window::new(&g, qh)),
         _top: None,
         _bottom: None,
     };
 
     let mut app = App {
         running: true,
-        globals,
+        g,
         windows,
         pointer_lock: None,
         rel_pointer: None,
@@ -173,12 +175,11 @@ impl App {
     fn grab(&mut self, pointer: &wl_pointer::WlPointer, serial: u32, qh: &QueueHandle<App>) {
         pointer.set_cursor(serial, None, 0, 0);
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface
-            .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if self.pointer_lock.is_none() {
-            self.pointer_lock = Some(self.globals.pointer_constraints.lock_pointer(
+            self.pointer_lock = Some(self.g.pointer_constraints.lock_pointer(
                 &surface,
                 pointer,
                 None,
@@ -188,27 +189,25 @@ impl App {
             ));
         }
         if self.rel_pointer.is_none() {
-            self.rel_pointer = Some(self.globals.relative_pointer_manager.get_relative_pointer(
+            self.rel_pointer = Some(self.g.relative_pointer_manager.get_relative_pointer(
                 pointer,
                 qh,
                 (),
             ));
         }
         if self.shortcut_inhibitor.is_none() {
-            self.shortcut_inhibitor =
-                Some(self.globals.shortcut_inhibit_manager.inhibit_shortcuts(
-                    &surface,
-                    &self.globals.seat,
-                    qh,
-                    (),
-                ));
+            self.shortcut_inhibitor = Some(self.g.shortcut_inhibit_manager.inhibit_shortcuts(
+                &surface,
+                &self.g.seat,
+                qh,
+                (),
+            ));
         }
     }
 
     fn ungrab(&mut self) {
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface
-            .set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if let Some(pointer_lock) = &self.pointer_lock {
@@ -225,7 +224,6 @@ impl App {
         }
     }
 }
-
 
 impl Dispatch<wl_seat::WlSeat, ()> for App {
     fn event(
@@ -322,7 +320,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 size: _,
             } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
-                app.connection.offer_data(protocol::DataRequest::KeyMap, mmap);
+                app.connection
+                    .offer_data(protocol::DataRequest::KeyMap, mmap);
             }
             _ => (),
         }
