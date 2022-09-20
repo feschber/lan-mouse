@@ -46,22 +46,22 @@ cargo run --bin client
 As mentioned the server will only work on sway compiled from source with the above mentioned patch applied.
 
 ## TODO
-- :heavy_check_mark: Capture the actual mouse events on the server side via a wayland client and send them to the client
-- :heavy_check_mark: Mouse grabbing
-- :heavy_check_mark: Window with absolute position -> wlr\_layer\_shell
-- :heavy_check_mark: DNS resolving
-- :heavy_check_mark: Keyboard support
-- :heavy_check_mark: Scrollwheel support
-- :heavy_check_mark: Button support
-- :x:                  Latency measurement + logging
-- :x:                  Bandwidth usage approximation + logging
-- :x:                  Multiple IP addresses -> check which one is reachable
-- :x:                  Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
-- :x:                  Liveness tracking (automatically ungrab mouse when client unreachable)
-- :x:                  Clipboard support
-- :x:                  Graphical frontend (gtk?)
-- :x:                  *Encrytion* -> likely DTLS
-- :x:                  Gnome Shell Extension (layer shell is not supported)
+- [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
+- [x] Mouse grabbing
+- [x] Window with absolute position -> wlr\_layer\_shell
+- [x] DNS resolving
+- [x] Keyboard support
+- [x] Scrollwheel support
+- [x] Button support
+- [ ] Latency measurement + logging
+- [ ] Bandwidth usage approximation + logging
+- [ ] Multiple IP addresses -> check which one is reachable
+- [ ] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
+- [ ] Liveness tracking (automatically ungrab mouse when client unreachable)
+- [ ] Clipboard support
+- [ ] Graphical frontend (gtk?)
+- [ ] *Encrytion* -> likely DTLS
+- [ ] Gnome Shell Extension (layer shell is not supported)
 
 ## Protocol considerations
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
