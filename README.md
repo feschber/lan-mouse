@@ -49,7 +49,15 @@ As mentioned the server will only work on sway compiled from source with the abo
 - :white_large_square: Gnome Shell Extension (layer shell is not supported)
 
 ## Protocol considerations
-Currently UDP is used exclusively for all events sent and / or received.
+Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
+Each event is sent as one single datagram so in case a packet is lost the event will simly be discarded, which is likely not much of a concern.
+**UDP** also has the additional bandwith that no reconnection logic is required.
+So any client can just go offline and it will simply start working again as soon as it comes back online.
+
+Additionally all server instances (in the future everything will be a server) host a tcp server where critical data, that needs to be send reliably (e.g. the keymap from the server or clipboard contents in the future) can be requested via a tcp connection.
+For each request a new connection is established so clients can simply retry if a connection is interrupted.
+
+## Bandwidth considerations
 The most bandwidth is taken up by mouse events. A typical office mouse has a polling rate of 125Hz
 while gaming mice typically have a much higher polling rate of 1000Hz.
 A mouse Event consists of 21 Bytes:
