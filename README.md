@@ -51,7 +51,7 @@ As mentioned the server will only work on sway compiled from source with the abo
 ## Protocol considerations
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
 Each event is sent as one single datagram so in case a packet is lost the event will simly be discarded, which is likely not much of a concern.
-**UDP** also has the additional bandwith that no reconnection logic is required.
+**UDP** also has the additional benefit that no reconnection logic is required.
 So any client can just go offline and it will simply start working again as soon as it comes back online.
 
 Additionally all server instances (in the future everything will be a server) host a tcp server where critical data, that needs to be send reliably (e.g. the keymap from the server or clipboard contents in the future) can be requested via a tcp connection.
