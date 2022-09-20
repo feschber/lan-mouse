@@ -10,6 +10,10 @@ use std::{
 use wayland_protocols::wp::{
     pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
     relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
+    keyboard_shortcuts_inhibit::zv1::client::{
+        zwp_keyboard_shortcuts_inhibit_manager_v1,
+        zwp_keyboard_shortcuts_inhibitor_v1,
+    },
 };
 
 use wayland_protocols_wlr::layer_shell::v1::client::{
@@ -38,7 +42,10 @@ struct App {
     rel_pointer_manager: Option<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>,
     pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
     rel_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
+    shortcut_inhibit_manager: Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,
+    shortcut_inhibitor: Option<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1>,
     connection: protocol::Connection,
+    seat: Option<wl_seat::WlSeat>,
 }
 
 fn main() {
@@ -69,6 +76,9 @@ fn main() {
         pointer_lock: None,
         rel_pointer: None,
         connection,
+        shortcut_inhibit_manager: None,
+        shortcut_inhibitor: None,
+        seat: None,
     };
 
     // use roundtrip to process this event synchronously
@@ -146,7 +156,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     app.buffer = Some(buffer);
                 }
                 "wl_seat" => {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, 8, qh, ());
+                    app.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 8, qh, ()));
                 }
                 "zwp_pointer_constraints_v1" => {
                     app.pointer_constraints = Some(
@@ -172,6 +182,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     app.layer_shell = Some(registry.bind::<zwlr_layer_shell_v1::ZwlrLayerShellV1, _, _>(
                         name,
                         4, &qh, (),
+                    ));
+                }
+                "zwp_keyboard_shortcuts_inhibit_manager_v1" => {
+                    app.shortcut_inhibit_manager = Some(registry.bind::<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, _, _>(
+                        name, 1, &qh, (),
                     ));
                 }
                 _ => {}
@@ -307,6 +322,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                             .get_relative_pointer(pointer, qh, ()),
                     );
                 }
+                if app.shortcut_inhibitor.is_none() {
+                    app.shortcut_inhibitor = Some(app.shortcut_inhibit_manager.as_ref().unwrap().inhibit_shortcuts(
+                            app.surface.as_ref().unwrap(),
+                            app.seat.as_ref().unwrap(),
+                            qh, (),
+                    ));
+                }
             }
             wl_pointer::Event::Leave {..} => {
                 if let Some(s) = app.layer_surface.as_ref() {
@@ -348,6 +370,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                     if let Some(rel_pointer) = app.rel_pointer.as_ref() {
                         rel_pointer.destroy();
                         app.rel_pointer = None;
+                    }
+                    if let Some(shortcut_inhibitor) = app.shortcut_inhibitor.as_ref() {
+                        shortcut_inhibitor.destroy();
+                        app.shortcut_inhibitor = None;
                     }
                 } else {
                     app.connection.send_event(event);
@@ -460,6 +486,28 @@ impl Dispatch<wl_region::WlRegion, ()> for App {
         _: &mut Self,
         _: &wl_region::WlRegion,
         _: <wl_region::WlRegion as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) { }
+}
+
+impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
+        _: <zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1 as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) { }
+}
+
+impl Dispatch<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1, ()> for App {
+    fn event(
+        _: &mut Self,
+        _: &zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
+        _: <zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,

@@ -1,3 +1,4 @@
+port = 42069
 [client.left]
 host_name = "rubinium"
 ip = "192.168.2.182"
