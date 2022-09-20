@@ -9,10 +9,17 @@ use std::{
 
 use wayland_protocols::wp::{
     keyboard_shortcuts_inhibit::zv1::client::{
-        zwp_keyboard_shortcuts_inhibit_manager_v1, zwp_keyboard_shortcuts_inhibitor_v1,
+        zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
+        zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
     },
-    pointer_constraints::zv1::client::{zwp_locked_pointer_v1, zwp_pointer_constraints_v1},
-    relative_pointer::zv1::client::{zwp_relative_pointer_manager_v1, zwp_relative_pointer_v1},
+    pointer_constraints::zv1::client::{
+        zwp_locked_pointer_v1::ZwpLockedPointerV1,
+        zwp_pointer_constraints_v1::{Lifetime, ZwpPointerConstraintsV1},
+    },
+    relative_pointer::zv1::client::{
+        zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
+        zwp_relative_pointer_v1::{self, ZwpRelativePointerV1},
+    },
 };
 
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -20,8 +27,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry,
-        wl_seat, wl_shm, wl_shm_pool, wl_surface,
+        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
+        wl_shm_pool, wl_surface,
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
@@ -30,9 +37,9 @@ use tempfile;
 
 struct Globals {
     compositor: wl_compositor::WlCompositor,
-    pointer_constraints: zwp_pointer_constraints_v1::ZwpPointerConstraintsV1,
-    relative_pointer_manager: zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
-    shortcut_inhibit_manager: zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
+    pointer_constraints: ZwpPointerConstraintsV1,
+    relative_pointer_manager: ZwpRelativePointerManagerV1,
+    shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1,
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
     layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1,
@@ -41,9 +48,9 @@ struct Globals {
 struct App {
     running: bool,
     windows: Windows,
-    pointer_lock: Option<zwp_locked_pointer_v1::ZwpLockedPointerV1>,
-    rel_pointer: Option<zwp_relative_pointer_v1::ZwpRelativePointerV1>,
-    shortcut_inhibitor: Option<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1>,
+    pointer_lock: Option<ZwpLockedPointerV1>,
+    rel_pointer: Option<ZwpRelativePointerV1>,
+    shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
     connection: protocol::Connection,
     globals: Globals,
 }
@@ -66,10 +73,17 @@ impl Window {
         let (width, height) = (1, 1440);
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
-        let pool = g.shm.create_pool(file.as_raw_fd(), (width * height * 4) as i32, &qh, ());
-        let buffer = pool.create_buffer(0,
-            width as i32, height as i32, (width * 4) as i32,
-            wl_shm::Format::Argb8888, &qh, (),
+        let pool = g
+            .shm
+            .create_pool(file.as_raw_fd(), (width * height * 4) as i32, &qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            width as i32,
+            height as i32,
+            (width * 4) as i32,
+            wl_shm::Format::Argb8888,
+            &qh,
+            (),
         );
         let surface = g.compositor.create_surface(&qh, ());
 
@@ -84,11 +98,15 @@ impl Window {
 
         layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::Right);
         layer_surface.set_size(1, 1440);
-        layer_surface.set_exclusive_zone(1);
+        layer_surface.set_exclusive_zone(0);
         layer_surface.set_margin(0, 0, 0, 0);
         surface.set_input_region(None);
         surface.commit();
-        Window { buffer, surface, layer_surface }
+        Window {
+            buffer,
+            surface,
+            layer_surface,
+        }
     }
 }
 
@@ -100,14 +118,15 @@ fn main() {
     let (globals, mut queue) = registry_queue_init::<App>(&conn).unwrap();
     let qh = queue.handle();
 
-
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=5, ()).unwrap();
     let shm: wl_shm::WlShm = globals.bind::<wl_shm::WlShm, _, _>(&qh, 1..=1, ()).unwrap();
     let layer_shell: zwlr_layer_shell_v1::ZwlrLayerShellV1 = globals.bind(&qh, 3..=4, ()).unwrap();
     let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-    let pointer_constraints: zwp_pointer_constraints_v1::ZwpPointerConstraintsV1 = globals.bind(&qh, 1..=1, ()).unwrap();
-    let relative_pointer_manager: zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1 = globals.bind(&qh, 1..=1, ()).unwrap();
-    let shortcut_inhibit_manager: zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1 = globals.bind(&qh, 1..=1, ()).unwrap();
+    let pointer_constraints: ZwpPointerConstraintsV1 = globals.bind(&qh, 1..=1, ()).unwrap();
+    let relative_pointer_manager: ZwpRelativePointerManagerV1 =
+        globals.bind(&qh, 1..=1, ()).unwrap();
+    let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 =
+        globals.bind(&qh, 1..=1, ()).unwrap();
 
     let globals = Globals {
         compositor,
@@ -136,7 +155,6 @@ fn main() {
         connection,
     };
 
-
     while app.running {
         queue.blocking_dispatch(&mut app).unwrap();
     }
@@ -146,7 +164,7 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for _ in 0..height {
         for _ in 0..width {
-            buf.write_all(&0x88FbF1C7u32.to_ne_bytes()).unwrap();
+            buf.write_all(&0x44FbF1C7u32.to_ne_bytes()).unwrap();
         }
     }
 }
@@ -155,33 +173,42 @@ impl App {
     fn grab(&mut self, pointer: &wl_pointer::WlPointer, serial: u32, qh: &QueueHandle<App>) {
         pointer.set_cursor(serial, None, 0, 0);
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if self.pointer_lock.is_none() {
-            self.pointer_lock =
-                Some(self.globals.pointer_constraints.lock_pointer(&surface, pointer, None, zwp_pointer_constraints_v1::Lifetime::Oneshot, qh, ()));
+            self.pointer_lock = Some(self.globals.pointer_constraints.lock_pointer(
+                &surface,
+                pointer,
+                None,
+                Lifetime::Oneshot,
+                qh,
+                (),
+            ));
         }
         if self.rel_pointer.is_none() {
-            self.rel_pointer = Some(
-                self.globals.relative_pointer_manager.get_relative_pointer(pointer, qh, ()),
-            );
+            self.rel_pointer = Some(self.globals.relative_pointer_manager.get_relative_pointer(
+                pointer,
+                qh,
+                (),
+            ));
         }
         if self.shortcut_inhibitor.is_none() {
-            self.shortcut_inhibitor = Some(
-                self.globals.shortcut_inhibit_manager.inhibit_shortcuts(
-                        &surface,
-                        &self.globals.seat,
-                        qh,
-                        (),
-                    ),
-            );
+            self.shortcut_inhibitor =
+                Some(self.globals.shortcut_inhibit_manager.inhibit_shortcuts(
+                    &surface,
+                    &self.globals.seat,
+                    qh,
+                    (),
+                ));
         }
     }
 
     fn ungrab(&mut self) {
         let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
         let surface = &self.windows.right.as_ref().unwrap().surface;
         surface.commit();
         if let Some(pointer_lock) = &self.pointer_lock {
@@ -207,7 +234,8 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for App {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
 impl Dispatch<wl_surface::WlSurface, ()> for App {
@@ -218,7 +246,8 @@ impl Dispatch<wl_surface::WlSurface, ()> for App {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
 impl Dispatch<wl_shm::WlShm, ()> for App {
@@ -229,7 +258,8 @@ impl Dispatch<wl_shm::WlShm, ()> for App {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
 impl Dispatch<wl_shm_pool::WlShmPool, ()> for App {
@@ -253,7 +283,8 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for App {
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
-    ) { }
+    ) {
+    }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for App {
@@ -359,11 +390,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
     }
 }
 
-impl Dispatch<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1, ()> for App {
+impl Dispatch<ZwpPointerConstraintsV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwp_pointer_constraints_v1::ZwpPointerConstraintsV1,
-        _: <zwp_pointer_constraints_v1::ZwpPointerConstraintsV1 as wayland_client::Proxy>::Event,
+        _: &ZwpPointerConstraintsV1,
+        _: <ZwpPointerConstraintsV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -371,11 +402,11 @@ impl Dispatch<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1, ()> for App {
     }
 }
 
-impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
+impl Dispatch<ZwpLockedPointerV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwp_locked_pointer_v1::ZwpLockedPointerV1,
-        _: <zwp_locked_pointer_v1::ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
+        _: &ZwpLockedPointerV1,
+        _: <ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -383,11 +414,11 @@ impl Dispatch<zwp_locked_pointer_v1::ZwpLockedPointerV1, ()> for App {
     }
 }
 
-impl Dispatch<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1, ()> for App {
+impl Dispatch<ZwpRelativePointerManagerV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
-        _: <zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1 as wayland_client::Proxy>::Event,
+        _: &ZwpRelativePointerManagerV1,
+        _: <ZwpRelativePointerManagerV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -395,11 +426,11 @@ impl Dispatch<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1, ()> 
     }
 }
 
-impl Dispatch<zwp_relative_pointer_v1::ZwpRelativePointerV1, ()> for App {
+impl Dispatch<ZwpRelativePointerV1, ()> for App {
     fn event(
         app: &mut Self,
-        _: &zwp_relative_pointer_v1::ZwpRelativePointerV1,
-        event: <zwp_relative_pointer_v1::ZwpRelativePointerV1 as wayland_client::Proxy>::Event,
+        _: &ZwpRelativePointerV1,
+        event: <ZwpRelativePointerV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -466,13 +497,11 @@ impl Dispatch<wl_region::WlRegion, ()> for App {
     }
 }
 
-impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1, ()>
-    for App
-{
+impl Dispatch<ZwpKeyboardShortcutsInhibitManagerV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
-        _: <zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1 as wayland_client::Proxy>::Event,
+        _: &ZwpKeyboardShortcutsInhibitManagerV1,
+        _: <ZwpKeyboardShortcutsInhibitManagerV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -480,11 +509,11 @@ impl Dispatch<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInh
     }
 }
 
-impl Dispatch<zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1, ()> for App {
+impl Dispatch<ZwpKeyboardShortcutsInhibitorV1, ()> for App {
     fn event(
         _: &mut Self,
-        _: &zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
-        _: <zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1 as wayland_client::Proxy>::Event,
+        _: &ZwpKeyboardShortcutsInhibitorV1,
+        _: <ZwpKeyboardShortcutsInhibitorV1 as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -500,6 +529,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
         _: &GlobalListContents,
         _: &Connection,
         _: &QueueHandle<App>,
-    ) { }
-
+    ) {
+    }
 }
