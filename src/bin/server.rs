@@ -113,7 +113,6 @@ impl Window {
 fn main() {
     let config = lan_mouse::config::Config::new("config.toml").unwrap();
     let connection = protocol::Connection::new(config);
-    // establish connection via environment-provided configuration.
     let conn = Connection::connect_to_env().unwrap();
     let (globals, mut queue) = registry_queue_init::<App>(&conn).unwrap();
     let qh = queue.handle();

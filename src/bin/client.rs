@@ -18,6 +18,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
+    globals::{registry_queue_init, GlobalListContents},
     protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
     Connection, Dispatch, EventQueue, QueueHandle,
 };
@@ -25,75 +26,18 @@ use wayland_client::{
 use tempfile;
 
 // App State, implements Dispatch event handlers
-struct App {
-    vpm: Option<VpManager>,
-    vkm: Option<VkManager>,
-    seat: Option<wl_seat::WlSeat>,
-}
+struct App;
 
-// Implement `Dispatch<WlRegistry, ()> event handler
-// user-data = ()
-impl Dispatch<wl_registry::WlRegistry, ()> for App {
-    fn event(
-        app: &mut Self,
-        registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<App>,
-    ) {
-        // Match global event to get globals after requesting them in main
-        if let wl_registry::Event::Global {
-            name, interface, ..
-        } = event
-        {
-            match &interface[..] {
-                "wl_keyboard" => {
-                    registry.bind::<wl_keyboard::WlKeyboard, _, _>(name, 1, qh, ());
-                }
-                "wl_seat" => {
-                    app.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, 1, qh, ()));
-                }
-                "zwlr_virtual_pointer_manager_v1" => {
-                    app.vpm = Some(registry.bind::<VpManager, _, _>(name, 1, qh, ()));
-                }
-                "zwp_virtual_keyboard_manager_v1" => {
-                    app.vkm = Some(registry.bind::<VkManager, _, _>(name, 1, qh, ()));
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-// The main function of our program
 fn main() {
     let config = Config::new("config.toml").unwrap();
-    // establish connection via environment-provided configuration.
     let conn = Connection::connect_to_env().unwrap();
+    let (globals, queue) = registry_queue_init::<App>(&conn).unwrap();
+    let qh = queue.handle();
 
-    // Retrieve the wayland display object
-    let display = conn.display();
+    let vpm: VpManager = globals.bind(&qh, 1..=1, ()).unwrap();
+    let vkm: VkManager = globals.bind(&qh, 1..=1, ()).unwrap();
+    let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
 
-    // Create an event queue for our event processing
-    let mut event_queue = conn.new_event_queue();
-    let qh = event_queue.handle();
-
-    // Create a wl_registry object by sending the wl_display.get_registry request
-    let _registry = display.get_registry(&qh, ());
-
-    let mut app = App {
-        vpm: None,
-        vkm: None,
-        seat: None,
-    };
-
-    // use roundtrip to process this event synchronously
-    event_queue.roundtrip(&mut app).unwrap();
-
-    let vpm = app.vpm.as_ref().unwrap();
-    let vkm = app.vkm.as_ref().unwrap();
-    let seat = app.seat.as_ref().unwrap();
     let pointer: Vp = vpm.create_virtual_pointer(None, &qh, ());
     let keyboard: Vk = vkm.create_virtual_keyboard(&seat, &qh, ());
     let connection = protocol::Connection::new(config);
@@ -109,73 +53,78 @@ fn main() {
     buf.write_all(&data[..]).unwrap();
     buf.flush().unwrap();
     keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
-    event_queue.roundtrip(&mut app).unwrap();
-    udp_loop(&connection, &pointer, &keyboard, event_queue).unwrap();
+    loop {
+        receive_event(&connection, &pointer, &keyboard, &queue).unwrap();
+    }
 }
 
 /// main loop handling udp packets
-fn udp_loop(
+fn receive_event(
     connection: &protocol::Connection,
     pointer: &Vp,
     keyboard: &Vk,
-    q: EventQueue<App>,
+    q: &EventQueue<App>,
 ) -> std::io::Result<()> {
-    loop {
-        if let Some(event) = connection.receive_event() {
-            match event {
-                protocol::Event::Pointer(e) => match e {
-                    wl_pointer::Event::Motion {
-                        time,
-                        surface_x,
-                        surface_y,
-                    } => {
-                        pointer.motion(time, surface_x, surface_y);
-                        pointer.frame();
-                    }
-                    wl_pointer::Event::Button {
-                        serial: _,
-                        time: t,
-                        button: b,
-                        state: s,
-                    } => {
-                        pointer.button(t, b, s.into_result().unwrap());
-                        pointer.frame();
-                    }
-                    wl_pointer::Event::Axis {
-                        time: t,
-                        axis: a,
-                        value: v,
-                    } => {
-                        pointer.axis(t, a.into_result().unwrap(), v);
-                        pointer.frame();
-                    }
-                    wl_pointer::Event::Frame {} => {}
-                    _ => todo!(),
-                },
-                protocol::Event::Keyboard(e) => match e {
-                    wl_keyboard::Event::Key {
-                        serial: _,
-                        time: t,
-                        key: k,
-                        state: s,
-                    } => {
-                        keyboard.key(t, k, u32::from(s));
-                    }
-                    wl_keyboard::Event::Modifiers {
-                        serial: _,
-                        mods_depressed,
-                        mods_latched,
-                        mods_locked,
-                        group,
-                    } => {
-                        keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                    }
-                    _ => todo!(),
-                },
+    let event = if let Some(event) = connection.receive_event() {
+        event
+    } else {
+        return Ok(());
+    };
+    match event {
+        protocol::Event::Pointer(e) => match e {
+            wl_pointer::Event::Motion {
+                time,
+                surface_x,
+                surface_y,
+            } => {
+                pointer.motion(time, surface_x, surface_y);
+                pointer.frame();
             }
-        }
-        q.flush().unwrap();
+            wl_pointer::Event::Button {
+                serial: _,
+                time: t,
+                button: b,
+                state: s,
+            } => {
+                pointer.button(t, b, s.into_result().unwrap());
+                pointer.frame();
+            }
+            wl_pointer::Event::Axis {
+                time: t,
+                axis: a,
+                value: v,
+            } => {
+                pointer.axis(t, a.into_result().unwrap(), v);
+                pointer.frame();
+            }
+            wl_pointer::Event::Frame => {
+                pointer.frame();
+            }
+            _ => todo!(),
+        },
+        protocol::Event::Keyboard(e) => match e {
+            wl_keyboard::Event::Key {
+                serial: _,
+                time: t,
+                key: k,
+                state: s,
+            } => {
+                keyboard.key(t, k, u32::from(s));
+            }
+            wl_keyboard::Event::Modifiers {
+                serial: _,
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            } => {
+                keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
+            }
+            _ => todo!(),
+        },
     }
+    q.flush().unwrap();
+    Ok(())
 }
 
 impl Dispatch<VpManager, ()> for App {
@@ -187,7 +136,6 @@ impl Dispatch<VpManager, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // nothing to do here since no events are defined for VpManager
     }
 }
 
@@ -200,20 +148,6 @@ impl Dispatch<Vp, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // no events defined for vp either
-    }
-}
-
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
-    fn event(
-        _: &mut Self,
-        _: &wl_keyboard::WlKeyboard,
-        _: <wl_keyboard::WlKeyboard as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-        //
     }
 }
 
@@ -226,7 +160,6 @@ impl Dispatch<VkManager, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
     }
 }
 
@@ -239,7 +172,6 @@ impl Dispatch<Vk, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
     }
 }
 
@@ -252,6 +184,17 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        //
+    }
+}
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
+    fn event(
+        _: &mut App,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
     }
 }
