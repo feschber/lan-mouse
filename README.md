@@ -19,6 +19,7 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 |----------------------------------------|--------------------|----------------------|----------------------|
 | wlr-virtual-pointer-unstable-v1        | :heavy_check_mark: | :x:                  | :x:                  |
 | virtual-keyboard-unstable-v1           | :heavy_check_mark: | :x:                  | :x:                  |
+| fake-input                             | :x:                | :heavy_check_mark:   | :x:                  |
 
 
 
