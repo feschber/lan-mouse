@@ -121,14 +121,27 @@ fn main() {
     let (g, mut queue) = registry_queue_init::<App>(&conn).unwrap();
     let qh = queue.handle();
 
-    let compositor: wl_compositor::WlCompositor = g.bind(&qh, 4..=5, ()).unwrap();
-    let shm: wl_shm::WlShm = g.bind(&qh, 1..=1, ()).unwrap();
-    let layer_shell: ZwlrLayerShellV1 = g.bind(&qh, 3..=4, ()).unwrap();
-    let seat: wl_seat::WlSeat = g.bind(&qh, 7..=8, ()).unwrap();
-    let pointer_constraints: ZwpPointerConstraintsV1 = g.bind(&qh, 1..=1, ()).unwrap();
-    let relative_pointer_manager: ZwpRelativePointerManagerV1 = g.bind(&qh, 1..=1, ()).unwrap();
-    let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 =
-        g.bind(&qh, 1..=1, ()).unwrap();
+    let compositor: wl_compositor::WlCompositor = g
+        .bind(&qh, 4..=5, ())
+        .expect("wl_compositor >= v4 not supported");
+    let shm: wl_shm::WlShm = g
+        .bind(&qh, 1..=1, ())
+        .expect("wl_shm v1 not supported");
+    let layer_shell: ZwlrLayerShellV1 = g
+        .bind(&qh, 3..=4, ())
+        .expect("zwlr_layer_shell_v1 >= v3 not supported");
+    let seat: wl_seat::WlSeat = g
+        .bind(&qh, 7..=8, ())
+        .expect("wl_seat >= v7 not supported");
+    let pointer_constraints: ZwpPointerConstraintsV1 = g
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_pointer_constraints_v1 not supported");
+    let relative_pointer_manager: ZwpRelativePointerManagerV1 = g
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_relative_pointer_manager_v1 not supported");
+    let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = g
+        .bind(&qh, 1..=1, ())
+        .expect("zwp_keyboard_shortcuts_inhibit_manager_v1 not supported");
 
     let g = Globals {
         compositor,
