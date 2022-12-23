@@ -34,7 +34,7 @@ use wayland_client::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, QueueHandle, WEnum,
+    Connection, Dispatch, QueueHandle, WEnum, delegate_dispatch,
 };
 
 use tempfile;
@@ -117,8 +117,8 @@ impl Window {
 fn main() {
     let config = lan_mouse::config::Config::new("config.toml").unwrap();
     let connection = protocol::Connection::new(config);
-    let conn = Connection::connect_to_env().unwrap();
-    let (g, mut queue) = registry_queue_init::<App>(&conn).unwrap();
+    let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
+    let (g, mut queue) = registry_queue_init::<App>(&conn).expect("failed to initialize wl_registry");
     let qh = queue.handle();
 
     let compositor: wl_compositor::WlCompositor = g
@@ -388,17 +388,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(
-        _: &mut App,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<App>,
-    ) {
-    }
-}
+// delegate wl_registry events to App itself
+delegate_dispatch!(App: [wl_registry::WlRegistry: GlobalListContents] => App);
 
 // don't emit any events
 delegate_noop!(App: wl_region::WlRegion);
