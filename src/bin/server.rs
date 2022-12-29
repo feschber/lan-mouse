@@ -28,13 +28,13 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
-    delegate_noop,
+    delegate_noop, delegate_dispatch,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, QueueHandle, WEnum, delegate_dispatch,
+    Connection, Dispatch, QueueHandle, WEnum,
 };
 
 use tempfile;
@@ -313,18 +313,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 app.connection.send_event(event);
                 if mods_depressed == 77 {
                     // ctrl shift super alt
-                    if let Some(pointer_lock) = app.pointer_lock.as_ref() {
-                        pointer_lock.destroy();
-                        app.pointer_lock = None;
-                    }
-                    if let Some(rel_pointer) = app.rel_pointer.as_ref() {
-                        rel_pointer.destroy();
-                        app.rel_pointer = None;
-                    }
-                    if let Some(shortcut_inhibitor) = app.shortcut_inhibitor.as_ref() {
-                        shortcut_inhibitor.destroy();
-                        app.shortcut_inhibitor = None;
-                    }
+                    app.ungrab();
                 }
             }
             wl_keyboard::Event::Keymap {
