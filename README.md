@@ -23,7 +23,10 @@ The protocols used for the virtual mouse and virtual keyboard drivers are curren
 
 
 
-Also the [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1) is currently not available on Gnome and may very well [never be](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141) so Gnome support probably requires some sort of Gome-Shell-Extension.
+Also the [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1) is currently not available on Gnome and may very well [never be](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141).
+
+Likely [libei](https://gitlab.freedesktop.org/libinput/libei) will be the better choice going forward after all.
+I will implement it as an alternative backend as soon as I have the time.
 
 ~In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.~
 (this works natively on sway versions >= 1.8)
