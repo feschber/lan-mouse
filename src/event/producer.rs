@@ -179,12 +179,9 @@ pub fn run(
         app.add_client(client.handle, client.pos);
     }
 
-    let mut i = 0;
     while app.running {
         match queue.blocking_dispatch(&mut app) {
-            Ok(_) => {
-                eprint!("{}\r", {i+=1; i});
-            },
+            Ok(_) => { },
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
                 eprintln!("Wayland Error: {}", e);
                 thread::sleep(Duration::from_millis(500));
