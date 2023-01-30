@@ -57,7 +57,7 @@ As mentioned the server will only work on sway compiled from source with the abo
 - [ ] Latency measurement + logging
 - [ ] Bandwidth usage approximation + logging
 - [ ] Multiple IP addresses -> check which one is reachable
-- [ ] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
+- [x] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
 - [ ] Liveness tracking (automatically ungrab mouse when client unreachable)
 - [ ] Clipboard support
 - [ ] Graphical frontend (gtk?)
