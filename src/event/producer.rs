@@ -5,7 +5,7 @@ use memmap::Mmap;
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    os::unix::prelude::{AsRawFd, FromRawFd}, sync::mpsc::SyncSender, rc::Rc,
+    os::unix::prelude::{AsRawFd, FromRawFd}, sync::mpsc::SyncSender, rc::Rc, thread, time::Duration,
 };
 
 use wayland_protocols::wp::{
@@ -35,7 +35,7 @@ use wayland_client::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, QueueHandle, WEnum,
+    Connection, Dispatch, QueueHandle, WEnum, DispatchError, backend::WaylandError,
 };
 
 use tempfile;
@@ -179,8 +179,23 @@ pub fn run(
         app.add_client(client.handle, client.pos);
     }
 
+    let mut i = 0;
     while app.running {
-        queue.blocking_dispatch(&mut app).unwrap();
+        match queue.blocking_dispatch(&mut app) {
+            Ok(_) => {
+                eprint!("{}\r", {i+=1; i});
+            },
+            Err(DispatchError::Backend(WaylandError::Io(e))) => {
+                eprintln!("Wayland Error: {}", e);
+                thread::sleep(Duration::from_millis(500));
+            },
+            Err(DispatchError::Backend(e)) => {
+                panic!("{}", e);
+            }
+            Err(DispatchError::BadMessage{ sender_id, interface, opcode }) => {
+                panic!("bad message {}, {} , {}", sender_id, interface, opcode);
+            }
+        }
     }
 }
 
@@ -452,7 +467,17 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
 }
 
 // delegate wl_registry events to App itself
-delegate_dispatch!(App: [wl_registry::WlRegistry: GlobalListContents] => App);
+// delegate_dispatch!(App: [wl_registry::WlRegistry: GlobalListContents] => App);
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {}
+}
 
 // don't emit any events
 delegate_noop!(App: wl_region::WlRegion);
