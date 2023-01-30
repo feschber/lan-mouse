@@ -10,14 +10,6 @@ struct DnsError {
     host: String,
 }
 
-impl Error for InvalidConfigError {}
-
-impl Display for InvalidConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "No hostname specified!")
-    }
-}
-
 impl Error for DnsError {}
 
 impl Display for DnsError {
@@ -26,11 +18,7 @@ impl Display for DnsError {
     }
 }
 
-pub fn resolve(host: &Option<String>) -> Result<IpAddr, Box<dyn Error>> {
-    let host = match host {
-        Some(host) => host,
-        None => return Err(InvalidConfigError.into()),
-    };
+pub fn resolve(host: &String) -> Result<IpAddr, Box<dyn Error>> {
     let response = Resolver::from_system_conf()?.lookup_ip(host)?;
     match response.iter().next() {
         Some(ip) => Ok(ip),

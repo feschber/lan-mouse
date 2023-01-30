@@ -17,7 +17,7 @@ pub struct Clients {
     pub bottom: Option<Client>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct Client {
     pub host_name: Option<String>,
     pub ip: Option<IpAddr>,

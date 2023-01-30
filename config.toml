@@ -1,10 +1,13 @@
 port = 42069
+
+# [client.right]
+# host_name = "localhost"
+# port = 42068
+
 [client.left]
-host_name = "rubinium"
-ip = "192.168.2.182"
+host_name = "Osmium"
 port = 42069
 
-[client.right]
-host_name = "rubinium"
-ip = "192.168.2.182"
-port = 42069
+# [client.right]
+# host_name = "Osmium"
+# port = 42069

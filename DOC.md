@@ -51,3 +51,33 @@ sequenceDiagram
     Bob-->>-Alice: Ack (Keyboard Layout)
 ```
 
+## Problems
+The general Idea is to have a bidirectional connection by default, meaning
+any connected device can not only receive events but also send events back.
+
+This way when connecting e.g. a PC to a Laptop, either device can be used
+to control the other.
+
+It needs to be ensured, that whenever a device is controlled the controlled
+device does not transmit the events back to the original sender.
+Otherwise events are multiplied and either one of the instances crashes.
+
+To keep the implementation of input backends simple this needs to be handled
+on the server level.
+
+## Device State - Active and Inactive
+To solve this problem, each device can be in exactly two states:
+
+Events can only be sent to active clients.
+Events can only be received from inactive clients.
+
+Active denotes that a particular device is controlled by the local pc.
+
+Any event received from an active device is ignored unless it is a state change request.
+In this case the device is marked as inactive and no further events are sent to the device.
+
+The received events are then processed until a further state change to active
+is requested (when the corresponding layer surface is entered).
+
+**In short:** The invariance "each client either sends or receives events" must
+always be true.

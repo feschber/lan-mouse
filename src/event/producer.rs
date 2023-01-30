@@ -1,10 +1,11 @@
-use lan_mouse::protocol;
+use crate::{request, client::{ClientHandle, Position, Client}};
+
 use memmap::Mmap;
 
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    os::unix::prelude::{AsRawFd, FromRawFd},
+    os::unix::prelude::{AsRawFd, FromRawFd}, sync::mpsc::SyncSender, rc::Rc,
 };
 
 use wayland_protocols::wp::{
@@ -39,6 +40,8 @@ use wayland_client::{
 
 use tempfile;
 
+use super::Event;
+
 struct Globals {
     compositor: wl_compositor::WlCompositor,
     pointer_constraints: ZwpPointerConstraintsV1,
@@ -51,19 +54,15 @@ struct Globals {
 
 struct App {
     running: bool,
-    windows: Windows,
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
-    connection: protocol::Connection,
+    client_for_window: Vec<(Rc<Window>, ClientHandle)>,
+    focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-}
-
-struct Windows {
-    _left: Option<Window>,
-    right: Option<Window>,
-    _top: Option<Window>,
-    _bottom: Option<Window>,
+    tx: SyncSender<(Event, ClientHandle)>,
+    server: request::Server,
+    qh: QueueHandle<Self>,
 }
 
 struct Window {
@@ -73,34 +72,40 @@ struct Window {
 }
 
 impl Window {
-    fn new(g: &Globals, qh: QueueHandle<App>) -> Window {
+    fn new(g: &Globals, qh: &QueueHandle<App>, pos: Position) -> Window {
         let (width, height) = (1, 1440);
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
         let pool = g
             .shm
-            .create_pool(file.as_raw_fd(), (width * height * 4) as i32, &qh, ());
+            .create_pool(file.as_raw_fd(), (width * height * 4) as i32, qh, ());
         let buffer = pool.create_buffer(
             0,
             width as i32,
             height as i32,
             (width * 4) as i32,
             wl_shm::Format::Argb8888,
-            &qh,
+            qh,
             (),
         );
-        let surface = g.compositor.create_surface(&qh, ());
+        let surface = g.compositor.create_surface(qh, ());
 
         let layer_surface = g.layer_shell.get_layer_surface(
             &surface,
             None,
             Layer::Top,
             "LAN Mouse Sharing".into(),
-            &qh,
+            qh,
             (),
         );
+        let anchor = match pos {
+            Position::Left => Anchor::Left,
+            Position::Right => Anchor::Right,
+            Position::Top => Anchor::Top,
+            Position::Bottom => Anchor::Bottom,
+        };
 
-        layer_surface.set_anchor(Anchor::Right);
+        layer_surface.set_anchor(anchor);
         layer_surface.set_size(1, 1440);
         layer_surface.set_exclusive_zone(0);
         layer_surface.set_margin(0, 0, 0, 0);
@@ -114,9 +119,11 @@ impl Window {
     }
 }
 
-fn main() {
-    let config = lan_mouse::config::Config::new("config.toml").unwrap();
-    let connection = protocol::Connection::new(config);
+pub fn run(
+    tx: SyncSender<(Event, ClientHandle)>,
+    server: request::Server,
+    clients: Vec<Client>,
+) {
     let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
     let (g, mut queue) = registry_queue_init::<App>(&conn).expect("failed to initialize wl_registry");
     let qh = queue.handle();
@@ -129,7 +136,7 @@ fn main() {
         .expect("wl_shm v1 not supported");
     let layer_shell: ZwlrLayerShellV1 = g
         .bind(&qh, 3..=4, ())
-        .expect("zwlr_layer_shell_v1 >= v3 not supported");
+        .expect("zwlr_layer_shell_v1 >= v3 not supported - required to display a surface at the edge of the screen");
     let seat: wl_seat::WlSeat = g
         .bind(&qh, 7..=8, ())
         .expect("wl_seat >= v7 not supported");
@@ -153,22 +160,24 @@ fn main() {
         shortcut_inhibit_manager,
     };
 
-    let windows: Windows = Windows {
-        _left: None,
-        right: Some(Window::new(&g, qh)),
-        _top: None,
-        _bottom: None,
-    };
+    let client_for_window = Vec::new();
 
     let mut app = App {
         running: true,
         g,
-        windows,
         pointer_lock: None,
         rel_pointer: None,
         shortcut_inhibitor: None,
-        connection,
+        client_for_window,
+        focused: None,
+        tx,
+        server,
+        qh,
     };
+
+    for client in clients {
+        app.add_client(client.handle, client.pos);
+    }
 
     while app.running {
         queue.blocking_dispatch(&mut app).unwrap();
@@ -185,15 +194,27 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 }
 
 impl App {
-    fn grab(&mut self, pointer: &wl_pointer::WlPointer, serial: u32, qh: &QueueHandle<App>) {
+
+    fn grab(
+        &mut self,
+        surface: &wl_surface::WlSurface,
+        pointer: &wl_pointer::WlPointer,
+        serial: u32,
+        qh: &QueueHandle<App>
+    ) {
+        let (window, _) = self.focused.as_ref().unwrap();
+
+        // hide the cursor
         pointer.set_cursor(serial, None, 0, 0);
-        let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        let surface = &self.windows.right.as_ref().unwrap().surface;
-        surface.commit();
+
+        // capture input
+        window.layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        window.surface.commit();
+
+        // lock pointer
         if self.pointer_lock.is_none() {
             self.pointer_lock = Some(self.g.pointer_constraints.lock_pointer(
-                &surface,
+                surface,
                 pointer,
                 None,
                 Lifetime::Oneshot,
@@ -201,6 +222,8 @@ impl App {
                 (),
             ));
         }
+
+        // request relative input
         if self.rel_pointer.is_none() {
             self.rel_pointer = Some(self.g.relative_pointer_manager.get_relative_pointer(
                 pointer,
@@ -208,9 +231,11 @@ impl App {
                 (),
             ));
         }
+
+        // capture modifier keys
         if self.shortcut_inhibitor.is_none() {
             self.shortcut_inhibitor = Some(self.g.shortcut_inhibit_manager.inhibit_shortcuts(
-                &surface,
+                surface,
                 &self.g.seat,
                 qh,
                 (),
@@ -219,22 +244,35 @@ impl App {
     }
 
     fn ungrab(&mut self) {
-        let layer_surface = &self.windows.right.as_ref().unwrap().layer_surface;
-        layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
-        let surface = &self.windows.right.as_ref().unwrap().surface;
-        surface.commit();
+        // get focused client
+        let (window, _client) = self.focused.as_ref().unwrap();
+
+        // ungrab surface
+        window.layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        window.surface.commit();
+
+        // release pointer
         if let Some(pointer_lock) = &self.pointer_lock {
             pointer_lock.destroy();
             self.pointer_lock = None;
         }
+
+        // destroy relative input
         if let Some(rel_pointer) = &self.rel_pointer {
             rel_pointer.destroy();
             self.rel_pointer = None;
         }
+
+        // release shortcut inhibitor
         if let Some(shortcut_inhibitor) = &self.shortcut_inhibitor {
             shortcut_inhibitor.destroy();
             self.shortcut_inhibitor = None;
         }
+    }
+
+    fn add_client(&mut self, client: ClientHandle, pos: Position) {
+        let window = Rc::new(Window::new(&self.g, &self.qh, pos));
+        self.client_for_window.push((window, client));
     }
 }
 
@@ -273,23 +311,40 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         match event {
             wl_pointer::Event::Enter {
                 serial,
-                surface: _,
+                surface,
                 surface_x: _,
                 surface_y: _,
             } => {
-                app.grab(pointer, serial, qh);
+                // get client corresponding to the focused surface
+                    
+                {
+                    let (window, client) = app.client_for_window
+                        .iter()
+                        .find(|(w,_c)| w.surface == surface)
+                        .unwrap();
+                    app.focused = Some((window.clone(), *client));
+                    app.grab(&surface, pointer, serial.clone(), qh);
+                }
+                let (_, client) = app.client_for_window
+                    .iter()
+                    .find(|(w,_c)| w.surface == surface)
+                    .unwrap();
+                app.tx.send((Event::Release(), *client)).unwrap();
             }
             wl_pointer::Event::Leave { .. } => {
                 app.ungrab();
             }
             wl_pointer::Event::Button { .. } => {
-                app.connection.send_event(event);
+                let (_, client) = app.focused.as_ref().unwrap();
+                app.tx.send((Event::Pointer(event), *client)).unwrap();
             }
             wl_pointer::Event::Axis { .. } => {
-                app.connection.send_event(event);
+                let (_, client) = app.focused.as_ref().unwrap();
+                app.tx.send((Event::Pointer(event), *client)).unwrap();
             }
             wl_pointer::Event::Frame { .. } => {
-                app.connection.send_event(event);
+                let (_, client) = app.focused.as_ref().unwrap();
+                app.tx.send((Event::Pointer(event), *client)).unwrap();
             }
             _ => {}
         }
@@ -305,12 +360,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let (_window, client) = match &app.focused {
+            Some(focused) => (Some(&focused.0), Some(&focused.1)),
+            None => (None, None),
+        };
         match event {
             wl_keyboard::Event::Key { .. } => {
-                app.connection.send_event(event);
+                if let Some(client) = client {
+                    app.tx.send((Event::Keyboard(event), *client)).unwrap();
+                }
             }
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                app.connection.send_event(event);
+                if let Some(client) = client {
+                    app.tx.send((Event::Keyboard(event), *client)).unwrap();
+                }
                 if mods_depressed == 77 {
                     // ctrl shift super alt
                     app.ungrab();
@@ -322,8 +385,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 size: _,
             } => {
                 let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
-                app.connection
-                    .offer_data(protocol::DataRequest::KeyMap, mmap);
+                app.server.offer_data(request::Request::KeyMap, mmap);
             }
             _ => (),
         }
@@ -348,12 +410,18 @@ impl Dispatch<ZwpRelativePointerV1, ()> for App {
             dy_unaccel: surface_y,
         } = event
         {
-            let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-            app.connection.send_event(wl_pointer::Event::Motion {
-                time,
-                surface_x,
-                surface_y,
-            });
+            if let Some((_window, client)) = &app.focused {
+                let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
+                app.tx.send((
+                    Event::Pointer(wl_pointer::Event::Motion {
+                        time,
+                        surface_x,
+                        surface_y,
+                    }),
+                    *client,
+                )).unwrap();
+
+            }
         }
     }
 }
@@ -368,10 +436,16 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
-            let surface = &app.windows.right.as_ref().unwrap().surface;
+            let (window, _client) = app.client_for_window
+                .iter()
+                .find(|(w,_c)| &w.layer_surface == layer_surface)
+                .unwrap();
+            // client corresponding to the layer_surface
+            let surface = &window.surface;
+            let buffer = &window.buffer;
             surface.commit();
             layer_surface.ack_configure(serial);
-            surface.attach(Some(&app.windows.right.as_ref().unwrap().buffer), 0, 0);
+            surface.attach(Some(&buffer), 0, 0);
             surface.commit();
         }
     }
