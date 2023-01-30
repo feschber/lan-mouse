@@ -29,7 +29,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
-    delegate_noop, delegate_dispatch,
+    delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
