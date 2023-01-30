@@ -34,15 +34,11 @@ Currently a client is hardcoded to be `client.right`, while a server is configur
 
 Client and Server can at the current state not be run on the same server, unless the port is changed in the config in between.
 
-Run Server (sending key events):
+Run
 ```sh
-cargo run --bin server
+cargo run
 ```
 
-Run Client (receiving key events):
-```sh
-cargo run --bin client
-```
 
 As mentioned the server will only work on sway compiled from source with the above mentioned patch applied.
 
