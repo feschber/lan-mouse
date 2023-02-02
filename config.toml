@@ -6,7 +6,6 @@ port = 42069
 
 [client.left]
 host_name = "Osmium"
-ip = "192.168.178.114"
 port = 42069
 
 # [client.right]

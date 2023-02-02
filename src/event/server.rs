@@ -7,7 +7,7 @@ use std::{
 
 use crate::client::{ClientHandle, ClientManager};
 
-use super::{Event, Decode};
+use super::{Event, Encode, Decode};
 
 pub struct Server {
     listen_addr: SocketAddr,
@@ -102,9 +102,8 @@ impl Server {
         Ok((receiver, sender))
     }
 
-    fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {
-        let data: Vec<u8> = (&e).into();
-        if let Err(e) = tx.send_to(&data[..], addr) {
+    fn send_event<E: Encode>(tx: &UdpSocket, e: E, addr: SocketAddr) {
+        if let Err(e) = tx.send_to(&e.encode(), addr) {
             eprintln!("{}", e);
         }
     }
@@ -112,7 +111,7 @@ impl Server {
     fn receive_event(rx: &UdpSocket) -> Option<(Event, SocketAddr)> {
         let mut buf = vec![0u8; 21];
         if let Ok((_amt, src)) = rx.recv_from(&mut buf) {
-            Some((Event::try_from(buf), src))
+            Some((Event::decode(buf), src))
         } else {
             None
         }
