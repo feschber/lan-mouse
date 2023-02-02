@@ -1,2 +1,0 @@
-remove handle_to_addr / addr_to_handle functions from client_manager
-instead mirror state in event server
