@@ -1,11 +1,18 @@
-use crate::{request, client::{ClientHandle, Position, Client}};
+use crate::{
+    client::{Client, ClientHandle, Position},
+    request,
+};
 
 use memmap::Mmap;
 
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    os::unix::prelude::{AsRawFd, FromRawFd}, sync::mpsc::SyncSender, rc::Rc, thread, time::Duration,
+    os::unix::prelude::{AsRawFd, FromRawFd},
+    rc::Rc,
+    sync::mpsc::SyncSender,
+    thread,
+    time::Duration,
 };
 
 use wayland_protocols::wp::{
@@ -29,18 +36,19 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
+    backend::WaylandError,
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, QueueHandle, WEnum, DispatchError, backend::WaylandError,
+    Connection, Dispatch, DispatchError, QueueHandle, WEnum,
 };
 
 use tempfile;
 
-use super::Event;
+use super::{Event, KeyboardEvent, PointerEvent};
 
 struct Globals {
     compositor: wl_compositor::WlCompositor,
@@ -119,27 +127,20 @@ impl Window {
     }
 }
 
-pub fn run(
-    tx: SyncSender<(Event, ClientHandle)>,
-    server: request::Server,
-    clients: Vec<Client>,
-) {
+pub fn run(tx: SyncSender<(Event, ClientHandle)>, server: request::Server, clients: Vec<Client>) {
     let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
-    let (g, mut queue) = registry_queue_init::<App>(&conn).expect("failed to initialize wl_registry");
+    let (g, mut queue) =
+        registry_queue_init::<App>(&conn).expect("failed to initialize wl_registry");
     let qh = queue.handle();
 
     let compositor: wl_compositor::WlCompositor = g
         .bind(&qh, 4..=5, ())
         .expect("wl_compositor >= v4 not supported");
-    let shm: wl_shm::WlShm = g
-        .bind(&qh, 1..=1, ())
-        .expect("wl_shm v1 not supported");
+    let shm: wl_shm::WlShm = g.bind(&qh, 1..=1, ()).expect("wl_shm v1 not supported");
     let layer_shell: ZwlrLayerShellV1 = g
         .bind(&qh, 3..=4, ())
         .expect("zwlr_layer_shell_v1 >= v3 not supported - required to display a surface at the edge of the screen");
-    let seat: wl_seat::WlSeat = g
-        .bind(&qh, 7..=8, ())
-        .expect("wl_seat >= v7 not supported");
+    let seat: wl_seat::WlSeat = g.bind(&qh, 7..=8, ()).expect("wl_seat >= v7 not supported");
     let pointer_constraints: ZwpPointerConstraintsV1 = g
         .bind(&qh, 1..=1, ())
         .expect("zwp_pointer_constraints_v1 not supported");
@@ -181,15 +182,19 @@ pub fn run(
 
     while app.running {
         match queue.blocking_dispatch(&mut app) {
-            Ok(_) => { },
+            Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
                 eprintln!("Wayland Error: {}", e);
                 thread::sleep(Duration::from_millis(500));
-            },
+            }
             Err(DispatchError::Backend(e)) => {
                 panic!("{}", e);
             }
-            Err(DispatchError::BadMessage{ sender_id, interface, opcode }) => {
+            Err(DispatchError::BadMessage {
+                sender_id,
+                interface,
+                opcode,
+            }) => {
                 panic!("bad message {}, {} , {}", sender_id, interface, opcode);
             }
         }
@@ -206,13 +211,12 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 }
 
 impl App {
-
     fn grab(
         &mut self,
         surface: &wl_surface::WlSurface,
         pointer: &wl_pointer::WlPointer,
         serial: u32,
-        qh: &QueueHandle<App>
+        qh: &QueueHandle<App>,
     ) {
         let (window, _) = self.focused.as_ref().unwrap();
 
@@ -220,7 +224,9 @@ impl App {
         pointer.set_cursor(serial, None, 0, 0);
 
         // capture input
-        window.layer_surface.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        window
+            .layer_surface
+            .set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         window.surface.commit();
 
         // lock pointer
@@ -260,7 +266,9 @@ impl App {
         let (window, _client) = self.focused.as_ref().unwrap();
 
         // ungrab surface
-        window.layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+        window
+            .layer_surface
+            .set_keyboard_interactivity(KeyboardInteractivity::None);
         window.surface.commit();
 
         // release pointer
@@ -328,35 +336,62 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_y: _,
             } => {
                 // get client corresponding to the focused surface
-                    
+
                 {
-                    let (window, client) = app.client_for_window
+                    let (window, client) = app
+                        .client_for_window
                         .iter()
-                        .find(|(w,_c)| w.surface == surface)
+                        .find(|(w, _c)| w.surface == surface)
                         .unwrap();
                     app.focused = Some((window.clone(), *client));
                     app.grab(&surface, pointer, serial.clone(), qh);
                 }
-                let (_, client) = app.client_for_window
+                let (_, client) = app
+                    .client_for_window
                     .iter()
-                    .find(|(w,_c)| w.surface == surface)
+                    .find(|(w, _c)| w.surface == surface)
                     .unwrap();
                 app.tx.send((Event::Release(), *client)).unwrap();
             }
             wl_pointer::Event::Leave { .. } => {
                 app.ungrab();
             }
-            wl_pointer::Event::Button { .. } => {
+            wl_pointer::Event::Button {
+                serial: _,
+                time,
+                button,
+                state,
+            } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx.send((Event::Pointer(event), *client)).unwrap();
+                app.tx
+                    .send((
+                        Event::Pointer(PointerEvent::Button {
+                            time,
+                            button,
+                            state: u32::from(state),
+                        }),
+                        *client,
+                    ))
+                    .unwrap();
             }
-            wl_pointer::Event::Axis { .. } => {
+            wl_pointer::Event::Axis { time, axis, value } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx.send((Event::Pointer(event), *client)).unwrap();
+                app.tx
+                    .send((
+                        Event::Pointer(PointerEvent::Axis {
+                            time,
+                            axis: u32::from(axis) as u8,
+                            value,
+                        }),
+                        *client,
+                    ))
+                    .unwrap();
             }
-            wl_pointer::Event::Frame { .. } => {
+            wl_pointer::Event::Frame {} => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx.send((Event::Pointer(event), *client)).unwrap();
+                app.tx
+                    .send((Event::Pointer(PointerEvent::Frame {}), *client))
+                    .unwrap();
             }
             _ => {}
         }
@@ -377,14 +412,44 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
             None => (None, None),
         };
         match event {
-            wl_keyboard::Event::Key { .. } => {
+            wl_keyboard::Event::Key {
+                serial: _,
+                time,
+                key,
+                state,
+            } => {
                 if let Some(client) = client {
-                    app.tx.send((Event::Keyboard(event), *client)).unwrap();
+                    app.tx
+                        .send((
+                            Event::Keyboard(KeyboardEvent::Key {
+                                time,
+                                key,
+                                state: u32::from(state) as u8,
+                            }),
+                            *client,
+                        ))
+                        .unwrap();
                 }
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+            wl_keyboard::Event::Modifiers {
+                serial: _,
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            } => {
                 if let Some(client) = client {
-                    app.tx.send((Event::Keyboard(event), *client)).unwrap();
+                    app.tx
+                        .send((
+                            Event::Keyboard(KeyboardEvent::Modifiers {
+                                mods_depressed,
+                                mods_latched,
+                                mods_locked,
+                                group,
+                            }),
+                            *client,
+                        ))
+                        .unwrap();
                 }
                 if mods_depressed == 77 {
                     // ctrl shift super alt
@@ -424,15 +489,16 @@ impl Dispatch<ZwpRelativePointerV1, ()> for App {
         {
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-                app.tx.send((
-                    Event::Pointer(wl_pointer::Event::Motion {
-                        time,
-                        surface_x,
-                        surface_y,
-                    }),
-                    *client,
-                )).unwrap();
-
+                app.tx
+                    .send((
+                        Event::Pointer(PointerEvent::Motion {
+                            time,
+                            relative_x: surface_x,
+                            relative_y: surface_y,
+                        }),
+                        *client,
+                    ))
+                    .unwrap();
             }
         }
     }
@@ -448,9 +514,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
         _: &QueueHandle<Self>,
     ) {
         if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
-            let (window, _client) = app.client_for_window
+            let (window, _client) = app
+                .client_for_window
                 .iter()
-                .find(|(w,_c)| &w.layer_surface == layer_surface)
+                .find(|(w, _c)| &w.layer_surface == layer_surface)
                 .unwrap();
             // client corresponding to the layer_surface
             let surface = &window.surface;
@@ -473,7 +540,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
         _data: &GlobalListContents,
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
-    ) {}
+    ) {
+    }
 }
 
 // don't emit any events

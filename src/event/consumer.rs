@@ -1,14 +1,15 @@
 use crate::client::{Client, ClientHandle};
 use crate::request::{self, Request};
 use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 use std::{io, thread};
-use std::sync::mpsc::Receiver;
 use std::{
     io::{BufWriter, Write},
     os::unix::prelude::AsRawFd,
 };
 
+use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
     zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 as Vp,
@@ -22,13 +23,13 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
-    protocol::{wl_keyboard, wl_pointer, wl_registry, wl_seat},
+    protocol::{wl_registry, wl_seat},
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
 use tempfile;
 
-use super::Event;
+use super::{Event, KeyboardEvent, PointerEvent};
 
 // App State, implements Dispatch event handlers
 struct App {
@@ -52,11 +53,23 @@ impl App {
         let (globals, queue) = registry_queue_init::<App>(&conn).unwrap();
         let qh = queue.handle();
 
-        let vpm: VpManager = globals.bind(&qh, 1..=1, ()).expect("zwlr_virtual_pointer_manager_v1 protocol is required to emulate mouse input");
-        let vkm: VkManager = globals.bind(&qh, 1..=1, ()).expect("zwp_virtual_keyboard_manager_v1 protocol is required to emulate keyboard input");
+        let vpm: VpManager = globals
+            .bind(&qh, 1..=1, ())
+            .expect("zwlr_virtual_pointer_manager_v1 protocol is required to emulate mouse input");
+        let vkm: VkManager = globals.bind(&qh, 1..=1, ()).expect(
+            "zwp_virtual_keyboard_manager_v1 protocol is required to emulate keyboard input",
+        );
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
         let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-        let mut app = App { input_for_client, seat, event_rx, vpm, vkm, queue, qh };
+        let mut app = App {
+            input_for_client,
+            seat,
+            event_rx,
+            vpm,
+            vkm,
+            queue,
+            qh,
+        };
         for client in clients {
             app.add_client(client);
         }
@@ -65,7 +78,7 @@ impl App {
 
     pub fn run(&mut self) {
         loop {
-            let (event, client) = self.event_rx.recv().unwrap();
+            let (event, client) = self.event_rx.recv().expect("event receiver unavailable");
             if let Some(virtual_input) = self.input_for_client.get(&client) {
                 virtual_input.consume_event(event).unwrap();
                 if let Err(e) = self.queue.flush() {
@@ -76,7 +89,6 @@ impl App {
     }
 
     fn add_client(&mut self, client: Client) {
-
         // create virtual input devices
         let pointer: Vp = self.vpm.create_virtual_pointer(None, &self.qh, ());
         let keyboard: Vk = self.vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
@@ -106,7 +118,6 @@ impl App {
 
         self.input_for_client.insert(client.handle, vinput);
     }
-
 }
 
 struct VirtualInput {
@@ -115,59 +126,53 @@ struct VirtualInput {
 }
 
 impl VirtualInput {
-/// main loop handling udp packets
+    /// main loop handling udp packets
     fn consume_event(&self, event: Event) -> std::io::Result<()> {
         match event {
             Event::Pointer(e) => match e {
-                wl_pointer::Event::Motion {
+                PointerEvent::Motion {
                     time,
-                    surface_x,
-                    surface_y,
+                    relative_x,
+                    relative_y,
                 } => {
-                    self.pointer.motion(time, surface_x, surface_y);
+                    self.pointer.motion(time, relative_x, relative_y);
                     self.pointer.frame();
                 }
-                wl_pointer::Event::Button {
-                    serial: _,
-                    time: t,
-                    button: b,
-                    state: s,
+                PointerEvent::Button {
+                    time,
+                    button,
+                    state,
                 } => {
-                    self.pointer.button(t, b, s.into_result().unwrap());
+                    let state: ButtonState = state.try_into().unwrap();
+                    self.pointer.button(time, button, state);
                     self.pointer.frame();
                 }
-                wl_pointer::Event::Axis {
-                    time: t,
-                    axis: a,
-                    value: v,
-                } => {
-                    self.pointer.axis(t, a.into_result().unwrap(), v);
+                PointerEvent::Axis { time, axis, value } => {
+                    let axis: Axis = (axis as u32).try_into().unwrap();
+                    self.pointer.axis(time, axis, value);
                     self.pointer.frame();
                 }
-                wl_pointer::Event::Frame => {
+                PointerEvent::Frame {} => {
                     self.pointer.frame();
                 }
-                _ => todo!(),
             },
             Event::Keyboard(e) => match e {
-                wl_keyboard::Event::Key {
-                    serial: _,
-                    time: t,
-                    key: k,
-                    state: s,
+                KeyboardEvent::Key {
+                    time,
+                    key,
+                    state,
                 } => {
-                    self.keyboard.key(t, k, u32::from(s));
+                    self.keyboard.key(time, key, state as u32);
                 }
-                wl_keyboard::Event::Modifiers {
-                    serial: _,
+                KeyboardEvent::Modifiers {
                     mods_depressed,
                     mods_latched,
                     mods_locked,
                     group,
                 } => {
-                    self.keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
+                    self.keyboard
+                        .modifiers(mods_depressed, mods_latched, mods_locked, group);
                 }
-                _ => todo!(),
             },
             Event::Release() => {
                 self.keyboard.modifiers(77, 0, 0, 0);

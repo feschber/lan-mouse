@@ -1,8 +1,9 @@
 use std::{
-    net::{TcpListener, SocketAddr, TcpStream},
-    io::prelude::*,
-    collections::HashMap, sync::{RwLock, Arc},
+    collections::HashMap,
     error::Error,
+    io::prelude::*,
+    net::{SocketAddr, TcpListener, TcpStream},
+    sync::{Arc, RwLock},
     thread::{self, JoinHandle},
 };
 
@@ -80,7 +81,6 @@ impl Server {
     pub fn offer_data(&self, req: Request, d: Mmap) {
         self.data.write().unwrap().insert(req, d);
     }
-
 }
 
 pub fn request_data(addr: SocketAddr, req: Request) -> Option<Vec<u8>> {
@@ -96,7 +96,7 @@ pub fn request_data(addr: SocketAddr, req: Request) -> Option<Vec<u8>> {
     // write the request to the socket
     // convert to u32
     let req: u32 = req as u32;
-    if let Err(e) =  sock.write(&req.to_ne_bytes()) {
+    if let Err(e) = sock.write(&req.to_ne_bytes()) {
         eprintln!("{}", e);
         return None;
     }
@@ -127,4 +127,3 @@ pub fn request_data(addr: SocketAddr, req: Request) -> Option<Vec<u8>> {
     }
     Some(data)
 }
-

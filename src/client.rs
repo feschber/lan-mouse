@@ -2,7 +2,10 @@ use std::net::SocketAddr;
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy)]
 pub enum Position {
-    Left, Right, Top, Bottom,
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 #[derive(Clone, Copy)]
@@ -31,7 +34,6 @@ pub struct ClientManager {
 pub type ClientHandle = u32;
 
 impl ClientManager {
-    
     fn new_id(&mut self) -> ClientHandle {
         self.next_id += 1;
         self.next_id
@@ -54,4 +56,3 @@ impl ClientManager {
         self.clients.clone()
     }
 }
-

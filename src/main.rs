@@ -1,10 +1,10 @@
-use std::{sync::mpsc, thread, net::SocketAddr};
+use std::{net::SocketAddr, sync::mpsc, thread};
 
 use lan_mouse::{
-    event::{self, producer, consumer},
-    config,
+    client::{ClientManager, Position},
+    config, dns,
+    event::{self, consumer, producer},
     request,
-    client::{ClientManager, Position}, dns,
 };
 
 fn add_client(client_manager: &mut ClientManager, client: &config::Client, pos: Position) {
@@ -16,7 +16,7 @@ fn add_client(client_manager: &mut ClientManager, client: &config::Client, pos: 
                 Err(e) => panic!("{}", e),
             },
             None => panic!("neither ip nor hostname specified"),
-        }
+        },
     };
     let addr = SocketAddr::new(ip, client.port.unwrap_or(42069));
     client_manager.add_client(addr, pos);
@@ -64,19 +64,23 @@ pub fn main() {
     let event_producer = thread::Builder::new()
         .name("event producer".into())
         .spawn(|| {
-        producer::run(produce_tx, request_server, clients);
-    }).unwrap();
+            producer::run(produce_tx, request_server, clients);
+        })
+        .unwrap();
 
     let clients = client_manager.get_clients();
     let event_consumer = thread::Builder::new()
         .name("event consumer".into())
         .spawn(|| {
-        consumer::run(consume_rx, clients);
-    }).unwrap();
+            consumer::run(consume_rx, clients);
+        })
+        .unwrap();
 
     // start sending and receiving events
     let event_server = event::server::Server::new(port);
-    let (receiver, sender) = event_server.run(&mut client_manager, produce_rx, consume_tx).unwrap();
+    let (receiver, sender) = event_server
+        .run(&mut client_manager, produce_rx, consume_tx)
+        .unwrap();
 
     request_thread.join().unwrap();
 
