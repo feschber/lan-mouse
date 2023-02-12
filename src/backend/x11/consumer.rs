@@ -33,13 +33,13 @@ pub fn run(event_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
                     crate::event::PointerEvent::Motion { time: _, relative_x, relative_y } => {
                         relative_motion(display, relative_x as i32, relative_y as i32);
                     },
-                    crate::event::PointerEvent::Button { .. } => todo!(),
-                    crate::event::PointerEvent::Axis { .. } => todo!(),
-                    crate::event::PointerEvent::Frame {  } => todo!(),
+                    crate::event::PointerEvent::Button { .. } => {},
+                    crate::event::PointerEvent::Axis { .. } => {},
+                    crate::event::PointerEvent::Frame {  } => {},
                 }
             },
-            Event::Keyboard(_) => todo!(),
-            Event::Release() => todo!(),
+            Event::Keyboard(_) => {},
+            Event::Release() => {},
         }
     }
 }
