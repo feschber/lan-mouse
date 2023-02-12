@@ -49,7 +49,7 @@ use wayland_client::{
 
 use tempfile;
 
-use super::{Event, KeyboardEvent, PointerEvent};
+use crate::event::{Event, KeyboardEvent, PointerEvent};
 
 struct Globals {
     compositor: wl_compositor::WlCompositor,

@@ -30,7 +30,7 @@ use wayland_client::{
 
 use tempfile;
 
-use super::{Event, KeyboardEvent, PointerEvent};
+use crate::event::{Event, KeyboardEvent, PointerEvent};
 
 // App State, implements Dispatch event handlers
 struct App {

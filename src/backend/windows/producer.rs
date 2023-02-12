@@ -1,3 +1,4 @@
+#![cfg(windows)]
 use std::sync::mpsc::SyncSender;
 
 use crate::{event::Event, client::{ClientHandle, Client}, request::Server};
