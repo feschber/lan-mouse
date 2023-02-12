@@ -19,6 +19,7 @@ wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
 wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
 wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
 wayland-protocols-misc = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
+x11 = { version = "2.21.0", features = ["xlib", "xtest"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }
