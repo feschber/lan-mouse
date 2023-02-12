@@ -2,10 +2,14 @@ use std::{net::SocketAddr, sync::mpsc, thread};
 
 use lan_mouse::{
     client::{ClientManager, Position},
-    config, dns,
-    event::{self, consumer, producer},
-    request,
+    config, dns, event, request,
 };
+
+#[cfg(windows)]
+use lan_mouse::backend::windows;
+
+#[cfg(unix)]
+use lan_mouse::backend::wayland;
 
 fn add_client(client_manager: &mut ClientManager, client: &config::Client, pos: Position) {
     let ip = match client.ip {
@@ -60,11 +64,15 @@ pub fn main() {
     let (request_server, request_thread) = request::Server::listen(port).unwrap();
 
     let clients = client_manager.get_clients();
+
     // start producing and consuming events
     let event_producer = thread::Builder::new()
         .name("event producer".into())
         .spawn(|| {
-            producer::run(produce_tx, request_server, clients);
+            #[cfg(windows)]
+            windows::producer::run(produce_tx, request_server, clients);
+            #[cfg(unix)]
+            wayland::producer::run(produce_tx, request_server, clients);
         })
         .unwrap();
 
@@ -72,7 +80,11 @@ pub fn main() {
     let event_consumer = thread::Builder::new()
         .name("event consumer".into())
         .spawn(|| {
-            consumer::run(consume_rx, clients);
+            #[cfg(windows)]
+            windows::consumer::run(consume_rx, clients);
+
+            #[cfg(unix)]
+            wayland::consumer::run(consume_rx, clients);
         })
         .unwrap();
 

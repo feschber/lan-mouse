@@ -1,3 +1,4 @@
+#![cfg(unix)]
 use crate::client::{Client, ClientHandle};
 use crate::request::{self, Request};
 use std::collections::HashMap;

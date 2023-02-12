@@ -1,7 +1,5 @@
 use std::{error::Error, fmt};
 
-pub mod consumer;
-pub mod producer;
 pub mod server;
 
 pub enum PointerEvent {

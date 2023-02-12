@@ -6,10 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
-wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
-wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
-wayland-protocols-misc = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
 tempfile = "3.2"
 trust-dns-resolver = "0.22"
 memmap = "0.7"
@@ -17,3 +13,12 @@ toml = "0.5"
 serde = "1.0"
 serde_derive = "1.0"
 threadpool = "1.8"
+
+[target.'cfg(unix)'.dependencies]
+wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
+wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
+wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
+wayland-protocols-misc = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["winuser"] }
