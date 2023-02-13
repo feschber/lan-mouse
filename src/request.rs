@@ -1,10 +1,11 @@
 use std::{
     collections::HashMap,
     error::Error,
+    fmt::Display,
     io::prelude::*,
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, RwLock},
-    thread::{self, JoinHandle}, fmt::Display,
+    thread::{self, JoinHandle},
 };
 
 use memmap::MmapMut;
@@ -121,7 +122,7 @@ pub fn request_data(addr: SocketAddr, req: Request) -> Result<Vec<u8>, Box<dyn E
 
     // check for bad request
     if len == 0 {
-        return Err(Box::new(BadRequest{}));
+        return Err(Box::new(BadRequest {}));
     }
 
     // read the data

@@ -99,10 +99,14 @@ impl App {
         let data = loop {
             let result = request::request_data(client.addr, Request::KeyMap);
             eprint!("\rconnecting to {} ", client.addr);
-            for _ in 0..attempts { eprint!("."); }
+            for _ in 0..attempts {
+                eprint!(".");
+            }
             match result {
                 Ok(data) => break data,
-                Err(e) => { eprint!(" - {}", e); }
+                Err(e) => {
+                    eprint!(" - {}", e);
+                }
             }
             io::stderr().flush().unwrap();
             thread::sleep(Duration::from_millis(500));
@@ -110,7 +114,9 @@ impl App {
         };
 
         eprint!("\rconnecting to {} ", client.addr);
-        for _ in 0..attempts { eprint!("."); }
+        for _ in 0..attempts {
+            eprint!(".");
+        }
         eprintln!(" done!                          ");
 
         // TODO use shm_open
@@ -163,11 +169,7 @@ impl VirtualInput {
                 }
             },
             Event::Keyboard(e) => match e {
-                KeyboardEvent::Key {
-                    time,
-                    key,
-                    state,
-                } => {
+                KeyboardEvent::Key { time, key, state } => {
                     self.keyboard.key(time, key, state as u32);
                 }
                 KeyboardEvent::Modifiers {
