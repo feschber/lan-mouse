@@ -1,10 +1,11 @@
 # Lan Mouse Share
-Goal of this project is to be an open-source replacement for tools like [Synergy](https://symless.com/synergy) or [Share Mouse](https://www.sharemouse.com/de/).
-Currently only wayland is supported but I will take a look at xorg, windows & MacOS in the future.
+Goal of this project is to be an open-source replacement for proprietary tools like [Synergy](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
 
 Focus lies on performance and a clean, manageable implementation that can easily be expanded to support additional backends like e.g. Android, iOS, ... .
 
 Of course ***blazingly fast™*** and stable, because it's written in rust.
+
+For an alternative (with slightly different goals) you may check out [Input Leap](https://github.com/input-leap).
 
 # OS Support
 
@@ -15,6 +16,7 @@ Of course ***blazingly fast™*** and stable, because it's written in rust.
 | Wayland (Gnome)           | TODO (libei support)     | TODO (wlr-layer-shell not supported) |
 | X11                       | WIP                      | TODO                                 |
 | Windows                   | WIP                      | TODO                                 |
+| MacOS                     | TODO (I dont own a Mac)  | TODO (I dont own a Mac)              |
 
 
 ## Wayland compositor support
