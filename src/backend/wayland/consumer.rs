@@ -95,18 +95,24 @@ impl App {
         let keyboard: Vk = self.vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
         // receive keymap from device
-        eprintln!("connecting to {}", client.addr);
-
+        eprint!("\rconnecting to {} ", client.addr);
+        let mut attempts = 0;
         let data = loop {
-            match request::request_data(client.addr, Request::KeyMap) {
-                Some(data) => break data,
-                None => {
-                    eprint!(".");
-                    io::stderr().flush().unwrap();
-                    thread::sleep(Duration::from_millis(500));
-                }
+            let result = request::request_data(client.addr, Request::KeyMap);
+            eprint!("\rconnecting to {} ", client.addr);
+            for _ in 0..attempts { eprint!("."); }
+            match result {
+                Ok(data) => break data,
+                Err(e) => { eprint!(" - {}", e); }
             }
+            io::stderr().flush().unwrap();
+            thread::sleep(Duration::from_millis(500));
+            attempts += 1;
         };
+
+        eprint!("\rconnecting to {} ", client.addr);
+        for _ in 0..attempts { eprint!("."); }
+        eprintln!(" done!                          ");
 
         // TODO use shm_open
         let f = tempfile::tempfile().unwrap();

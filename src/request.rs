@@ -4,7 +4,7 @@ use std::{
     io::prelude::*,
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, RwLock},
-    thread::{self, JoinHandle},
+    thread::{self, JoinHandle}, fmt::Display,
 };
 
 use memmap::Mmap;
@@ -83,47 +83,51 @@ impl Server {
     }
 }
 
-pub fn request_data(addr: SocketAddr, req: Request) -> Option<Vec<u8>> {
+#[derive(Debug)]
+pub struct BadRequest;
+
+impl Display for BadRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BadRequest")
+    }
+}
+
+impl Error for BadRequest {}
+
+pub fn request_data(addr: SocketAddr, req: Request) -> Result<Vec<u8>, Box<dyn Error>> {
     // connect to server
     let mut sock = match TcpStream::connect(addr) {
         Ok(sock) => sock,
-        Err(e) => {
-            eprintln!("{}", e);
-            return None;
-        }
+        Err(e) => return Err(Box::new(e)),
     };
 
     // write the request to the socket
     // convert to u32
     let req: u32 = req as u32;
     if let Err(e) = sock.write(&req.to_ne_bytes()) {
-        eprintln!("{}", e);
-        return None;
+        return Err(Box::new(e));
     }
     if let Err(e) = sock.flush() {
-        eprintln!("{}", e);
-        return None;
+        return Err(Box::new(e));
     }
 
     // read the response = (len, data) - len 0 means no data / bad request
     // read len
     let mut buf = [0u8; 8];
     if let Err(e) = sock.read_exact(&mut buf[..]) {
-        eprintln!("{}", e);
-        return None;
+        return Err(Box::new(e));
     }
     let len = usize::from_ne_bytes(buf);
 
     // check for bad request
     if len == 0 {
-        return None;
+        return Err(Box::new(BadRequest{}));
     }
 
     // read the data
     let mut data: Vec<u8> = vec![0u8; len];
     if let Err(e) = sock.read_exact(&mut data[..]) {
-        eprintln!("{}", e);
-        return None;
+        return Err(Box::new(e));
     }
-    Some(data)
+    Ok(data)
 }
