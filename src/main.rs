@@ -1,16 +1,18 @@
-use std::{net::SocketAddr, sync::mpsc, thread, env};
+use std::{net::SocketAddr, sync::mpsc, thread};
+
+#[cfg(unix)]
+use std::env;
 
 use lan_mouse::{
     client::{ClientManager, Position},
-    config, dns, event, request, backend::Backend,
+    config, dns, event, request,
 };
 
 #[cfg(windows)]
 use lan_mouse::backend::windows;
 
 #[cfg(unix)]
-use lan_mouse::backend::wayland;
-use lan_mouse::backend::x11;
+use lan_mouse::backend::{Backend,wayland,x11};
 
 fn add_client(client_manager: &mut ClientManager, client: &config::Client, pos: Position) {
     let ip = match client.ip {
@@ -75,6 +77,11 @@ pub fn main() {
         }
         Err(_) => panic!("could not detect session type"),
     };
+
+    #[cfg(windows)]
+    println!("using backend: windows");
+
+    #[cfg(unix)]
     println!("using backend: {}", match backend {
         Backend::X11 => "x11",
         Backend::WAYLAND => "wayland",
