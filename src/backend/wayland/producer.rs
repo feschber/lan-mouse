@@ -3,7 +3,7 @@ use crate::{
     request,
 };
 
-use memmap::Mmap;
+use memmap::MmapOptions;
 
 use std::{
     fs::File,
@@ -461,7 +461,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 fd,
                 size: _,
             } => {
-                let mmap = unsafe { Mmap::map(&File::from_raw_fd(fd.as_raw_fd())).unwrap() };
+                let fd = unsafe { &File::from_raw_fd(fd.as_raw_fd()) };
+                let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
                 app.server.offer_data(request::Request::KeyMap, mmap);
             }
             _ => (),

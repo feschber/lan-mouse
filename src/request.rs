@@ -7,7 +7,7 @@ use std::{
     thread::{self, JoinHandle}, fmt::Display,
 };
 
-use memmap::Mmap;
+use memmap::MmapMut;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Request {
@@ -30,7 +30,7 @@ impl TryFrom<[u8; 4]> for Request {
 
 #[derive(Clone)]
 pub struct Server {
-    data: Arc<RwLock<HashMap<Request, Mmap>>>,
+    data: Arc<RwLock<HashMap<Request, MmapMut>>>,
 }
 
 impl Server {
@@ -58,7 +58,7 @@ impl Server {
     }
 
     pub fn listen(port: u16) -> Result<(Server, JoinHandle<()>), Box<dyn Error>> {
-        let data: Arc<RwLock<HashMap<Request, Mmap>>> = Arc::new(RwLock::new(HashMap::new()));
+        let data: Arc<RwLock<HashMap<Request, MmapMut>>> = Arc::new(RwLock::new(HashMap::new()));
         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
         let server = Server { data };
         let server_copy = server.clone();
@@ -78,7 +78,7 @@ impl Server {
         Ok((server_copy, thread))
     }
 
-    pub fn offer_data(&self, req: Request, d: Mmap) {
+    pub fn offer_data(&self, req: Request, d: MmapMut) {
         self.data.write().unwrap().insert(req, d);
     }
 }
