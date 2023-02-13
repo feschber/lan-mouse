@@ -79,9 +79,11 @@ cargo run
 
 ## Protocol considerations
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
-Each event is sent as one single datagram so in case a packet is lost the event will simly be discarded, which is likely not much of a concern.
+Each event is sent as one single datagram, currently without any acknowledgement to guarantee 0% packet loss.
+This means, any packet that is lost results in a discarded mouse / key event, which is ignored for now.
+
 **UDP** also has the additional benefit that no reconnection logic is required.
-So any client can just go offline and it will simply start working again as soon as it comes back online.
+Any client can just go offline and it will simply start working again as soon as it comes back online.
 
 Additionally a tcp server is hosted for data that needs to be sent reliably (e.g. the keymap from the server or clipboard contents in the future) can be requested via a tcp connection.
 
