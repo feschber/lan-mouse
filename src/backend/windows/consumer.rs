@@ -1,4 +1,3 @@
-#![cfg(windows)]
 use std::sync::mpsc::Receiver;
 
 use winapi::{self, um::winuser::{INPUT, LPINPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_MOVE}};

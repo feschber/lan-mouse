@@ -1,4 +1,3 @@
-#![cfg(unix)]
 use std::{sync::mpsc::Receiver, ptr};
 use x11::{xtest, xlib};
 

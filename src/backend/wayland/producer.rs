@@ -1,4 +1,3 @@
-#![cfg(unix)]
 use crate::{
     client::{Client, ClientHandle, Position},
     request,
