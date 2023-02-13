@@ -43,7 +43,7 @@ The [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-uns
 ~In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.~
 (this works natively on sway versions >= 1.8)
 
-For the receiving end, Gnome provides [libei](https://gitlab.freedesktop.org/libinput/libei) which might be a better approach in general (TODO).
+For the receiving end, Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation, which might be the better approach in general moving forward (TODO).
 
 
 ## Build and run
