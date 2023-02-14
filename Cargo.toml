@@ -15,10 +15,11 @@ serde_derive = "1.0"
 threadpool = "1.8"
 
 [target.'cfg(unix)'.dependencies]
-wayland-client = { git="https://github.com/Smithay/wayland-rs.git" }
-wayland-protocols = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "staging", "unstable"] }
-wayland-protocols-wlr = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
-wayland-protocols-misc = { git="https://github.com/Smithay/wayland-rs.git", features=["client", "server"] }
+wayland-client = { version="0.30.0" }
+wayland-protocols = { version="0.30.0", features=["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version="0.1.0", features=["client"] }
+wayland-protocols-misc = { version="0.1.0", features=["client"] }
+wayland-protocols-plasma = { version="0.1.0", features=["client"] }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"] }
 
 [target.'cfg(windows)'.dependencies]
