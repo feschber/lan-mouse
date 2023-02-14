@@ -9,6 +9,7 @@ use std::{
     os::unix::prelude::AsRawFd,
 };
 
+use wayland_client::globals::BindError;
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
@@ -19,6 +20,8 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1 as VkManager,
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 as Vk,
 };
+
+use wayland_protocols_plasma::fake_input::client::org_kde_kwin_fake_input::OrgKdeKwinFakeInput;
 
 use wayland_client::{
     delegate_noop,
@@ -31,13 +34,22 @@ use tempfile;
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
+enum VirtualInputManager {
+    Wlroots {
+        vpm: VpManager,
+        vkm: VkManager,
+    },
+    Kde {
+        fake_input: OrgKdeKwinFakeInput,
+    }
+}
+
 // App State, implements Dispatch event handlers
 struct App {
     input_for_client: HashMap<ClientHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
     event_rx: Receiver<(Event, ClientHandle)>,
-    vpm: VpManager,
-    vkm: VkManager,
+    virtual_input_manager: VirtualInputManager,
     queue: EventQueue<Self>,
     qh: QueueHandle<Self>,
 }
@@ -53,20 +65,31 @@ impl App {
         let (globals, queue) = registry_queue_init::<App>(&conn).unwrap();
         let qh = queue.handle();
 
-        let vpm: VpManager = globals
-            .bind(&qh, 1..=1, ())
-            .expect("zwlr_virtual_pointer_manager_v1 protocol is required to emulate mouse input");
-        let vkm: VkManager = globals.bind(&qh, 1..=1, ()).expect(
-            "zwp_virtual_keyboard_manager_v1 protocol is required to emulate keyboard input",
-        );
+        let vpm: Result<VpManager, BindError> = globals.bind(&qh, 1..=1, ());
+        let vkm: Result<VkManager, BindError> = globals.bind(&qh, 1..=1, ());
+        let fake_input: Result<OrgKdeKwinFakeInput, BindError> = globals.bind(&qh, 4..=4, ());
+
+        let virtual_input_manager = match (vpm, vkm, fake_input) {
+            (Ok(vpm), Ok(vkm), _) => VirtualInputManager::Wlroots { vpm, vkm },
+            (_, _, Ok(fake_input)) => {
+                VirtualInputManager::Kde { fake_input }
+            },
+            (Err(e1), Err(e2), Err(e3)) => {
+                eprintln!("zwlr_virtual_pointer_v1: {e1}");
+                eprintln!("zwp_virtual_keyboard_v1: {e2}");
+                eprintln!("org_kde_kwin_fake_input: {e3}");
+                panic!("neither wlroots nor kde input emulation protocol supported!")
+            },
+            _ => { panic!() }
+        };
+
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
         let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
         let mut app = App {
             input_for_client,
             seat,
             event_rx,
-            vpm,
-            vkm,
+            virtual_input_manager,
             queue,
             qh,
         };
@@ -90,51 +113,66 @@ impl App {
 
     fn add_client(&mut self, client: Client) {
         // create virtual input devices
-        let pointer: Vp = self.vpm.create_virtual_pointer(None, &self.qh, ());
-        let keyboard: Vk = self.vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
+        match &self.virtual_input_manager {
+            VirtualInputManager::Wlroots { vpm, vkm } => {
+                let pointer: Vp = vpm.create_virtual_pointer(None, &self.qh, ());
+                let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
-        // receive keymap from device
-        eprint!("\rconnecting to {} ", client.addr);
-        let mut attempts = 0;
-        let data = loop {
-            let result = request::request_data(client.addr, Request::KeyMap);
-            eprint!("\rconnecting to {} ", client.addr);
-            for _ in 0..attempts {
-                eprint!(".");
-            }
-            match result {
-                Ok(data) => break data,
-                Err(e) => {
-                    eprint!(" - {}", e);
+                // receive keymap from device
+                eprint!("\rconnecting to {} ", client.addr);
+                let mut attempts = 0;
+                let data = loop {
+                    let result = request::request_data(client.addr, Request::KeyMap);
+                    eprint!("\rconnecting to {} ", client.addr);
+                    for _ in 0..attempts {
+                        eprint!(".");
+                    }
+                    match result {
+                        Ok(data) => break data,
+                        Err(e) => {
+                            eprint!(" - {}", e);
+                        }
+                    }
+                    io::stderr().flush().unwrap();
+                    thread::sleep(Duration::from_millis(500));
+                    attempts += 1;
+                };
+
+                eprint!("\rconnecting to {} ", client.addr);
+                for _ in 0..attempts {
+                    eprint!(".");
                 }
-            }
-            io::stderr().flush().unwrap();
-            thread::sleep(Duration::from_millis(500));
-            attempts += 1;
-        };
+                eprintln!(" done!                          ");
 
-        eprint!("\rconnecting to {} ", client.addr);
-        for _ in 0..attempts {
-            eprint!(".");
+                // TODO use shm_open
+                let f = tempfile::tempfile().unwrap();
+                let mut buf = BufWriter::new(&f);
+                buf.write_all(&data[..]).unwrap();
+                buf.flush().unwrap();
+                keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
+
+                let vinput = VirtualInput::Wlroots{ pointer, keyboard };
+
+                self.input_for_client.insert(client.handle, vinput);
+
+            },
+            VirtualInputManager::Kde { fake_input } => {
+                let fake_input = fake_input.clone();
+                let vinput = VirtualInput::Kde { fake_input };
+                self.input_for_client.insert(client.handle, vinput);
+            },
         }
-        eprintln!(" done!                          ");
-
-        // TODO use shm_open
-        let f = tempfile::tempfile().unwrap();
-        let mut buf = BufWriter::new(&f);
-        buf.write_all(&data[..]).unwrap();
-        buf.flush().unwrap();
-        keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
-
-        let vinput = VirtualInput { pointer, keyboard };
-
-        self.input_for_client.insert(client.handle, vinput);
     }
 }
 
-struct VirtualInput {
-    pointer: Vp,
-    keyboard: Vk,
+enum VirtualInput {
+    Wlroots {
+        pointer: Vp,
+        keyboard: Vk,
+    },
+    Kde {
+        fake_input: OrgKdeKwinFakeInput,
+    }
 }
 
 impl VirtualInput {
@@ -147,8 +185,15 @@ impl VirtualInput {
                     relative_x,
                     relative_y,
                 } => {
-                    self.pointer.motion(time, relative_x, relative_y);
-                    self.pointer.frame();
+                    match self {
+                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                            pointer.motion(time, relative_x, relative_y);
+                            pointer.frame();
+                        },
+                        VirtualInput::Kde { fake_input } => {
+                            fake_input.pointer_motion(relative_y, relative_y);
+                        },
+                    }
                 }
                 PointerEvent::Button {
                     time,
@@ -156,21 +201,47 @@ impl VirtualInput {
                     state,
                 } => {
                     let state: ButtonState = state.try_into().unwrap();
-                    self.pointer.button(time, button, state);
-                    self.pointer.frame();
+                    match self {
+                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                            pointer.button(time, button, state);
+                            pointer.frame();
+                        },
+                        VirtualInput::Kde { fake_input } => {
+                            fake_input.button(button, state as u32);
+                        },
+                    }
                 }
                 PointerEvent::Axis { time, axis, value } => {
                     let axis: Axis = (axis as u32).try_into().unwrap();
-                    self.pointer.axis(time, axis, value);
-                    self.pointer.frame();
+                    match self {
+                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                            pointer.axis(time, axis, value);
+                            pointer.frame();
+                        },
+                        VirtualInput::Kde { fake_input } => {
+                            fake_input.axis(axis as u32, value);
+                        },
+                    }
                 }
                 PointerEvent::Frame {} => {
-                    self.pointer.frame();
+                    match self {
+                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                            pointer.frame();
+                        },
+                        VirtualInput::Kde { fake_input:_ } => { },
+                    }
                 }
             },
             Event::Keyboard(e) => match e {
                 KeyboardEvent::Key { time, key, state } => {
-                    self.keyboard.key(time, key, state as u32);
+                    match self {
+                        VirtualInput::Wlroots { pointer:_, keyboard } => {
+                            keyboard.key(time, key, state as u32);
+                        },
+                        VirtualInput::Kde { fake_input } => {
+                            fake_input.keyboard_key(key, state as u32);
+                        },
+                    }
                 }
                 KeyboardEvent::Modifiers {
                     mods_depressed,
@@ -178,13 +249,22 @@ impl VirtualInput {
                     mods_locked,
                     group,
                 } => {
-                    self.keyboard
-                        .modifiers(mods_depressed, mods_latched, mods_locked, group);
+                    match self {
+                        VirtualInput::Wlroots { pointer:_, keyboard } => {
+                            keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
+                        },
+                        VirtualInput::Kde { fake_input:_ } => { },
+                    }
                 }
             },
             Event::Release() => {
-                self.keyboard.modifiers(77, 0, 0, 0);
-                self.keyboard.modifiers(0, 0, 0, 0);
+                match self {
+                    VirtualInput::Wlroots { pointer:_, keyboard } => {
+                        keyboard.modifiers(77, 0, 0, 0);
+                        keyboard.modifiers(0, 0, 0, 0);
+                    },
+                    VirtualInput::Kde { fake_input:_ } => {},
+                }
             }
         }
         Ok(())
@@ -196,6 +276,7 @@ delegate_noop!(App: Vk);
 delegate_noop!(App: VpManager);
 delegate_noop!(App: VkManager);
 delegate_noop!(App: wl_seat::WlSeat);
+delegate_noop!(App: OrgKdeKwinFakeInput);
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     fn event(
