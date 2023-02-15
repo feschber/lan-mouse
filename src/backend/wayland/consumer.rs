@@ -72,6 +72,7 @@ impl App {
         let virtual_input_manager = match (vpm, vkm, fake_input) {
             (Ok(vpm), Ok(vkm), _) => VirtualInputManager::Wlroots { vpm, vkm },
             (_, _, Ok(fake_input)) => {
+                fake_input.authenticate("lan-mouse".into(), "Allow remote clients to control this devices".into());
                 VirtualInputManager::Kde { fake_input }
             },
             (Err(e1), Err(e2), Err(e3)) => {
