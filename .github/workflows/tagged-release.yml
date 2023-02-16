@@ -1,0 +1,51 @@
+name: "Tagged Release"
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  linux-release-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install libx11-dev libxtst-dev
+    - name: Release Build
+      run: cargo build --release
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: lan-mouse-linux
+        path: target/release/lan-mouse
+
+  windows-release-build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Release Build
+      run: cargo build --release
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: lan-mouse-windows
+        path: target/release/lan-mouse.exe
+
+  tagged-release:
+    name: "Tagged Release"
+    needs: [windows-release-build, linux-release-build]
+    runs-on: "ubuntu-latest"
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+    - name: "Create Release"
+      uses: "marvinpinto/action-automatic-releases@latest"
+      with:
+        repo_token: "${{ secrets.GITHUB_TOKEN }}"
+        prerelease: false
+        files: |
+          lan-mouse-linux/lan-mouse
+          lan-mouse-windows/lan-mouse.exe
