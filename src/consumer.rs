@@ -1,4 +1,7 @@
-use std::{thread::{JoinHandle, self}, env, sync::mpsc::Receiver};
+use std::{thread::{JoinHandle, self}, sync::mpsc::Receiver};
+
+#[cfg(unix)]
+use std::env;
 
 use crate::{backend::consumer, client::{Client, ClientHandle}, event::Event};
 
