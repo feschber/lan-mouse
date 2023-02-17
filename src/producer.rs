@@ -6,6 +6,7 @@ use crate::{client::{Client, ClientHandle}, event::Event, request::Server};
 
 use crate::backend::producer;
 
+#[cfg(unix)]
 enum Backend {
     Wayland,
     X11,
