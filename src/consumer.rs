@@ -1,7 +1,11 @@
-use std::{thread::{JoinHandle, self}, env, sync::mpsc::Receiver};
+use std::{thread::{JoinHandle, self}, sync::mpsc::Receiver};
+
+#[cfg(unix)]
+use std::env;
 
 use crate::{backend::consumer, client::{Client, ClientHandle}, event::Event};
 
+#[cfg(unix)]
 #[derive(Debug)]
 enum Backend {
     Wlroots,
@@ -11,6 +15,9 @@ enum Backend {
 }
 
 pub fn start(consume_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>, backend: Option<String>) -> JoinHandle<()> {
+    #[cfg(windows)]
+    let _backend = backend;
+
     thread::Builder::new()
         .name("event consumer".into())
         .spawn(move || {
