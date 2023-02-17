@@ -2,6 +2,7 @@ use std::{thread::{JoinHandle, self}, env, sync::mpsc::Receiver};
 
 use crate::{backend::consumer, client::{Client, ClientHandle}, event::Event};
 
+#[cfg(unix)]
 #[derive(Debug)]
 enum Backend {
     Wlroots,
