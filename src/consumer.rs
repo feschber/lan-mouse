@@ -15,6 +15,9 @@ enum Backend {
 }
 
 pub fn start(consume_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>, backend: Option<String>) -> JoinHandle<()> {
+    #[cfg(windows)]
+    let _backend = backend;
+
     thread::Builder::new()
         .name("event consumer".into())
         .spawn(move || {
