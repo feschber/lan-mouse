@@ -7,6 +7,7 @@ use toml;
 pub struct Config {
     pub client: Clients,
     pub port: Option<u16>,
+    pub backend: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
