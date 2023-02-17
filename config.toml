@@ -1,4 +1,5 @@
 port = 42069
+backend = "wlroots"
 
 # [client.right]
 # host_name = "localhost"

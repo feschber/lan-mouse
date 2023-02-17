@@ -35,13 +35,8 @@ use tempfile;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
 enum VirtualInputManager {
-    Wlroots {
-        vpm: VpManager,
-        vkm: VkManager,
-    },
-    Kde {
-        fake_input: OrgKdeKwinFakeInput,
-    }
+    Wlroots { vpm: VpManager, vkm: VkManager },
+    Kde { fake_input: OrgKdeKwinFakeInput },
 }
 
 // App State, implements Dispatch event handlers
@@ -72,16 +67,21 @@ impl App {
         let virtual_input_manager = match (vpm, vkm, fake_input) {
             (Ok(vpm), Ok(vkm), _) => VirtualInputManager::Wlroots { vpm, vkm },
             (_, _, Ok(fake_input)) => {
-                fake_input.authenticate("lan-mouse".into(), "Allow remote clients to control this devices".into());
+                fake_input.authenticate(
+                    "lan-mouse".into(),
+                    "Allow remote clients to control this devices".into(),
+                );
                 VirtualInputManager::Kde { fake_input }
-            },
+            }
             (Err(e1), Err(e2), Err(e3)) => {
                 eprintln!("zwlr_virtual_pointer_v1: {e1}");
                 eprintln!("zwp_virtual_keyboard_v1: {e2}");
                 eprintln!("org_kde_kwin_fake_input: {e3}");
                 panic!("neither wlroots nor kde input emulation protocol supported!")
-            },
-            _ => { panic!() }
+            }
+            _ => {
+                panic!()
+            }
         };
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
@@ -152,28 +152,22 @@ impl App {
                 buf.flush().unwrap();
                 keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
 
-                let vinput = VirtualInput::Wlroots{ pointer, keyboard };
+                let vinput = VirtualInput::Wlroots { pointer, keyboard };
 
                 self.input_for_client.insert(client.handle, vinput);
-
-            },
+            }
             VirtualInputManager::Kde { fake_input } => {
                 let fake_input = fake_input.clone();
                 let vinput = VirtualInput::Kde { fake_input };
                 self.input_for_client.insert(client.handle, vinput);
-            },
+            }
         }
     }
 }
 
 enum VirtualInput {
-    Wlroots {
-        pointer: Vp,
-        keyboard: Vk,
-    },
-    Kde {
-        fake_input: OrgKdeKwinFakeInput,
-    }
+    Wlroots { pointer: Vp, keyboard: Vk },
+    Kde { fake_input: OrgKdeKwinFakeInput },
 }
 
 impl VirtualInput {
@@ -185,17 +179,18 @@ impl VirtualInput {
                     time,
                     relative_x,
                     relative_y,
-                } => {
-                    match self {
-                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
-                            pointer.motion(time, relative_x, relative_y);
-                            pointer.frame();
-                        },
-                        VirtualInput::Kde { fake_input } => {
-                            fake_input.pointer_motion(relative_y, relative_y);
-                        },
+                } => match self {
+                    VirtualInput::Wlroots {
+                        pointer,
+                        keyboard: _,
+                    } => {
+                        pointer.motion(time, relative_x, relative_y);
+                        pointer.frame();
                     }
-                }
+                    VirtualInput::Kde { fake_input } => {
+                        fake_input.pointer_motion(relative_y, relative_y);
+                    }
+                },
                 PointerEvent::Button {
                     time,
                     button,
@@ -203,70 +198,80 @@ impl VirtualInput {
                 } => {
                     let state: ButtonState = state.try_into().unwrap();
                     match self {
-                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                        VirtualInput::Wlroots {
+                            pointer,
+                            keyboard: _,
+                        } => {
                             pointer.button(time, button, state);
                             pointer.frame();
-                        },
+                        }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.button(button, state as u32);
-                        },
+                        }
                     }
                 }
                 PointerEvent::Axis { time, axis, value } => {
                     let axis: Axis = (axis as u32).try_into().unwrap();
                     match self {
-                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
+                        VirtualInput::Wlroots {
+                            pointer,
+                            keyboard: _,
+                        } => {
                             pointer.axis(time, axis, value);
                             pointer.frame();
-                        },
+                        }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.axis(axis as u32, value);
-                        },
+                        }
                     }
                 }
-                PointerEvent::Frame {} => {
-                    match self {
-                        VirtualInput::Wlroots { pointer, keyboard:_ } => {
-                            pointer.frame();
-                        },
-                        VirtualInput::Kde { fake_input:_ } => { },
+                PointerEvent::Frame {} => match self {
+                    VirtualInput::Wlroots {
+                        pointer,
+                        keyboard: _,
+                    } => {
+                        pointer.frame();
                     }
-                }
+                    VirtualInput::Kde { fake_input: _ } => {}
+                },
             },
             Event::Keyboard(e) => match e {
-                KeyboardEvent::Key { time, key, state } => {
-                    match self {
-                        VirtualInput::Wlroots { pointer:_, keyboard } => {
-                            keyboard.key(time, key, state as u32);
-                        },
-                        VirtualInput::Kde { fake_input } => {
-                            fake_input.keyboard_key(key, state as u32);
-                        },
+                KeyboardEvent::Key { time, key, state } => match self {
+                    VirtualInput::Wlroots {
+                        pointer: _,
+                        keyboard,
+                    } => {
+                        keyboard.key(time, key, state as u32);
                     }
-                }
+                    VirtualInput::Kde { fake_input } => {
+                        fake_input.keyboard_key(key, state as u32);
+                    }
+                },
                 KeyboardEvent::Modifiers {
                     mods_depressed,
                     mods_latched,
                     mods_locked,
                     group,
-                } => {
-                    match self {
-                        VirtualInput::Wlroots { pointer:_, keyboard } => {
-                            keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                        },
-                        VirtualInput::Kde { fake_input:_ } => { },
+                } => match self {
+                    VirtualInput::Wlroots {
+                        pointer: _,
+                        keyboard,
+                    } => {
+                        keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
                     }
-                }
+                    VirtualInput::Kde { fake_input: _ } => {}
+                },
             },
-            Event::Release() => {
-                match self {
-                    VirtualInput::Wlroots { pointer:_, keyboard } => {
-                        keyboard.modifiers(77, 0, 0, 0);
-                        keyboard.modifiers(0, 0, 0, 0);
-                    },
-                    VirtualInput::Kde { fake_input:_ } => {},
+            Event::Release() => match self {
+                VirtualInput::Wlroots {
+                    pointer: _,
+                    keyboard,
+                } => {
+                    keyboard.modifiers(77, 0, 0, 0);
+                    keyboard.modifiers(0, 0, 0, 0);
                 }
-            }
+                VirtualInput::Kde { fake_input: _ } => {}
+            },
         }
         Ok(())
     }
