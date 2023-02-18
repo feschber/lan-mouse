@@ -171,8 +171,7 @@ enum VirtualInput {
 }
 
 impl VirtualInput {
-    /// main loop handling udp packets
-    fn consume_event(&self, event: Event) -> std::io::Result<()> {
+    fn consume_event(&self, event: Event) -> Result<(),()> {
         match event {
             Event::Pointer(e) => match e {
                 PointerEvent::Motion {
@@ -196,7 +195,7 @@ impl VirtualInput {
                     button,
                     state,
                 } => {
-                    let state: ButtonState = state.try_into().unwrap();
+                    let state: ButtonState = state.try_into()?;
                     match self {
                         VirtualInput::Wlroots {
                             pointer,
@@ -211,7 +210,7 @@ impl VirtualInput {
                     }
                 }
                 PointerEvent::Axis { time, axis, value } => {
-                    let axis: Axis = (axis as u32).try_into().unwrap();
+                    let axis: Axis = (axis as u32).try_into()?;
                     match self {
                         VirtualInput::Wlroots {
                             pointer,

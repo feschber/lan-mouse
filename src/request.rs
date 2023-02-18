@@ -35,27 +35,28 @@ pub struct Server {
 }
 
 impl Server {
-    fn handle_request(&self, mut stream: TcpStream) {
+    fn handle_request(&self, mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         let mut buf = [0u8; 4];
-        stream.read_exact(&mut buf).unwrap();
+        stream.read_exact(&mut buf)?;
         match Request::try_from(buf) {
             Ok(Request::KeyMap) => {
                 let data = self.data.read().unwrap();
                 let buf = data.get(&Request::KeyMap);
                 match buf {
                     None => {
-                        stream.write(&0u32.to_ne_bytes()).unwrap();
+                        stream.write(&0u32.to_ne_bytes())?;
                     }
                     Some(buf) => {
-                        stream.write(&buf[..].len().to_ne_bytes()).unwrap();
-                        stream.write(&buf[..]).unwrap();
+                        stream.write(&buf[..].len().to_ne_bytes())?;
+                        stream.write(&buf[..])?;
                     }
                 }
-                stream.flush().unwrap();
+                stream.flush()?;
             }
             Ok(Request::Connect) => todo!(),
             Err(msg) => eprintln!("{}", msg),
         }
+        Ok(())
     }
 
     pub fn listen(port: u16) -> Result<(Server, JoinHandle<()>), Box<dyn Error>> {
@@ -70,7 +71,9 @@ impl Server {
             for stream in listen_socket.incoming() {
                 match stream {
                     Ok(stream) => {
-                        server.handle_request(stream);
+                        if let Err(e) = server.handle_request(stream) {
+                            eprintln!("{}", e);
+                        }
                     }
                     Err(e) => {
                         eprintln!("{}", e);
