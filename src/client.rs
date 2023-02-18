@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, error::Error, fmt::Display};
 
 use crate::{config, dns};
 
@@ -35,20 +35,29 @@ pub struct ClientManager {
 
 pub type ClientHandle = u32;
 
+#[derive(Debug)]
+struct ClientConfigError;
+
+impl Display for ClientConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "neither ip nor hostname specified")
+    }
+}
+
+impl Error for ClientConfigError {}
+
 impl ClientManager {
-    fn add_client(&mut self, client: &config::Client, pos: Position) {
+    fn add_client(&mut self, client: &config::Client, pos: Position) -> Result<(), Box<dyn Error>> {
         let ip = match client.ip {
             Some(ip) => ip,
             None => match &client.host_name {
-                Some(host_name) => match dns::resolve(host_name) {
-                    Ok(ip) => ip,
-                    Err(e) => panic!("{}", e),
-                },
-                None => panic!("neither ip nor hostname specified"),
+                Some(host_name) => dns::resolve(host_name)?,
+                None => return Err(Box::new(ClientConfigError{})),
             },
         };
         let addr = SocketAddr::new(ip, client.port.unwrap_or(42069));
         self.register_client(addr, pos);
+        Ok(())
     }
 
     fn new_id(&mut self) -> ClientHandle {
@@ -56,7 +65,7 @@ impl ClientManager {
         self.next_id
     }
 
-    pub fn new(config: &config::Config) -> Self {
+    pub fn new(config: &config::Config) -> Result<Self, Box<dyn Error>> {
 
         let mut client_manager = ClientManager {
             next_id: 0,
@@ -64,25 +73,11 @@ impl ClientManager {
         };
 
         // add clients from config
-        for client in vec![
-            &config.client.left,
-            &config.client.right,
-            &config.client.top,
-            &config.client.bottom,
-        ] {
-            if let Some(client) = client {
-                let pos = match client {
-                    client if Some(client) == config.client.left.as_ref() => Position::Left,
-                    client if Some(client) == config.client.right.as_ref() => Position::Right,
-                    client if Some(client) == config.client.top.as_ref() => Position::Top,
-                    client if Some(client) == config.client.bottom.as_ref() => Position::Bottom,
-                    _ => panic!(),
-                };
-                client_manager.add_client(client, pos);
-            }
+        for (client, pos) in config.clients.iter() {
+            client_manager.add_client(&client, *pos)?;
         }
 
-        client_manager
+        Ok(client_manager)
     }
 
     pub fn register_client(&mut self, addr: SocketAddr, pos: Position) {

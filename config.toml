@@ -1,11 +1,11 @@
 port = 42069
 backend = "wlroots"
 
-# [client.right]
+# [right]
 # host_name = "localhost"
 # port = 42068
 
-[client.left]
+[left]
 host_name = "Osmium"
 ip = "192.168.178.114"
 port = 42069

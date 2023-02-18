@@ -1,4 +1,4 @@
-use std::{thread::{JoinHandle, self}, sync::mpsc::Receiver};
+use std::{thread::{JoinHandle, self}, sync::mpsc::Receiver, error::Error};
 
 #[cfg(unix)]
 use std::env;
@@ -14,11 +14,11 @@ enum Backend {
     Libei,
 }
 
-pub fn start(consume_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>, backend: Option<String>) -> JoinHandle<()> {
+pub fn start(consume_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>, backend: Option<String>) -> Result<JoinHandle<()>, Box<dyn Error>> {
     #[cfg(windows)]
     let _backend = backend;
 
-    thread::Builder::new()
+    Ok(thread::Builder::new()
         .name("event consumer".into())
         .spawn(move || {
             #[cfg(windows)]
@@ -72,6 +72,5 @@ pub fn start(consume_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>, 
                     consumer::x11::run(consume_rx, clients);
                 },
             }
-        })
-        .unwrap()
+        })?)
 }
