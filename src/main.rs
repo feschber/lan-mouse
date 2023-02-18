@@ -64,7 +64,13 @@ pub fn main() {
     }
 
     // start sending and receiving events
-    let event_server = event::server::Server::new(port);
+    let event_server = match event::server::Server::new(port) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+    };
     let (receiver, sender) = match event_server.run(&mut client_manager, produce_rx, consume_tx) {
         Ok((r,s)) => (r,s),
         Err(e) => {

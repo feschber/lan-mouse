@@ -20,13 +20,13 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(port: u16) -> Self {
-        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+    pub fn new(port: u16) -> Result<Self, Box<dyn Error>> {
+        let listen_addr = SocketAddr::new("0.0.0.0".parse()?, port);
         let sending = Arc::new(AtomicBool::new(false));
-        Server {
+        Ok(Server {
             listen_addr,
             sending,
-        }
+        })
     }
 
     pub fn run(
@@ -36,7 +36,7 @@ impl Server {
         consume_tx: SyncSender<(Event, ClientHandle)>,
     ) -> Result<(JoinHandle<()>, JoinHandle<()>), Box<dyn Error>> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
-        let rx = udp_socket.try_clone().unwrap();
+        let rx = udp_socket.try_clone()?;
         let tx = udp_socket;
 
         let sending = self.sending.clone();
@@ -92,8 +92,7 @@ impl Server {
                             .expect("event consumer unavailable");
                     }
                 }
-            })
-            .unwrap();
+            })?;
 
         let sending = self.sending.clone();
 
@@ -124,8 +123,7 @@ impl Server {
                         }
                     }
                 }
-            })
-            .unwrap();
+            })?;
         Ok((receiver, sender))
     }
 
