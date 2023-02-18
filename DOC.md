@@ -68,16 +68,10 @@ on the server level.
 ## Device State - Active and Inactive
 To solve this problem, each device can be in exactly two states:
 
-Events can only be sent to active clients.
-Events can only be received from inactive clients.
+Either events are sent or received.
 
-Active denotes that a particular device is controlled by the local pc.
+This ensures that
+- a) Events can never result in a feedback loop.
+- b) As soon as a virtual input enters another client, lan-mouse will stop receiving events,
+which ensures clients can only be controlled directly and not indirectly through other clients.
 
-Any event received from an active device is ignored unless it is a state change request.
-In this case the device is marked as inactive and no further events are sent to the device.
-
-The received events are then processed until a further state change to active
-is requested (when the corresponding layer surface is entered).
-
-**In short:** The invariance "each client either sends or receives events" must
-always be true.
