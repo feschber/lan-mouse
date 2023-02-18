@@ -60,11 +60,13 @@ impl Server {
 
     pub fn listen(port: u16) -> Result<(Server, JoinHandle<()>), Box<dyn Error>> {
         let data: Arc<RwLock<HashMap<Request, MmapMut>>> = Arc::new(RwLock::new(HashMap::new()));
-        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+        let listen_addr = SocketAddr::new("0.0.0.0".parse()?, port);
         let server = Server { data };
         let server_copy = server.clone();
-        let thread = thread::spawn(move || {
-            let listen_socket = TcpListener::bind(listen_addr).unwrap();
+        let listen_socket = TcpListener::bind(listen_addr)?;
+        let thread = thread::Builder::new()
+            .name("tcp server".into())
+            .spawn(move || {
             for stream in listen_socket.incoming() {
                 match stream {
                     Ok(stream) => {
@@ -75,7 +77,7 @@ impl Server {
                     }
                 }
             }
-        });
+        })?;
         Ok((server_copy, thread))
     }
 
