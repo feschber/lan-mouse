@@ -69,48 +69,34 @@ pub struct Config {
 impl Config {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let config_path = "config.toml";
-        let config_toml = match ConfigToml::new(config_path) {
-            Err(e) => {
-                eprintln!("config.toml: {e}");
-                eprintln!("Continuing without config file ...");
-                None
-            },
-            Ok(c) => Some(c),
-        };
+        let config_toml = ConfigToml::new(config_path)?;
 
         let backend = match find_arg("--backend")? {
-            None => match &config_toml {
-                Some(c) => c.backend.clone(),
-                None => None,
-            },
+            None => config_toml.backend,
             backend => backend,
         };
 
-        const DEFAULT_PORT: u16 = 4242;
-
         let port = match find_arg("--port")? {
             Some(port) => port.parse::<u16>()?,
-            None => match &config_toml {
-                Some(c) => c.port.unwrap_or(DEFAULT_PORT),
-                None => DEFAULT_PORT,
-            }
+            None => config_toml.port.unwrap_or(4242),
         };
 
-        let mut clients: Vec<(Client, Position)> = vec![];
+        let mut clients = vec![];
 
-        if let Some(config_toml) = config_toml {
-            if let Some(c) = config_toml.right {
-                clients.push((c, Position::Right))
-            }
-            if let Some(c) = config_toml.left {
-                clients.push((c, Position::Left))
-            }
-            if let Some(c) = config_toml.top {
-                clients.push((c, Position::Top))
-            }
-            if let Some(c) = config_toml.bottom {
-                clients.push((c, Position::Bottom))
-            }
+        if let Some(c) = config_toml.right {
+            clients.push((c, Position::Right))
+        }
+
+        if let Some(c) = config_toml.left {
+            clients.push((c, Position::Left))
+        }
+
+        if let Some(c) = config_toml.top {
+            clients.push((c, Position::Top))
+        }
+
+        if let Some(c) = config_toml.bottom {
+            clients.push((c, Position::Bottom))
         }
 
         Ok(Config { backend, clients, port })
