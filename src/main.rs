@@ -44,20 +44,46 @@ pub fn main() {
     let (request_server, request_thread) = request::Server::listen(port).unwrap();
 
     // start producing and consuming events
-    let event_producer = producer::start(produce_tx, client_manager.get_clients(), request_server);
-    let event_consumer = consumer::start(consume_rx, client_manager.get_clients(), config.backend);
+    let event_producer = match producer::start(produce_tx, client_manager.get_clients(), request_server) {
+        Err(e) => {
+            eprintln!("Could not start event producer: {e}");
+            None
+        },
+        Ok(p) => Some(p),
+    };
+    let event_consumer = match consumer::start(consume_rx, client_manager.get_clients(), config.backend) {
+        Err(e) => {
+            eprintln!("Could not start event consumer: {e}");
+            None
+        },
+        Ok(p) => Some(p),
+    };
+
+    if event_consumer.is_none() && event_producer.is_none() {
+        process::exit(1);
+    }
 
     // start sending and receiving events
     let event_server = event::server::Server::new(port);
-    let (receiver, sender) = event_server
-        .run(&mut client_manager, produce_rx, consume_tx)
-        .unwrap();
+    let (receiver, sender) = match event_server.run(&mut client_manager, produce_rx, consume_tx) {
+        Ok((r,s)) => (r,s),
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+    };
 
     request_thread.join().unwrap();
 
+    // stop receiving events and terminate event-consumer
     receiver.join().unwrap();
-    sender.join().unwrap();
+    if let Some(thread) = event_consumer {
+        thread.join().unwrap();
+    }
 
-    event_producer.join().unwrap();
-    event_consumer.join().unwrap();
+    // stop producing events and terminate event-sender
+    if let Some(thread) = event_producer {
+        thread.join().unwrap();
+    }
+    sender.join().unwrap();
 }

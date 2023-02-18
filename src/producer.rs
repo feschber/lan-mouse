@@ -1,6 +1,6 @@
 #[cfg(unix)]
 use std::env;
-use std::{thread::{JoinHandle, self}, sync::mpsc::SyncSender};
+use std::{thread::{JoinHandle, self}, sync::mpsc::SyncSender, error::Error};
 
 use crate::{client::{Client, ClientHandle}, event::Event, request::Server};
 
@@ -16,8 +16,8 @@ pub fn start(
     produce_tx: SyncSender<(Event, ClientHandle)>,
     clients: Vec<Client>,
     request_server: Server,
-) -> JoinHandle<()> {
-    thread::Builder::new()
+) -> Result<JoinHandle<()>, Box<dyn Error>> {
+    Ok(thread::Builder::new()
         .name("event producer".into())
         .spawn(move || {
             #[cfg(windows)]
@@ -48,6 +48,5 @@ pub fn start(
                     producer::wayland::run(produce_tx, request_server, clients);
                 }
             }
-        })
-        .unwrap()
+        })?)
 }
