@@ -1,15 +1,21 @@
+# define port and backend of this instance
 port = 42069
 backend = "wlroots"
 
-# [right]
-# host_name = "localhost"
-# port = 42068
+# example configuration
 
-[left]
-host_name = "Osmium"
-ip = "192.168.178.114"
+# define a client on the right side with host name "iridium"
+[right]
+# hostname
+host_name = "iridium"
+# optional ip address
+ip = "192.168.178.141"
+# optional port (defaults to 42069)
 port = 42069
 
-# [client.right]
-# host_name = "Osmium"
-# port = 42069
+# define a client on the left side with ip 192.168.178.189
+#
+# when an ip address is specified, it takes priority
+# and host_name can be omitted
+[left]
+ip = "192.168.178.189"

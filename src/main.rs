@@ -43,6 +43,8 @@ pub fn main() {
     // start receiving client connection requests
     let (request_server, request_thread) = request::Server::listen(port).unwrap();
 
+    println!("Press Ctrl+Alt+Shift+Super to release the mouse");
+
     // start producing and consuming events
     let event_producer = match producer::start(produce_tx, client_manager.get_clients(), request_server) {
         Err(e) => {
