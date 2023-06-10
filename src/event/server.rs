@@ -61,6 +61,7 @@ impl Server {
                     };
 
                     if clients_updated.load(Ordering::Acquire) {
+                        clients_updated.store(false, Ordering::SeqCst);
                         client_for_socket.clear();
                         for client in client_manager_clone.get_clients() {
                             println!("{}: {}", client.handle, client.addr);
@@ -71,10 +72,11 @@ impl Server {
                     let client_handle = match client_for_socket.get(&addr) {
                         Some(c) => *c,
                         None => {
-                            println!("Allow connection from {:?}?", addr);
+                            eprint!("Allow connection from {:?}? ", addr);
                             if ask_confirmation(false)? {
-                                // yes
                                 client_manager_clone.register_client(addr, ask_position()?);
+                            } else {
+                                eprintln!("rejecting client: {:?}?", addr);
                             }
                             continue;
                         }

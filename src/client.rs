@@ -64,7 +64,7 @@ impl ClientManager {
 
     fn notify(&self) {
         for subscriber in self.subscribers.read().unwrap().iter() {
-            subscriber.store(true, Ordering::Release);
+            subscriber.store(true, Ordering::SeqCst);
         }
     }
 
