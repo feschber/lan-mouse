@@ -69,7 +69,7 @@ impl App {
             (_, _, Ok(fake_input)) => {
                 fake_input.authenticate(
                     "lan-mouse".into(),
-                    "Allow remote clients to control this devices".into(),
+                    "Allow remote clients to control this device".into(),
                 );
                 VirtualInputManager::Kde { fake_input }
             }

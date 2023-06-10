@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, error::Error, fmt::Display};
+use std::{net::SocketAddr, error::Error, fmt::Display, sync::{Arc, atomic::{AtomicBool, Ordering, AtomicU32}, RwLock}};
 
 use crate::{config, dns};
 
@@ -29,8 +29,9 @@ pub enum ClientEvent {
 }
 
 pub struct ClientManager {
-    next_id: u32,
-    clients: Vec<Client>,
+    next_id: AtomicU32,
+    clients: RwLock<Vec<Client>>,
+    subscribers: RwLock<Vec<Arc<AtomicBool>>>,
 }
 
 pub type ClientHandle = u32;
@@ -47,7 +48,7 @@ impl Display for ClientConfigError {
 impl Error for ClientConfigError {}
 
 impl ClientManager {
-    fn add_client(&mut self, client: &config::Client, pos: Position) -> Result<(), Box<dyn Error>> {
+    fn add_client(&self, client: &config::Client, pos: Position) -> Result<(), Box<dyn Error>> {
         let ip = match client.ip {
             Some(ip) => ip,
             None => match &client.host_name {
@@ -60,16 +61,24 @@ impl ClientManager {
         Ok(())
     }
 
-    fn new_id(&mut self) -> ClientHandle {
-        self.next_id += 1;
-        self.next_id
+    fn notify(&self) {
+        for subscriber in self.subscribers.read().unwrap().iter() {
+            subscriber.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn new_id(&self) -> ClientHandle {
+        let id = self.next_id.load(Ordering::Acquire);
+        self.next_id.store(id + 1, Ordering::Release);
+        id as ClientHandle
     }
 
     pub fn new(config: &config::Config) -> Result<Self, Box<dyn Error>> {
 
-        let mut client_manager = ClientManager {
-            next_id: 0,
-            clients: Vec::new(),
+        let client_manager = ClientManager {
+            next_id: AtomicU32::new(0),
+            clients: RwLock::new(Vec::new()),
+            subscribers: RwLock::new(vec![]),
         };
 
         // add clients from config
@@ -80,13 +89,18 @@ impl ClientManager {
         Ok(client_manager)
     }
 
-    pub fn register_client(&mut self, addr: SocketAddr, pos: Position) {
+    pub fn register_client(&self, addr: SocketAddr, pos: Position) {
         let handle = self.new_id();
         let client = Client { addr, pos, handle };
-        self.clients.push(client);
+        self.clients.write().unwrap().push(client);
+        self.notify();
     }
 
     pub fn get_clients(&self) -> Vec<Client> {
-        self.clients.clone()
+        self.clients.read().unwrap().clone()
+    }
+
+    pub fn subscribe(&self, subscriber: Arc<AtomicBool>) {
+        self.subscribers.write().unwrap().push(subscriber);
     }
 }

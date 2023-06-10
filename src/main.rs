@@ -1,4 +1,4 @@
-use std::{sync::mpsc, process, env};
+use std::{sync::{mpsc, Arc}, process, env};
 
 use lan_mouse::{
     client::ClientManager,
@@ -32,7 +32,7 @@ pub fn main() {
     let (consume_tx, consume_rx) = mpsc::sync_channel(128);
 
     // create client manager
-    let mut client_manager = match ClientManager::new(&config) {
+    let client_manager = match ClientManager::new(&config) {
         Err(e) => {
             eprintln!("{e}");
             process::exit(1);
@@ -73,7 +73,7 @@ pub fn main() {
             process::exit(1);
         }
     };
-    let (receiver, sender) = match event_server.run(&mut client_manager, produce_rx, consume_tx) {
+    let (receiver, sender) = match event_server.run(Arc::new(client_manager), produce_rx, consume_tx) {
         Ok((r,s)) => (r,s),
         Err(e) => {
             eprintln!("{e}");
@@ -84,7 +84,11 @@ pub fn main() {
     request_thread.join().unwrap();
 
     // stop receiving events and terminate event-consumer
-    receiver.join().unwrap();
+    if let Err(e) = receiver.join().unwrap() {
+        eprint!("{e}");
+        process::exit(1);
+    }
+
     if let Some(thread) = event_consumer {
         thread.join().unwrap();
     }
@@ -93,5 +97,9 @@ pub fn main() {
     if let Some(thread) = event_producer {
         thread.join().unwrap();
     }
-    sender.join().unwrap();
+
+    if let Err(e) = sender.join().unwrap() {
+        eprint!("{e}");
+        process::exit(1);
+    }
 }

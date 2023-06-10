@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use std::{
     collections::HashMap,
     error::Error,
@@ -10,7 +12,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::client::{ClientHandle, ClientManager};
+use crate::{client::{ClientHandle, ClientManager}, ioutils::{ask_confirmation, ask_position}};
 
 use super::Event;
 
@@ -30,25 +32,25 @@ impl Server {
     }
 
     pub fn run(
-        self,
-        client_manager: &mut ClientManager,
+        &self,
+        client_manager: Arc<ClientManager>,
         produce_rx: Receiver<(Event, ClientHandle)>,
         consume_tx: SyncSender<(Event, ClientHandle)>,
-    ) -> Result<(JoinHandle<()>, JoinHandle<()>), Box<dyn Error>> {
+    ) -> Result<(JoinHandle<Result<()>>, JoinHandle<Result<()>>), Box<dyn Error>> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
         let rx = udp_socket.try_clone()?;
         let tx = udp_socket;
 
         let sending = self.sending.clone();
+        let clients_updated = Arc::new(AtomicBool::new(true));
+        client_manager.subscribe(clients_updated.clone());
+        let client_manager_clone = client_manager.clone();
 
-        let mut client_for_socket = HashMap::new();
-        for client in client_manager.get_clients() {
-            println!("{}: {}", client.handle, client.addr);
-            client_for_socket.insert(client.addr, client.handle);
-        }
         let receiver = thread::Builder::new()
             .name("event receiver".into())
             .spawn(move || {
+                let mut client_for_socket = HashMap::new();
+
                 loop {
                     let (event, addr) = match Server::receive_event(&rx) {
                         Ok(e) => e,
@@ -58,10 +60,30 @@ impl Server {
                         }
                     };
 
+                    if let Ok(_) = clients_updated.compare_exchange(
+                        true,
+                        false,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
+                        clients_updated.store(false, Ordering::SeqCst);
+                        client_for_socket.clear();
+                        println!("updating clients: ");
+                        for client in client_manager_clone.get_clients() {
+                            println!("{}: {}", client.handle, client.addr);
+                            client_for_socket.insert(client.addr, client.handle);
+                        }
+                    }
+
                     let client_handle = match client_for_socket.get(&addr) {
                         Some(c) => *c,
                         None => {
-                            println!("Allow connection from {:?}? [Y/n]", addr);
+                            eprint!("Allow connection from {:?}? ", addr);
+                            if ask_confirmation(false)? {
+                                client_manager_clone.register_client(addr, ask_position()?);
+                            } else {
+                                eprintln!("rejecting client: {:?}?", addr);
+                            }
                             continue;
                         }
                     };
