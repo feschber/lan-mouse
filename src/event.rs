@@ -211,7 +211,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                 match event_type {
                     PointerEventType::MOTION => {
                         let time = match data.get(2..6) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
@@ -219,7 +219,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         let relative_x = match data.get(6..14) {
-                            Some(d) => f64::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 8 Bytes at index 6".into(),
@@ -227,7 +227,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         let relative_y = match data.get(14..22) {
-                            Some(d) => f64::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 8 Bytes at index 14".into(),
@@ -242,7 +242,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                     }
                     PointerEventType::BUTTON => {
                         let time = match data.get(2..6) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
@@ -250,7 +250,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         let button = match data.get(6..10) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
@@ -258,7 +258,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         let state = match data.get(10..14) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 14".into(),
@@ -273,7 +273,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                     }
                     PointerEventType::AXIS => {
                         let time = match data.get(2..6) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
@@ -289,7 +289,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         let value = match data.get(7..15) {
-                            Some(d) => f64::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 8 Bytes at index 7".into(),
@@ -354,7 +354,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                 match event_type {
                     KeyboardEventType::KEY => {
                         let time = match data.get(2..6) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 6".into(),
@@ -362,7 +362,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                             }
                         };
                         let key = match data.get(6..10) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
@@ -381,7 +381,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                     }
                     KeyboardEventType::MODIFIERS => {
                         let mods_depressed = match data.get(2..6) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 6".into(),
@@ -389,7 +389,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                             }
                         };
                         let mods_latched = match data.get(6..10) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
@@ -397,7 +397,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                             }
                         };
                         let mods_locked = match data.get(10..14) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 14".into(),
@@ -405,7 +405,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                             }
                         };
                         let group = match data.get(14..18) {
-                            Some(d) => u32::from_be_bytes(d.try_into().unwrap()),
+                            Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
                                 return Err(Box::new(ProtocolError {
                                     msg: "Expected 4 Bytes at index 18".into(),
