@@ -30,8 +30,8 @@ impl Server {
     }
 
     pub fn run(
-        self,
-        client_manager: &mut ClientManager,
+        &self,
+        client_manager: Arc<ClientManager>,
         produce_rx: Receiver<(Event, ClientHandle)>,
         consume_tx: SyncSender<(Event, ClientHandle)>,
     ) -> Result<(JoinHandle<()>, JoinHandle<()>), Box<dyn Error>> {
@@ -40,16 +40,16 @@ impl Server {
         let tx = udp_socket;
 
         let sending = self.sending.clone();
+        let clients_updated = Arc::new(AtomicBool::new(false));
+        client_manager.subscribe(clients_updated.clone());
+        let client_manager_clone = client_manager.clone();
 
-        let mut client_for_socket = HashMap::new();
-        for client in client_manager.get_clients() {
-            println!("{}: {}", client.handle, client.addr);
-            client_for_socket.insert(client.addr, client.handle);
-        }
         let receiver = thread::Builder::new()
             .name("event receiver".into())
             .spawn(move || {
                 loop {
+                    let mut client_for_socket = HashMap::new();
+
                     let (event, addr) = match Server::receive_event(&rx) {
                         Ok(e) => e,
                         Err(e) => {
@@ -57,6 +57,13 @@ impl Server {
                             continue;
                         }
                     };
+
+                    if clients_updated.load(Ordering::Acquire) {
+                        for client in client_manager_clone.get_clients() {
+                            println!("{}: {}", client.handle, client.addr);
+                            client_for_socket.insert(client.addr, client.handle);
+                        }
+                    }
 
                     let client_handle = match client_for_socket.get(&addr) {
                         Some(c) => *c,
