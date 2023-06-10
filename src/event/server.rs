@@ -42,7 +42,7 @@ impl Server {
         let tx = udp_socket;
 
         let sending = self.sending.clone();
-        let clients_updated = Arc::new(AtomicBool::new(false));
+        let clients_updated = Arc::new(AtomicBool::new(true));
         client_manager.subscribe(clients_updated.clone());
         let client_manager_clone = client_manager.clone();
 
