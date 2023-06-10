@@ -41,7 +41,13 @@ pub fn main() {
     };
 
     // start receiving client connection requests
-    let (request_server, request_thread) = request::Server::listen(port).unwrap();
+    let (request_server, request_thread) = match request::Server::listen(port) {
+        Err(e) => {
+            eprintln!("Could not bind to port {port}: {e}");
+            process::exit(1);
+        }
+        Ok(r) => r,
+    };
 
     println!("Press Ctrl+Alt+Shift+Super to release the mouse");
 
