@@ -58,7 +58,6 @@ impl ClientManager {
         };
         let addr = SocketAddr::new(ip, client.port.unwrap_or(42069));
         self.register_client(addr, pos);
-        self.notify();
         Ok(())
     }
 
@@ -94,6 +93,7 @@ impl ClientManager {
         let handle = self.new_id();
         let client = Client { addr, pos, handle };
         self.clients.write().unwrap().push(client);
+        self.notify();
     }
 
     pub fn get_clients(&self) -> Vec<Client> {

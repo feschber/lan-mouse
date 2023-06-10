@@ -60,9 +60,15 @@ impl Server {
                         }
                     };
 
-                    if clients_updated.load(Ordering::Acquire) {
+                    if let Ok(_) = clients_updated.compare_exchange(
+                        true,
+                        false,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    ) {
                         clients_updated.store(false, Ordering::SeqCst);
                         client_for_socket.clear();
+                        println!("updating clients: ");
                         for client in client_manager_clone.get_clients() {
                             println!("{}: {}", client.handle, client.addr);
                             client_for_socket.insert(client.addr, client.handle);
