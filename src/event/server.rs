@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use std::{
     collections::HashMap,
     error::Error,
@@ -10,7 +12,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::client::{ClientHandle, ClientManager};
+use crate::{client::{ClientHandle, ClientManager}, ioutils::{ask_confirmation, ask_position}};
 
 use super::Event;
 
@@ -34,7 +36,7 @@ impl Server {
         client_manager: Arc<ClientManager>,
         produce_rx: Receiver<(Event, ClientHandle)>,
         consume_tx: SyncSender<(Event, ClientHandle)>,
-    ) -> Result<(JoinHandle<()>, JoinHandle<()>), Box<dyn Error>> {
+    ) -> Result<(JoinHandle<Result<()>>, JoinHandle<Result<()>>), Box<dyn Error>> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
         let rx = udp_socket.try_clone()?;
         let tx = udp_socket;
@@ -59,6 +61,7 @@ impl Server {
                     };
 
                     if clients_updated.load(Ordering::Acquire) {
+                        client_for_socket.clear();
                         for client in client_manager_clone.get_clients() {
                             println!("{}: {}", client.handle, client.addr);
                             client_for_socket.insert(client.addr, client.handle);
@@ -68,7 +71,11 @@ impl Server {
                     let client_handle = match client_for_socket.get(&addr) {
                         Some(c) => *c,
                         None => {
-                            println!("Allow connection from {:?}? [Y/n]", addr);
+                            println!("Allow connection from {:?}?", addr);
+                            if ask_confirmation(false)? {
+                                // yes
+                                client_manager_clone.register_client(addr, ask_position()?);
+                            }
                             continue;
                         }
                     };
@@ -98,6 +105,7 @@ impl Server {
                             .send((event, client_handle))
                             .expect("event consumer unavailable");
                     }
+                    return Ok(())
                 }
             })?;
 

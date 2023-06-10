@@ -84,7 +84,11 @@ pub fn main() {
     request_thread.join().unwrap();
 
     // stop receiving events and terminate event-consumer
-    receiver.join().unwrap();
+    if let Err(e) = receiver.join().unwrap() {
+        eprint!("{e}");
+        process::exit(1);
+    }
+
     if let Some(thread) = event_consumer {
         thread.join().unwrap();
     }
@@ -93,5 +97,9 @@ pub fn main() {
     if let Some(thread) = event_producer {
         thread.join().unwrap();
     }
-    sender.join().unwrap();
+
+    if let Err(e) = sender.join().unwrap() {
+        eprint!("{e}");
+        process::exit(1);
+    }
 }
