@@ -113,7 +113,6 @@ impl Server {
                             .send((event, client_handle))
                             .expect("event consumer unavailable");
                     }
-                    return Ok(())
                 }
             })?;
 
