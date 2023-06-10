@@ -5,13 +5,13 @@ backend = "wlroots"
 # example configuration
 
 # define a client on the right side with host name "iridium"
-[left]
-# hostname
-host_name = "iridium"
-# optional ip address
-ip = "192.168.178.141"
-# optional port (defaults to 42069)
-port = 42069
+# [left]
+# # hostname
+# host_name = "iridium"
+# # optional ip address
+# ip = "192.168.178.141"
+# # optional port (defaults to 42069)
+# port = 42069
 
 # define a client on the left side with ip 192.168.178.189
 #
@@ -19,4 +19,4 @@ port = 42069
 # and host_name can be omitted
 [right]
 ip = "192.168.178.172"
-port = 42068
+port = 42069
