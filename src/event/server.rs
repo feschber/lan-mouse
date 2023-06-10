@@ -49,9 +49,9 @@ impl Server {
         let receiver = thread::Builder::new()
             .name("event receiver".into())
             .spawn(move || {
-                loop {
-                    let mut client_for_socket = HashMap::new();
+                let mut client_for_socket = HashMap::new();
 
+                loop {
                     let (event, addr) = match Server::receive_event(&rx) {
                         Ok(e) => e,
                         Err(e) => {
