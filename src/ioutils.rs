@@ -25,6 +25,8 @@ pub fn ask_confirmation(default: bool) -> Result<bool, io::Error> {
 }
 
 pub fn ask_position() -> Result<Position, io::Error> {
+    eprint!("Enter position - top (t) | bottom (b) | left(l) | right(r): ");
+    io::stderr().flush()?;
     let pos = loop {
         let mut buffer = String::new();
         io::stdin().read_line(&mut buffer)?;
@@ -36,7 +38,7 @@ pub fn ask_position() -> Result<Position, io::Error> {
             "l" | "left" => break Position::Right,
             "r" | "right" => break Position::Left,
             _ => {
-                eprint!("Enter top/t bottom/b left/l or right/r: ");
+                eprint!("Invalid position: {answer} - enter top (t) | bottom (b) | left(l) | right(r): ");
                 io::stderr().flush()?;
                 continue
             }
