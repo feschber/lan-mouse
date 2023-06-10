@@ -12,7 +12,8 @@ pub fn ask_confirmation(default: bool) -> Result<bool, io::Error> {
         let answer = buffer.to_lowercase();
         let answer = answer.trim();
         match answer {
-            "" | "y" => break true,
+            "" => break default,
+            "y" => break true,
             "n" => break false,
             _ => {
                 eprint!("Enter y for Yes or n for No: ");
