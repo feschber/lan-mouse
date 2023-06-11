@@ -26,7 +26,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 ### Additional options
 Additionally
 - a preferred backend
-- a port override for the default port (2020)
+- a port override for the default port (4242)
 
 can be specified.
 
