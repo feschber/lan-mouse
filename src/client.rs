@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, error::Error, fmt::Display, sync::{Arc, atomic::{AtomicBool, Ordering, AtomicU32}, RwLock}};
 
-use crate::{config, dns};
+use crate::{config::{self, DEFAULT_PORT}, dns};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy)]
 pub enum Position {
@@ -56,7 +56,7 @@ impl ClientManager {
                 None => return Err(Box::new(ClientConfigError{})),
             },
         };
-        let addr = SocketAddr::new(ip, client.port.unwrap_or(20202));
+        let addr = SocketAddr::new(ip, client.port.unwrap_or(DEFAULT_PORT));
         self.register_client(addr, pos);
         Ok(())
     }

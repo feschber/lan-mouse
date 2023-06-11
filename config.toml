@@ -1,7 +1,7 @@
 # example configuration
 
 # optional port
-port = 20202
+port = 4242
 # optional backend override
 backend = "wlroots"
 
@@ -11,8 +11,8 @@ backend = "wlroots"
 host_name = "iridium"
 # optional ip address
 ip = "192.168.178.141"
-# optional port (defaults to 20202)
-port = 20202
+# optional port (defaults to 4242)
+port = 4242
 
 # define a client on the left side with IP address 192.168.178.189
 #

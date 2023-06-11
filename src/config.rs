@@ -8,6 +8,8 @@ use toml;
 
 use crate::client::Position;
 
+pub const DEFAULT_PORT: u16 = 4242;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
     pub port: Option<u16>,
@@ -85,8 +87,6 @@ impl Config {
             },
             backend => backend,
         };
-
-        const DEFAULT_PORT: u16 = 4242;
 
         let port = match find_arg("--port")? {
             Some(port) => port.parse::<u16>()?,
