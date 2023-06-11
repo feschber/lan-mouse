@@ -108,7 +108,7 @@ fn send_keyboard_input(ki: KEYBDINPUT) {
     unsafe {
         let mut input = INPUT {
             type_: INPUT_KEYBOARD,
-            u: Default::default(),
+            u: std::mem::zeroed(),
         };
         *input.u.ki_mut() = ki;
         winapi::um::winuser::SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);

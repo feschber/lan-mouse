@@ -56,7 +56,7 @@ impl ClientManager {
                 None => return Err(Box::new(ClientConfigError{})),
             },
         };
-        let addr = SocketAddr::new(ip, client.port.unwrap_or(42069));
+        let addr = SocketAddr::new(ip, client.port.unwrap_or(2020));
         self.register_client(addr, pos);
         Ok(())
     }

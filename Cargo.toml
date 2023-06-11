@@ -10,16 +10,16 @@ strip = true
 lto = "fat"
 
 [dependencies]
-tempfile = "3.2"
+tempfile = "3.6"
 trust-dns-resolver = "0.22"
 memmap = "0.7"
-toml = "0.5"
+toml = "0.7"
 serde = "1.0"
 serde_derive = "1.0"
 anyhow = "1.0.71"
 
 [target.'cfg(unix)'.dependencies]
-wayland-client = { version="0.30.0", optional = true }
+wayland-client = { version="0.30.2", optional = true }
 wayland-protocols = { version="0.30.0", features=["client", "staging", "unstable"], optional = true }
 wayland-protocols-wlr = { version="0.1.0", features=["client"], optional = true }
 wayland-protocols-misc = { version="0.1.0", features=["client"], optional = true }

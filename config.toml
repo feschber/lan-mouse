@@ -1,8 +1,9 @@
-# define port and backend of this instance
-port = 42069
-backend = "wlroots"
-
 # example configuration
+
+# optional port
+port = 2020
+# optional backend override
+backend = "wlroots"
 
 # define a client on the right side with host name "iridium"
 [right]
@@ -10,12 +11,12 @@ backend = "wlroots"
 host_name = "iridium"
 # optional ip address
 ip = "192.168.178.141"
-# optional port (defaults to 42069)
-port = 42069
+# optional port (defaults to 2020)
+port = 2020
 
-# define a client on the left side with ip 192.168.178.189
+# define a client on the left side with IP address 192.168.178.189
 #
-# when an ip address is specified, it takes priority
+# when an IP address is specified, it takes priority
 # and host_name can be omitted
 [left]
 ip = "192.168.178.189"

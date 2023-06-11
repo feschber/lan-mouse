@@ -7,7 +7,68 @@ Of course ***blazingly fast™*** and stable, because it's written in rust.
 
 For an alternative (with slightly different goals) you may check out [Input Leap](https://github.com/input-leap).
 
-# OS Support
+## Configuration
+Configuration is done through the file `config.toml`,
+which must be located in the current working directory when
+executing lan-mouse.
+
+### Example config
+A minimal config file could look like this:
+
+```toml
+[left]
+host_name = "my-laptop"
+```
+
+Where `left` can be either `left`, `right`, `top` or `bottom`.
+
+
+### Additional options
+Additionally
+- a preferred backend
+- a port override for the default port (2020)
+
+can be specified.
+
+Supported backends currently include "wlroots", "x11" and "windows".
+
+These two options can also be specified via the commandline
+options `--backend` and `--port` respectively.
+
+## Build and Run
+Build only
+```sh
+cargo build --release
+```
+
+Run
+```sh
+cargo run --release
+```
+
+### Conditional Compilation
+
+Currently only x11, wayland and windows are supported backends,
+Depending on the toolchain used, support for other platforms is omitted
+automatically (it does not make sense to build a Windows `.exe` with
+support for x11 and wayland backends).
+
+However one might still want to omit support for e.g. wayland or x11 on
+a Linux system.
+
+This is possible through
+[cargo features](https://doc.rust-lang.org/cargo/reference/features.html)
+
+E.g. if only wayland support is needed, the following command produces
+an executable with just support for wayland:
+```sh
+cargo build --no-default-features --features wayland
+```
+
+## OS Support
+
+The following table shows support for Event receiving and event Emitting
+on different operating systems:
 
 | Backend                   | Event Receiving          | Event Emitting                       |
 |---------------------------|--------------------------|--------------------------------------|
@@ -15,15 +76,39 @@ For an alternative (with slightly different goals) you may check out [Input Leap
 | Wayland (KDE)             | WIP                      | :heavy_check_mark:                   |
 | Wayland (Gnome)           | TODO (libei support)     | TODO (wlr-layer-shell not supported) |
 | X11                       | WIP                      | TODO                                 |
-| Windows                   | WIP                      | TODO                                 |
+| Windows                   | needs improvements       | TODO                                 |
 | MacOS                     | TODO (I dont own a Mac)  | TODO (I dont own a Mac)              |
 
-
 ## Wayland compositor support
-Wayland support for consuming and producing input-events currently relies on unstable wayland protocols:
-- [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1) is required to display surfaces on screen edges -> not supported by Gnome
-- [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1) and [wlr-virtual-pointer-unstable-v1](https://wayland.app/protocols/wlr-virtual-pointer-unstable-v1) are used to emulate input on wlroots compositors
-- [kde-fake-input](https://wayland.app/protocols/kde-fake-input) is used to emulate input in KDE (WIP)
+### Input Emulation (for receiving events)
+On wayland input-emulation is in an early/unstable state as of writing this.
+
+Different compositors have different ways of enabling input emulation:
+
+Most wlroots-based compositors like Hyprland and Sway support the following
+unstable wayland protocols for keyboard and mouse emulation:
+- [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1)
+- [wlr-virtual-pointer-unstable-v1](https://wayland.app/protocols/wlr-virtual-pointer-unstable-v1) are used to emulate input on wlroots compositors
+
+KDE also has a protocol for input emulation ([kde-fake-input](https://wayland.app/protocols/kde-fake-input)), it is however not exposed to
+third party apps, so the recommended way of enabling input emulation in KDE is the
+[freedesktop remote-desktop-portal](https://flatpak.github.io/xdg-desktop-portal/#gdbus-org.freedesktop.portal.RemoteDesktop).
+
+Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation,
+which has the goal to become the general approach for emulating Input on wayland.
+
+|  Required Protocols  (Event Receiving) | Sway               | Kwin                 | Gnome                |
+|----------------------------------------|--------------------|----------------------|----------------------|
+| wlr-virtual-pointer-unstable-v1        | :heavy_check_mark: | :x:                  | :x:                  |
+| virtual-keyboard-unstable-v1           | :heavy_check_mark: | :x:                  | :x:                  |
+| ~fake-input~                           | :x:                | ~:heavy_check_mark:~ | :x:                  |
+
+### Input capture
+
+To capture mouse and keyboard input, a few things are necessary:
+- Displaying an immovable surface at screen edges
+- Locking the mouse in place
+- (optionally but highly recommended) reading unaccelerated mouse input
 
 |  Required Protocols  (Event Emitting)  | Sway               | Kwin                 | Gnome                |
 |----------------------------------------|--------------------|----------------------|----------------------|
@@ -32,36 +117,31 @@ Wayland support for consuming and producing input-events currently relies on uns
 | keyboard-shortcuts-inhibit-unstable-v1 | :heavy_check_mark: | :heavy_check_mark:   | :heavy_check_mark:   |
 | wlr-layer-shell-unstable-v1            | :heavy_check_mark: | :heavy_check_mark:   | :x:                  |
 
-|  Required Protocols  (Event Receiving) | Sway               | Kwin                 | Gnome                |
-|----------------------------------------|--------------------|----------------------|----------------------|
-| wlr-virtual-pointer-unstable-v1        | :heavy_check_mark: | :x:                  | :x:                  |
-| virtual-keyboard-unstable-v1           | :heavy_check_mark: | :x:                  | :x:                  |
-| fake-input                             | :x:                | :heavy_check_mark:   | :x:                  |
+The [zwlr\_virtual\_pointer\_manager\_v1](wlr-virtual-pointer-unstable-v1) is required
+to display surfaces on screen edges and used to display the immovable window on
+both wlroots based compositors and KDE.
 
+Gnome unfortunately does not support this protocol
+and [likely won't ever support it](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141).
 
-The [wlr_layer_shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1) will likely [never be implemented in Gnome](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141), so a Gnome-Shell extension is probably the way to go here.
+So there is currently no way of doing this in Wayland, aside from a custom Gnome-Shell
+extension, which is not a very elegant solution.
 
+This is to be looked into in the future.
 
 ~In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.~
 (this works natively on sway versions >= 1.8)
 
-For the receiving end, Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation, which might be the better approach in general moving forward (TODO).
+## Windows support
+Currently windows can receive mouse and keyboard events, however unlike
+with the wlroots back-end,
+
+the scancodes are not translated between keyboard layouts.
+
+Event emitting is WIP.
 
 
-## Build and run
-First configure the client / server in `config.toml`. (A misconfiguration currently does not produce a very informative error message)
-
-Build only
-```sh
-cargo build
-```
-
-Run
-```sh
-cargo run
-```
-
-## TODO
+## TODOS
 - [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
 - [x] Mouse grabbing
 - [x] Window with absolute position -> wlr\_layer\_shell
@@ -78,8 +158,9 @@ cargo run
 - [ ] Graphical frontend (gtk?)
 - [ ] *Encrytion*
 - [ ] Gnome Shell Extension (layer shell is not supported)
+- [ ] respect xdg-config-home for config file location.
 
-## Protocol considerations
+## Protocol
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
 Each event is sent as one single datagram, currently without any acknowledgement to guarantee 0% packet loss.
 This means, any packet that is lost results in a discarded mouse / key event, which is ignored for now.
@@ -107,8 +188,22 @@ Larger data chunks, like the keymap are offered by the server via tcp listening 
 This way we dont need to implement any congestion control and leave this up to tcp.
 In the future this can be used for e.g. clipboard contents as well.
 
+## Packets per Second
+While on LAN the performance is great,
+some WIFI cards seem to struggle with the amount of packets per second,
+particularly on high-end gaming mice with 1000Hz+ polling rates.
+
+The plan is to implement a way of accumulating packets and sending them as
+one single key event to reduce the packet rate (basically reducing the polling
+rate artificially).
+
+The way movement data is currently sent is also quite wasteful since even a 16bit integer
+is likely enough to represent even the fastest possible mouse movement.
+A different encoding that is more efficient for smaller values like
+[Protocol Buffers](https://protobuf.dev/programming-guides/encoding/)
+would be a better choice for the future and could also help for WIFI connections.
 
 ## Security
 Sending key and mouse event data over the local network might not be the biggest security concern but in any public network or business environment it's *QUITE* a problem to basically broadcast your keystrokes.
-- There should probably be an encryption layer below the application to enable a secure link
-- The encryption keys could be generated by the graphical frontend
+- There should be an encryption layer below the application to enable a secure link.
+- The encryption keys could be generated by the graphical frontend.
