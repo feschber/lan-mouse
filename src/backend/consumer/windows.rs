@@ -4,14 +4,14 @@ use crate::event::{KeyboardEvent, PointerEvent};
 use winapi::{
     self,
     um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
-    MOUSEEVENTF_LEFTDOWN,
-    MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_MIDDLEDOWN,
-    MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_RIGHTUP,
-    MOUSEEVENTF_MIDDLEUP,
-    MOUSEEVENTF_WHEEL,
-    MOUSEEVENTF_HWHEEL,
+        MOUSEEVENTF_LEFTDOWN,
+        MOUSEEVENTF_RIGHTDOWN,
+        MOUSEEVENTF_MIDDLEDOWN,
+        MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_RIGHTUP,
+        MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_WHEEL,
+        MOUSEEVENTF_HWHEEL, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_SCANCODE, KEYEVENTF_KEYUP,
     },
 };
 
@@ -89,6 +89,32 @@ fn scroll(axis: u8, value: f64) {
     send_mouse_input(mi);
 }
 
+fn key_event(key: u32, state: u8) {
+    let ki = KEYBDINPUT {
+        wVk: 0,
+        wScan: key as u16,
+        dwFlags: KEYEVENTF_SCANCODE | match state {
+            0 => KEYEVENTF_KEYUP,
+            1 => 0u32,
+            _ => return
+        },
+        time: 0,
+        dwExtraInfo: 0,
+    };
+    send_keyboard_input(ki);
+}
+
+fn send_keyboard_input(ki: KEYBDINPUT) {
+    unsafe {
+        let mut input = INPUT {
+            type_: INPUT_KEYBOARD,
+            u: Default::default(),
+        };
+        *input.u.ki_mut() = ki;
+        winapi::um::winuser::SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
 pub fn run(event_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
     loop {
         match event_rx.recv().expect("event receiver unavailable").0 {
@@ -101,14 +127,11 @@ pub fn run(event_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
                     rel_mouse(relative_x as i32, relative_y as i32);
                 }
                 PointerEvent::Button { time:_, button, state } => { mouse_button(button, state)}
-                PointerEvent::Axis { time:_, axis, value } => {
-                    println!("axis: {axis}, value: {value}");
-                    scroll(axis, value)
-                }
+                PointerEvent::Axis { time:_, axis, value } => { scroll(axis, value) }
                 PointerEvent::Frame {} => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
-                KeyboardEvent::Key { .. } => {}
+                KeyboardEvent::Key { time:_, key, state } => { key_event(key, state) }
                 KeyboardEvent::Modifiers { .. } => {}
             },
             Event::Release() => {}
