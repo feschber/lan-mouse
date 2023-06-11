@@ -27,6 +27,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 Additionally
 - a preferred backend
 - a port override for the default port (2020)
+
 can be specified.
 
 Supported backends currently include "wlroots", "x11" and "windows".
@@ -95,8 +96,6 @@ third party apps, so the recommended way of enabling input emulation in KDE is t
 
 Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation,
 which has the goal to become the general approach for emulating Input on wayland.
-
-For now the backend can be selected through the config file.
 
 |  Required Protocols  (Event Receiving) | Sway               | Kwin                 | Gnome                |
 |----------------------------------------|--------------------|----------------------|----------------------|
