@@ -9,7 +9,7 @@ For an alternative (with slightly different goals) you may check out [Input Leap
 
 ## Configuration
 Configuration is done through the file `config.toml`,
-which must be located in the current working directory, when
+which must be located in the current working directory when
 executing lan-mouse.
 
 ### Example config
