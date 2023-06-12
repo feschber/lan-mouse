@@ -47,7 +47,7 @@ reis = { git = "https://github.com/ids1024/reis", features = [ "tokio" ], option
 core-graphics = { version = "0.23", features = ["highsierra"] }
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["winuser"] }
+winapi = { version = "0.3.9", features = ["winuser", "commctrl"] }
 
 [build-dependencies]
 glib-build-tools = "0.18.0"
