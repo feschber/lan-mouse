@@ -4,7 +4,6 @@ description = "Software KVM Switch / mouse & keyboard sharing software for Local
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-license-file = "LICENSE"
 repository = "https://github.com/ferdinandschober/lan-mouse"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
