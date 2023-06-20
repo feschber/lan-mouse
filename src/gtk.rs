@@ -7,7 +7,7 @@ use std::thread;
 use adw::Application;
 use gtk::{gio, glib, prelude::ApplicationExt};
 
-pub(crate) fn start() -> thread::JoinHandle<glib::ExitCode> {
+pub fn start() -> thread::JoinHandle<glib::ExitCode> {
     thread::spawn(gtk_main)
 }
 

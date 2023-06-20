@@ -47,7 +47,7 @@
         <property name="spacing">6</property>
         <child>
           <object class="GtkEntry" id="entry">
-            <property name="placeholder-text" translatable="yes">Enter a Task…</property>
+            <property name="placeholder-text" translatable="yes">Enter IP-Address or Hostname…</property>
             <property name="secondary-icon-name">list-add-symbolic</property>
           </object>
         </child>

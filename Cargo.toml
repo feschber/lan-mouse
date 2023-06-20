@@ -45,7 +45,7 @@ default = [
 	"x11",
 	"xdg_desktop_portal",
 	"libei",
-	"gtk"
+	"gtk",
 ]
 wayland = [
 	"dep:wayland-client",
