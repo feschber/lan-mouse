@@ -13,8 +13,8 @@ strip = true
 lto = "fat"
 
 [dependencies]
-tempfile = "3.6"
-trust-dns-resolver = "0.22"
+tempfile = "3.8"
+trust-dns-resolver = "0.23"
 memmap = "0.7"
 toml = "0.7"
 serde = { version = "1.0", features = ["derive"] }
