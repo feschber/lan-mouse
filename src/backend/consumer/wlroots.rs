@@ -120,18 +120,20 @@ impl App {
                 let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
                 // receive keymap from device
-                eprint!("\rconnecting to {} ", client.addr);
+                eprint!("\rtrying to recieve keymap from {} ", client.addr);
                 let mut attempts = 0;
                 let data = loop {
+                    if attempts > 10 { break None }
                     let result = request::request_data(client.addr, Request::KeyMap);
-                    eprint!("\rconnecting to {} ", client.addr);
-                    for _ in 0..attempts {
-                        eprint!(".");
-                    }
+                    eprint!("\rtrying to recieve keymap from {} ", client.addr);
                     match result {
-                        Ok(data) => break data,
+                        Ok(data) => break Some(data),
                         Err(e) => {
-                            eprint!(" - {}", e);
+                            eprint!(" - {} ", e);
+                            for _ in 0..attempts % 4 {
+                                eprint!(".");
+                            }
+                            eprint!("   ");
                         }
                     }
                     io::stderr().flush().unwrap();
@@ -139,18 +141,21 @@ impl App {
                     attempts += 1;
                 };
 
-                eprint!("\rconnecting to {} ", client.addr);
-                for _ in 0..attempts {
-                    eprint!(".");
-                }
-                eprintln!(" done!                          ");
+                if let Some(data) = data {
+                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
+                    eprintln!(" - done!                                        ");
 
-                // TODO use shm_open
-                let f = tempfile::tempfile().unwrap();
-                let mut buf = BufWriter::new(&f);
-                buf.write_all(&data[..]).unwrap();
-                buf.flush().unwrap();
-                keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
+                    // TODO use shm_open
+                    let f = tempfile::tempfile().unwrap();
+                    let mut buf = BufWriter::new(&f);
+                    buf.write_all(&data[..]).unwrap();
+                    buf.flush().unwrap();
+                    keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
+                } else {
+                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
+                    eprintln!("no keyboard provided, using server keymap");
+                }
+
 
                 let vinput = VirtualInput::Wlroots { pointer, keyboard };
 
