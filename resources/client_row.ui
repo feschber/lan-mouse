@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+	<template class="ClientRow" parent="AdwExpanderRow">
+		<property name="title">hostname</property>
+		<!-- enabled -->
+		<child type="prefix">
+			<object class="GtkSwitch">
+				<property name="valign">center</property>
+				<property name="halign">end</property>
+				<property name="tooltip-text" translatable="yes">enable</property>
+			</object>
+		</child>
+		<!-- position -->
+		<child>
+			<object class="AdwComboRow" id="position">
+				<property name="title" translatable="yes">position</property>
+				<property name="model">
+					<object class="GtkStringList">
+						<items>
+							<item>Left</item>
+							<item>Right</item>
+							<item>Top</item>
+							<item>Bottom</item>
+						</items>
+					</object>
+				</property>
+			</object>
+		</child>
+		<!-- hostname -->
+		<child>
+			<object class="AdwEntryRow" id="hostname">
+				<property name="title" translatable="yes">hostname</property>
+				<property name="xalign">0.5</property>
+			</object>
+		</child>
+		<!-- port -->
+		<child>
+			<object class="AdwEntryRow" id="port">
+				<property name="title" translatable="yes">port</property>
+				<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
+				<property name="xalign">0.5</property>
+			</object>
+		</child>
+	</template>
+</interface>

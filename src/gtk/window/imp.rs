@@ -1,9 +1,9 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use glib::subclass::InitializingObject;
-use gtk::{prelude::*, Button};
-use gtk::subclass::prelude::*;
-use gtk::{glib, CompositeTemplate};
+use adw::prelude::*;
+use adw::subclass::prelude::*;
+use gtk::{glib, Button, CompositeTemplate, ListBox, gio};
 
 // ANCHOR: object
 // Object holding the state
@@ -11,6 +11,11 @@ use gtk::{glib, CompositeTemplate};
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
 pub struct Window {
     pub number: Cell<i32>,
+    #[template_child]
+    pub add_client_button: TemplateChild<Button>,
+    #[template_child]
+    pub client_list: TemplateChild<ListBox>,
+    pub clients: RefCell<Option<gio::ListStore>>,
 }
 // ANCHOR_END: object
 
@@ -43,11 +48,28 @@ impl Window {
         self.number.set(number_increased);
         button.set_label(&number_increased.to_string())
     }
+
+    #[template_callback]
+    fn handle_add_client(&self, _button: &Button) {
+        println!("Add client");
+    }
+
+    // fn create_client_row(&self, client_object: &ClientObject) -> ActionRow {
+
+    // }
 }
 // ANCHOR_END: template_callbacks
 
 // Trait shared by all GObjects
-impl ObjectImpl for Window {}
+impl ObjectImpl for Window {
+    fn constructed(&self) {
+        self.parent_constructed();
+        let obj = self.obj();
+        obj.setup_icon();
+        obj.setup_clients();
+        obj.setup_callbacks();
+    }
+}
 
 // Trait shared by all widgets
 impl WidgetImpl for Window {}

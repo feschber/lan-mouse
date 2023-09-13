@@ -1,8 +1,10 @@
 mod window;
+mod client_object;
+mod client_row;
 
 use crate::gtk::window::Window;
 
-use gtk::prelude::*;
+use gtk::{prelude::*, IconTheme, gdk::Display};
 use std::thread;
 use adw::Application;
 use gtk::{gio, glib, prelude::ApplicationExt};
@@ -19,9 +21,15 @@ fn gtk_main() -> glib::ExitCode {
         .application_id("de.feschber.lan-mouse")
         .build();
 
+    app.connect_startup(|_| load_icons());
     app.connect_activate(build_ui);
 
     app.run()
+}
+
+fn load_icons() {
+    let icon_theme = IconTheme::for_display(&Display::default().expect("Could not connect to a display."));
+    icon_theme.add_resource_path("/de/feschber/LanMouse/icons");
 }
 
 fn build_ui(app: &Application) {

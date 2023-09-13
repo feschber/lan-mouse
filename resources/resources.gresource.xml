@@ -2,5 +2,9 @@
 <gresources>
   <gresource prefix="/de/feschber/LanMouse/">
     <file compressed="true" preprocess="xml-stripblanks">window.ui</file>
+    <file compressed="true" preprocess="xml-stripblanks">client_row.ui</file>
+  </gresource>
+  <gresource prefix="/de/feschber/LanMouse/icons">
+	<file compressed="true" preprocess="xml-stripblanks">mouse-icon.svg</file>
   </gresource>
 </gresources>

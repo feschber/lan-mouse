@@ -1,69 +1,109 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-  <menu id="main-menu">
-    <item>
-      <attribute name="label" translatable="yes">_Close window</attribute>
-      <attribute name="action">window.close</attribute>
-    </item>
-    <item>
-      <attribute name="label" translatable="yes">_Sensitive button</attribute>
-      <attribute name="action">win.sensitive-button</attribute>
-    </item>
-    <section>
-      <attribute name="label" translatable="yes">Orientation</attribute>
-      <item>
-        <attribute name="label" translatable="yes">_Horizontal</attribute>
-        <attribute name="action">win.orientation</attribute>
-        <attribute name="target">Horizontal</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Vertical</attribute>
-        <attribute name="action">win.orientation</attribute>
-        <attribute name="target">Vertical</attribute>
-      </item>
-    </section>
-  </menu>
-  <template class="LanMouseWindow" parent="GtkApplicationWindow">
-    <property name="width-request">360</property>
-    <child type="titlebar">
-      <object class="GtkHeaderBar">
-        <child type ="end">
-          <object class="GtkMenuButton">
-            <property name="icon-name">open-menu-symbolic</property>
-            <property name="menu-model">main-menu</property>
-          </object>
-        </child>
-      </object>
-    </child>
-    <property name="width-request">360</property>
-    <property name="title" translatable="yes">Lan Mouse</property>
-    <child>
-      <object class="GtkBox">
-        <property name="orientation">vertical</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <property name="spacing">6</property>
-        <child>
-          <object class="GtkEntry" id="entry">
-            <property name="placeholder-text" translatable="yes">Enter IP-Address or Hostname…</property>
-            <property name="secondary-icon-name">list-add-symbolic</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkScrolledWindow">
-            <property name="hscrollbar-policy">never</property>
-            <property name="min-content-height">360</property>
-            <property name="vexpand">true</property>
-            <child>
-              <object class="GtkListView" id="tasks_list">
-                <property name="valign">start</property>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
-  </template>
+	<requires lib="gtk" version="4.0"/>
+	<requires lib="libadwaita" version="1.0"/>
+	<menu id="main-menu">
+		<item>
+			<attribute name="label" translatable="yes">_Close window</attribute>
+			<attribute name="action">window.close</attribute>
+		</item>
+	</menu>
+	<template class="LanMouseWindow" parent="GtkApplicationWindow">
+		<property name="width-request">800</property>
+		<property name="title" translatable="yes">Lan Mouse</property>
+		<property name="show-menubar">True</property>
+		<child type="titlebar">
+			<object class="GtkHeaderBar">
+				<child type ="end">
+					<object class="GtkMenuButton">
+						<property name="icon-name">open-menu-symbolic</property>
+						<property name="menu-model">main-menu</property>
+					</object>
+				</child>
+				<style>
+					<class name="flat"/>
+				</style>
+			</object>
+		</child>
+		<child>
+			<object class="AdwStatusPage">
+				<property name="title" translatable="yes">Lan Mouse</property>
+				<property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
+				<property name="icon-name">mouse-icon</property>
+				<property name="child">
+				  <object class="AdwClamp">
+					<property name="maximum-size">600</property>
+					<property name="tightening-threshold">300</property>
+					<property name="child">
+					  <object class="GtkBox">
+						<property name="orientation">vertical</property>
+						<property name="spacing">12</property>
+						<child>
+							<object class="AdwPreferencesGroup">
+								<property name="title" translatable="yes">General</property>
+								<child>
+									<object class="AdwActionRow">
+										<property name="title" translatable="yes">enable</property>
+										<child type="suffix">
+											<object class="GtkSwitch">
+												<property name="valign">center</property>
+												<property name="tooltip-text" translatable="yes">enable</property>
+											</object>
+										</child>
+									</object>
+								</child>
+								<child>
+									<object class="AdwEntryRow">
+										<property name="title" translatable="yes">port</property>
+										<property name="text">4242</property>
+										<property name="width-chars">5</property>
+										<property name="xalign">0.5</property>
+										<property name="show-apply-button">True</property>
+										<property name="input-purpose">GTK_INPUT_PURPOSE_DIGITS</property>
+									</object>
+								</child>
+							</object>
+						</child>
+						<child>
+							<object class="AdwPreferencesGroup">
+								<property name="title" translatable="yes">Connections</property>
+								<child>
+								  <object class="GtkListBox" id="client_list">
+									  <property name="selection-mode">none</property>
+									  <style>
+										  <class name="boxed-list" />
+									  </style>
+								  </object>
+								</child>
+							</object>
+						</child>
+						<child>
+							<object class="AdwPreferencesGroup">
+								<child>
+									<object class="GtkButton" id="add_client_button">
+										<property name="halign">center</property>
+										<property name="valign">center</property>
+										<property name="tooltip-text">connect a new computer</property>
+										<property name="child">
+											<object class="AdwButtonContent">
+												<property name="icon-name">list-add-symbolic</property>
+												<property name="label" translatable="yes">Add</property>
+												<property name="use-underline">True</property>
+											</object>
+										</property>
+										<signal name="clicked" handler="handle_add_client" swapped="true"/>
+										<style>
+											<class name="pill"/>
+										</style>
+									</object>
+								</child>
+							</object>
+						</child>
+					  </object>
+					</property>
+				  </object>
+			  </property>
+			</object>
+		</child>
+	</template>
 </interface>
