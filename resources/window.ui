@@ -69,10 +69,16 @@
 								<property name="title" translatable="yes">Connections</property>
 								<child>
 								  <object class="GtkListBox" id="client_list">
-									  <property name="selection-mode">none</property>
-									  <style>
-										  <class name="boxed-list" />
-									  </style>
+										<property name="selection-mode">none</property>
+										<child type="placeholder">
+											<object class="AdwActionRow" id="client_placeholder">
+												<property name="title">No connections!</property>
+												<property name="subtitle">add a new client via the button below</property>
+											</object>
+										</child>
+										<style>
+											<class name="boxed-list" />
+										</style>
 								  </object>
 								</child>
 							</object>

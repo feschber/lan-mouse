@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 
 use glib::subclass::InitializingObject;
-use adw::prelude::*;
+use adw::{prelude::*, ActionRow};
 use adw::subclass::prelude::*;
 use gtk::{glib, Button, CompositeTemplate, ListBox, gio};
 
@@ -15,6 +15,8 @@ pub struct Window {
     pub add_client_button: TemplateChild<Button>,
     #[template_child]
     pub client_list: TemplateChild<ListBox>,
+    #[template_child]
+    pub client_placeholder: TemplateChild<ActionRow>,
     pub clients: RefCell<Option<gio::ListStore>>,
 }
 // ANCHOR_END: object

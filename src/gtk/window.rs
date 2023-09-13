@@ -1,6 +1,6 @@
 mod imp;
 
-use adw::{prelude::*, ActionRow};
+use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
@@ -42,13 +42,16 @@ impl Window {
                 row.upcast()
             })
         );
+    }
 
-        let placeholder = ActionRow::builder()
-            .title("No connections!")
-            .subtitle("add a new client via the button below")
-            .build();
-
-        self.imp().client_list.set_placeholder(Some(&placeholder));
+    /// workaround for a bug in libadwaita that shows an ugly line beneath
+    /// the last element if a placeholder is set.
+    fn set_placeholder_visible(&self, visible: bool) {
+        let placeholder = self.imp().client_placeholder.get();
+        self.imp().client_list.set_placeholder(match visible {
+            true => Some(&placeholder),
+            false => None,
+        });
     }
 
     fn setup_icon(&self) {
@@ -71,6 +74,7 @@ impl Window {
             .add_client_button
             .connect_clicked(clone!(@weak self as window => move |_| {
                 window.new_client();
+                window.set_placeholder_visible(false);
             }));
     }
 }
