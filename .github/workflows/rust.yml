@@ -20,6 +20,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install libx11-dev libxtst-dev
+        sudo apt-get install libadwaita-1-dev libgtk-4-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
