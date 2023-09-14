@@ -50,48 +50,50 @@ impl Server {
         tx: UdpSocket,
         mut producer: Box<dyn EpollProducer>,
         consumer: Box<dyn Consumer>,
-    ) {
+    ) -> Result<()> {
         let udpfd = rx.as_raw_fd();
         let eventfd = producer.eventfd();
-        let epoll = Epoll::new(&[udpfd, eventfd]);
+        let epoll = Epoll::new(&[udpfd, eventfd])?;
         let client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
         let socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
-        match epoll.wait() {
-            fd if fd == udpfd => {
-                match Self::receive_event(&rx) {
-                    Ok((event, addr)) => {
-                        match client_for_socket.get(&addr) {
-                            Some(client_handle) => {
-                                consumer.consume(event, *client_handle);
-                            },
-                            None => {
-                                log::warn!("ignoring event from client {addr:?}");
-                            },
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("{e}");
-                    },
-                }
-            },
-            fd if fd == eventfd => {
-                let events = producer.read_events();
-                events.into_iter().for_each(|(c, e)| {
-                    if let Some(addr) = socket_for_client.get(&c) {
-                        Self::send_event(&tx, e, *addr);
-                    } else {
-                        log::error!("unknown client: id {c}");
+        loop {
+            match epoll.wait() {
+                fd if fd == udpfd => {
+                    match Self::receive_event(&rx) {
+                        Ok((event, addr)) => {
+                            match client_for_socket.get(&addr) {
+                                Some(client_handle) => {
+                                    consumer.consume(event, *client_handle);
+                                },
+                                None => {
+                                    log::warn!("ignoring event from client {addr:?}");
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            log::error!("{e}");
+                        },
                     }
-                })
-            },
-            _ => panic!("what happened here?")
+                },
+                fd if fd == eventfd => {
+                    let events = producer.read_events();
+                    events.into_iter().for_each(|(c, e)| {
+                        if let Some(addr) = socket_for_client.get(&c) {
+                            Self::send_event(&tx, e, *addr);
+                        } else {
+                            log::error!("unknown client: id {c}");
+                        }
+                    })
+                },
+                _ => panic!("what happened here?")
+            }
         }
     }
 
     fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {
         let data: Vec<u8> = (&e).into();
         if let Err(e) = tx.send_to(&data[..], addr) {
-            eprintln!("{}", e);
+            log::error!("{}", e);
         }
     }
 

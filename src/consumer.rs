@@ -40,11 +40,11 @@ pub fn create() -> Result<Box<dyn Consumer>> {
                 match env::var("XDG_CURRENT_DESKTOP") {
                     Ok(current_desktop) => match current_desktop.as_str() {
                         "gnome" => {
-                            log::info!("XDG_CURRENT_DESKTOP = kde -> using libei backend");
+                            log::info!("XDG_CURRENT_DESKTOP = KDE -> using libei backend");
                             Backend::Libei
                         }
-                        "kde" => {
-                            log::info!("XDG_CURRENT_DESKTOP = kde -> using xdg_desktop_portal backend");
+                        "KDE" => {
+                            log::info!("XDG_CURRENT_DESKTOP = KDE -> using xdg_desktop_portal backend");
                             Backend::RemoteDesktopPortal
                         }
                         "sway" => {

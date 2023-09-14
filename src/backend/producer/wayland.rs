@@ -307,7 +307,7 @@ impl EpollProducer for WaylandEventProducer {
         match self.queue.dispatch_pending(&mut self.state) {
             Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
-                eprintln!("Wayland Error: {}", e);
+                log::error!("Wayland Error: {}", e);
             }
             Err(DispatchError::Backend(e)) => {
                 panic!("{}", e);
