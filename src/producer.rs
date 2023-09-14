@@ -20,7 +20,7 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
     let backend = match env::var("XDG_SESSION_TYPE") {
         Ok(session_type) => match session_type.as_str() {
             "x11" => {
-                log::info!("XDG_SESSION_TYPE x11 = x11 using X11 even producer backend");
+                log::info!("XDG_SESSION_TYPE = x11 -> using X11 event producer");
                 Backend::X11
             },
             "wayland" => {
@@ -44,7 +44,7 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
-            Ok(EventProducer::Epoll(Box::new(producer::wayland::WaylandEventProducer::new())))
+            Ok(EventProducer::Epoll(Box::new(producer::wayland::WaylandEventProducer::new()?)))
         }
     }
 }

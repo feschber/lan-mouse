@@ -54,7 +54,7 @@ impl Server {
                 stream.flush()?;
             }
             Ok(Request::Connect) => todo!(),
-            Err(msg) => eprintln!("{}", msg),
+            Err(msg) => log::error!("{}", msg),
         }
         Ok(())
     }
@@ -72,11 +72,11 @@ impl Server {
                 match stream {
                     Ok(stream) => {
                         if let Err(e) = server.handle_request(stream) {
-                            eprintln!("{}", e);
+                            log::warn!("{}", e);
                         }
                     }
                     Err(e) => {
-                        eprintln!("{}", e);
+                        log::warn!("{}", e);
                     }
                 }
             }

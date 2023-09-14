@@ -1,8 +1,7 @@
-use std::error::Error;
-
 #[cfg(unix)]
 use std::env;
 
+use anyhow::Result;
 use crate::{backend::consumer, client::{ClientHandle, ClientEvent}, event::Event};
 
 #[cfg(unix)]
@@ -22,7 +21,7 @@ pub trait Consumer {
     fn notify(&mut self, client_event: ClientEvent);
 }
 
-pub fn create() -> Result<Box<dyn Consumer>, Box<dyn Error>> {
+pub fn create() -> Result<Box<dyn Consumer>> {
     #[cfg(windows)]
     let _backend = backend;
 
@@ -91,7 +90,7 @@ pub fn create() -> Result<Box<dyn Consumer>, Box<dyn Error>> {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
-            Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()))
+            Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()?))
         },
         Backend::X11 => {
             #[cfg(not(feature = "x11"))]

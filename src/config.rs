@@ -73,8 +73,8 @@ impl Config {
         let config_path = "config.toml";
         let config_toml = match ConfigToml::new(config_path) {
             Err(e) => {
-                eprintln!("config.toml: {e}");
-                eprintln!("Continuing without config file ...");
+                log::warn!("config.toml: {e}");
+                log::warn!("Continuing without config file ...");
                 None
             },
             Ok(c) => Some(c),

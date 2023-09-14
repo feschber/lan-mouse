@@ -9,6 +9,7 @@ use std::{
     os::unix::prelude::AsRawFd,
 };
 
+use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
@@ -49,7 +50,7 @@ pub(crate) struct WlrootsConsumer {
 }
 
 impl WlrootsConsumer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let conn = Connection::connect_to_env().unwrap();
         let (globals, queue) = registry_queue_init::<WlrootsConsumer>(&conn).unwrap();
         let qh = queue.handle();
@@ -68,10 +69,11 @@ impl WlrootsConsumer {
                 VirtualInputManager::Kde { fake_input }
             }
             (Err(e1), Err(e2), Err(e3)) => {
-                eprintln!("zwlr_virtual_pointer_v1: {e1}");
-                eprintln!("zwp_virtual_keyboard_v1: {e2}");
-                eprintln!("org_kde_kwin_fake_input: {e3}");
-                panic!("neither wlroots nor kde input emulation protocol supported!")
+                log::warn!("zwlr_virtual_pointer_v1: {e1}");
+                log::warn!("zwp_virtual_keyboard_v1: {e2}");
+                log::warn!("org_kde_kwin_fake_input: {e3}");
+                log::error!("neither wlroots nor kde input emulation protocol supported!");
+                return Err(anyhow!("could not create event consumer"));
             }
             _ => {
                 panic!()
@@ -80,13 +82,13 @@ impl WlrootsConsumer {
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
         let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-        WlrootsConsumer {
+        Ok(WlrootsConsumer {
             input_for_client,
             seat,
             virtual_input_manager,
             queue,
             qh,
-        }
+        })
     }
 
     fn add_client(&mut self, client: Client) {

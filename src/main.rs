@@ -35,8 +35,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     println!("Press Ctrl+Alt+Shift+Super to release the mouse");
 
     // start producing and consuming events
-    let producer = producer::create().unwrap();
-    let consumer = consumer::create().unwrap();
+    let producer = producer::create()?;
+    let consumer = consumer::create()?;
 
     // start sending and receiving events
     let event_server = event::server::Server::new(port)?;

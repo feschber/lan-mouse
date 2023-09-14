@@ -6,7 +6,7 @@ pub struct X11Producer {}
 
 impl X11Producer {
     pub fn new() -> Self {
-        todo!()
+        Self {}
     }
 }
 
