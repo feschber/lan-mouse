@@ -5,7 +5,7 @@ use adw::subclass::prelude::*;
 use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
 
-use crate::{gtk::client_object::ClientObject, config::DEFAULT_PORT};
+use crate::{frontend::gtk::client_object::ClientObject, config::DEFAULT_PORT};
 
 use super::client_row::ClientRow;
 

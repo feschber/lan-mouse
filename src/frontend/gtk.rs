@@ -2,7 +2,7 @@ mod window;
 mod client_object;
 mod client_row;
 
-use crate::gtk::window::Window;
+use crate::frontend::gtk::window::Window;
 
 use gtk::{prelude::*, IconTheme, gdk::Display};
 use std::thread;
