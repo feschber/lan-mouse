@@ -53,13 +53,19 @@
 									</object>
 								</child>
 								<child>
-									<object class="AdwEntryRow">
-										<property name="title" translatable="yes">port</property>
-										<property name="text">4242</property>
-										<property name="width-chars">5</property>
-										<property name="xalign">0.5</property>
-										<property name="show-apply-button">True</property>
-										<property name="input-purpose">GTK_INPUT_PURPOSE_DIGITS</property>
+									<object class="AdwActionRow">
+										<property name="title">port</property>
+										<child>
+											<object class="GtkEntry">
+												<!-- <property name="title" translatable="yes">port</property> -->
+												<property name="placeholder-text">4242</property>
+												<property name="width-chars">5</property>
+												<property name="xalign">0.5</property>
+												<property name="valign">center</property>
+												<!-- <property name="show-apply-button">True</property> -->
+												<property name="input-purpose">GTK_INPUT_PURPOSE_DIGITS</property>
+											</object>
+										</child>
 									</object>
 								</child>
 							</object>

@@ -10,6 +10,34 @@
 				<property name="tooltip-text" translatable="yes">enable</property>
 			</object>
 		</child>
+		<!-- host -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title">hostname</property>
+				<property name="subtitle">port</property>
+				<!-- hostname -->
+				<child>
+					<object class="GtkEntry" id="hostname">
+						<!-- <property name="title" translatable="yes">hostname</property> -->
+						<property name="xalign">0.5</property>
+						<property name="valign">center</property>
+						<property name="placeholder-text">hostname</property>
+						<property name="width-chars">-1</property>
+					</object>
+				</child>
+				<!-- port -->
+				<child>
+					<object class="GtkEntry" id="port">
+						<!-- <property name="title" translatable="yes">port</property> -->
+						<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
+						<property name="xalign">0.5</property>
+						<property name="valign">center</property>
+						<property name="placeholder-text">4242</property>
+						<property name="width-chars">5</property>
+					</object>
+				</child>
+			</object>
+		</child>
 		<!-- position -->
 		<child>
 			<object class="AdwComboRow" id="position">
@@ -24,21 +52,6 @@
 						</items>
 					</object>
 				</property>
-			</object>
-		</child>
-		<!-- hostname -->
-		<child>
-			<object class="AdwEntryRow" id="hostname">
-				<property name="title" translatable="yes">hostname</property>
-				<property name="xalign">0.5</property>
-			</object>
-		</child>
-		<!-- port -->
-		<child>
-			<object class="AdwEntryRow" id="port">
-				<property name="title" translatable="yes">port</property>
-				<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
-				<property name="xalign">0.5</property>
 			</object>
 		</child>
 	</template>

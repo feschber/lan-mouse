@@ -1,16 +1,16 @@
 use std::cell::RefCell;
 
 use glib::Binding;
-use adw::{subclass::prelude::*, EntryRow, ComboRow};
+use adw::{subclass::prelude::*, ComboRow};
 use gtk::{glib, CompositeTemplate};
 
 #[derive(Default, CompositeTemplate)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
 pub struct ClientRow {
     #[template_child]
-    pub hostname: TemplateChild<EntryRow>,
+    pub hostname: TemplateChild<gtk::Entry>,
     #[template_child]
-    pub port: TemplateChild<EntryRow>,
+    pub port: TemplateChild<gtk::Entry>,
     #[template_child]
     pub position: TemplateChild<ComboRow>,
     pub bindings: RefCell<Vec<Binding>>,

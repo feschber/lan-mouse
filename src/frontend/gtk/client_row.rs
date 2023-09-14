@@ -4,6 +4,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
+use crate::config::DEFAULT_PORT;
+
 use super::client_object::ClientObject;
 
 glib::wrapper! {
@@ -28,6 +30,9 @@ impl ClientRow {
 
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
+            .transform_from(|_, v: String| {
+                if v == "" { Some("hostname".into()) } else { Some(v) }
+            })
             .bidirectional()
             .sync_create()
             .build();
@@ -38,8 +43,14 @@ impl ClientRow {
 
         let port_binding = client_object
             .bind_property("port", &self.imp().port.get(), "text")
+            .transform_from(|_, v: String| {
+                if v == "" {
+                    Some(4242)
+                } else {
+                    Some(v.parse::<u16>().unwrap_or(DEFAULT_PORT) as u32)
+                }
+            })
             .bidirectional()
-            .sync_create()
             .build();
 
         let subtitle_binding = client_object
