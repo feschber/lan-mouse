@@ -19,7 +19,7 @@ pub trait Consumer {
     fn consume(&self, event: Event, client_handle: ClientHandle);
 
     /// Event corresponding to a configuration change
-    fn notify(&self, client_event: ClientEvent);
+    fn notify(&mut self, client_event: ClientEvent);
 }
 
 pub fn create() -> Result<Box<dyn Consumer>, Box<dyn Error>> {

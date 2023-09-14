@@ -4,6 +4,7 @@ pub struct Epoll;
 
 impl Epoll {
     pub fn new(fds: &[RawFd]) -> Self {
+        let _fds = fds;
         Self {}
     }
 

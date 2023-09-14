@@ -5,7 +5,6 @@ use std::{
     collections::HashMap,
     error::Error,
     net::{SocketAddr, UdpSocket},
-    sync::{atomic::AtomicBool, Arc},
     os::fd::AsRawFd,
 };
 
@@ -15,22 +14,17 @@ use super::Event;
 
 pub struct Server {
     listen_addr: SocketAddr,
-    sending: Arc<AtomicBool>,
 }
 
 impl Server {
     pub fn new(port: u16) -> Result<Self, Box<dyn Error>> {
         let listen_addr = SocketAddr::new("0.0.0.0".parse()?, port);
-        let sending = Arc::new(AtomicBool::new(false));
-        Ok(Server {
-            listen_addr,
-            sending,
-        })
+        Ok(Server { listen_addr })
     }
 
     pub fn run(
         &self,
-        client_manager: ClientManager,
+        _client_manager: ClientManager,
         producer: EventProducer,
         consumer: Box<dyn Consumer>,
     ) -> Result<()> {

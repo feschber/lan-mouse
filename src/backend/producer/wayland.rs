@@ -1,4 +1,4 @@
-use crate::{client::{ClientHandle, Position}, producer::EpollProducer};
+use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EpollProducer};
 
 use std::{os::fd::RawFd, vec::Drain};
 use memmap::MmapOptions;
@@ -62,7 +62,7 @@ struct State {
     client_for_window: Vec<(Rc<Window>, ClientHandle)>,
     focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-    event_fd: RawFd,
+    wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: Vec<(ClientHandle, Event)>,
@@ -136,13 +136,10 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     }
 }
 
-const EVENT_WAYLAND: u64 = 1;
-const EVENT_CONFIG: u64 = 2;
-
 impl WaylandEventProducer {
     pub fn new() -> Self {
         let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
-        let (g, mut queue) =
+        let (g, queue) =
             registry_queue_init::<State>(&conn).expect("failed to initialize wl_registry");
         let qh = queue.handle();
 
@@ -174,18 +171,12 @@ impl WaylandEventProducer {
             shortcut_inhibit_manager,
         };
 
-        // retrieve wayland_fd
-        let wayland_fd = {
-            let read_guard = queue.prepare_read().unwrap();
-            read_guard.connection_fd().as_raw_fd()
-        };
-
         // flush outgoing events
         queue.flush().unwrap();
 
         // prepare reading wayland events
         let read_guard = queue.prepare_read().unwrap();
-        let event_fd = read_guard.connection_fd().as_raw_fd();
+        let wayland_fd = read_guard.connection_fd().as_raw_fd();
         let read_guard = Some(read_guard);
 
         WaylandEventProducer {
@@ -198,7 +189,7 @@ impl WaylandEventProducer {
                 client_for_window: Vec::new(),
                 focused: None,
                 qh,
-                event_fd,
+                wayland_fd,
                 read_guard,
                 pending_events: vec![],
             }
@@ -321,12 +312,14 @@ impl EpollProducer for WaylandEventProducer {
         self.state.pending_events.drain(..)
     }
 
-    fn notify(&self, _: crate::client::ClientEvent) {
-        todo!()
+    fn notify(&mut self, client_event: ClientEvent) {
+        if let ClientEvent::Create(client) = client_event {
+            self.state.add_client(client.handle, client.pos);
+        }
     }
 
     fn eventfd(&self) -> RawFd {
-        todo!()
+        self.state.wayland_fd
     }
 }
 
@@ -489,7 +482,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 size: _,
             } => {
                 let fd = unsafe { &File::from_raw_fd(fd.as_raw_fd()) };
-                let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
+                let _mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
             }
             _ => (),
         }

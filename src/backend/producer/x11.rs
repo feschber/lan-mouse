@@ -11,7 +11,7 @@ impl X11Producer {
 }
 
 impl EpollProducer for X11Producer {
-    fn notify(&self, _: crate::client::ClientEvent) {
+    fn notify(&mut self, _: crate::client::ClientEvent) {
         todo!()
     }
 

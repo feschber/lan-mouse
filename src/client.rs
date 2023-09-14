@@ -43,6 +43,7 @@ impl Display for ClientConfigError {
 impl Error for ClientConfigError {}
 
 impl ClientManager {
+    #[allow(dead_code)] // TODO
     fn add_client(&self, client: &config::Client, pos: Position) -> Result<(), Box<dyn Error>> {
         let ip = match client.ip {
             Some(ip) => ip,

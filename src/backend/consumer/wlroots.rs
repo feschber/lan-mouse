@@ -1,8 +1,7 @@
-use crate::client::{Client, ClientHandle};
+use crate::client::{Client, ClientHandle, ClientEvent};
 use crate::consumer::Consumer;
 use crate::request::{self, Request};
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
 use std::time::Duration;
 use std::{io, thread};
 use std::{
@@ -158,8 +157,10 @@ impl Consumer for WlrootsConsumer {
         }
     }
 
-    fn notify(&self, client_event: crate::client::ClientEvent) {
-        todo!()
+    fn notify(&mut self, client_event: ClientEvent) {
+        if let ClientEvent::Create(client) = client_event {
+            self.add_client(client);
+        }
     }
 }
 

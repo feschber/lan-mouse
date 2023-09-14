@@ -51,7 +51,7 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
 
 pub trait EpollProducer {
     /// notify event producer of configuration changes
-    fn notify(&self, event: ClientEvent);
+    fn notify(&mut self, event: ClientEvent);
 
     /// handle to the eventfd for a producer
     fn eventfd(&self) -> RawFd;

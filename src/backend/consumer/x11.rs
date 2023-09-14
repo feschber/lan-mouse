@@ -50,7 +50,7 @@ impl Consumer for X11Consumer {
         }
     }
 
-    fn notify(&self, _: crate::client::ClientEvent) {
+    fn notify(&mut self, _: crate::client::ClientEvent) {
         // for our purposes it does not matter what client sent the event
     }
 }
