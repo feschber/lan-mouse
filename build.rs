@@ -1,3 +1,4 @@
+#[cfg(unix)]
 fn main() {
     // composite_templates
     glib_build_tools::compile_resources(
