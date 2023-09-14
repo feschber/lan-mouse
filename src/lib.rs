@@ -10,5 +10,4 @@ pub mod backend;
 pub mod frontend;
 pub mod ioutils;
 
-#[cfg(all(unix, feature = "gtk"))]
-pub mod gtk;
+pub mod frontend;
