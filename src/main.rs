@@ -2,16 +2,15 @@ use std::{process, env, error::Error};
 
 use lan_mouse::{
     client::ClientManager,
-    consumer, producer::{self, ThreadProducer},
+    consumer, producer,
     config, event, request,
 };
 
-fn usage() {
-    eprintln!("usage: {} [--backend <backend>] [--port <port>]",
-        env::args().next().unwrap_or("lan-mouse".into()));
-}
-
 pub fn main() {
+    if let Err(e) = run() {
+        log::error!("{e}");
+        process::exit(1);
+    }
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -25,30 +24,20 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let client_manager = ClientManager::new()?;
 
     // start receiving client connection requests
-    let (request_server, request_thread) = request::Server::listen(port)?;
+    let (_request_server, request_thread) = request::Server::listen(port)?;
 
     println!("Press Ctrl+Alt+Shift+Super to release the mouse");
 
     // start producing and consuming events
-    let event_producer = producer::create().unwrap();
-    let event_consumer = consumer::create().unwrap();
+    let producer = producer::create().unwrap();
+    let consumer = consumer::create().unwrap();
 
     // start sending and receiving events
     let event_server = event::server::Server::new(port)?;
 
-    let (receiver, sender) = event_server.run(client_manager, consumer)?;
+    event_server.run(client_manager, producer, consumer)?;
 
     request_thread.join().unwrap();
 
-    // stop receiving events and terminate event-consumer
-    receiver.join().unwrap()?;
-
-    // stop producing events and terminate event-sender
-    match event_producer {
-        producer::EventProducer::Epoll(_) => {},
-        producer::EventProducer::ThreadProducer(p) => p.stop(),
-    }
-
-    sender.join().unwrap()?;
-
+    Ok(())
 }

@@ -1,17 +1,15 @@
 use anyhow::Result;
+use log;
 
 use std::{
     collections::HashMap,
     error::Error,
     net::{SocketAddr, UdpSocket},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread::{self, JoinHandle},
+    sync::{atomic::AtomicBool, Arc},
+    os::fd::AsRawFd,
 };
 
-use crate::{client::ClientManager, ioutils::{ask_confirmation, ask_position}, consumer::Consumer, producer::EventProducer};
+use crate::{client::{ClientManager, ClientHandle}, consumer::Consumer, producer::{EventProducer, EpollProducer}, event::epoll::Epoll};
 
 use super::Event;
 
@@ -32,116 +30,68 @@ impl Server {
 
     pub fn run(
         &self,
-        client_manager: Arc<ClientManager>,
+        client_manager: ClientManager,
         producer: EventProducer,
         consumer: Box<dyn Consumer>,
-    ) -> Result<(JoinHandle<Result<()>>, JoinHandle<Result<()>>), Box<dyn Error>> {
+    ) -> Result<()> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
         let rx = udp_socket.try_clone()?;
         let tx = udp_socket;
 
-        let sending = self.sending.clone();
-        let clients_updated = Arc::new(AtomicBool::new(true));
-        client_manager.subscribe(clients_updated.clone());
-        let client_manager_clone = client_manager.clone();
-
-        let receiver = thread::Builder::new()
-            .name("event receiver".into())
-            .spawn(move || {
-                let mut client_for_socket = HashMap::new();
-
-                loop {
-                    let (event, addr) = match Server::receive_event(&rx) {
-                        Ok(e) => e,
-                        Err(e) => {
-                            eprintln!("{}", e);
-                            continue;
-                        }
-                    };
-
-                    if let Ok(_) = clients_updated.compare_exchange(
-                        true,
-                        false,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
-                        clients_updated.store(false, Ordering::SeqCst);
-                        client_for_socket.clear();
-                        println!("updating clients: ");
-                        for client in client_manager_clone.get_clients() {
-                            println!("{}: {}", client.handle, client.addr);
-                            client_for_socket.insert(client.addr, client.handle);
-                        }
-                    }
-
-                    let client_handle = match client_for_socket.get(&addr) {
-                        Some(c) => *c,
-                        None => {
-                            eprint!("Allow connection from {:?}? ", addr);
-                            if ask_confirmation(false)? {
-                                client_manager_clone.register_client(addr, ask_position()?);
-                            } else {
-                                eprintln!("rejecting client: {:?}?", addr);
-                            }
-                            continue;
-                        }
-                    };
-
-                    // There is a race condition between loading this
-                    // value and handling the event:
-                    // In the meantime a event could be produced, which
-                    // should theoretically disable receiving of events.
-                    //
-                    // This is however not a huge problem, as some
-                    // events that make it through are not a large problem
-                    if sending.load(Ordering::Acquire) {
-                        // ignore received events when in sending state
-                        // if release event is received, switch state to receiving
-                        if let Event::Release() = event {
-                            sending.store(false, Ordering::Release);
-                            consumer.consume(event, client_handle);
-                        }
-                    } else {
-                        // we received an event -> set state to receiving
-                        if let Event::Release() = event {
-                            sending.store(false, Ordering::Release);
-                        }
-                        consumer.consume(event, client_handle);
-                    }
-                }
-            })?;
-
-        let sending = self.sending.clone();
-
-        let mut socket_for_client = HashMap::new();
-        for client in client_manager.get_clients() {
-            socket_for_client.insert(client.handle, client.addr);
+        match producer {
+            EventProducer::Epoll(producer) => {
+                #[cfg(windows)]
+                panic!("epoll not supported!");
+                #[cfg(not(windows))]
+                self.epoll_event_loop(rx, tx, producer, consumer);
+            },
+            EventProducer::ThreadProducer(_) => todo!(),
         }
-        let sender = thread::Builder::new()
-            .name("event sender".into())
-            .spawn(move || {
-                loop {
-                    let (event, client_handle) =
-                        produce_rx.recv().expect("event producer unavailable");
-                    let addr = match socket_for_client.get(&client_handle) {
-                        Some(addr) => addr,
-                        None => continue,
-                    };
+        Ok(())
+    }
 
-                    if sending.load(Ordering::Acquire) {
-                        Server::send_event(&tx, event, *addr);
-                    } else {
-                        // only accept enter event
-                        if let Event::Release() = event {
-                            // set state to sending, to ignore incoming events
-                            // and enable sending of events
-                            sending.store(true, Ordering::Release);
-                            Server::send_event(&tx, event, *addr);
+    fn epoll_event_loop(
+        &self,
+        rx: UdpSocket,
+        tx: UdpSocket,
+        mut producer: Box<dyn EpollProducer>,
+        consumer: Box<dyn Consumer>,
+    ) {
+        let udpfd = rx.as_raw_fd();
+        let eventfd = producer.eventfd();
+        let epoll = Epoll::new(&[udpfd, eventfd]);
+        let client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
+        let socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
+        match epoll.wait() {
+            fd if fd == udpfd => {
+                match Self::receive_event(&rx) {
+                    Ok((event, addr)) => {
+                        match client_for_socket.get(&addr) {
+                            Some(client_handle) => {
+                                consumer.consume(event, *client_handle);
+                            },
+                            None => {
+                                log::warn!("ignoring event from client {addr:?}");
+                            },
                         }
-                    }
+                    },
+                    Err(e) => {
+                        log::error!("{e}");
+                    },
                 }
-            })?;
-        Ok((receiver, sender))
+            },
+            fd if fd == eventfd => {
+                let events = producer.read_events();
+                events.into_iter().for_each(|(c, e)| {
+                    if let Some(addr) = socket_for_client.get(&c) {
+                        Self::send_event(&tx, e, *addr);
+                    } else {
+                        log::error!("unknown client: id {c}");
+                    }
+                })
+            },
+            _ => panic!("what happened here?")
+        }
     }
 
     fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {

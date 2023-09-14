@@ -1,6 +1,7 @@
 use std::{error::Error, fmt};
 
 pub mod server;
+pub mod epoll;
 
 pub enum PointerEvent {
     Motion {
