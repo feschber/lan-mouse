@@ -1,8 +1,8 @@
 #[cfg(unix)]
 use std::env;
-use std::{sync::mpsc::{SyncSender, Receiver}, error::Error, os::fd::RawFd, vec::Drain};
+use std::{sync::mpsc::Receiver, error::Error, os::fd::RawFd, vec::Drain};
 
-use crate::{client::{ClientHandle, ClientEvent}, event::Event, request::Server};
+use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 
 use crate::backend::producer;
 
@@ -19,8 +19,14 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
         Ok(session_type) => match session_type.as_str() {
-            "x11" => Backend::X11,
-            "wayland" => Backend::Wayland,
+            "x11" => {
+                log::info!("XDG_SESSION_TYPE x11 = x11 using X11 even producer backend");
+                Backend::X11
+            },
+            "wayland" => {
+                log::info!("XDG_SESSION_TYPE = wayland -> using wayland event producer");
+                Backend::Wayland
+            }
             _ => panic!("unknown XDG_SESSION_TYPE"),
         },
         Err(_) => panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!"),

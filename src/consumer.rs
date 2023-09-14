@@ -32,16 +32,40 @@ pub fn create() -> Result<Box<dyn Consumer>, Box<dyn Error>> {
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
         Ok(session_type) => match session_type.as_str() {
-            "x11" => Backend::X11,
+            "x11" => {
+                log::info!("XDG_SESSION_TYPE = x11 -> using x11 event consumer");
+                Backend::X11
+            }
             "wayland" => {
+                log::info!("XDG_SESSION_TYPE = wayland -> using wayland event consumer");
                 match env::var("XDG_CURRENT_DESKTOP") {
                     Ok(current_desktop) => match current_desktop.as_str() {
-                        "gnome" => Backend::Libei,
-                        "kde" => Backend::RemoteDesktopPortal,
-                        _ => Backend::Wlroots,
+                        "gnome" => {
+                            log::info!("XDG_CURRENT_DESKTOP = kde -> using libei backend");
+                            Backend::Libei
+                        }
+                        "kde" => {
+                            log::info!("XDG_CURRENT_DESKTOP = kde -> using xdg_desktop_portal backend");
+                            Backend::RemoteDesktopPortal
+                        }
+                        "sway" => {
+                            log::info!("XDG_CURRENT_DESKTOP = sway -> using wlroots backend");
+                            Backend::Wlroots
+                        }
+                        "Hyprland" => {
+                            log::info!("XDG_CURRENT_DESKTOP = Hyprland -> using wlroots backend");
+                            Backend::Wlroots
+                        }
+                        _ => {
+                            log::warn!("unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend");
+                            Backend::Wlroots
+                        }
                     }
                     // default to wlroots backend for now
-                    _ => Backend::Wlroots,
+                    _ => {
+                        log::warn!("unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend");
+                        Backend::Wlroots
+                    }
                 }
             }
             _ => panic!("unknown XDG_SESSION_TYPE"),

@@ -1,5 +1,6 @@
-use std::{process, env, error::Error};
+use std::{process, error::Error};
 
+use env_logger::Env;
 use lan_mouse::{
     client::ClientManager,
     consumer, producer,
@@ -7,6 +8,11 @@ use lan_mouse::{
 };
 
 pub fn main() {
+
+    // init logging
+    let env = Env::default().filter_or("MY_LOG_LEVEL", "info");
+    env_logger::init_from_env(env);
+
     if let Err(e) = run() {
         log::error!("{e}");
         process::exit(1);
