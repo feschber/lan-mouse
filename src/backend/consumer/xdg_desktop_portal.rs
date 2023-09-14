@@ -1,9 +1,17 @@
-use std::sync::mpsc::Receiver;
+use crate::consumer::Consumer;
 
-use crate::{event::Event, client::{ClientHandle, Client}};
+pub struct DesktopPortalConsumer {}
 
+impl DesktopPortalConsumer {
+    pub fn new() -> Self { Self {  } }
+}
 
+impl Consumer for DesktopPortalConsumer {
+    fn consume(&self, event: crate::event::Event, client_handle: crate::client::ClientHandle) {
+        todo!()
+    }
 
-pub(crate) fn run(_consume_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
-    todo!()
+    fn notify(&self, client_event: crate::client::ClientEvent) {
+        todo!()
+    }
 }

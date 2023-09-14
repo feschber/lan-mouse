@@ -12,20 +12,15 @@ pub enum Position {
 
 #[derive(Clone, Copy)]
 pub struct Client {
+    pub handle: ClientHandle,
     pub addr: SocketAddr,
     pub pos: Position,
-    pub handle: ClientHandle,
-}
-
-impl Client {
-    pub fn handle(&self) -> ClientHandle {
-        return self.handle;
-    }
 }
 
 pub enum ClientEvent {
     Create(Client),
     Destroy(Client),
+    Change(Client),
 }
 
 pub struct ClientManager {
@@ -73,18 +68,13 @@ impl ClientManager {
         id as ClientHandle
     }
 
-    pub fn new(config: &config::Config) -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
 
         let client_manager = ClientManager {
             next_id: AtomicU32::new(0),
             clients: RwLock::new(Vec::new()),
             subscribers: RwLock::new(vec![]),
         };
-
-        // add clients from config
-        for (client, pos) in config.clients.iter() {
-            client_manager.add_client(&client, *pos)?;
-        }
 
         Ok(client_manager)
     }

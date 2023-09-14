@@ -6,13 +6,12 @@ use std::{
     net::{SocketAddr, UdpSocket},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, SyncSender},
         Arc,
     },
     thread::{self, JoinHandle},
 };
 
-use crate::{client::{ClientHandle, ClientManager}, ioutils::{ask_confirmation, ask_position}};
+use crate::{client::ClientManager, ioutils::{ask_confirmation, ask_position}, consumer::Consumer, producer::EventProducer};
 
 use super::Event;
 
@@ -34,8 +33,8 @@ impl Server {
     pub fn run(
         &self,
         client_manager: Arc<ClientManager>,
-        produce_rx: Receiver<(Event, ClientHandle)>,
-        consume_tx: SyncSender<(Event, ClientHandle)>,
+        producer: EventProducer,
+        consumer: Box<dyn Consumer>,
     ) -> Result<(JoinHandle<Result<()>>, JoinHandle<Result<()>>), Box<dyn Error>> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
         let rx = udp_socket.try_clone()?;
@@ -100,18 +99,14 @@ impl Server {
                         // if release event is received, switch state to receiving
                         if let Event::Release() = event {
                             sending.store(false, Ordering::Release);
-                            consume_tx
-                                .send((event, client_handle))
-                                .expect("event consumer unavailable");
+                            consumer.consume(event, client_handle);
                         }
                     } else {
+                        // we received an event -> set state to receiving
                         if let Event::Release() = event {
                             sending.store(false, Ordering::Release);
                         }
-                        // we retrieve all events
-                        consume_tx
-                            .send((event, client_handle))
-                            .expect("event consumer unavailable");
+                        consumer.consume(event, client_handle);
                     }
                 }
             })?;

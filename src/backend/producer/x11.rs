@@ -1,9 +1,25 @@
-use std::sync::mpsc::SyncSender;
+use std::vec::Drain;
 
-use crate::client::Client;
-use crate::event::Event;
-use crate::request::Server;
+use crate::producer::EpollProducer;
 
-pub fn run(_produce_tx: SyncSender<(Event, u32)>, _request_server: Server, _clients: Vec<Client>) {
-    todo!()
+pub struct X11Producer {}
+
+impl X11Producer {
+    pub fn new() -> Self {
+        todo!()
+    }
+}
+
+impl EpollProducer for X11Producer {
+    fn notify(&self, _: crate::client::ClientEvent) {
+        todo!()
+    }
+
+    fn eventfd(&self) -> std::os::fd::RawFd {
+        todo!()
+    }
+
+    fn read_events(&mut self) -> Drain<(crate::client::ClientHandle, crate::event::Event)> {
+        todo!()
+    }
 }
