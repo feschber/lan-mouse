@@ -40,19 +40,23 @@ enum VirtualInputManager {
     Kde { fake_input: OrgKdeKwinFakeInput },
 }
 
-// App State, implements Dispatch event handlers
-pub(crate) struct WlrootsConsumer {
+struct State {
     input_for_client: HashMap<ClientHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
     virtual_input_manager: VirtualInputManager,
-    queue: EventQueue<Self>,
     qh: QueueHandle<Self>,
+}
+
+// App State, implements Dispatch event handlers
+pub(crate) struct WlrootsConsumer {
+    state: State,
+    queue: EventQueue<State>,
 }
 
 impl WlrootsConsumer {
     pub fn new() -> Result<Self> {
         let conn = Connection::connect_to_env().unwrap();
-        let (globals, queue) = registry_queue_init::<WlrootsConsumer>(&conn).unwrap();
+        let (globals, queue) = registry_queue_init::<State>(&conn).unwrap();
         let qh = queue.handle();
 
         let vpm: Result<VpManager, BindError> = globals.bind(&qh, 1..=1, ());
@@ -83,14 +87,18 @@ impl WlrootsConsumer {
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
         let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
         Ok(WlrootsConsumer {
-            input_for_client,
-            seat,
-            virtual_input_manager,
+            state: State {
+                input_for_client,
+                seat,
+                virtual_input_manager,
+                qh,
+            },
             queue,
-            qh,
         })
     }
+}
 
+impl State {
     fn add_client(&mut self, client: Client) {
         // create virtual input devices
         match &self.virtual_input_manager {
@@ -151,17 +159,21 @@ impl WlrootsConsumer {
 
 impl Consumer for WlrootsConsumer {
     fn consume(&self, event: Event, client_handle: ClientHandle) {
-        if let Some(virtual_input) = self.input_for_client.get(&client_handle) {
+        if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             virtual_input.consume_event(event).unwrap();
             if let Err(e) = self.queue.flush() {
-                eprintln!("{}", e);
+                log::error!("{}", e);
             }
         }
     }
 
     fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(client) = client_event {
-            self.add_client(client);
+            self.state.add_client(client);
+            if let Err(e) = self.queue.flush() {
+                log::error!("{}", e);
+            }
+            self.queue.dispatch_pending(&mut self.state).unwrap();
         }
     }
 }
@@ -186,7 +198,6 @@ impl VirtualInput {
                         keyboard: _,
                     } => {
                         pointer.motion(time, relative_x, relative_y);
-                        pointer.frame();
                     }
                     VirtualInput::Kde { fake_input } => {
                         fake_input.pointer_motion(relative_y, relative_y);
@@ -204,7 +215,6 @@ impl VirtualInput {
                             keyboard: _,
                         } => {
                             pointer.button(time, button, state);
-                            pointer.frame();
                         }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.button(button, state as u32);
@@ -219,7 +229,6 @@ impl VirtualInput {
                             keyboard: _,
                         } => {
                             pointer.axis(time, axis, value);
-                            pointer.frame();
                         }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.axis(axis as u32, value);
@@ -263,36 +272,27 @@ impl VirtualInput {
                     VirtualInput::Kde { fake_input: _ } => {}
                 },
             },
-            Event::Release() => match self {
-                VirtualInput::Wlroots {
-                    pointer: _,
-                    keyboard,
-                } => {
-                    keyboard.modifiers(77, 0, 0, 0);
-                    keyboard.modifiers(0, 0, 0, 0);
-                }
-                VirtualInput::Kde { fake_input: _ } => {}
-            },
+            event => panic!("unknown event type {event:?}"),
         }
         Ok(())
     }
 }
 
-delegate_noop!(WlrootsConsumer: Vp);
-delegate_noop!(WlrootsConsumer: Vk);
-delegate_noop!(WlrootsConsumer: VpManager);
-delegate_noop!(WlrootsConsumer: VkManager);
-delegate_noop!(WlrootsConsumer: wl_seat::WlSeat);
-delegate_noop!(WlrootsConsumer: OrgKdeKwinFakeInput);
+delegate_noop!(State: Vp);
+delegate_noop!(State: Vk);
+delegate_noop!(State: VpManager);
+delegate_noop!(State: VkManager);
+delegate_noop!(State: wl_seat::WlSeat);
+delegate_noop!(State: OrgKdeKwinFakeInput);
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WlrootsConsumer {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
-        _: &mut WlrootsConsumer,
+        _: &mut State,
         _: &wl_registry::WlRegistry,
         _: wl_registry::Event,
         _: &GlobalListContents,
         _: &Connection,
-        _: &QueueHandle<WlrootsConsumer>,
+        _: &QueueHandle<State>,
     ) {
     }
 }

@@ -341,6 +341,12 @@ impl EpollProducer for WaylandEventProducer {
     fn eventfd(&self) -> RawFd {
         self.state.wayland_fd
     }
+
+    fn release(&mut self) {
+        self.state.ungrab();
+        self.queue.flush().unwrap();
+        self.queue.dispatch_pending(&mut self.state).unwrap();
+    }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {

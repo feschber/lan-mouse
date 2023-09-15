@@ -50,7 +50,7 @@ impl Server {
         rx: UdpSocket,
         tx: UdpSocket,
         mut producer: Box<dyn EpollProducer>,
-        consumer: Box<dyn Consumer>,
+        mut consumer: Box<dyn Consumer>,
         frontend: Box<dyn Frontend>,
         client_manager: ClientManager,
     ) -> Result<()> {
@@ -67,13 +67,18 @@ impl Server {
                 fd if fd == udpfd => {
                     match Self::receive_event(&rx) {
                         Ok((event, addr)) => {
-                            match client_for_socket.get(&addr) {
-                                Some(client_handle) => {
-                                    consumer.consume(event, *client_handle);
-                                },
-                                None => {
-                                    log::warn!("ignoring event from client {addr:?}");
-                                },
+                            log::debug!("{addr}: {event:?}");
+                            if let Event::Release() = event {
+                                producer.release();
+                            } else {
+                                match client_for_socket.get(&addr) {
+                                    Some(client_handle) => {
+                                        consumer.consume(event, *client_handle);
+                                    },
+                                    None => {
+                                        log::warn!("ignoring event from client {addr:?}");
+                                    },
+                                }
                             }
                         },
                         Err(e) => {
@@ -103,6 +108,7 @@ impl Server {
                                 socket_for_client.insert(client.handle, addr);
                                 client_for_socket.insert(addr, client.handle);
                                 producer.notify(ClientEvent::Create(client));
+                                consumer.notify(ClientEvent::Create(client));
                             }
                             FrontendEvent::RequestClientDelete(_) => todo!(),
                             FrontendEvent::RequestClientUpdate(_) => todo!(),

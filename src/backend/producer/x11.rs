@@ -22,4 +22,8 @@ impl EpollProducer for X11Producer {
     fn read_events(&mut self) -> Drain<(crate::client::ClientHandle, crate::event::Event)> {
         todo!()
     }
+
+    fn release(&mut self) {
+        todo!()
+    }
 }

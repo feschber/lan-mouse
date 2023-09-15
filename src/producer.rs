@@ -60,6 +60,9 @@ pub trait EpollProducer {
     /// this function must be invoked to retrieve an Event after
     /// the eventfd indicates a pending Event
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)>;
+
+    /// release mouse
+    fn release(&mut self);
 }
 
 pub trait ThreadProducer {
