@@ -268,7 +268,10 @@ impl State {
 
     fn ungrab(&mut self) {
         // get focused client
-        let (window, _client) = self.focused.as_ref().unwrap();
+        let (window, _client) = match self.focused.as_ref() {
+            Some(focused) => focused,
+            None => return,
+        };
 
         // ungrab surface
         window
