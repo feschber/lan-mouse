@@ -37,7 +37,7 @@ impl Server {
                 #[cfg(windows)]
                 panic!("epoll not supported!");
                 #[cfg(not(windows))]
-                self.epoll_event_loop(rx, tx, producer, consumer);
+                self.epoll_event_loop(rx, tx, producer, consumer)?;
             },
             EventProducer::ThreadProducer(_) => todo!(),
         }
