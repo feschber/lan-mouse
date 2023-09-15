@@ -8,7 +8,7 @@ use std::{
     os::fd::AsRawFd,
 };
 
-use crate::{client::{ClientManager, ClientHandle}, consumer::Consumer, producer::{EventProducer, EpollProducer}, event::epoll::Epoll};
+use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::{EventProducer, EpollProducer}, event::epoll::Epoll, frontend::{FrontendEvent, Frontend}};
 
 use super::Event;
 
@@ -24,9 +24,10 @@ impl Server {
 
     pub fn run(
         &self,
-        _client_manager: ClientManager,
+        client_manager: ClientManager,
         producer: EventProducer,
         consumer: Box<dyn Consumer>,
+        frontend: Box<dyn Frontend>,
     ) -> Result<()> {
         let udp_socket = UdpSocket::bind(self.listen_addr)?;
         let rx = udp_socket.try_clone()?;
@@ -37,7 +38,7 @@ impl Server {
                 #[cfg(windows)]
                 panic!("epoll not supported!");
                 #[cfg(not(windows))]
-                self.epoll_event_loop(rx, tx, producer, consumer)?;
+                self.epoll_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
             },
             EventProducer::ThreadProducer(_) => todo!(),
         }
@@ -50,14 +51,19 @@ impl Server {
         tx: UdpSocket,
         mut producer: Box<dyn EpollProducer>,
         consumer: Box<dyn Consumer>,
+        frontend: Box<dyn Frontend>,
+        client_manager: ClientManager,
     ) -> Result<()> {
         let udpfd = rx.as_raw_fd();
         let eventfd = producer.eventfd();
-        let epoll = Epoll::new(&[udpfd, eventfd])?;
-        let client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
-        let socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
+        let frontendfd = frontend.eventfd().unwrap();
+        log::debug!("udpfd: {}, waylandfd: {}, frontendfd: {}", udpfd, eventfd, frontendfd);
+        let epoll = Epoll::new(&[udpfd, eventfd, frontendfd])?;
+        let mut client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
+        let mut socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
         loop {
-            match epoll.wait() {
+            let fd = epoll.wait();
+            match fd {
                 fd if fd == udpfd => {
                     match Self::receive_event(&rx) {
                         Ok((event, addr)) => {
@@ -78,6 +84,7 @@ impl Server {
                 fd if fd == eventfd => {
                     let events = producer.read_events();
                     events.into_iter().for_each(|(c, e)| {
+                        log::debug!("wayland event: {e:?}");
                         if let Some(addr) = socket_for_client.get(&c) {
                             Self::send_event(&tx, e, *addr);
                         } else {
@@ -85,6 +92,23 @@ impl Server {
                         }
                     })
                 },
+                fd if fd == frontendfd => {
+                    frontend.read_event();
+                    if let Ok(event) = frontend.event_channel().recv() {
+                        log::debug!("frontend event {event:?}");
+                        match event {
+                            FrontendEvent::RequestPortChange(_) => todo!(),
+                            FrontendEvent::RequestClientAdd(addr, pos) => {
+                                let client = client_manager.register_client(addr, pos);
+                                socket_for_client.insert(client.handle, addr);
+                                client_for_socket.insert(addr, client.handle);
+                                producer.notify(ClientEvent::Create(client));
+                            }
+                            FrontendEvent::RequestClientDelete(_) => todo!(),
+                            FrontendEvent::RequestClientUpdate(_) => todo!(),
+                        }
+                    }
+                }
                 _ => panic!("what happened here?")
             }
         }

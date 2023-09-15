@@ -17,8 +17,7 @@ tempfile = "3.6"
 trust-dns-resolver = "0.22"
 memmap = "0.7"
 toml = "0.7"
-serde = "1.0"
-serde_derive = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.10.0"
@@ -34,6 +33,7 @@ x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
 gtk = { package = "gtk4", version = "0.7.2", features = ["v4_8"], optional = true }
 adw = { package = "libadwaita", version = "0.5.2", features = ["v1_3"], optional = true }
 epoll = "4.3"
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }

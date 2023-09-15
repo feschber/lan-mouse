@@ -333,6 +333,8 @@ impl EpollProducer for WaylandEventProducer {
     fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(client) = client_event {
             self.state.add_client(client.handle, client.pos);
+            self.queue.flush().unwrap();
+            self.queue.dispatch_pending(&mut self.state).unwrap();
         }
     }
 

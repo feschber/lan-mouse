@@ -762,10 +762,10 @@ dependencies = [
  "gtk4",
  "ipc-channel",
  "libadwaita",
+ "libc",
  "log",
  "memmap",
  "serde",
- "serde_derive",
  "tempfile",
  "toml",
  "trust-dns-resolver",
@@ -1285,6 +1285,9 @@ name = "serde"
 version = "1.0.164"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e8c8cf938e98f769bc164923b06dce91cea1751522f46f8466461af04c9027d"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde_derive"

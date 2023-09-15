@@ -3,6 +3,7 @@ use std::{error::Error, fmt};
 pub mod server;
 pub mod epoll;
 
+#[derive(Debug)]
 pub enum PointerEvent {
     Motion {
         time: u32,
@@ -22,6 +23,7 @@ pub enum PointerEvent {
     Frame {},
 }
 
+#[derive(Debug)]
 pub enum KeyboardEvent {
     Key {
         time: u32,
@@ -36,6 +38,7 @@ pub enum KeyboardEvent {
     },
 }
 
+#[derive(Debug)]
 pub enum Event {
     Pointer(PointerEvent),
     Keyboard(KeyboardEvent),

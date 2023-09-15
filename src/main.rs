@@ -24,14 +24,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // parse config file
     let config = config::Config::new()?;
 
-    let frontend: Box<dyn Frontend> = match config.frontend {
+    let mut frontend: Box<dyn Frontend> = match config.frontend {
         config::Frontend::Gtk => {
             #[cfg(all(unix, feature = "gtk"))]
             frontend::gtk::create();
             #[cfg(any(not(unix), not(feature = "gtk")))]
             panic!("gtk frontend requested but feature not enabled!");
         },
-        config::Frontend::Cli => frontend::cli::create(),
+        config::Frontend::Cli => frontend::cli::create()?,
     };
 
     // create client manager
@@ -49,7 +49,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // start sending and receiving events
     let event_server = event::server::Server::new(config.port)?;
 
-    event_server.run(client_manager, producer, consumer)?;
+    frontend.start();
+    event_server.run(client_manager, producer, consumer, frontend)?;
 
     request_thread.join().unwrap();
 

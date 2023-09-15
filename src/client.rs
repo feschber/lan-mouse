@@ -1,8 +1,10 @@
 use std::{net::SocketAddr, error::Error, fmt::Display, sync::{Arc, atomic::{AtomicBool, Ordering, AtomicU32}, RwLock}};
 
+use serde::{Serialize, Deserialize};
+
 use crate::{config::{self, DEFAULT_PORT}, dns};
 
-#[derive(Eq, Hash, PartialEq, Clone, Copy)]
+#[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
     Left,
     Right,
@@ -10,7 +12,7 @@ pub enum Position {
     Bottom,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Client {
     pub handle: ClientHandle,
     pub addr: SocketAddr,
@@ -80,11 +82,12 @@ impl ClientManager {
         Ok(client_manager)
     }
 
-    pub fn register_client(&self, addr: SocketAddr, pos: Position) {
+    pub fn register_client(&self, addr: SocketAddr, pos: Position) -> Client {
         let handle = self.new_id();
         let client = Client { addr, pos, handle };
         self.clients.write().unwrap().push(client);
         self.notify();
+        client
     }
 
     pub fn get_clients(&self) -> Vec<Client> {

@@ -1,4 +1,4 @@
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use core::fmt;
 use std::net::IpAddr;
 use std::{error::Error, fs};
