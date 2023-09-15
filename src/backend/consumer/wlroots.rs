@@ -1,7 +1,11 @@
+use memmap::MmapOptions;
+use wayland_client::WEnum;
 use crate::client::{Client, ClientHandle, ClientEvent};
 use crate::consumer::Consumer;
 use crate::request::{self, Request};
 use std::collections::HashMap;
+use std::fs::File;
+use std::os::fd::{RawFd, FromRawFd, OwnedFd};
 use std::time::Duration;
 use std::{io, thread};
 use std::{
@@ -12,6 +16,8 @@ use std::{
 use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
+use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
+use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
     zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 as Vp,
@@ -41,6 +47,7 @@ enum VirtualInputManager {
 }
 
 struct State {
+    keymap: Option<(u32, OwnedFd, u32)>,
     input_for_client: HashMap<ClientHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
     virtual_input_manager: VirtualInputManager,
@@ -58,6 +65,11 @@ impl WlrootsConsumer {
         let conn = Connection::connect_to_env().unwrap();
         let (globals, queue) = registry_queue_init::<State>(&conn).unwrap();
         let qh = queue.handle();
+
+        let seat: wl_seat::WlSeat = match globals.bind(&qh, 7..=8, ()) {
+            Ok(wl_seat) => wl_seat,
+            Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
+        };
 
         let vpm: Result<VpManager, BindError> = globals.bind(&qh, 1..=1, ());
         let vkm: Result<VkManager, BindError> = globals.bind(&qh, 1..=1, ());
@@ -85,16 +97,24 @@ impl WlrootsConsumer {
         };
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
-        let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-        Ok(WlrootsConsumer {
+
+        let mut consumer = WlrootsConsumer {
             state: State {
+                keymap: None,
                 input_for_client,
                 seat,
                 virtual_input_manager,
                 qh,
             },
             queue,
-        })
+        };
+        while consumer.state.keymap.is_none() {
+            consumer.queue.blocking_dispatch(&mut consumer.state).unwrap();
+        }
+        // let fd = unsafe { &File::from_raw_fd(consumer.state.keymap.unwrap().1.as_raw_fd()) };
+        // let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
+        // log::debug!("{:?}", &mmap[..100]);
+        Ok(consumer)
     }
 }
 
@@ -107,31 +127,10 @@ impl State {
                 let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
                 // receive keymap from device
-                eprint!("\rtrying to recieve keymap from {} ", client.addr);
-                let mut attempts = 0;
-                let data = loop {
-                    if attempts > 10 { break None }
-                    let result = request::request_data(client.addr, Request::KeyMap);
-                    eprint!("\rtrying to recieve keymap from {} ", client.addr);
-                    match result {
-                        Ok(data) => break Some(data),
-                        Err(e) => {
-                            eprint!(" - {} ", e);
-                            for _ in 0..attempts % 4 {
-                                eprint!(".");
-                            }
-                            eprint!("   ");
-                        }
-                    }
-                    io::stderr().flush().unwrap();
-                    thread::sleep(Duration::from_millis(500));
-                    attempts += 1;
-                };
+                log::info!("requesting keymap for {}", client.addr);
+                let data = request::request_data(client.addr, Request::KeyMap).ok();
 
                 if let Some(data) = data {
-                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
-                    eprintln!(" - done!                                        ");
-
                     // TODO use shm_open
                     let f = tempfile::tempfile().unwrap();
                     let mut buf = BufWriter::new(&f);
@@ -139,10 +138,13 @@ impl State {
                     buf.flush().unwrap();
                     keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
                 } else {
-                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
-                    eprintln!("no keyboard provided, using server keymap");
+                    log::warn!("no keyboard provided, using server keymap");
+                    if let Some((format, fd, size)) = self.keymap.as_ref() {
+                        keyboard.keymap(*format, fd.as_raw_fd(), *size);
+                    } else {
+                        panic!("no keymap");
+                    }
                 }
-
 
                 let vinput = VirtualInput::Wlroots { pointer, keyboard };
 
@@ -173,7 +175,6 @@ impl Consumer for WlrootsConsumer {
             if let Err(e) = self.queue.flush() {
                 log::error!("{}", e);
             }
-            self.queue.dispatch_pending(&mut self.state).unwrap();
         }
     }
 }
@@ -282,7 +283,6 @@ delegate_noop!(State: Vp);
 delegate_noop!(State: Vk);
 delegate_noop!(State: VpManager);
 delegate_noop!(State: VkManager);
-delegate_noop!(State: wl_seat::WlSeat);
 delegate_noop!(State: OrgKdeKwinFakeInput);
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
@@ -294,5 +294,43 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
         _: &Connection,
         _: &QueueHandle<State>,
     ) {
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlKeyboard,
+        event: <WlKeyboard as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                state.keymap = Some((u32::from(format), fd, size));
+            }
+            _ => {},
+        }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for State {
+    fn event(
+        _: &mut Self,
+        seat: &WlSeat,
+        event: <WlSeat as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(capabilities),
+        } = event
+        {
+            if capabilities.contains(wl_seat::Capability::Keyboard) {
+                seat.get_keyboard(qhandle, ());
+            }
+        }
     }
 }
