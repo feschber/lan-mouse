@@ -1,13 +1,9 @@
-use memmap::MmapOptions;
 use wayland_client::WEnum;
 use crate::client::{Client, ClientHandle, ClientEvent};
 use crate::consumer::Consumer;
 use crate::request::{self, Request};
 use std::collections::HashMap;
-use std::fs::File;
-use std::os::fd::{RawFd, FromRawFd, OwnedFd};
-use std::time::Duration;
-use std::{io, thread};
+use std::os::fd::OwnedFd;
 use std::{
     io::{BufWriter, Write},
     os::unix::prelude::AsRawFd,
