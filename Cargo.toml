@@ -22,6 +22,7 @@ serde_derive = "1.0"
 anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.10.0"
+ipc-channel = "0.17.0"
 
 [target.'cfg(unix)'.dependencies]
 wayland-client = { version="0.30.2", optional = true }
