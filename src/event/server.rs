@@ -54,15 +54,15 @@ impl Server {
         &self,
         rx: UdpSocket,
         tx: UdpSocket,
-        mut producer: Box<dyn ThreadProducer>,
-        mut consumer: Box<dyn Consumer>,
-        frontend: Box<dyn Frontend>,
-        client_manager: ClientManager,
+        producer: Box<dyn ThreadProducer>,
+        consumer: Box<dyn Consumer>,
+        _frontend: Box<dyn Frontend>, // TODO
+        _client_manager: ClientManager, // TODO
     ) -> Result<()> {
         thread::Builder::new()
             .name("event-producer".to_string())
             .spawn(move || {
-                let mut socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
+                let socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
                 loop {
                     let (handle, event) = producer.produce();
                     if let Some(addr) = socket_for_client.get(&handle) {
@@ -71,9 +71,9 @@ impl Server {
                         log::error!("unknown client: id {handle}");
                     }
                 }
-        });
+        }).unwrap();
 
-        let mut client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
+        let client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
         loop {
             match Self::receive_event(&rx) {
                 Ok((event, addr)) => {

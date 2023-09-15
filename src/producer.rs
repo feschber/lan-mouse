@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::{env, os::fd::RawFd};
 
-use std::{sync::mpsc::Receiver, error::Error, vec::Drain};
+use std::{error::Error, vec::Drain};
 
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 
