@@ -14,6 +14,7 @@ pub const DEFAULT_PORT: u16 = 4242;
 pub struct ConfigToml {
     pub port: Option<u16>,
     pub backend: Option<String>,
+    pub frontend: Option<String>,
     pub left: Option<Client>,
     pub right: Option<Client>,
     pub top: Option<Client>,
@@ -62,8 +63,14 @@ fn find_arg(key: &'static str) -> Result<Option<String>, MissingParameter> {
     Ok(None)
 }
 
+pub enum Frontend {
+    Gtk,
+    Cli,
+}
+
 pub struct Config {
     pub backend: Option<String>,
+    pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(Client, Position)>,
 }
@@ -86,6 +93,23 @@ impl Config {
                 None => None,
             },
             backend => backend,
+        };
+
+        let frontend = match find_arg("--frontend")? {
+            None => match &config_toml {
+                Some(c) => c.frontend.clone(),
+                None => None,
+            },
+            frontend => frontend,
+        };
+
+        let frontend = match frontend {
+            None => Frontend::Cli,
+            Some(s) => match s.as_str() {
+                "cli" => Frontend::Cli,
+                "gtk" => Frontend::Gtk,
+                    _ => Frontend::Cli,
+            }
         };
 
         let port = match find_arg("--port")? {
@@ -113,6 +137,6 @@ impl Config {
             }
         }
 
-        Ok(Config { backend, clients, port })
+        Ok(Config { backend, frontend, clients, port })
     }
 }

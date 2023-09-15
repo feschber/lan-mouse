@@ -2,6 +2,9 @@ use ipc_channel::ipc::{IpcReceiver, IpcSender};
 
 use crate::client::Client;
 
+/// cli frontend
+pub mod cli;
+
 /// gtk frontend
 #[cfg(all(unix, feature = "gtk"))]
 pub mod gtk;
