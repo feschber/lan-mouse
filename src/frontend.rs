@@ -1,4 +1,7 @@
-use std::{os::fd::RawFd, net::SocketAddr};
+#[cfg(unix)]
+use std::os::fd::RawFd;
+
+use std::net::SocketAddr;
 
 use ipc_channel::ipc::{IpcReceiver, IpcSender};
 use serde::{Serialize, Deserialize};
@@ -30,6 +33,8 @@ pub trait Frontend {
     fn start(&mut self);
     fn event_channel(&self) -> &IpcReceiver<FrontendEvent>;
     fn notify_channel(&self) -> &IpcSender<FrontendNotify>;
+    #[cfg(unix)]
     fn eventfd(&self) -> Option<RawFd>;
+    #[cfg(unix)]
     fn read_event(&self) -> u64;
 }

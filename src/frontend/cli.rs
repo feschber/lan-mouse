@@ -1,8 +1,11 @@
-use std::{os::fd::{RawFd, AsRawFd}, ffi::CStr, thread, io::Write, net::SocketAddr};
+use std::{ffi::CStr, thread, io::Write, net::SocketAddr};
+#[cfg(unix)]
+use std::os::fd::{RawFd, AsRawFd};
+#[cfg(unix)]
+use libc::c_void;
 
 use anyhow::Result;
 use ipc_channel::ipc::{IpcReceiver, IpcSender};
-use libc::c_void;
 use crate::client::Position;
 
 use super::{Frontend, FrontendEvent, FrontendNotify};
@@ -16,6 +19,7 @@ pub struct CliFrontend {
     event_tx: Option<IpcSender<FrontendEvent>>,
     _notify_rx: IpcReceiver<FrontendNotify>,
     notify_tx: IpcSender<FrontendNotify>,
+    #[cfg(unix)]
     event_fd: Option<RawFd>,
 }
 
@@ -34,15 +38,15 @@ impl CliFrontend {
             }
             Some(fd.as_raw_fd())
         };
+        #[cfg(unix)]
         log::debug!("eventfd: {event_fd:?}");
-        #[cfg(not(unix))]
-        let event_fd = None;
 
         Ok(Self {
             event_rx,
             event_tx: Some(event_tx),
             _notify_rx,
             notify_tx,
+            #[cfg(unix)]
             event_fd,
         })
     }
@@ -57,10 +61,12 @@ impl Frontend for CliFrontend {
         &self.notify_tx
     }
 
+    #[cfg(unix)]
     fn eventfd(&self) -> Option<RawFd> {
         self.event_fd
     }
 
+    #[cfg(unix)]
     fn read_event(&self) -> u64 {
         let l = 0u64;
         unsafe {
@@ -69,6 +75,7 @@ impl Frontend for CliFrontend {
     }
 
     fn start(&mut self) {
+        #[cfg(unix)]
         let eventfd = self.event_fd;
         let event_tx = self.event_tx.take().unwrap();
         thread::Builder::new()
@@ -85,6 +92,7 @@ impl Frontend for CliFrontend {
                             if let Err(e) = event_tx.send(event) {
                                 log::error!("error sending message: {e}");
                             };
+                            #[cfg(unix)]
                             if let Some(eventfd) = eventfd {
                                 signal_event(eventfd);
                             }
@@ -121,6 +129,7 @@ fn parse_event(s: String) -> Option<FrontendEvent> {
     }
 }
 
+#[cfg(unix)]
 fn signal_event(fd: RawFd) {
     unsafe {
         let i = 1u64;

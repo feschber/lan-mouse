@@ -23,10 +23,7 @@ pub trait Consumer {
 
 pub fn create() -> Result<Box<dyn Consumer>> {
     #[cfg(windows)]
-    let _backend = backend;
-
-    #[cfg(windows)]
-    consumer::windows::run(consume_rx, clients);
+    return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {

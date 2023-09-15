@@ -1,6 +1,6 @@
 use std::sync::mpsc::Receiver;
 
-use crate::event::{KeyboardEvent, PointerEvent};
+use crate::{event::{KeyboardEvent, PointerEvent}, consumer::Consumer};
 use winapi::{
     self,
     um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
@@ -19,6 +19,41 @@ use crate::{
     client::{Client, ClientHandle},
     event::Event,
 };
+
+
+pub struct WindowsConsumer {}
+
+impl WindowsConsumer {
+    pub fn new() -> Self { Self {  } }
+}
+
+impl Consumer for WindowsConsumer {
+    fn consume(&self, event: Event, _: ClientHandle) {
+        match event {
+            Event::Pointer(pointer_event) => match pointer_event {
+                PointerEvent::Motion {
+                    time: _,
+                    relative_x,
+                    relative_y,
+                } => {
+                    rel_mouse(relative_x as i32, relative_y as i32);
+                }
+                PointerEvent::Button { time:_, button, state } => { mouse_button(button, state)}
+                PointerEvent::Axis { time:_, axis, value } => { scroll(axis, value) }
+                PointerEvent::Frame {} => {}
+            },
+            Event::Keyboard(keyboard_event) => match keyboard_event {
+                KeyboardEvent::Key { time:_, key, state } => { key_event(key, state) }
+                KeyboardEvent::Modifiers { .. } => {}
+            },
+            Event::Release() => {}
+        }
+    }
+
+    fn notify(&mut self, client_event: crate::client::ClientEvent) {
+        todo!()
+    }
+}
 
 fn send_mouse_input(mi: MOUSEINPUT) {
     unsafe {
@@ -112,29 +147,5 @@ fn send_keyboard_input(ki: KEYBDINPUT) {
         };
         *input.u.ki_mut() = ki;
         winapi::um::winuser::SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-pub fn run(event_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
-    loop {
-        match event_rx.recv().expect("event receiver unavailable").0 {
-            Event::Pointer(pointer_event) => match pointer_event {
-                PointerEvent::Motion {
-                    time: _,
-                    relative_x,
-                    relative_y,
-                } => {
-                    rel_mouse(relative_x as i32, relative_y as i32);
-                }
-                PointerEvent::Button { time:_, button, state } => { mouse_button(button, state)}
-                PointerEvent::Axis { time:_, axis, value } => { scroll(axis, value) }
-                PointerEvent::Frame {} => {}
-            },
-            Event::Keyboard(keyboard_event) => match keyboard_event {
-                KeyboardEvent::Key { time:_, key, state } => { key_event(key, state) }
-                KeyboardEvent::Modifiers { .. } => {}
-            },
-            Event::Release() => {}
-        }
     }
 }

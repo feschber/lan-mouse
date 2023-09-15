@@ -5,10 +5,15 @@ use std::{
     collections::HashMap,
     error::Error,
     net::{SocketAddr, UdpSocket},
-    os::fd::AsRawFd,
 };
 
-use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::{EventProducer, EpollProducer}, event::epoll::Epoll, frontend::{FrontendEvent, Frontend}};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+
+use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::EventProducer, frontend::{FrontendEvent, Frontend}};
+
+#[cfg(unix)]
+use crate::{producer::EpollProducer, event::epoll::Epoll};
 
 use super::Event;
 
@@ -34,17 +39,16 @@ impl Server {
         let tx = udp_socket;
 
         match producer {
+            #[cfg(unix)]
             EventProducer::Epoll(producer) => {
-                #[cfg(windows)]
-                panic!("epoll not supported!");
-                #[cfg(not(windows))]
                 self.epoll_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
             },
-            EventProducer::ThreadProducer(_) => todo!(),
+            EventProducer::ThreadProducer(_) => {},
         }
         Ok(())
     }
 
+    #[cfg(unix)]
     fn epoll_event_loop(
         &self,
         rx: UdpSocket,

@@ -1,6 +1,7 @@
 #[cfg(unix)]
-use std::env;
-use std::{sync::mpsc::Receiver, error::Error, os::fd::RawFd, vec::Drain};
+use std::{env, os::fd::RawFd};
+
+use std::{sync::mpsc::Receiver, error::Error, vec::Drain};
 
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 
@@ -14,7 +15,7 @@ enum Backend {
 
 pub fn create() -> Result<EventProducer, Box<dyn Error>> {
     #[cfg(windows)]
-    producer::windows::run(produce_tx, request_server, clients);
+    return Ok(EventProducer::ThreadProducer(Box::new(producer::windows::WindowsProducer::new())));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
@@ -49,6 +50,7 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
     }
 }
 
+#[cfg(unix)]
 pub trait EpollProducer {
     /// notify event producer of configuration changes
     fn notify(&mut self, event: ClientEvent);
@@ -70,13 +72,14 @@ pub trait ThreadProducer {
     fn notify(&self, event: ClientEvent);
 
     /// get the recieving end of the event channel to read from
-    fn wait_channel(&self) -> Receiver<(ClientHandle, Event)>;
+    fn wait_channel(&self) -> &Receiver<(ClientHandle, Event)>;
 
     /// stop the producer thread
     fn stop(&self);
 }
 
 pub enum EventProducer {
+    #[cfg(unix)]
     /// epoll based event producer
     Epoll(Box<dyn EpollProducer>),
 
