@@ -2,8 +2,6 @@
 
 # optional port
 port = 4242
-# optional backend override
-backend = "wlroots"
 
 # define a client on the right side with host name "iridium"
 [right]

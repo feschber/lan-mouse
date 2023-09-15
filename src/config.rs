@@ -13,7 +13,6 @@ pub const DEFAULT_PORT: u16 = 4242;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
     pub port: Option<u16>,
-    pub backend: Option<String>,
     pub frontend: Option<String>,
     pub left: Option<Client>,
     pub right: Option<Client>,
@@ -69,7 +68,6 @@ pub enum Frontend {
 }
 
 pub struct Config {
-    pub backend: Option<String>,
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(Client, Position)>,
@@ -85,14 +83,6 @@ impl Config {
                 None
             },
             Ok(c) => Some(c),
-        };
-
-        let backend = match find_arg("--backend")? {
-            None => match &config_toml {
-                Some(c) => c.backend.clone(),
-                None => None,
-            },
-            backend => backend,
         };
 
         let frontend = match find_arg("--frontend")? {
@@ -137,6 +127,6 @@ impl Config {
             }
         }
 
-        Ok(Config { backend, frontend, clients, port })
+        Ok(Config { frontend, clients, port })
     }
 }
