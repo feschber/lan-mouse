@@ -67,12 +67,11 @@ pub trait EpollProducer {
     fn release(&mut self);
 }
 
-pub trait ThreadProducer {
+pub trait ThreadProducer: Send {
     /// notify event producer of configuration changes
     fn notify(&self, event: ClientEvent);
 
-    /// get the recieving end of the event channel to read from
-    fn wait_channel(&self) -> &Receiver<(ClientHandle, Event)>;
+    fn produce(&self) -> (ClientHandle, Event);
 
     /// stop the producer thread
     fn stop(&self);

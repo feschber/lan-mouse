@@ -4,13 +4,13 @@ use log;
 use std::{
     collections::HashMap,
     error::Error,
-    net::{SocketAddr, UdpSocket},
+    net::{SocketAddr, UdpSocket}, thread,
 };
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 
-use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::EventProducer, frontend::{FrontendEvent, Frontend}};
+use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::{EventProducer, ThreadProducer}, frontend::{FrontendEvent, Frontend}};
 
 #[cfg(unix)]
 use crate::{producer::EpollProducer, event::epoll::Epoll};
@@ -43,9 +43,60 @@ impl Server {
             EventProducer::Epoll(producer) => {
                 self.epoll_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
             },
-            EventProducer::ThreadProducer(_) => {},
+            EventProducer::ThreadProducer(producer) => {
+                self.thread_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
+            },
         }
         Ok(())
+    }
+
+    fn thread_event_loop(
+        &self,
+        rx: UdpSocket,
+        tx: UdpSocket,
+        mut producer: Box<dyn ThreadProducer>,
+        mut consumer: Box<dyn Consumer>,
+        frontend: Box<dyn Frontend>,
+        client_manager: ClientManager,
+    ) -> Result<()> {
+        thread::Builder::new()
+            .name("event-producer".to_string())
+            .spawn(move || {
+                let mut socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
+                loop {
+                    let (handle, event) = producer.produce();
+                    if let Some(addr) = socket_for_client.get(&handle) {
+                        Self::send_event(&tx, event, *addr);
+                    } else {
+                        log::error!("unknown client: id {handle}");
+                    }
+                }
+        });
+
+        let mut client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
+        loop {
+            match Self::receive_event(&rx) {
+                Ok((event, addr)) => {
+                    log::debug!("{addr}: {event:?}");
+                    if let Event::Release() = event {
+                        // producer.release();
+                    } else {
+                        match client_for_socket.get(&addr) {
+                            Some(client_handle) => {
+                                consumer.consume(event, *client_handle);
+                            },
+                            None => {
+                                log::warn!("event from unknown client {addr:?}");
+                                consumer.consume(event, 0);
+                            },
+                        }
+                    }
+                },
+                Err(e) => {
+                    log::error!("{e}");
+                },
+            }
+        }
     }
 
     #[cfg(unix)]

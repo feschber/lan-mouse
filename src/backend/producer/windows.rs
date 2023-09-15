@@ -14,8 +14,8 @@ pub struct WindowsProducer {
 impl ThreadProducer for WindowsProducer {
     fn notify(&self, _: ClientEvent) { }
 
-    fn wait_channel(&self) -> &Receiver<(ClientHandle, Event)> {
-        &self.rx
+    fn produce(&self) -> (ClientHandle, Event) {
+        todo!();
     }
 
     fn stop(&self) { }
