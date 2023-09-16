@@ -1,6 +1,6 @@
 use wayland_client::WEnum;
 use crate::client::{Client, ClientHandle, ClientEvent};
-use crate::consumer::Consumer;
+use crate::consumer::EventConsumer;
 use crate::request::{self, Request};
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
@@ -155,7 +155,7 @@ impl State {
     }
 }
 
-impl Consumer for WlrootsConsumer {
+impl EventConsumer for WlrootsConsumer {
     fn consume(&self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             virtual_input.consume_event(event).unwrap();

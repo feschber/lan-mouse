@@ -3,7 +3,7 @@ use x11::{xlib, xtest};
 
 use crate::{
     client::ClientHandle,
-    event::Event, consumer::Consumer,
+    event::Event, consumer::EventConsumer,
 };
 
 pub struct X11Consumer {
@@ -30,7 +30,7 @@ impl X11Consumer {
     }
 }
 
-impl Consumer for X11Consumer {
+impl EventConsumer for X11Consumer {
     fn consume(&self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {

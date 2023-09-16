@@ -13,7 +13,7 @@ enum Backend {
     Libei,
 }
 
-pub trait Consumer {
+pub trait EventConsumer {
     /// Event corresponding to an abstract `client_handle`
     fn consume(&self, event: Event, client_handle: ClientHandle);
 
@@ -21,7 +21,7 @@ pub trait Consumer {
     fn notify(&mut self, client_event: ClientEvent);
 }
 
-pub fn create() -> Result<Box<dyn Consumer>> {
+pub fn create() -> Result<Box<dyn EventConsumer>> {
     #[cfg(windows)]
     return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 

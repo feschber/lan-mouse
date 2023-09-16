@@ -1,10 +1,6 @@
-#[cfg(unix)]
-use std::{env, os::fd::RawFd};
-
-use std::{error::Error, vec::Drain};
-
+use mio::event::Source;
+use std::{error::Error, vec::Drain, env};
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
-
 use crate::backend::producer;
 
 #[cfg(unix)]
@@ -13,7 +9,7 @@ enum Backend {
     X11,
 }
 
-pub fn create() -> Result<EventProducer, Box<dyn Error>> {
+pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
     #[cfg(windows)]
     return Ok(EventProducer::ThreadProducer(Box::new(producer::windows::WindowsProducer::new())));
 
@@ -39,24 +35,21 @@ pub fn create() -> Result<EventProducer, Box<dyn Error>> {
             #[cfg(not(feature = "x11"))]
             panic!("feature x11 not enabled");
             #[cfg(feature = "x11")]
-            Ok(EventProducer::Epoll(Box::new(producer::x11::X11Producer::new())))
+            Ok(Box::new(producer::x11::X11Producer::new()))
         }
         Backend::Wayland => {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
-            Ok(EventProducer::Epoll(Box::new(producer::wayland::WaylandEventProducer::new()?)))
+            Ok(Box::new(producer::wayland::WaylandEventProducer::new()?))
         }
     }
 }
 
 #[cfg(unix)]
-pub trait EpollProducer {
+pub trait EventProducer: Source {
     /// notify event producer of configuration changes
     fn notify(&mut self, event: ClientEvent);
-
-    /// handle to the eventfd for a producer
-    fn eventfd(&self) -> RawFd;
 
     /// read an event
     /// this function must be invoked to retrieve an Event after
@@ -65,23 +58,4 @@ pub trait EpollProducer {
 
     /// release mouse
     fn release(&mut self);
-}
-
-pub trait ThreadProducer: Send {
-    /// notify event producer of configuration changes
-    fn notify(&self, event: ClientEvent);
-
-    fn produce(&self) -> (ClientHandle, Event);
-
-    /// stop the producer thread
-    fn stop(&self);
-}
-
-pub enum EventProducer {
-    #[cfg(unix)]
-    /// epoll based event producer
-    Epoll(Box<dyn EpollProducer>),
-
-    /// mpsc channel based event producer
-    ThreadProducer(Box<dyn ThreadProducer>),
 }

@@ -1,8 +1,6 @@
 use std::{error::Error, fmt};
 
 pub mod server;
-#[cfg(unix)]
-pub mod epoll;
 
 #[derive(Debug)]
 pub enum PointerEvent {

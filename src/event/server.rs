@@ -1,176 +1,130 @@
 use anyhow::Result;
 use log;
+use mio::{Events, Poll, Interest, Token, net::UdpSocket};
+use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{
     collections::HashMap,
     error::Error,
-    net::{SocketAddr, UdpSocket}, thread,
+    net::SocketAddr,
 };
 
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
-
-use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::Consumer, producer::{EventProducer, ThreadProducer}, frontend::{FrontendEvent, Frontend}};
-
-#[cfg(unix)]
-use crate::{producer::EpollProducer, event::epoll::Epoll};
-
+use crate::{client::{ClientManager, ClientHandle, ClientEvent}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
 use super::Event;
 
 pub struct Server {
-    listen_addr: SocketAddr,
+    poll: Poll,
+    socket: UdpSocket,
+    producer: Box<dyn EventProducer>,
+    consumer: Box<dyn EventConsumer>,
+    signals: Signals,
+    frontend: FrontendAdapter,
 }
 
+const UDP_RX: Token = Token(0);
+const FRONTEND_RX: Token = Token(1);
+const PRODUCER_RX: Token = Token(2);
+const SIGNAL: Token = Token(3);
+
 impl Server {
-    pub fn new(port: u16) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        port: u16,
+        mut producer: Box<dyn EventProducer>,
+        consumer: Box<dyn EventConsumer>,
+        mut frontend: FrontendAdapter,
+    ) -> Result<Self, Box<dyn Error>> {
         let listen_addr = SocketAddr::new("0.0.0.0".parse()?, port);
-        Ok(Server { listen_addr })
+        let mut socket = UdpSocket::bind(listen_addr)?;
+
+        let poll = Poll::new()?;
+        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE)?;
+        poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
+        poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
+
+        // hand signal handing over to event loop
+        let mut signals = Signals::new(SignalSet::all())?;
+        poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
+        Ok(Server { poll, socket, consumer, producer, signals, frontend })
     }
 
     pub fn run(
-        &self,
-        client_manager: ClientManager,
-        producer: EventProducer,
-        consumer: Box<dyn Consumer>,
-        frontend: Box<dyn Frontend>,
-    ) -> Result<()> {
-        let udp_socket = UdpSocket::bind(self.listen_addr)?;
-        let rx = udp_socket.try_clone()?;
-        let tx = udp_socket;
-
-        match producer {
-            #[cfg(unix)]
-            EventProducer::Epoll(producer) => {
-                self.epoll_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
-            },
-            EventProducer::ThreadProducer(producer) => {
-                self.thread_event_loop(rx, tx, producer, consumer, frontend, client_manager)?;
-            },
-        }
-        Ok(())
-    }
-
-    fn thread_event_loop(
-        &self,
-        rx: UdpSocket,
-        tx: UdpSocket,
-        producer: Box<dyn ThreadProducer>,
-        consumer: Box<dyn Consumer>,
-        _frontend: Box<dyn Frontend>, // TODO
-        _client_manager: ClientManager, // TODO
-    ) -> Result<()> {
-        thread::Builder::new()
-            .name("event-producer".to_string())
-            .spawn(move || {
-                let socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
-                loop {
-                    let (handle, event) = producer.produce();
-                    if let Some(addr) = socket_for_client.get(&handle) {
-                        Self::send_event(&tx, event, *addr);
-                    } else {
-                        log::error!("unknown client: id {handle}");
-                    }
-                }
-        }).unwrap();
-
-        let client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
-        loop {
-            match Self::receive_event(&rx) {
-                Ok((event, addr)) => {
-                    log::debug!("{addr}: {event:?}");
-                    if let Event::Release() = event {
-                        // producer.release();
-                    } else {
-                        match client_for_socket.get(&addr) {
-                            Some(client_handle) => {
-                                consumer.consume(event, *client_handle);
-                            },
-                            None => {
-                                log::warn!("event from unknown client {addr:?}");
-                                consumer.consume(event, 0);
-                            },
-                        }
-                    }
-                },
-                Err(e) => {
-                    log::error!("{e}");
-                },
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    fn epoll_event_loop(
-        &self,
-        rx: UdpSocket,
-        tx: UdpSocket,
-        mut producer: Box<dyn EpollProducer>,
-        mut consumer: Box<dyn Consumer>,
-        frontend: Box<dyn Frontend>,
+        &mut self,
         client_manager: ClientManager,
     ) -> Result<()> {
-        let udpfd = rx.as_raw_fd();
-        let eventfd = producer.eventfd();
-        let frontendfd = frontend.eventfd().unwrap();
-        log::debug!("udpfd: {}, waylandfd: {}, frontendfd: {}", udpfd, eventfd, frontendfd);
-        let epoll = Epoll::new(&[udpfd, eventfd, frontendfd])?;
+
         let mut client_for_socket: HashMap<SocketAddr, ClientHandle> = HashMap::new();
         let mut socket_for_client: HashMap<ClientHandle, SocketAddr> = HashMap::new();
+
+        let mut events = Events::with_capacity(10);
+
         loop {
-            let fd = epoll.wait();
-            match fd {
-                fd if fd == udpfd => {
-                    match Self::receive_event(&rx) {
-                        Ok((event, addr)) => {
-                            log::debug!("{addr}: {event:?}");
-                            if let Event::Release() = event {
-                                producer.release();
-                            } else {
-                                match client_for_socket.get(&addr) {
-                                    Some(client_handle) => {
-                                        consumer.consume(event, *client_handle);
-                                    },
-                                    None => {
+            self.poll.poll(&mut events, None)?;
+            for event in &events {
+                if !event.is_readable() { continue; }
+
+                match event.token() {
+                    UDP_RX => {
+                        match Self::receive_event(&self.socket) {
+                            Ok((event, addr)) => {
+                                log::debug!("{addr}: {event:?}");
+                                if let Event::Release() = event {
+                                    self.producer.release();
+                                } else {
+                                    if let Some(client_handle) = client_for_socket.get(&addr) {
+                                        self.consumer.consume(event, *client_handle);
+                                    } else {
                                         log::warn!("ignoring event from client {addr:?}");
-                                    },
+                                    }
                                 }
                             }
-                        },
-                        Err(e) => {
-                            log::error!("{e}");
-                        },
-                    }
-                },
-                fd if fd == eventfd => {
-                    let events = producer.read_events();
-                    events.into_iter().for_each(|(c, e)| {
-                        log::debug!("wayland event: {e:?}");
-                        if let Some(addr) = socket_for_client.get(&c) {
-                            Self::send_event(&tx, e, *addr);
-                        } else {
-                            log::error!("unknown client: id {c}");
+                            Err(e) => log::error!("{e}")
                         }
-                    })
-                },
-                fd if fd == frontendfd => {
-                    frontend.read_event();
-                    if let Ok(event) = frontend.event_channel().recv() {
-                        log::debug!("frontend event {event:?}");
-                        match event {
-                            FrontendEvent::RequestPortChange(_) => todo!(),
-                            FrontendEvent::RequestClientAdd(addr, pos) => {
-                                let client = client_manager.register_client(addr, pos);
-                                socket_for_client.insert(client.handle, addr);
-                                client_for_socket.insert(addr, client.handle);
-                                producer.notify(ClientEvent::Create(client));
-                                consumer.notify(ClientEvent::Create(client));
+                    },
+                    PRODUCER_RX => {
+                        let events = self.producer.read_events();
+                        events.into_iter().for_each(|(c, e)| {
+                            log::debug!("wayland event: {e:?}");
+                            if let Some(addr) = socket_for_client.get(&c) {
+                                Self::send_event(&self.socket, e, *addr);
+                            } else {
+                                log::error!("unknown client: id {c}");
                             }
-                            FrontendEvent::RequestClientDelete(_) => todo!(),
-                            FrontendEvent::RequestClientUpdate(_) => todo!(),
+                        })
+                    },
+                    FRONTEND_RX => {
+                        if let Ok(event) = self.frontend.read_event() {
+                            match event {
+                                FrontendEvent::RequestPortChange(_) => todo!(),
+                                FrontendEvent::RequestClientAdd(addr, pos) => {
+                                    let client = client_manager.register_client(addr, pos);
+                                    socket_for_client.insert(client.handle, addr);
+                                    client_for_socket.insert(addr, client.handle);
+                                    self.producer.notify(ClientEvent::Create(client));
+                                    self.consumer.notify(ClientEvent::Create(client));
+                                }
+                                FrontendEvent::RequestClientDelete(_) => todo!(),
+                                FrontendEvent::RequestClientUpdate(_) => todo!(),
+                                FrontendEvent::RequestShutdown() => {
+                                    log::info!("terminating gracefully...");
+                                    return Ok(());
+                                },
+                            }
                         }
                     }
+                    SIGNAL => loop {
+                        match self.signals.receive()? {
+                            Some(Signal::Interrupt) | Some(Signal::Terminate) => {
+                                log::info!("terminating gracefully...");
+                                return Ok(());
+                            },
+                            Some(signal) => {
+                                log::info!("ignoring signal {signal:?}");
+                            },
+                            None => {},
+                        }
+                    },
+                    _ => panic!("what happened here?")
                 }
-                _ => panic!("what happened here?")
             }
         }
     }

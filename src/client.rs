@@ -12,7 +12,7 @@ pub enum Position {
     Bottom,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub struct Client {
     pub handle: ClientHandle,
     pub addr: SocketAddr,

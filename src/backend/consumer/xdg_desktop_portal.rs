@@ -1,4 +1,4 @@
-use crate::consumer::Consumer;
+use crate::consumer::EventConsumer;
 
 pub struct DesktopPortalConsumer {}
 
@@ -6,7 +6,7 @@ impl DesktopPortalConsumer {
     pub fn new() -> Self { Self {  } }
 }
 
-impl Consumer for DesktopPortalConsumer {
+impl EventConsumer for DesktopPortalConsumer {
     fn consume(&self, _: crate::event::Event, _: crate::client::ClientHandle) {
         log::error!("xdg_desktop_portal backend not yet implemented!");
     }

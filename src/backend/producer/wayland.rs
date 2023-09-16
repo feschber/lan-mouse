@@ -1,4 +1,5 @@
-use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EpollProducer};
+use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
+use mio::{event::Source, unix::SourceFd};
 
 use std::{os::fd::RawFd, vec::Drain};
 use memmap::MmapOptions;
@@ -304,7 +305,31 @@ impl State {
     }
 }
 
-impl EpollProducer for WaylandEventProducer {
+impl Source for WaylandEventProducer {
+    fn register(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).register(registry, token, interests)
+    }
+
+    fn reregister(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).reregister(registry, token, interests)
+    }
+
+    fn deregister(&mut self, registry: &mio::Registry) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).deregister(registry)
+    }
+}
+
+impl EventProducer for WaylandEventProducer {
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
         self.state.read_guard.take().unwrap().read().unwrap();
         match self.queue.dispatch_pending(&mut self.state) {
@@ -339,10 +364,6 @@ impl EpollProducer for WaylandEventProducer {
             self.queue.flush().unwrap();
             self.queue.dispatch_pending(&mut self.state).unwrap();
         }
-    }
-
-    fn eventfd(&self) -> RawFd {
-        self.state.wayland_fd
     }
 
     fn release(&mut self) {
