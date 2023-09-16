@@ -25,7 +25,6 @@ ipc-channel = "0.17.0"
 mio = { version = "0.8", features = ["os-ext"] }
 libc = "0.2.148"
 serde_json = "1.0.107"
-mio-signals = "0.2.0"
 
 [target.'cfg(unix)'.dependencies]
 wayland-client = { version="0.30.2", optional = true }
@@ -33,6 +32,7 @@ wayland-protocols = { version="0.30.0", features=["client", "staging", "unstable
 wayland-protocols-wlr = { version="0.1.0", features=["client"], optional = true }
 wayland-protocols-misc = { version="0.1.0", features=["client"], optional = true }
 wayland-protocols-plasma = { version="0.1.0", features=["client"], optional = true }
+mio-signals = "0.2.0"
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
 gtk = { package = "gtk4", version = "0.7.2", features = ["v4_8"], optional = true }
 adw = { package = "libadwaita", version = "0.5.2", features = ["v1_3"], optional = true }
