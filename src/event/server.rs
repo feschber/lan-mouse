@@ -1,6 +1,7 @@
 use anyhow::Result;
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
+#[cfg(not(windows))]
 use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{
@@ -17,6 +18,7 @@ pub struct Server {
     socket: UdpSocket,
     producer: Box<dyn EventProducer>,
     consumer: Box<dyn EventConsumer>,
+    #[cfg(not(windows))]
     signals: Signals,
     frontend: FrontendAdapter,
 }
@@ -24,6 +26,7 @@ pub struct Server {
 const UDP_RX: Token = Token(0);
 const FRONTEND_RX: Token = Token(1);
 const PRODUCER_RX: Token = Token(2);
+#[cfg(not(windows))]
 const SIGNAL: Token = Token(3);
 
 impl Server {
@@ -42,9 +45,19 @@ impl Server {
         poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
 
         // hand signal handing over to event loop
+        #[cfg(not(windows))]
         let mut signals = Signals::new(SignalSet::all())?;
+        #[cfg(not(windows))]
         poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
-        Ok(Server { poll, socket, consumer, producer, signals, frontend })
+        Ok(Server {
+            poll,
+            socket,
+            consumer,
+            producer,
+            #[cfg(not(windows))]
+            signals,
+            frontend,
+        })
     }
 
     pub fn run(
@@ -111,6 +124,7 @@ impl Server {
                             }
                         }
                     }
+                    #[cfg(not(windows))]
                     SIGNAL => loop {
                         match self.signals.receive()? {
                             Some(Signal::Interrupt) | Some(Signal::Terminate) => {
@@ -120,7 +134,7 @@ impl Server {
                             Some(signal) => {
                                 log::info!("ignoring signal {signal:?}");
                             },
-                            None => {},
+                            None => break,
                         }
                     },
                     _ => panic!("what happened here?")
