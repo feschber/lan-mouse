@@ -1,6 +1,4 @@
-use std::sync::mpsc::Receiver;
-
-use crate::{event::{KeyboardEvent, PointerEvent}, consumer::Consumer};
+use crate::{event::{KeyboardEvent, PointerEvent}, consumer::EventConsumer};
 use winapi::{
     self,
     um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
@@ -16,7 +14,7 @@ use winapi::{
 };
 
 use crate::{
-    client::{Client, ClientHandle},
+    client::{ClientEvent, ClientHandle},
     event::Event,
 };
 
@@ -27,7 +25,7 @@ impl WindowsConsumer {
     pub fn new() -> Self { Self {  } }
 }
 
-impl Consumer for WindowsConsumer {
+impl EventConsumer for WindowsConsumer {
     fn consume(&self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
@@ -50,7 +48,7 @@ impl Consumer for WindowsConsumer {
         }
     }
 
-    fn notify(&mut self, client_event: crate::client::ClientEvent) {
+    fn notify(&mut self, _: ClientEvent) {
         todo!()
     }
 }

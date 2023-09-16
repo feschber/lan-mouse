@@ -1,7 +1,10 @@
 use mio::event::Source;
-use std::{error::Error, vec::Drain, env};
+use std::{error::Error, vec::Drain};
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 use crate::backend::producer;
+
+#[cfg(unix)]
+use std::env;
 
 #[cfg(unix)]
 enum Backend {
@@ -11,7 +14,7 @@ enum Backend {
 
 pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
     #[cfg(windows)]
-    return Ok(EventProducer::ThreadProducer(Box::new(producer::windows::WindowsProducer::new())));
+    return Ok(Box::new(producer::windows::WindowsProducer::new()));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
@@ -46,7 +49,6 @@ pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
     }
 }
 
-#[cfg(unix)]
 pub trait EventProducer: Source {
     /// notify event producer of configuration changes
     fn notify(&mut self, event: ClientEvent);

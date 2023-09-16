@@ -1,5 +1,8 @@
 use anyhow::Result;
-use std::{thread, io::Write, net::SocketAddr, os::unix::net::UnixStream, path::Path, env};
+use std::{thread, io::Write, net::SocketAddr};
+
+#[cfg(unix)]
+use std::{os::unix::net::UnixStream, path::Path, env};
 
 use crate::client::Position;
 
@@ -11,6 +14,7 @@ impl Frontend for CliFrontend {}
 
 impl CliFrontend {
     pub fn new() -> Result<CliFrontend> {
+        #[cfg(unix)]
         let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
         thread::Builder::new()
             .name("cli-frontend".to_string())
@@ -20,6 +24,7 @@ impl CliFrontend {
                 std::io::stderr().flush().unwrap();
                 let mut buf = String::new();
                 match std::io::stdin().read_line(&mut buf) {
+                    #[cfg(unix)]
                     Ok(len) => {
                         if let Some(event) = parse_event(buf, len) {
                             let Ok(mut stream) = UnixStream::connect(&socket_path) else {
@@ -35,6 +40,10 @@ impl CliFrontend {
                             }
                         }
                     }
+                    #[cfg(windows)]
+                    Ok(_) => {
+                        log::warn!("not yet implemented!")
+                    },
                     Err(e) => {
                         log::error!("{e:?}");
                         break

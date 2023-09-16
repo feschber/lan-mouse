@@ -1,11 +1,22 @@
 use anyhow::Result;
-use std::{str, net::SocketAddr, env, path::{Path, PathBuf}, os::fd::AsRawFd, io};
+use std::{str, net::SocketAddr, io};
+
+#[cfg(unix)]
+use std::{env, os::fd::AsRawFd, path::{Path, PathBuf}};
+#[cfg(windows)]
+use std::os::windows::io::AsRawSocket;
 
 use mio::{Registry, Token, event::Source};
+
 #[cfg(unix)]
 use mio::net::UnixListener;
 #[cfg(windows)]
 use mio::net::TcpListener;
+
+#[cfg(unix)]
+use libc::recv;
+#[cfg(windows)]
+use winapi::um::winsock2::recv;
 
 use serde::{Serialize, Deserialize};
 
@@ -38,6 +49,7 @@ pub struct FrontendAdapter {
     listener: TcpListener,
     #[cfg(unix)]
     listener: UnixListener,
+    #[cfg(unix)]
     socket_path: PathBuf,
 }
 
@@ -51,7 +63,11 @@ impl FrontendAdapter {
         #[cfg(windows)]
         let listener = TcpListener::bind("127.0.0.1:0".parse()?)?;
 
-        let adapter = Self { listener, socket_path };
+        let adapter = Self {
+            listener,
+            #[cfg(unix)]
+            socket_path,
+        };
 
         Ok(adapter)
     }
@@ -61,7 +77,10 @@ impl FrontendAdapter {
         let mut buf = [0u8; 128];
         stream.try_io(|| {
             let buf_ptr = &mut buf as *mut _ as *mut _;
-            let res = unsafe { libc::recv(stream.as_raw_fd(), buf_ptr, buf.len(), 0) };
+            #[cfg(unix)]
+            let res = unsafe { recv(stream.as_raw_fd(), buf_ptr, buf.len(), 0) };
+            #[cfg(windows)]
+            let res = unsafe { recv(stream.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0) };
             if res != -1 {
                 Ok(res as usize)
             } else {
@@ -105,6 +124,7 @@ impl Source for FrontendAdapter {
     }
 }
 
+#[cfg(unix)]
 impl Drop for FrontendAdapter {
     fn drop(&mut self) {
         log::debug!("remove socket: {:?}", self.socket_path);

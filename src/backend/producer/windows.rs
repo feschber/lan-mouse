@@ -1,33 +1,58 @@
-use std::sync::mpsc::{SyncSender, Receiver, sync_channel};
+use std::vec::Drain;
+
+use mio::{Token, Registry};
+use mio::event::Source;
+use std::io::Result;
 
 use crate::{
-    client::{Client, ClientHandle, ClientEvent},
+    client::{ClientHandle, ClientEvent},
     event::Event,
-    request::Server, producer::ThreadProducer,
+    producer::EventProducer,
 };
 
 pub struct WindowsProducer {
-    rx: Receiver<(ClientHandle, Event)>,
-    _tx: SyncSender<(ClientHandle, Event)>,
+    pending_events: Vec<(ClientHandle, Event)>,
 }
 
-impl ThreadProducer for WindowsProducer {
-    fn notify(&self, _: ClientEvent) { }
-
-    fn produce(&self) -> (ClientHandle, Event) {
-        todo!();
+impl Source for WindowsProducer {
+    fn register(
+        &mut self,
+        _registry: &Registry,
+        _token: Token,
+        _interests: mio::Interest,
+    ) -> Result<()> {
+        Ok(())
     }
 
-    fn stop(&self) { }
+    fn reregister(
+        &mut self,
+        _registry: &Registry,
+        _token: Token,
+        _interests: mio::Interest,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn deregister(&mut self, _registry: &Registry) -> Result<()> {
+        Ok(())
+    }
+}
+
+
+impl EventProducer for WindowsProducer {
+    fn notify(&mut self, _: ClientEvent) { }
+
+    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
+        self.pending_events.drain(..)
+    }
+
+    fn release(&mut self) { }
 }
 
 impl WindowsProducer {
     pub(crate) fn new() -> Self {
-        let (_tx, rx) = sync_channel(128);
-        Self { rx, _tx }
+        Self {
+            pending_events: vec![],
+        }
     }
-}
-
-pub fn run(_produce_tx: SyncSender<(Event, ClientHandle)>, _server: Server, _clients: Vec<Client>) {
-    todo!();
 }
