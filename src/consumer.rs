@@ -37,7 +37,7 @@ pub fn create() -> Result<Box<dyn EventConsumer>> {
                 match env::var("XDG_CURRENT_DESKTOP") {
                     Ok(current_desktop) => match current_desktop.as_str() {
                         "gnome" => {
-                            log::info!("XDG_CURRENT_DESKTOP = KDE -> using libei backend");
+                            log::info!("XDG_CURRENT_DESKTOP = gnome -> using libei backend");
                             Backend::Libei
                         }
                         "KDE" => {
