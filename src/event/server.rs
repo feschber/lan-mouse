@@ -106,6 +106,10 @@ impl Server {
                         events.into_iter().for_each(|(c, e)| {
                             log::debug!("wayland event: {e:?}");
                             if let Some(addr) = socket_for_client.get(&c) {
+                                // We are currently abusing a blocking send
+                                // to get the lowest possible latency.
+                                // It may be better to set the socket
+                                // to non-blocking and only send when ready.
                                 Self::send_event(&self.socket, e, *addr);
                             } else {
                                 log::error!("unknown client: id {c}");
@@ -160,7 +164,7 @@ impl Server {
     fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {
         let data: Vec<u8> = (&e).into();
         if let Err(e) = tx.send_to(&data[..], addr) {
-            log::error!("{}", e);
+            log::error!("udp send: {}", e);
         }
     }
 

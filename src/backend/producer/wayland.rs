@@ -1,7 +1,7 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 use mio::{event::Source, unix::SourceFd};
 
-use std::{os::fd::RawFd, vec::Drain};
+use std::{os::fd::RawFd, vec::Drain, io::ErrorKind};
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
 
@@ -331,7 +331,18 @@ impl Source for WaylandEventProducer {
 
 impl EventProducer for WaylandEventProducer {
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
-        self.state.read_guard.take().unwrap().read().unwrap();
+        loop {
+            match self.state.read_guard.take().unwrap().read() {
+                Ok(_) => {},
+                Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(WaylandError::Io(e)) => {
+                    log::error!("error reading from wayland socket: {e}");
+                }
+                Err(WaylandError::Protocol(e)) => {
+                    log::error!("wayland protocol violation: {e}");
+                }
+            }
+        }
         match self.queue.dispatch_pending(&mut self.state) {
             Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
@@ -590,9 +601,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
             // client corresponding to the layer_surface
             let surface = &window.surface;
             let buffer = &window.buffer;
-            surface.commit();
-            layer_surface.ack_configure(serial);
             surface.attach(Some(&buffer), 0, 0);
+            layer_surface.ack_configure(serial);
             surface.commit();
         }
     }
