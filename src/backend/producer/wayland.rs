@@ -235,7 +235,7 @@ impl App {
                 surface,
                 pointer,
                 None,
-                Lifetime::Oneshot,
+                Lifetime::Persistent,
                 qh,
                 (),
             ));
