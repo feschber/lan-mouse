@@ -54,7 +54,7 @@ pub struct FrontendAdapter {
 }
 
 impl FrontendAdapter {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
         #[cfg(unix)]
         let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
         #[cfg(unix)]

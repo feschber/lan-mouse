@@ -333,7 +333,9 @@ impl EventProducer for WaylandEventProducer {
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
         loop {
             match self.state.read_guard.take().unwrap().read() {
-                Ok(_) => {},
+                Ok(_) => {
+                    self.state.read_guard = Some(self.queue.prepare_read().unwrap());
+                },
                 Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(WaylandError::Io(e)) => {
                     log::error!("error reading from wayland socket: {e}");

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use std::{thread, io::Write, net::{SocketAddr, SocketAddrV4}};
+use std::{thread, io::Write, net::SocketAddr};
+#[cfg(windows)]
+use std::net::SocketAddrV4;
 
 #[cfg(unix)]
 use std::{os::unix::net::UnixStream, path::Path, env};
