@@ -1,8 +1,10 @@
 use anyhow::Result;
-use std::{thread, io::Write, net::SocketAddr};
+use std::{thread, io::Write, net::{SocketAddr, SocketAddrV4}};
 
 #[cfg(unix)]
 use std::{os::unix::net::UnixStream, path::Path, env};
+#[cfg(windows)]
+use std::net::TcpStream;
 
 use crate::client::Position;
 
@@ -24,11 +26,16 @@ impl CliFrontend {
                 std::io::stderr().flush().unwrap();
                 let mut buf = String::new();
                 match std::io::stdin().read_line(&mut buf) {
-                    #[cfg(unix)]
                     Ok(len) => {
                         if let Some(event) = parse_event(buf, len) {
+                            #[cfg(unix)]
                             let Ok(mut stream) = UnixStream::connect(&socket_path) else {
                                 log::error!("Could not connect to lan-mouse-socket");
+                                continue;
+                            };
+                            #[cfg(windows)]
+                            let Ok(mut stream) = TcpStream::connect("127.0.0.1:5252".parse::<SocketAddrV4>().unwrap()) else {
+                                log::error!("Could not connect to lan-mouse-server");
                                 continue;
                             };
                             let json = serde_json::to_string(&event).unwrap();
@@ -40,10 +47,6 @@ impl CliFrontend {
                             }
                         }
                     }
-                    #[cfg(windows)]
-                    Ok(_) => {
-                        log::warn!("not yet implemented!")
-                    },
                     Err(e) => {
                         log::error!("{e:?}");
                         break

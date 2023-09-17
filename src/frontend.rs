@@ -1,4 +1,4 @@
-use anyhow::Result;
+use std::io::Result;
 use std::{str, net::SocketAddr, io};
 
 #[cfg(unix)]
@@ -61,7 +61,7 @@ impl FrontendAdapter {
         let listener = UnixListener::bind(&socket_path)?;
 
         #[cfg(windows)]
-        let listener = TcpListener::bind("127.0.0.1:0".parse()?)?;
+        let listener = TcpListener::bind("127.0.0.1:5252".parse().unwrap())?; // abuse tcp
 
         let adapter = Self {
             listener,
@@ -73,7 +73,7 @@ impl FrontendAdapter {
     }
 
     pub fn read_event(&mut self) -> Result<FrontendEvent>{
-        let (stream, _) = self.listener.accept().unwrap();
+        let (stream, _) = self.listener.accept()?;
         let mut buf = [0u8; 128];
         stream.try_io(|| {
             let buf_ptr = &mut buf as *mut _ as *mut _;
@@ -81,6 +81,7 @@ impl FrontendAdapter {
             let res = unsafe { recv(stream.as_raw_fd(), buf_ptr, buf.len(), 0) };
             #[cfg(windows)]
             let res = unsafe { recv(stream.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0) };
+            log::trace!("recvfrom res = {res}");
             if res != -1 {
                 Ok(res as usize)
             } else {
@@ -106,7 +107,7 @@ impl Source for FrontendAdapter {
         registry: &Registry,
         token: Token,
         interests: mio::Interest,
-    ) -> std::io::Result<()> {
+    ) -> Result<()> {
         self.listener.register(registry, token, interests)
     }
 
@@ -115,11 +116,11 @@ impl Source for FrontendAdapter {
         registry: &Registry,
         token: Token,
         interests: mio::Interest,
-    ) -> std::io::Result<()> {
+    ) -> Result<()> {
         self.listener.reregister(registry, token, interests)
     }
 
-    fn deregister(&mut self, registry: &Registry) -> std::io::Result<()> {
+    fn deregister(&mut self, registry: &Registry) -> Result<()> {
         self.listener.deregister(registry)
     }
 }

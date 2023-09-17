@@ -49,7 +49,7 @@ impl EventConsumer for WindowsConsumer {
     }
 
     fn notify(&mut self, _: ClientEvent) {
-        todo!()
+        // nothing to do
     }
 }
 
