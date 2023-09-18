@@ -2,7 +2,6 @@ use std::{process, error::Error};
 
 use env_logger::Env;
 use lan_mouse::{
-    client::ClientManager,
     consumer, producer,
     config, event, request,
     frontend::{self, Frontend, FrontendAdapter},
@@ -23,9 +22,6 @@ pub fn main() {
 pub fn run() -> Result<(), Box<dyn Error>> {
     // parse config file
     let config = config::Config::new()?;
-
-    // create client manager
-    let client_manager = ClientManager::new()?;
 
     // start producing and consuming events
     let producer = producer::create()?;
@@ -54,7 +50,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let (_, _) = request::Server::listen(config.port)?;
 
     // run event loop
-    event_server.run(client_manager)?;
+    event_server.run()?;
 
     Ok(())
 }
