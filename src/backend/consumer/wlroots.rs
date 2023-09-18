@@ -1,13 +1,9 @@
 use wayland_client::WEnum;
-use crate::client::{Client, ClientHandle, ClientEvent};
+use crate::client::{ClientHandle, ClientEvent};
 use crate::consumer::EventConsumer;
-use crate::request::{self, Request};
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
-use std::{
-    io::{BufWriter, Write},
-    os::unix::prelude::AsRawFd,
-};
+use std::os::unix::prelude::AsRawFd;
 
 use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
@@ -32,8 +28,6 @@ use wayland_client::{
     protocol::{wl_registry, wl_seat},
     Connection, Dispatch, EventQueue, QueueHandle,
 };
-
-use tempfile;
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
@@ -115,41 +109,28 @@ impl WlrootsConsumer {
 }
 
 impl State {
-    fn add_client(&mut self, client: Client) {
+    fn add_client(&mut self, client: ClientHandle) {
         // create virtual input devices
         match &self.virtual_input_manager {
             VirtualInputManager::Wlroots { vpm, vkm } => {
                 let pointer: Vp = vpm.create_virtual_pointer(None, &self.qh, ());
                 let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
-                // receive keymap from device
-                log::info!("requesting keymap for {}", client.addr);
-                let data = request::request_data(client.addr, Request::KeyMap).ok();
-
-                if let Some(data) = data {
-                    // TODO use shm_open
-                    let f = tempfile::tempfile().unwrap();
-                    let mut buf = BufWriter::new(&f);
-                    buf.write_all(&data[..]).unwrap();
-                    buf.flush().unwrap();
-                    keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
+                // TODO: use server side keymap
+                if let Some((format, fd, size)) = self.keymap.as_ref() {
+                    keyboard.keymap(*format, fd.as_raw_fd(), *size);
                 } else {
-                    log::warn!("no keyboard provided, using server keymap");
-                    if let Some((format, fd, size)) = self.keymap.as_ref() {
-                        keyboard.keymap(*format, fd.as_raw_fd(), *size);
-                    } else {
-                        panic!("no keymap");
-                    }
+                    panic!("no keymap");
                 }
 
                 let vinput = VirtualInput::Wlroots { pointer, keyboard };
 
-                self.input_for_client.insert(client.handle, vinput);
+                self.input_for_client.insert(client, vinput);
             }
             VirtualInputManager::Kde { fake_input } => {
                 let fake_input = fake_input.clone();
                 let vinput = VirtualInput::Kde { fake_input };
-                self.input_for_client.insert(client.handle, vinput);
+                self.input_for_client.insert(client, vinput);
             }
         }
     }
@@ -166,7 +147,7 @@ impl EventConsumer for WlrootsConsumer {
     }
 
     fn notify(&mut self, client_event: ClientEvent) {
-        if let ClientEvent::Create(client) = client_event {
+        if let ClientEvent::Create(client, _) = client_event {
             self.state.add_client(client);
             if let Err(e) = self.queue.flush() {
                 log::error!("{}", e);

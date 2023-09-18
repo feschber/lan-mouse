@@ -3,7 +3,7 @@ use std::{process, error::Error};
 use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
-    config, event, request,
+    config, event,
     frontend::{self, Frontend, FrontendAdapter},
 };
 
@@ -45,9 +45,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         },
         config::Frontend::Cli => Box::new(frontend::cli::CliFrontend::new()?),
     };
-
-    // start receiving client connection requests
-    let (_, _) = request::Server::listen(config.port)?;
 
     // run event loop
     event_server.run()?;

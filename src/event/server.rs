@@ -1,16 +1,12 @@
-use std::io::Result;
+use std::{error::Error, io::Result};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
 #[cfg(not(windows))]
 use mio_signals::{Signals, Signal, SignalSet};
 
-use std::{
-    collections::HashMap,
-    error::Error,
-    net::SocketAddr, io::ErrorKind,
-};
+use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientHandle, ClientEvent, Position, Client}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
+use crate::{client::{ClientEvent, ClientManager}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
 use super::Event;
 
 pub struct Server {
@@ -21,10 +17,7 @@ pub struct Server {
     #[cfg(not(windows))]
     signals: Signals,
     frontend: FrontendAdapter,
-    clients: Vec<Client>,
-    next_client_id: u32,
-    client_for_socket: HashMap<SocketAddr, ClientHandle>,
-    socket_for_client: HashMap<ClientHandle, Vec<SocketAddr>>,
+    client_manager: ClientManager,
 }
 
 const UDP_RX: Token = Token(0);
@@ -46,25 +39,24 @@ impl Server {
 
         // register event sources
         let poll = Poll::new()?;
-        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE)?;
-        poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
-        poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
-
-        // create connection lookup tables
-        let client_for_socket = HashMap::new();
-        let socket_for_client = HashMap::new();
 
         // hand signal handling over to the event loop
         #[cfg(not(windows))]
         let mut signals = Signals::new(SignalSet::all())?;
+
         #[cfg(not(windows))]
         poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
+        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE)?;
+        poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
+        poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
+
+        // create client manager
+        let client_manager = ClientManager::new();
         Ok(Server {
             poll, socket, consumer, producer,
             #[cfg(not(windows))]
             signals, frontend,
-            clients: vec![],
-            next_client_id: 0, client_for_socket, socket_for_client,
+            client_manager,
         })
     }
 
@@ -73,7 +65,7 @@ impl Server {
         loop {
             self.poll.poll(&mut events, None)?;
             for event in &events {
-                if !event.is_readable() { continue; }
+                if !event.is_readable() { continue }
 
                 match event.token() {
                     UDP_RX => self.handle_udp_rx(),
@@ -96,8 +88,8 @@ impl Server {
                         self.producer.release();
                         return;
                     }
-                    if let Some(client_handle) = self.client_for_socket.get(&addr) {
-                        self.consumer.consume(event, *client_handle);
+                    if let Some(client_handle) = self.client_manager.get_client(addr) {
+                        self.consumer.consume(event, client_handle);
                     } else {
                         log::warn!("ignoring event from client {addr:?}");
                     }
@@ -119,11 +111,7 @@ impl Server {
     fn handle_producer_rx(&mut self) {
         let events = self.producer.read_events();
         events.into_iter().for_each(|(c, e)| {
-            if let Some(addr) = self.socket_for_client.get(&c) {
-                // We are currently abusing a blocking send
-                // to get the lowest possible latency.
-                // It may be better to set the socket
-                // to non-blocking and only send when ready.
+            if let Some(addr) = self.client_manager.get_active_addr(c) {
                 Self::send_event(&self.socket, e, addr);
             } else {
                 log::error!("unknown client: id {c}");
@@ -137,9 +125,9 @@ impl Server {
                 Ok(event) => match event {
                     FrontendEvent::RequestPortChange(_) => todo!(),
                     FrontendEvent::RequestClientAdd(addr, pos) => {
-                        let client = self.add_client(addr, pos);
-                        self.producer.notify(ClientEvent::Create(client));
-                        self.consumer.notify(ClientEvent::Create(client));
+                        let client = self.client_manager.add_client(vec![addr], pos);
+                        self.producer.notify(ClientEvent::Create(client, pos));
+                        self.consumer.notify(ClientEvent::Create(client, pos));
                     }
                     FrontendEvent::RequestClientDelete(_) => todo!(),
                     FrontendEvent::RequestClientUpdate(_) => todo!(),
@@ -154,20 +142,6 @@ impl Server {
                 }
             }
         }
-    }
-
-    fn add_client(&mut self, addr: SocketAddr, pos: Position) -> Client {
-        let handle = self.next_client_id;
-        self.next_client_id += 1;
-        let client = Client { handle, addr, pos };
-        self.clients.push(client);
-        if self.socket_for_client.contains_key(&client.handle) {
-            self.socket_for_client.get_mut(&client.handle).unwrap().push(addr);
-        } else {
-            self.socket_for_client.insert(client.handle, vec![addr]);
-        }
-        self.client_for_socket.insert(addr, client.handle);
-        client
     }
 
     fn handle_signal(&mut self) -> bool {
@@ -194,9 +168,11 @@ impl Server {
         }
     }
 
-    fn send_event(tx: &UdpSocket, e: Event, addr: &[SocketAddr]) {
+    fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {
         let data: Vec<u8> = (&e).into();
-        if let Err(e) = tx.send_to(&data[..], addr[0]) { // TODO: anycast
+        // We are currently abusing a blocking send to get the lowest possible latency.
+        // It may be better to set the socket to non-blocking and only send when ready.
+        if let Err(e) = tx.send_to(&data[..], addr) {
             log::error!("udp send: {}", e);
         }
     }

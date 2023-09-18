@@ -29,7 +29,7 @@ pub mod cli;
 #[cfg(all(unix, feature = "gtk"))]
 pub mod gtk;
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
     RequestPortChange(u16),
     RequestClientAdd(SocketAddr, Position),
