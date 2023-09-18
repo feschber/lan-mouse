@@ -1,6 +1,5 @@
 use std::{process, error::Error};
 
-use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
     config::{Config, Frontend::{Gtk, Cli}}, event::server::Server,
@@ -10,8 +9,9 @@ use lan_mouse::{
 pub fn main() {
 
     // init logging
-    let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
-    env_logger::init_from_env(env);
+    env_logger::Builder::from_env("LAN_MOUSE_LOG_LEVEL")
+        .filter_level(log::LevelFilter::Info)
+        .init();
 
     if let Err(e) = run() {
         log::error!("{e}");

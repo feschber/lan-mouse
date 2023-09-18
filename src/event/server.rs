@@ -1,4 +1,4 @@
-use std::{error::Error, io::Result, collections::HashSet};
+use std::{error::Error, io::{Result, self}, collections::HashSet};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
 #[cfg(not(windows))]
@@ -18,6 +18,7 @@ pub struct Server {
     signals: Signals,
     frontend: FrontendAdapter,
     client_manager: ClientManager,
+    prev_error: Option<io::Error>,
 }
 
 const UDP_RX: Token = Token(0);
@@ -57,6 +58,7 @@ impl Server {
             #[cfg(not(windows))]
             signals, frontend,
             client_manager,
+            prev_error: None,
         })
     }
 
@@ -87,7 +89,7 @@ impl Server {
 
     fn handle_udp_rx(&mut self) {
         loop {
-            match Self::receive_event(&self.socket) {
+            match self.receive_event() {
                 Ok((event, addr)) => {
                     log::debug!("{addr}: {event:?}");
                     if let Event::Release() = event {
@@ -117,13 +119,22 @@ impl Server {
 
     fn handle_producer_rx(&mut self) {
         let events = self.producer.read_events();
-        events.into_iter().for_each(|(c, e)| {
+        for (c, e) in events.into_iter() {
             if let Some(addr) = self.client_manager.get_active_addr(c) {
-                Self::send_event(&self.socket, e, addr);
+                if let Err(e) = Self::send_event(&self.socket, e, addr) {
+                    if self.prev_error.is_none()
+                    || self.prev_error.as_ref()
+                        .unwrap()
+                        .kind() != e.kind() {
+                        log::error!("udp send: {}", e);
+                    }
+                    self.prev_error = Some(e);
+                }
+
             } else {
                 log::error!("unknown client: id {c}");
             }
-        })
+        }
     }
 
     fn handle_frontend_rx(&mut self) -> bool {
@@ -173,18 +184,16 @@ impl Server {
         }
     }
 
-    fn send_event(tx: &UdpSocket, e: Event, addr: SocketAddr) {
+    fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize> {
         let data: Vec<u8> = (&e).into();
         // We are currently abusing a blocking send to get the lowest possible latency.
         // It may be better to set the socket to non-blocking and only send when ready.
-        if let Err(e) = tx.send_to(&data[..], addr) {
-            log::error!("udp send: {}", e);
-        }
+        sock.send_to(&data[..], addr)
     }
 
-    fn receive_event(rx: &UdpSocket) -> std::result::Result<(Event, SocketAddr), Box<dyn Error>> {
+    fn receive_event(&self) -> std::result::Result<(Event, SocketAddr), Box<dyn Error>> {
         let mut buf = vec![0u8; 22];
-        match rx.recv_from(&mut buf) {
+        match self.socket.recv_from(&mut buf) {
             Ok((_amt, src)) => Ok((Event::try_from(buf)?, src)),
             Err(e) => Err(Box::new(e)),
         }
