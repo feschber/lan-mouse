@@ -1,20 +1,19 @@
 # example configuration
 
-# optional port
+# optional port (defaults to 4242)
 port = 4242
 
 # define a client on the right side with host name "iridium"
 [right]
 # hostname
 host_name = "iridium"
-# optional ip address
-ip = "192.168.178.141"
+# optional list of (known) ip addresses
+ips = ["192.168.178.141"]
 # optional port (defaults to 4242)
 port = 4242
 
 # define a client on the left side with IP address 192.168.178.189
-#
-# when an IP address is specified, it takes priority
-# and host_name can be omitted
 [left]
-ip = "192.168.178.189"
+# The hostname is optional: When no hostname is specified,
+# at least one ip address needs to be specified.
+ips = ["192.168.178.189"]

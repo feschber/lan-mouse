@@ -6,7 +6,7 @@ use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
+use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
 use super::Event;
 
 pub struct Server {
@@ -79,6 +79,12 @@ impl Server {
         }
     }
 
+    pub fn add_client(&mut self, addr: Vec<SocketAddr>, pos: Position) {
+        let client = self.client_manager.add_client(addr, pos);
+        self.producer.notify(ClientEvent::Create(client, pos));
+        self.consumer.notify(ClientEvent::Create(client, pos));
+    }
+
     fn handle_udp_rx(&mut self) {
         loop {
             match Self::receive_event(&self.socket) {
@@ -90,6 +96,7 @@ impl Server {
                     }
                     if let Some(client_handle) = self.client_manager.get_client(addr) {
                         self.consumer.consume(event, client_handle);
+                        self.client_manager.set_default_addr(client_handle, addr);
                     } else {
                         log::warn!("ignoring event from client {addr:?}");
                     }
@@ -125,9 +132,7 @@ impl Server {
                 Ok(event) => match event {
                     FrontendEvent::RequestPortChange(_) => todo!(),
                     FrontendEvent::RequestClientAdd(addr, pos) => {
-                        let client = self.client_manager.add_client(vec![addr], pos);
-                        self.producer.notify(ClientEvent::Create(client, pos));
-                        self.consumer.notify(ClientEvent::Create(client, pos));
+                        self.add_client(vec![addr], pos);
                     }
                     FrontendEvent::RequestClientDelete(_) => todo!(),
                     FrontendEvent::RequestClientUpdate(_) => todo!(),

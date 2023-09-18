@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use core::fmt;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::{error::Error, fs};
 
 use std::env;
 use toml;
 
 use crate::client::Position;
+use crate::dns;
 
 pub const DEFAULT_PORT: u16 = 4242;
 
@@ -23,7 +24,7 @@ pub struct ConfigToml {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct Client {
     pub host_name: Option<String>,
-    pub ip: Option<IpAddr>,
+    pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
 }
 
@@ -78,7 +79,7 @@ impl Config {
         let config_path = "config.toml";
         let config_toml = match ConfigToml::new(config_path) {
             Err(e) => {
-                log::warn!("config.toml: {e}");
+                log::error!("config.toml: {e}");
                 log::warn!("Continuing without config file ...");
                 None
             },
@@ -128,5 +129,41 @@ impl Config {
         }
 
         Ok(Config { frontend, clients, port })
+    }
+
+    pub fn get_clients(&self) -> Vec<(Vec<SocketAddr>, Option<String>,  Position)> {
+        self.clients.iter().map(|(c,p)| {
+            let port = c.port.unwrap_or(DEFAULT_PORT);
+            // add ips from config
+            let config_ips: Vec<IpAddr> = if let Some(ips) = c.ips.as_ref() {
+                ips.iter().cloned().collect()
+            } else {
+                vec![]
+            };
+            let host_name = c.host_name.clone();
+            // add ips from dns lookup
+            let dns_ips = match host_name.as_ref() {
+                None => vec![],
+                Some(host_name) => match dns::resolve(host_name) {
+                    Err(e) => {
+                        log::warn!("{host_name}: could not resolve host: {e}");
+                        vec![]
+                    }
+                    Ok(l) if l.is_empty() => {
+                        log::warn!("{host_name}: could not resolve host");
+                        vec![]
+                    }
+                    Ok(l) => l,
+                }
+            };
+            if config_ips.is_empty() && dns_ips.is_empty() {
+                log::error!("no ips found for client {p:?}, ignoring!");
+                log::error!("You can manually specify ip addresses via the `ips` config option");
+            }
+            let ips = config_ips.into_iter().chain(dns_ips.into_iter());
+            // map ip addresses to socket addresses
+            let addrs: Vec<SocketAddr> = ips.map(|ip| SocketAddr::new(ip, port)).collect();
+            (addrs, host_name, *p)
+        }).filter(|(a, _, _)| !a.is_empty()).collect()
     }
 }

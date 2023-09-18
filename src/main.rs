@@ -3,8 +3,8 @@ use std::{process, error::Error};
 use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
-    config, event,
-    frontend::{self, Frontend, FrontendAdapter},
+    config::{Config, Frontend::{Gtk, Cli}}, event::server::Server,
+    frontend::{FrontendAdapter, cli::CliFrontend},
 };
 
 pub fn main() {
@@ -21,7 +21,7 @@ pub fn main() {
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     // parse config file
-    let config = config::Config::new()?;
+    let config = Config::new()?;
 
     // start producing and consuming events
     let producer = producer::create()?;
@@ -30,22 +30,35 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // create frontend communication adapter
     let frontend_adapter = FrontendAdapter::new()?;
 
-    log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
-
     // start sending and receiving events
-    let mut event_server = event::server::Server::new(config.port, producer, consumer, frontend_adapter)?;
+    let mut event_server = Server::new(config.port, producer, consumer, frontend_adapter)?;
+
+    // add clients form config
+    config.get_clients().into_iter().for_each(|(c, h, p)| {
+        log::debug!("{c:?}: {p:?}");
+        let host_name = match h {
+            Some(h) => format!(" '{}'", h),
+            None => "".to_owned(),
+        };
+        if c.len() == 0 {
+            log::warn!("ignoring client{} with 0 assigned ips!", host_name);
+        }
+        log::info!("adding client{} with addrs {:?}", host_name, c);
+        event_server.add_client(c, p);
+    });
 
     // any threads need to be started after event_server sets up signal handling
-    let _: Box<dyn Frontend> = match config.frontend {
-        config::Frontend::Gtk => {
+    match config.frontend {
+        Gtk => {
             #[cfg(all(unix, feature = "gtk"))]
             frontend::gtk::create();
-            #[cfg(any(not(unix), not(feature = "gtk")))]
+            #[cfg(not(feature = "gtk"))]
             panic!("gtk frontend requested but feature not enabled!");
         },
-        config::Frontend::Cli => Box::new(frontend::cli::CliFrontend::new()?),
+        Cli => Box::new(CliFrontend::new()?),
     };
 
+    log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
     // run event loop
     event_server.run()?;
 

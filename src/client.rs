@@ -19,7 +19,7 @@ pub struct Client {
     /// `active` address of the client, used to send data to.
     /// This should generally be the socket address where data
     /// was last received from.
-    pub active_addr: SocketAddr,
+    pub active_addr: Option<SocketAddr>,
     /// all socket addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
@@ -55,7 +55,7 @@ impl ClientManager {
     /// add a new client to this manager
     pub fn add_client(&mut self, addrs: Vec<SocketAddr>, pos: Position) -> ClientHandle {
         let handle = self.next_id();
-        let active_addr = addrs[0];
+        let active_addr = addrs.iter().next().cloned();
 
         // store the client
         let client = Client { handle, active_addr, addrs, pos };
@@ -80,6 +80,12 @@ impl ClientManager {
         }
     }
 
+    pub fn set_default_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
+        if let Some(client) = self.get_mut(client) {
+            client.active_addr = Some(addr)
+        }
+    }
+
     /// update the position of a client
     pub fn update_pos(&mut self, client: ClientHandle, pos: Position) {
         if let Some(client) = self.get_mut(client) {
@@ -88,7 +94,7 @@ impl ClientManager {
     }
 
     pub fn get_active_addr(&self, client: ClientHandle) -> Option<SocketAddr> {
-        self.get(client).map(|c| c.active_addr)
+        self.get(client)?.active_addr
     }
 
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
