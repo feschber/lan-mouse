@@ -1,4 +1,4 @@
-use std::{error::Error, io::Result};
+use std::{error::Error, io::Result, collections::HashSet};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
 #[cfg(not(windows))]
@@ -79,7 +79,7 @@ impl Server {
         }
     }
 
-    pub fn add_client(&mut self, addr: Vec<SocketAddr>, pos: Position) {
+    pub fn add_client(&mut self, addr: HashSet<SocketAddr>, pos: Position) {
         let client = self.client_manager.add_client(addr, pos);
         self.producer.notify(ClientEvent::Create(client, pos));
         self.consumer.notify(ClientEvent::Create(client, pos));
@@ -132,7 +132,7 @@ impl Server {
                 Ok(event) => match event {
                     FrontendEvent::RequestPortChange(_) => todo!(),
                     FrontendEvent::RequestClientAdd(addr, pos) => {
-                        self.add_client(vec![addr], pos);
+                        self.add_client(HashSet::from_iter(&mut [addr].into_iter()), pos);
                     }
                     FrontendEvent::RequestClientDelete(_) => todo!(),
                     FrontendEvent::RequestClientUpdate(_) => todo!(),

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, collections::HashSet, fmt::Display};
 
 use serde::{Serialize, Deserialize};
 
@@ -8,6 +8,16 @@ pub enum Position {
     Right,
     Top,
     Bottom,
+}
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Position::Left => "left",
+            Position::Right => "right",
+            Position::Top => "top",
+            Position::Bottom => "bottom",
+        })
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -23,7 +33,7 @@ pub struct Client {
     /// all socket addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
-    pub addrs: Vec<SocketAddr>,
+    pub addrs: HashSet<SocketAddr>,
     /// position of a client on screen
     pub pos: Position,
 }
@@ -53,7 +63,7 @@ impl ClientManager {
     }
 
     /// add a new client to this manager
-    pub fn add_client(&mut self, addrs: Vec<SocketAddr>, pos: Position) -> ClientHandle {
+    pub fn add_client(&mut self, addrs: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
         let handle = self.next_id();
         let active_addr = addrs.iter().next().cloned();
 
@@ -67,16 +77,14 @@ impl ClientManager {
     /// add a socket address to the given client
     pub fn add_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
         if let Some(client) = self.get_mut(client) {
-            client.addrs.push(addr)
+            client.addrs.insert(addr);
         }
     }
 
     /// remove socket address from the given client
     pub fn remove_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
         if let Some(client) = self.get_mut(client) {
-            if let Some(idx) = client.addrs.iter().position(|a| *a == addr) {
-                client.addrs.remove(idx);
-            }
+            client.addrs.remove(&addr);
         }
     }
 

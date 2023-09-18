@@ -35,7 +35,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // add clients form config
     config.get_clients().into_iter().for_each(|(c, h, p)| {
-        log::debug!("{c:?}: {p:?}");
         let host_name = match h {
             Some(h) => format!(" '{}'", h),
             None => "".to_owned(),
@@ -43,7 +42,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         if c.len() == 0 {
             log::warn!("ignoring client{} with 0 assigned ips!", host_name);
         }
-        log::info!("adding client{} with addrs {:?}", host_name, c);
+        log::info!("adding client [{}]{} @ {:?}", p, host_name, c);
         event_server.add_client(c, p);
     });
 

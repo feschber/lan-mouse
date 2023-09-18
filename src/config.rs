@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use core::fmt;
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::{error::Error, fs};
 
@@ -131,7 +132,7 @@ impl Config {
         Ok(Config { frontend, clients, port })
     }
 
-    pub fn get_clients(&self) -> Vec<(Vec<SocketAddr>, Option<String>,  Position)> {
+    pub fn get_clients(&self) -> Vec<(HashSet<SocketAddr>, Option<String>,  Position)> {
         self.clients.iter().map(|(c,p)| {
             let port = c.port.unwrap_or(DEFAULT_PORT);
             // add ips from config
@@ -161,8 +162,9 @@ impl Config {
                 log::error!("You can manually specify ip addresses via the `ips` config option");
             }
             let ips = config_ips.into_iter().chain(dns_ips.into_iter());
+
             // map ip addresses to socket addresses
-            let addrs: Vec<SocketAddr> = ips.map(|ip| SocketAddr::new(ip, port)).collect();
+            let addrs: HashSet<SocketAddr> = ips.map(|ip| SocketAddr::new(ip, port)).collect();
             (addrs, host_name, *p)
         }).filter(|(a, _, _)| !a.is_empty()).collect()
     }
