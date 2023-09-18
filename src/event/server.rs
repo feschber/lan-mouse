@@ -171,6 +171,9 @@ impl Server {
     }
 
     fn handle_signal(&mut self) -> bool {
+        #[cfg(windows)]
+        return false;
+        #[cfg(not(windows))]
         loop {
             match self.signals.receive() {
                 Err(e) if e.kind() == ErrorKind::WouldBlock => return false,
