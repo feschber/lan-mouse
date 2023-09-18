@@ -9,6 +9,14 @@ use std::{net::SocketAddr, io::ErrorKind};
 use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
 use super::Event;
 
+/// keeps track of state to prevent a feedback loop
+/// of continuously sending and receiving the same event.
+#[derive(Eq, PartialEq)]
+enum State {
+    Sending,
+    Receiving,
+}
+
 pub struct Server {
     poll: Poll,
     socket: UdpSocket,
@@ -19,6 +27,7 @@ pub struct Server {
     frontend: FrontendAdapter,
     client_manager: ClientManager,
     prev_error: Option<io::Error>,
+    state: State,
 }
 
 const UDP_RX: Token = Token(0);
@@ -59,6 +68,7 @@ impl Server {
             signals, frontend,
             client_manager,
             prev_error: None,
+            state: State::Receiving,
         })
     }
 
@@ -92,15 +102,28 @@ impl Server {
             match self.receive_event() {
                 Ok((event, addr)) => {
                     log::debug!("{addr}: {event:?}");
-                    if let Event::Release() = event {
-                        self.producer.release();
-                        return;
-                    }
-                    if let Some(client_handle) = self.client_manager.get_client(addr) {
-                        self.consumer.consume(event, client_handle);
-                        self.client_manager.set_default_addr(client_handle, addr);
-                    } else {
-                        log::warn!("ignoring event from client {addr:?}");
+                    match self.state {
+                        State::Sending => {
+                            // in sending state, we dont want to process
+                            // any events except to avoid feedback loops,
+                            // therefore we tell the event producer
+                            // to release the pointer and move on
+                            // first event -> release pointer
+                            self.producer.release();
+                            self.state = State::Receiving;
+                        }
+                        State::Receiving => {
+                            // ignore release event - we are already in receiving state
+                            if let Event::Release() = event { continue }
+
+                            // handle events
+                            if let Some(client_handle) = self.client_manager.get_client(addr) {
+                                self.consumer.consume(event, client_handle);
+                                self.client_manager.set_default_addr(client_handle, addr);
+                            } else {
+                                log::warn!("ignoring event from client {addr:?}");
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -111,7 +134,7 @@ impl Server {
                         }
                     }
                     log::error!("{}", e);
-                    return;
+                    continue;
                 },
             }
         }
@@ -120,19 +143,45 @@ impl Server {
     fn handle_producer_rx(&mut self) {
         let events = self.producer.read_events();
         for (c, e) in events.into_iter() {
-            if let Some(addr) = self.client_manager.get_active_addr(c) {
-                if let Err(e) = Self::send_event(&self.socket, e, addr) {
-                    if self.prev_error.is_none()
-                    || self.prev_error.as_ref()
-                        .unwrap()
-                        .kind() != e.kind() {
-                        log::error!("udp send: {}", e);
+            // in receiving state, only release events
+            // must be transmitted
+            match self.state {
+                State::Receiving => {
+                    // in receiving state, only release events must
+                    // be transmitted (when client is entered)
+                    if let Event::Release() = e {
+                        self.state = State::Sending;
                     }
-                    self.prev_error = Some(e);
                 }
-
-            } else {
-                log::error!("unknown client: id {c}");
+                State::Sending => {
+                    // transmit events to the corrensponding client
+                    if let Some(addr) = self.client_manager.get_active_addr(c) {
+                        if let Err(e) = Self::send_event(&self.socket, e, addr) {
+                            if self.prev_error.is_none()
+                            || self.prev_error.as_ref()
+                                .unwrap()
+                                .kind() != e.kind() {
+                                log::error!("udp send: {}", e);
+                            }
+                            self.prev_error = Some(e);
+                        }
+                    } else {
+                        // no address is active -> send to all ips
+                        if let Some(addrs) = self.client_manager.get_addrs(c) {
+                            for addr in addrs {
+                                if let Err(e) = Self::send_event(&self.socket, e, addr) {
+                                    if self.prev_error.is_none()
+                                    || self.prev_error.as_ref()
+                                        .unwrap()
+                                        .kind() != e.kind() {
+                                        log::error!("udp send: {}", e);
+                                    }
+                                    self.prev_error = Some(e);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

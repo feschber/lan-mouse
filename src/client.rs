@@ -65,7 +65,8 @@ impl ClientManager {
     /// add a new client to this manager
     pub fn add_client(&mut self, addrs: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
         let handle = self.next_id();
-        let active_addr = addrs.iter().next().cloned();
+        // we dont know, which IP is initially active
+        let active_addr = None;
 
         // store the client
         let client = Client { handle, active_addr, addrs, pos };
@@ -103,6 +104,10 @@ impl ClientManager {
 
     pub fn get_active_addr(&self, client: ClientHandle) -> Option<SocketAddr> {
         self.get(client)?.active_addr
+    }
+
+    pub fn get_addrs(&self, client: ClientHandle) -> Option<Vec<SocketAddr>> {
+        Some(self.get(client)?.addrs.iter().cloned().collect())
     }
 
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
