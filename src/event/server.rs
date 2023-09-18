@@ -1,4 +1,4 @@
-use std::{error::Error, io::{Result, self}, collections::HashSet};
+use std::{error::Error, io::Result, collections::HashSet};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
 #[cfg(not(windows))]
@@ -26,7 +26,6 @@ pub struct Server {
     signals: Signals,
     frontend: FrontendAdapter,
     client_manager: ClientManager,
-    prev_error: Option<io::Error>,
     state: State,
 }
 
@@ -67,7 +66,6 @@ impl Server {
             #[cfg(not(windows))]
             signals, frontend,
             client_manager,
-            prev_error: None,
             state: State::Receiving,
         })
     }
@@ -157,26 +155,14 @@ impl Server {
                     // transmit events to the corrensponding client
                     if let Some(addr) = self.client_manager.get_active_addr(c) {
                         if let Err(e) = Self::send_event(&self.socket, e, addr) {
-                            if self.prev_error.is_none()
-                            || self.prev_error.as_ref()
-                                .unwrap()
-                                .kind() != e.kind() {
-                                log::error!("udp send: {}", e);
-                            }
-                            self.prev_error = Some(e);
+                            log::error!("udp send: {}", e);
                         }
                     } else {
                         // no address is active -> send to all ips
                         if let Some(addrs) = self.client_manager.get_addrs(c) {
                             for addr in addrs {
                                 if let Err(e) = Self::send_event(&self.socket, e, addr) {
-                                    if self.prev_error.is_none()
-                                    || self.prev_error.as_ref()
-                                        .unwrap()
-                                        .kind() != e.kind() {
-                                        log::error!("udp send: {}", e);
-                                    }
-                                    self.prev_error = Some(e);
+                                    log::error!("udp send: {}", e);
                                 }
                             }
                         }
