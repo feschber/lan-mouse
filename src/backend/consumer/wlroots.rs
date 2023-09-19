@@ -251,7 +251,7 @@ impl VirtualInput {
                     VirtualInput::Kde { fake_input: _ } => {}
                 },
             },
-            event => panic!("unknown event type {event:?}"),
+            _ => {},
         }
         Ok(())
     }
