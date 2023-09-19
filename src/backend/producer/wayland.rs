@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result};
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    os::{fd::AsFd, unix::prelude::{AsRawFd, FromRawFd}},
+    os::unix::prelude::{AsRawFd, FromRawFd},
     rc::Rc,
 };
 
@@ -88,7 +88,7 @@ impl Window {
         draw(&mut file, (width, height));
         let pool = g
             .shm
-            .create_pool(file.as_fd(), (width * height * 4) as i32, qh, ());
+            .create_pool(file.as_raw_fd(), (width * height * 4) as i32, qh, ());
         let buffer = pool.create_buffer(
             0,
             width as i32,

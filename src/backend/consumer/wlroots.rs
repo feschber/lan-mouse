@@ -207,7 +207,7 @@ impl VirtualInput {
                             keyboard: _,
                         } => {
                             pointer.axis(time, axis, value);
-                            // pointer.frame();
+                            pointer.frame();
                         }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.axis(axis as u32, value);
