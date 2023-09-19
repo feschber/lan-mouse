@@ -3,17 +3,17 @@
 # optional port (defaults to 4242)
 port = 4242
 
-# # define a client on the right side with host name "iridium"
-# [right]
-# # hostname
-# host_name = "iridium"
-# # optional list of (known) ip addresses
-# ips = ["192.168.178.141"]
-# # optional port (defaults to 4242)
-# port = 4242
+# define a client on the right side with host name "iridium"
+[right]
+# hostname
+host_name = "iridium"
+# optional list of (known) ip addresses
+ips = ["192.168.178.141"]
+# optional port (defaults to 4242)
+port = 4242
 
 # define a client on the left side with IP address 192.168.178.189
-[right]
+[left]
 # The hostname is optional: When no hostname is specified,
 # at least one ip address needs to be specified.
 host_name = "thorium"
