@@ -73,7 +73,11 @@ impl Server {
     pub fn run(&mut self) -> Result<()> {
         let mut events = Events::with_capacity(10);
         loop {
-            self.poll.poll(&mut events, None)?;
+            match self.poll.poll(&mut events, None) {
+                Ok(()) => (),
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
             for event in &events {
                 if !event.is_readable() { continue }
                 match event.token() {
