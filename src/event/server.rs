@@ -124,6 +124,7 @@ impl Server {
             self.client_manager.reset_last_seen(handle);
             self.client_manager.set_default_addr(handle, addr);
             match (event, addr) {
+                (Event::Release(), _) => {},
                 (Event::Pong(), addr) => log::debug!("{addr}: pong"),
                 (Event::Ping(), addr) => {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
