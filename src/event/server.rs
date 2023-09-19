@@ -125,7 +125,6 @@ impl Server {
             self.client_manager.reset_last_seen(handle);
             self.client_manager.set_default_addr(handle, addr);
             match (event, addr) {
-                (Event::Release(), _) => {},
                 (Event::Pong(), _) => {},
                 (Event::Ping(), addr) => {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
@@ -140,9 +139,11 @@ impl Server {
                             // therefore we tell the event producer
                             // to release the pointer and move on
                             // first event -> release pointer
-                            log::debug!("releasing pointer ...");
-                            self.producer.release();
-                            self.state = State::Receiving;
+                            if let Event::Release() = event {
+                                log::debug!("releasing pointer ...");
+                                self.producer.release();
+                                self.state = State::Receiving;
+                            }
                         }
                         State::Receiving => {
                             // consume event
@@ -169,47 +170,45 @@ impl Server {
         for (c, e) in events.into_iter() {
             // in receiving state, only release events
             // must be transmitted
-            match self.state {
-                State::Receiving => self.state = State::Sending,
-                State::Sending => {
-                    // otherwise we should have an address to send to
-                    // transmit events to the corrensponding client
-                    if let Some(addr) = self.client_manager.get_active_addr(c) {
-                        log::trace!("{:20} ------>->->-> {addr}", e.to_string());
-                        if let Err(e) = Self::send_event(&self.socket, e, addr) {
+            if let Event::Release() = e {
+                self.state = State::Sending;
+            }
+            // otherwise we should have an address to send to
+            // transmit events to the corrensponding client
+            if let Some(addr) = self.client_manager.get_active_addr(c) {
+                log::trace!("{:20} ------>->->-> {addr}", e.to_string());
+                if let Err(e) = Self::send_event(&self.socket, e, addr) {
+                    log::error!("udp send: {}", e);
+                }
+            }
+
+            // if client last responded > 2 seconds ago
+            // and we have not sent a ping since 500 milliseconds,
+            // send a ping
+            let last_seen = self.client_manager.last_seen(c);
+            let last_ping = self.client_manager.last_ping(c);
+            if last_seen.is_some() && last_seen.unwrap() < Duration::from_secs(2) {
+                continue
+            }
+
+            // client last seen > 500ms ago
+            if last_ping.is_some() && last_ping.unwrap() < Duration::from_millis(500) {
+                continue
+            }
+
+            // last ping > 500ms ago -> ping all interfaces
+            self.client_manager.reset_last_ping(c);
+            if let Some(iter) = self.client_manager.get_addrs(c) {
+                for addr in iter {
+                    log::debug!("pinging {addr}");
+                    if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
+                        if e.kind() != ErrorKind::WouldBlock {
                             log::error!("udp send: {}", e);
                         }
                     }
-
-                    // if client last responded > 2 seconds ago
-                    // and we have not sent a ping since 500 milliseconds,
-                    // send a ping
-                    let last_seen = self.client_manager.last_seen(c);
-                    let last_ping = self.client_manager.last_ping(c);
-                    if last_seen.is_some() && last_seen.unwrap() < Duration::from_secs(2) {
-                        continue
-                    }
-
-                    // client last seen > 500ms ago
-                    if last_ping.is_some() && last_ping.unwrap() < Duration::from_millis(500) {
-                        continue
-                    }
-
-                    // last ping > 500ms ago -> ping all interfaces
-                    self.client_manager.reset_last_ping(c);
-                    if let Some(iter) = self.client_manager.get_addrs(c) {
-                        for addr in iter {
-                            log::debug!("pinging {addr}");
-                            if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
-                                if e.kind() != ErrorKind::WouldBlock {
-                                    log::error!("udp send: {}", e);
-                                }
-                            }
-                        }
-                    } else {
-                        // TODO should repeat dns lookup
-                    }
                 }
+            } else {
+                // TODO should repeat dns lookup
             }
         }
     }
