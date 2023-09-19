@@ -1,18 +1,15 @@
-use crate::{
-    client::{Client, ClientHandle, Position},
-    request,
-};
+use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
+use mio::{event::Source, unix::SourceFd};
 
+use std::{os::fd::RawFd, vec::Drain, io::ErrorKind};
 use memmap::MmapOptions;
+use anyhow::{anyhow, Result};
 
 use std::{
     fs::File,
     io::{BufWriter, Write},
     os::unix::prelude::{AsRawFd, FromRawFd},
     rc::Rc,
-    sync::mpsc::SyncSender,
-    thread,
-    time::Duration,
 };
 
 use wayland_protocols::wp::{
@@ -36,14 +33,14 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
-    backend::WaylandError,
+    backend::{WaylandError, ReadEventsGuard},
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, DispatchError, QueueHandle, WEnum,
+    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue,
 };
 
 use tempfile;
@@ -60,17 +57,22 @@ struct Globals {
     layer_shell: ZwlrLayerShellV1,
 }
 
-struct App {
-    running: bool,
+struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
     client_for_window: Vec<(Rc<Window>, ClientHandle)>,
     focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-    tx: SyncSender<(Event, ClientHandle)>,
-    server: request::Server,
+    wayland_fd: RawFd,
+    read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
+    pending_events: Vec<(ClientHandle, Event)>,
+}
+
+pub struct WaylandEventProducer {
+    state: State,
+    queue: EventQueue<State>,
 }
 
 struct Window {
@@ -80,7 +82,7 @@ struct Window {
 }
 
 impl Window {
-    fn new(g: &Globals, qh: &QueueHandle<App>, pos: Position) -> Window {
+    fn new(g: &Globals, qh: &QueueHandle<State>, pos: Position) -> Window {
         let (width, height) = (1, 1440);
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
@@ -127,80 +129,6 @@ impl Window {
     }
 }
 
-pub fn run(tx: SyncSender<(Event, ClientHandle)>, server: request::Server, clients: Vec<Client>) {
-    let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
-    let (g, mut queue) =
-        registry_queue_init::<App>(&conn).expect("failed to initialize wl_registry");
-    let qh = queue.handle();
-
-    let compositor: wl_compositor::WlCompositor = g
-        .bind(&qh, 4..=5, ())
-        .expect("wl_compositor >= v4 not supported");
-    let shm: wl_shm::WlShm = g.bind(&qh, 1..=1, ()).expect("wl_shm v1 not supported");
-    let layer_shell: ZwlrLayerShellV1 = g
-        .bind(&qh, 3..=4, ())
-        .expect("zwlr_layer_shell_v1 >= v3 not supported - required to display a surface at the edge of the screen");
-    let seat: wl_seat::WlSeat = g.bind(&qh, 7..=8, ()).expect("wl_seat >= v7 not supported");
-    let pointer_constraints: ZwpPointerConstraintsV1 = g
-        .bind(&qh, 1..=1, ())
-        .expect("zwp_pointer_constraints_v1 not supported");
-    let relative_pointer_manager: ZwpRelativePointerManagerV1 = g
-        .bind(&qh, 1..=1, ())
-        .expect("zwp_relative_pointer_manager_v1 not supported");
-    let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = g
-        .bind(&qh, 1..=1, ())
-        .expect("zwp_keyboard_shortcuts_inhibit_manager_v1 not supported");
-
-    let g = Globals {
-        compositor,
-        shm,
-        layer_shell,
-        seat,
-        pointer_constraints,
-        relative_pointer_manager,
-        shortcut_inhibit_manager,
-    };
-
-    let client_for_window = Vec::new();
-
-    let mut app = App {
-        running: true,
-        g,
-        pointer_lock: None,
-        rel_pointer: None,
-        shortcut_inhibitor: None,
-        client_for_window,
-        focused: None,
-        tx,
-        server,
-        qh,
-    };
-
-    for client in clients {
-        app.add_client(client.handle, client.pos);
-    }
-
-    while app.running {
-        match queue.blocking_dispatch(&mut app) {
-            Ok(_) => {}
-            Err(DispatchError::Backend(WaylandError::Io(e))) => {
-                eprintln!("Wayland Error: {}", e);
-                thread::sleep(Duration::from_millis(500));
-            }
-            Err(DispatchError::Backend(e)) => {
-                panic!("{}", e);
-            }
-            Err(DispatchError::BadMessage {
-                sender_id,
-                interface,
-                opcode,
-            }) => {
-                panic!("bad message {}, {} , {}", sender_id, interface, opcode);
-            }
-        }
-    }
-}
-
 fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for _ in 0..height {
@@ -210,13 +138,91 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     }
 }
 
-impl App {
+impl WaylandEventProducer {
+    pub fn new() -> Result<Self> {
+        let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
+        let (g, queue) =
+            registry_queue_init::<State>(&conn).expect("failed to initialize wl_registry");
+        let qh = queue.handle();
+
+        let compositor: wl_compositor::WlCompositor = match g.bind(&qh, 4..=5, ()) {
+            Ok(compositor) => compositor,
+            Err(_) => return Err(anyhow!("wl_compositor >= v4 not supported")),
+        };
+
+        let shm: wl_shm::WlShm = match g.bind(&qh, 1..=1, ()) {
+            Ok(wl_shm) => wl_shm,
+            Err(_) => return Err(anyhow!("wl_shm v1 not supported")),
+        };
+
+        let layer_shell: ZwlrLayerShellV1 = match g.bind(&qh, 3..=4, ()) {
+            Ok(layer_shell) => layer_shell,
+            Err(_) => return Err(anyhow!("zwlr_layer_shell_v1 >= v3 not supported - required to display a surface at the edge of the screen")),
+        };
+
+        let seat: wl_seat::WlSeat = match g.bind(&qh, 7..=8, ()) {
+            Ok(wl_seat) => wl_seat,
+            Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
+        };
+
+        let pointer_constraints: ZwpPointerConstraintsV1 = match g.bind(&qh, 1..=1, ()) {
+            Ok(pointer_constraints) => pointer_constraints,
+            Err(_) => return Err(anyhow!("zwp_pointer_constraints_v1 not supported")),
+        };
+
+        let relative_pointer_manager: ZwpRelativePointerManagerV1 = match g.bind(&qh, 1..=1, ()) {
+            Ok(relative_pointer_manager) => relative_pointer_manager,
+            Err(_) => return Err(anyhow!("zwp_relative_pointer_manager_v1 not supported")),
+        };
+
+        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = match g.bind(&qh, 1..=1, ()) {
+            Ok(shortcut_inhibit_manager) => shortcut_inhibit_manager,
+            Err(_) => return Err(anyhow!("zwp_keyboard_shortcuts_inhibit_manager_v1 not supported")),
+        };
+
+        let g = Globals {
+            compositor,
+            shm,
+            layer_shell,
+            seat,
+            pointer_constraints,
+            relative_pointer_manager,
+            shortcut_inhibit_manager,
+        };
+
+        // flush outgoing events
+        queue.flush()?;
+
+        // prepare reading wayland events
+        let read_guard = queue.prepare_read()?;
+        let wayland_fd = read_guard.connection_fd().as_raw_fd();
+        let read_guard = Some(read_guard);
+
+        Ok(WaylandEventProducer {
+            queue,
+            state: State {
+                g,
+                pointer_lock: None,
+                rel_pointer: None,
+                shortcut_inhibitor: None,
+                client_for_window: Vec::new(),
+                focused: None,
+                qh,
+                wayland_fd,
+                read_guard,
+                pending_events: vec![],
+            }
+        })
+    }
+}
+
+impl State {
     fn grab(
         &mut self,
         surface: &wl_surface::WlSurface,
         pointer: &wl_pointer::WlPointer,
         serial: u32,
-        qh: &QueueHandle<App>,
+        qh: &QueueHandle<State>,
     ) {
         let (window, _) = self.focused.as_ref().unwrap();
 
@@ -263,7 +269,10 @@ impl App {
 
     fn ungrab(&mut self) {
         // get focused client
-        let (window, _client) = self.focused.as_ref().unwrap();
+        let (window, _client) = match self.focused.as_ref() {
+            Some(focused) => focused,
+            None => return,
+        };
 
         // ungrab surface
         window
@@ -271,7 +280,7 @@ impl App {
             .set_keyboard_interactivity(KeyboardInteractivity::None);
         window.surface.commit();
 
-        // release pointer
+        // destroy pointer lock
         if let Some(pointer_lock) = &self.pointer_lock {
             pointer_lock.destroy();
             self.pointer_lock = None;
@@ -283,7 +292,7 @@ impl App {
             self.rel_pointer = None;
         }
 
-        // release shortcut inhibitor
+        // destroy shortcut inhibitor
         if let Some(shortcut_inhibitor) = &self.shortcut_inhibitor {
             shortcut_inhibitor.destroy();
             self.shortcut_inhibitor = None;
@@ -296,7 +305,126 @@ impl App {
     }
 }
 
-impl Dispatch<wl_seat::WlSeat, ()> for App {
+impl Source for WaylandEventProducer {
+    fn register(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).register(registry, token, interests)
+    }
+
+    fn reregister(
+        &mut self,
+        registry: &mio::Registry,
+        token: mio::Token,
+        interests: mio::Interest,
+    ) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).reregister(registry, token, interests)
+    }
+
+    fn deregister(&mut self, registry: &mio::Registry) -> std::io::Result<()> {
+        SourceFd(&self.state.wayland_fd).deregister(registry)
+    }
+}
+impl WaylandEventProducer {
+    fn read(&mut self) -> bool {
+        match self.state.read_guard.take().unwrap().read() {
+            Ok(_) => true,
+            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => false,
+            Err(WaylandError::Io(e)) => {
+                log::error!("error reading from wayland socket: {e}");
+                false
+            }
+            Err(WaylandError::Protocol(e)) => {
+                panic!("wayland protocol violation: {e}")
+            }
+        }
+    }
+
+    fn prepare_read(&mut self) {
+        match self.queue.prepare_read() {
+            Ok(r) => self.state.read_guard = Some(r),
+            Err(WaylandError::Io(e)) => {
+                log::error!("error preparing read from wayland socket: {e}")
+            }
+            Err(WaylandError::Protocol(e)) => {
+                panic!("wayland Protocol violation: {e}")
+            }
+        };
+    }
+
+    fn dispatch_events(&mut self) {
+        match self.queue.dispatch_pending(&mut self.state) {
+            Ok(_) => {}
+            Err(DispatchError::Backend(WaylandError::Io(e))) => {
+                log::error!("Wayland Error: {}", e);
+            }
+            Err(DispatchError::Backend(e)) => {
+                panic!("backend error: {}", e);
+            }
+            Err(DispatchError::BadMessage {
+                sender_id,
+                interface,
+                opcode,
+            }) => {
+                panic!("bad message {}, {} , {}", sender_id, interface, opcode);
+            }
+        }
+    }
+
+    fn flush_events(&mut self) {
+        // flush outgoing events
+        match self.queue.flush() {
+            Ok(_) => (),
+            Err(e) => match e {
+                WaylandError::Io(e) => {
+                    log::error!("error writing to wayland socket: {e}")
+                },
+                WaylandError::Protocol(e) => {
+                    panic!("wayland protocol violation: {e}")
+                },
+            },
+        }
+    }
+}
+
+impl EventProducer for WaylandEventProducer {
+
+    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
+        // read events
+        while self.read() {
+            // prepare next read
+            self.prepare_read();
+        }
+        // dispatch the events
+        self.dispatch_events();
+
+        // flush outgoing events
+        self.flush_events();
+
+        // prepare for the next read
+        self.prepare_read();
+
+        // return the events
+        self.state.pending_events.drain(..)
+    }
+
+    fn notify(&mut self, client_event: ClientEvent) {
+        if let ClientEvent::Create(handle, pos) = client_event {
+            self.state.add_client(handle, pos);
+            self.flush_events();
+        }
+    }
+
+    fn release(&mut self) {
+        self.state.ungrab();
+        self.flush_events();
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
         _: &mut Self,
         seat: &wl_seat::WlSeat,
@@ -319,7 +447,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
     }
 }
 
-impl Dispatch<wl_pointer::WlPointer, ()> for App {
+impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
         app: &mut Self,
         pointer: &wl_pointer::WlPointer,
@@ -328,6 +456,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+
         match event {
             wl_pointer::Event::Enter {
                 serial,
@@ -336,6 +465,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 surface_y: _,
             } => {
                 // get client corresponding to the focused surface
+                log::trace!("produce: enter()");
 
                 {
                     let (window, client) = app
@@ -351,9 +481,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                     .iter()
                     .find(|(w, _c)| w.surface == surface)
                     .unwrap();
-                app.tx.send((Event::Release(), *client)).unwrap();
+                app.pending_events.push((*client, Event::Release()));
             }
             wl_pointer::Event::Leave { .. } => {
+                log::trace!("produce: leave()");
                 app.ungrab();
             }
             wl_pointer::Event::Button {
@@ -362,43 +493,43 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                 button,
                 state,
             } => {
+                log::trace!("produce: button()");
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx
-                    .send((
-                        Event::Pointer(PointerEvent::Button {
-                            time,
-                            button,
-                            state: u32::from(state),
-                        }),
-                        *client,
-                    ))
-                    .unwrap();
+                app.pending_events.push((
+                    *client,
+                    Event::Pointer(PointerEvent::Button {
+                        time,
+                        button,
+                        state: u32::from(state),
+                    }),
+                ));
             }
             wl_pointer::Event::Axis { time, axis, value } => {
+                log::trace!("produce: scroll()");
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx
-                    .send((
-                        Event::Pointer(PointerEvent::Axis {
-                            time,
-                            axis: u32::from(axis) as u8,
-                            value,
-                        }),
-                        *client,
-                    ))
-                    .unwrap();
+                app.pending_events.push((
+                    *client,
+                    Event::Pointer(PointerEvent::Axis {
+                        time,
+                        axis: u32::from(axis) as u8,
+                        value,
+                    }),
+                ));
             }
             wl_pointer::Event::Frame {} => {
+                log::trace!("produce: frame()");
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.tx
-                    .send((Event::Pointer(PointerEvent::Frame {}), *client))
-                    .unwrap();
+                app.pending_events.push((
+                    *client,
+                    Event::Pointer(PointerEvent::Frame {}),
+                ));
             }
             _ => {}
         }
     }
 }
 
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(
         app: &mut Self,
         _: &wl_keyboard::WlKeyboard,
@@ -419,16 +550,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 state,
             } => {
                 if let Some(client) = client {
-                    app.tx
-                        .send((
-                            Event::Keyboard(KeyboardEvent::Key {
-                                time,
-                                key,
-                                state: u32::from(state) as u8,
-                            }),
-                            *client,
-                        ))
-                        .unwrap();
+                    app.pending_events.push((
+                        *client,
+                        Event::Keyboard(KeyboardEvent::Key {
+                            time,
+                            key,
+                            state: u32::from(state) as u8,
+                        }),
+                    ));
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -439,17 +568,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 group,
             } => {
                 if let Some(client) = client {
-                    app.tx
-                        .send((
-                            Event::Keyboard(KeyboardEvent::Modifiers {
-                                mods_depressed,
-                                mods_latched,
-                                mods_locked,
-                                group,
-                            }),
-                            *client,
-                        ))
-                        .unwrap();
+                    app.pending_events.push((
+                        *client,
+                        Event::Keyboard(KeyboardEvent::Modifiers {
+                            mods_depressed,
+                            mods_latched,
+                            mods_locked,
+                            group,
+                        }),
+                    ));
                 }
                 if mods_depressed == 77 {
                     // ctrl shift super alt
@@ -462,15 +589,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
                 size: _,
             } => {
                 let fd = unsafe { &File::from_raw_fd(fd.as_raw_fd()) };
-                let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
-                app.server.offer_data(request::Request::KeyMap, mmap);
+                let _mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
+                // TODO keymap
             }
             _ => (),
         }
     }
 }
 
-impl Dispatch<ZwpRelativePointerV1, ()> for App {
+impl Dispatch<ZwpRelativePointerV1, ()> for State {
     fn event(
         app: &mut Self,
         _: &ZwpRelativePointerV1,
@@ -488,24 +615,23 @@ impl Dispatch<ZwpRelativePointerV1, ()> for App {
             dy_unaccel: surface_y,
         } = event
         {
+            log::trace!("produce: motion()");
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-                app.tx
-                    .send((
-                        Event::Pointer(PointerEvent::Motion {
-                            time,
-                            relative_x: surface_x,
-                            relative_y: surface_y,
-                        }),
-                        *client,
-                    ))
-                    .unwrap();
+                app.pending_events.push((
+                    *client,
+                    Event::Pointer(PointerEvent::Motion {
+                        time,
+                        relative_x: surface_x,
+                        relative_y: surface_y,
+                    }),
+                ));
             }
         }
     }
 }
 
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
+impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
     fn event(
         app: &mut Self,
         layer_surface: &ZwlrLayerSurfaceV1,
@@ -523,9 +649,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
             // client corresponding to the layer_surface
             let surface = &window.surface;
             let buffer = &window.buffer;
-            surface.commit();
-            layer_surface.ack_configure(serial);
             surface.attach(Some(&buffer), 0, 0);
+            layer_surface.ack_configure(serial);
             surface.commit();
         }
     }
@@ -533,7 +658,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for App {
 
 // delegate wl_registry events to App itself
 // delegate_dispatch!(App: [wl_registry::WlRegistry: GlobalListContents] => App);
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
         _state: &mut Self,
         _proxy: &wl_registry::WlRegistry,
@@ -546,17 +671,17 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
 }
 
 // don't emit any events
-delegate_noop!(App: wl_region::WlRegion);
-delegate_noop!(App: wl_shm_pool::WlShmPool);
-delegate_noop!(App: wl_compositor::WlCompositor);
-delegate_noop!(App: ZwlrLayerShellV1);
-delegate_noop!(App: ZwpRelativePointerManagerV1);
-delegate_noop!(App: ZwpKeyboardShortcutsInhibitManagerV1);
-delegate_noop!(App: ZwpPointerConstraintsV1);
+delegate_noop!(State: wl_region::WlRegion);
+delegate_noop!(State: wl_shm_pool::WlShmPool);
+delegate_noop!(State: wl_compositor::WlCompositor);
+delegate_noop!(State: ZwlrLayerShellV1);
+delegate_noop!(State: ZwpRelativePointerManagerV1);
+delegate_noop!(State: ZwpKeyboardShortcutsInhibitManagerV1);
+delegate_noop!(State: ZwpPointerConstraintsV1);
 
 // ignore events
-delegate_noop!(App: ignore wl_shm::WlShm);
-delegate_noop!(App: ignore wl_buffer::WlBuffer);
-delegate_noop!(App: ignore wl_surface::WlSurface);
-delegate_noop!(App: ignore ZwpKeyboardShortcutsInhibitorV1);
-delegate_noop!(App: ignore ZwpLockedPointerV1);
+delegate_noop!(State: ignore wl_shm::WlShm);
+delegate_noop!(State: ignore wl_buffer::WlBuffer);
+delegate_noop!(State: ignore wl_surface::WlSurface);
+delegate_noop!(State: ignore ZwpKeyboardShortcutsInhibitorV1);
+delegate_noop!(State: ignore ZwpLockedPointerV1);

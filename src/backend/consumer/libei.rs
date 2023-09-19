@@ -1,9 +1,18 @@
-use std::sync::mpsc::Receiver;
+use crate::consumer::EventConsumer;
 
-use crate::{event::Event, client::{ClientHandle, Client}};
+pub struct LibeiConsumer {}
 
+impl LibeiConsumer {
+    pub fn new() -> Self { Self {  } }
+}
 
+impl EventConsumer for LibeiConsumer {
+    fn consume(&self, _: crate::event::Event, _: crate::client::ClientHandle) {
+        log::error!("libei backend not yet implemented!");
+        todo!()
+    }
 
-pub(crate) fn run(_consume_rx: Receiver<(Event, ClientHandle)>, _clients: Vec<Client>) {
-    todo!()
+    fn notify(&mut self, _: crate::client::ClientEvent) {
+        todo!()
+    }
 }

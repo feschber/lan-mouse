@@ -1,7 +1,8 @@
-use std::{error::Error, fmt};
+use std::{error::Error, fmt::{self, Display}};
 
 pub mod server;
 
+#[derive(Debug, Clone, Copy)]
 pub enum PointerEvent {
     Motion {
         time: u32,
@@ -21,6 +22,7 @@ pub enum PointerEvent {
     Frame {},
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum KeyboardEvent {
     Key {
         time: u32,
@@ -35,14 +37,46 @@ pub enum KeyboardEvent {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Event {
     Pointer(PointerEvent),
     Keyboard(KeyboardEvent),
     Release(),
+    Ping(),
+    Pong(),
 }
 
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
+impl Display for PointerEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PointerEvent::Motion { time: _ , relative_x, relative_y } => write!(f, "motion({relative_x},{relative_y})"),
+            PointerEvent::Button { time: _ , button, state } => write!(f, "button({button}, {state})"),
+            PointerEvent::Axis { time: _, axis, value } => write!(f, "scroll({axis}, {value})"),
+            PointerEvent::Frame { } => write!(f, "frame()"),
+        }
+    }
+}
+
+impl Display for KeyboardEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeyboardEvent::Key { time: _, key, state } => write!(f, "key({key}, {state})"),
+            KeyboardEvent::Modifiers { mods_depressed, mods_latched, mods_locked, group } => write!(f, "modifiers({mods_depressed},{mods_latched},{mods_locked},{group})"),
+        }
+    }
+}
+
+impl Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Event::Pointer(p) => write!(f, "{}", p),
+            Event::Keyboard(k) => write!(f, "{}", k),
+            Event::Release() => write!(f, "release"),
+            Event::Ping() => write!(f, "ping"),
+            Event::Pong() => write!(f, "pong"),
+        }
+    }
+}
 
 impl Event {
     fn event_type(&self) -> EventType {
@@ -50,6 +84,8 @@ impl Event {
             Self::Pointer(_) => EventType::POINTER,
             Self::Keyboard(_) => EventType::KEYBOARD,
             Self::Release() => EventType::RELEASE,
+            Self::Ping() => EventType::PING,
+            Self::Pong() => EventType::PONG,
         }
     }
 }
@@ -88,6 +124,8 @@ enum EventType {
     POINTER,
     KEYBOARD,
     RELEASE,
+    PING,
+    PONG,
 }
 
 impl TryFrom<u8> for PointerEventType {
@@ -127,6 +165,8 @@ impl Into<Vec<u8>> for &Event {
             Event::Pointer(p) => p.into(),
             Event::Keyboard(k) => k.into(),
             Event::Release() => vec![],
+            Event::Ping() => vec![],
+            Event::Pong() => vec![],
         };
         vec![event_id, event_data].concat()
     }
@@ -153,6 +193,8 @@ impl TryFrom<Vec<u8>> for Event {
             i if i == (EventType::POINTER as u8) => Ok(Event::Pointer(value.try_into()?)),
             i if i == (EventType::KEYBOARD as u8) => Ok(Event::Keyboard(value.try_into()?)),
             i if i == (EventType::RELEASE as u8) => Ok(Event::Release()),
+            i if i == (EventType::PING as u8) => Ok(Event::Ping()),
+            i if i == (EventType::PONG as u8) => Ok(Event::Pong()),
             _ => Err(Box::new(ProtocolError {
                 msg: format!("invalid event_id {}", event_id),
             })),

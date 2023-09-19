@@ -1,16 +1,15 @@
-use crate::client::{Client, ClientHandle};
-use crate::request::{self, Request};
+use wayland_client::WEnum;
+use crate::client::{ClientHandle, ClientEvent};
+use crate::consumer::EventConsumer;
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
-use std::time::Duration;
-use std::{io, thread};
-use std::{
-    io::{BufWriter, Write},
-    os::unix::prelude::AsRawFd,
-};
+use std::os::fd::OwnedFd;
+use std::os::unix::prelude::AsRawFd;
 
+use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
+use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
+use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
     zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 as Vp,
@@ -30,8 +29,6 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
-use tempfile;
-
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
 enum VirtualInputManager {
@@ -39,26 +36,30 @@ enum VirtualInputManager {
     Kde { fake_input: OrgKdeKwinFakeInput },
 }
 
-// App State, implements Dispatch event handlers
-struct App {
+struct State {
+    keymap: Option<(u32, OwnedFd, u32)>,
     input_for_client: HashMap<ClientHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
-    event_rx: Receiver<(Event, ClientHandle)>,
     virtual_input_manager: VirtualInputManager,
-    queue: EventQueue<Self>,
     qh: QueueHandle<Self>,
 }
 
-pub fn run(event_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>) {
-    let mut app = App::new(event_rx, clients);
-    app.run();
+// App State, implements Dispatch event handlers
+pub(crate) struct WlrootsConsumer {
+    state: State,
+    queue: EventQueue<State>,
 }
 
-impl App {
-    pub fn new(event_rx: Receiver<(Event, ClientHandle)>, clients: Vec<Client>) -> Self {
+impl WlrootsConsumer {
+    pub fn new() -> Result<Self> {
         let conn = Connection::connect_to_env().unwrap();
-        let (globals, queue) = registry_queue_init::<App>(&conn).unwrap();
+        let (globals, queue) = registry_queue_init::<State>(&conn).unwrap();
         let qh = queue.handle();
+
+        let seat: wl_seat::WlSeat = match globals.bind(&qh, 7..=8, ()) {
+            Ok(wl_seat) => wl_seat,
+            Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
+        };
 
         let vpm: Result<VpManager, BindError> = globals.bind(&qh, 1..=1, ());
         let vkm: Result<VkManager, BindError> = globals.bind(&qh, 1..=1, ());
@@ -74,10 +75,11 @@ impl App {
                 VirtualInputManager::Kde { fake_input }
             }
             (Err(e1), Err(e2), Err(e3)) => {
-                eprintln!("zwlr_virtual_pointer_v1: {e1}");
-                eprintln!("zwp_virtual_keyboard_v1: {e2}");
-                eprintln!("org_kde_kwin_fake_input: {e3}");
-                panic!("neither wlroots nor kde input emulation protocol supported!")
+                log::warn!("zwlr_virtual_pointer_v1: {e1}");
+                log::warn!("zwp_virtual_keyboard_v1: {e2}");
+                log::warn!("org_kde_kwin_fake_input: {e3}");
+                log::error!("neither wlroots nor kde input emulation protocol supported!");
+                return Err(anyhow!("could not create event consumer"));
             }
             _ => {
                 panic!()
@@ -85,90 +87,75 @@ impl App {
         };
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
-        let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ()).unwrap();
-        let mut app = App {
-            input_for_client,
-            seat,
-            event_rx,
-            virtual_input_manager,
+
+        let mut consumer = WlrootsConsumer {
+            state: State {
+                keymap: None,
+                input_for_client,
+                seat,
+                virtual_input_manager,
+                qh,
+            },
             queue,
-            qh,
         };
-        for client in clients {
-            app.add_client(client);
+        while consumer.state.keymap.is_none() {
+            consumer.queue.blocking_dispatch(&mut consumer.state).unwrap();
         }
-        app
+        // let fd = unsafe { &File::from_raw_fd(consumer.state.keymap.unwrap().1.as_raw_fd()) };
+        // let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
+        // log::debug!("{:?}", &mmap[..100]);
+        Ok(consumer)
     }
+}
 
-    pub fn run(&mut self) {
-        loop {
-            let (event, client) = self.event_rx.recv().expect("event receiver unavailable");
-            if let Some(virtual_input) = self.input_for_client.get(&client) {
-                virtual_input.consume_event(event).unwrap();
-                if let Err(e) = self.queue.flush() {
-                    eprintln!("{}", e);
-                }
-            }
-        }
-    }
-
-    fn add_client(&mut self, client: Client) {
+impl State {
+    fn add_client(&mut self, client: ClientHandle) {
         // create virtual input devices
         match &self.virtual_input_manager {
             VirtualInputManager::Wlroots { vpm, vkm } => {
                 let pointer: Vp = vpm.create_virtual_pointer(None, &self.qh, ());
                 let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
-                // receive keymap from device
-                eprint!("\rtrying to recieve keymap from {} ", client.addr);
-                let mut attempts = 0;
-                let data = loop {
-                    if attempts > 10 { break None }
-                    let result = request::request_data(client.addr, Request::KeyMap);
-                    eprint!("\rtrying to recieve keymap from {} ", client.addr);
-                    match result {
-                        Ok(data) => break Some(data),
-                        Err(e) => {
-                            eprint!(" - {} ", e);
-                            for _ in 0..attempts % 4 {
-                                eprint!(".");
-                            }
-                            eprint!("   ");
-                        }
-                    }
-                    io::stderr().flush().unwrap();
-                    thread::sleep(Duration::from_millis(500));
-                    attempts += 1;
-                };
-
-                if let Some(data) = data {
-                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
-                    eprintln!(" - done!                                        ");
-
-                    // TODO use shm_open
-                    let f = tempfile::tempfile().unwrap();
-                    let mut buf = BufWriter::new(&f);
-                    buf.write_all(&data[..]).unwrap();
-                    buf.flush().unwrap();
-                    keyboard.keymap(1, f.as_raw_fd(), data.len() as u32);
+                // TODO: use server side keymap
+                if let Some((format, fd, size)) = self.keymap.as_ref() {
+                    keyboard.keymap(*format, fd.as_raw_fd(), *size);
                 } else {
-                    eprint!("\rtrying to recieve keymap from {}  ", client.addr);
-                    eprintln!("no keyboard provided, using server keymap");
+                    panic!("no keymap");
                 }
-
 
                 let vinput = VirtualInput::Wlroots { pointer, keyboard };
 
-                self.input_for_client.insert(client.handle, vinput);
+                self.input_for_client.insert(client, vinput);
             }
             VirtualInputManager::Kde { fake_input } => {
                 let fake_input = fake_input.clone();
                 let vinput = VirtualInput::Kde { fake_input };
-                self.input_for_client.insert(client.handle, vinput);
+                self.input_for_client.insert(client, vinput);
             }
         }
     }
 }
+
+impl EventConsumer for WlrootsConsumer {
+    fn consume(&self, event: Event, client_handle: ClientHandle) {
+        if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
+            virtual_input.consume_event(event).unwrap();
+            if let Err(e) = self.queue.flush() {
+                log::error!("{}", e);
+            }
+        }
+    }
+
+    fn notify(&mut self, client_event: ClientEvent) {
+        if let ClientEvent::Create(client, _) = client_event {
+            self.state.add_client(client);
+            if let Err(e) = self.queue.flush() {
+                log::error!("{}", e);
+            }
+        }
+    }
+}
+
 
 enum VirtualInput {
     Wlroots { pointer: Vp, keyboard: Vk },
@@ -189,7 +176,6 @@ impl VirtualInput {
                         keyboard: _,
                     } => {
                         pointer.motion(time, relative_x, relative_y);
-                        pointer.frame();
                     }
                     VirtualInput::Kde { fake_input } => {
                         fake_input.pointer_motion(relative_y, relative_y);
@@ -207,7 +193,6 @@ impl VirtualInput {
                             keyboard: _,
                         } => {
                             pointer.button(time, button, state);
-                            pointer.frame();
                         }
                         VirtualInput::Kde { fake_input } => {
                             fake_input.button(button, state as u32);
@@ -266,36 +251,64 @@ impl VirtualInput {
                     VirtualInput::Kde { fake_input: _ } => {}
                 },
             },
-            Event::Release() => match self {
-                VirtualInput::Wlroots {
-                    pointer: _,
-                    keyboard,
-                } => {
-                    keyboard.modifiers(77, 0, 0, 0);
-                    keyboard.modifiers(0, 0, 0, 0);
-                }
-                VirtualInput::Kde { fake_input: _ } => {}
-            },
+            event => panic!("unknown event type {event:?}"),
         }
         Ok(())
     }
 }
 
-delegate_noop!(App: Vp);
-delegate_noop!(App: Vk);
-delegate_noop!(App: VpManager);
-delegate_noop!(App: VkManager);
-delegate_noop!(App: wl_seat::WlSeat);
-delegate_noop!(App: OrgKdeKwinFakeInput);
+delegate_noop!(State: Vp);
+delegate_noop!(State: Vk);
+delegate_noop!(State: VpManager);
+delegate_noop!(State: VkManager);
+delegate_noop!(State: OrgKdeKwinFakeInput);
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
-        _: &mut App,
+        _: &mut State,
         _: &wl_registry::WlRegistry,
         _: wl_registry::Event,
         _: &GlobalListContents,
         _: &Connection,
-        _: &QueueHandle<App>,
+        _: &QueueHandle<State>,
     ) {
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &WlKeyboard,
+        event: <WlKeyboard as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                state.keymap = Some((u32::from(format), fd, size));
+            }
+            _ => {},
+        }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for State {
+    fn event(
+        _: &mut Self,
+        seat: &WlSeat,
+        event: <WlSeat as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qhandle: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(capabilities),
+        } = event
+        {
+            if capabilities.contains(wl_seat::Capability::Keyboard) {
+                seat.get_keyboard(qhandle, ());
+            }
+        }
     }
 }
