@@ -46,6 +46,7 @@ impl Window {
 
     /// workaround for a bug in libadwaita that shows an ugly line beneath
     /// the last element if a placeholder is set.
+    /// https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/6308
     fn set_placeholder_visible(&self, visible: bool) {
         let placeholder = self.imp().client_placeholder.get();
         self.imp().client_list.set_placeholder(match visible {
