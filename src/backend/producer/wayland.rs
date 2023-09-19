@@ -280,7 +280,7 @@ impl State {
             .set_keyboard_interactivity(KeyboardInteractivity::None);
         window.surface.commit();
 
-        // release pointer
+        // destroy pointer lock
         if let Some(pointer_lock) = &self.pointer_lock {
             pointer_lock.destroy();
             self.pointer_lock = None;
@@ -292,7 +292,7 @@ impl State {
             self.rel_pointer = None;
         }
 
-        // release shortcut inhibitor
+        // destroy shortcut inhibitor
         if let Some(shortcut_inhibitor) = &self.shortcut_inhibitor {
             shortcut_inhibitor.destroy();
             self.shortcut_inhibitor = None;
@@ -465,6 +465,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 surface_y: _,
             } => {
                 // get client corresponding to the focused surface
+                log::trace!("produce: enter()");
 
                 {
                     let (window, client) = app
@@ -483,6 +484,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 app.pending_events.push((*client, Event::Release()));
             }
             wl_pointer::Event::Leave { .. } => {
+                log::trace!("produce: leave()");
                 app.ungrab();
             }
             wl_pointer::Event::Button {
@@ -491,6 +493,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 button,
                 state,
             } => {
+                log::trace!("produce: button()");
                 let (_, client) = app.focused.as_ref().unwrap();
                 app.pending_events.push((
                     *client,
@@ -502,6 +505,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 ));
             }
             wl_pointer::Event::Axis { time, axis, value } => {
+                log::trace!("produce: scroll()");
                 let (_, client) = app.focused.as_ref().unwrap();
                 app.pending_events.push((
                     *client,
@@ -513,6 +517,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 ));
             }
             wl_pointer::Event::Frame {} => {
+                log::trace!("produce: frame()");
                 let (_, client) = app.focused.as_ref().unwrap();
                 app.pending_events.push((
                     *client,
@@ -610,6 +615,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
             dy_unaccel: surface_y,
         } = event
         {
+            log::trace!("produce: motion()");
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
                 app.pending_events.push((

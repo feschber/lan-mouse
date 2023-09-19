@@ -110,6 +110,7 @@ impl Server {
                     continue
                 }
             };
+            log::trace!("{:20} <-<-<-<------ {addr}", event.to_string());
 
             // get handle for addr
             let handle = match self.client_manager.get_client(addr) {
@@ -125,14 +126,13 @@ impl Server {
             self.client_manager.set_default_addr(handle, addr);
             match (event, addr) {
                 (Event::Release(), _) => {},
-                (Event::Pong(), addr) => log::debug!("{addr}: pong"),
+                (Event::Pong(), _) => {},
                 (Event::Ping(), addr) => {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                         log::error!("udp send: {}", e);
                     }
                 }
                 (event, addr) => {
-                    log::debug!("{addr}: {event:?}");
                     match self.state {
                         State::Sending => {
                             // in sending state, we dont want to process
@@ -175,6 +175,7 @@ impl Server {
                     // otherwise we should have an address to send to
                     // transmit events to the corrensponding client
                     if let Some(addr) = self.client_manager.get_active_addr(c) {
+                        log::trace!("{:20} ------>->->-> {addr}", e.to_string());
                         if let Err(e) = Self::send_event(&self.socket, e, addr) {
                             log::error!("udp send: {}", e);
                         }
