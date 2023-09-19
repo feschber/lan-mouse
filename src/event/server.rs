@@ -97,6 +97,18 @@ impl Server {
     fn handle_udp_rx(&mut self) {
         loop {
             match self.receive_event() {
+                
+                Ok((Event::Pong(), addr)) => {
+                    if let Some(client_handle) = self.client_manager.get_client(addr) {
+                        self.client_manager.set_default_addr(client_handle, addr);
+                    }
+                    log::debug!("{addr}: pong");
+                }
+                Ok((Event::Ping(), addr)) => {
+                    if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
+                        log::error!("udp send: {}", e);
+                    }
+                }
                 Ok((event, addr)) => {
                     log::debug!("{addr}: {event:?}");
                     match self.state {
@@ -106,6 +118,7 @@ impl Server {
                             // therefore we tell the event producer
                             // to release the pointer and move on
                             // first event -> release pointer
+                            log::debug!("releasing pointer ...");
                             self.producer.release();
                             self.state = State::Receiving;
                         }
@@ -116,15 +129,7 @@ impl Server {
                             // handle events
                             if let Some(client_handle) = self.client_manager.get_client(addr) {
                                 self.client_manager.set_default_addr(client_handle, addr);
-                                match event {
-                                    Event::Ping() => {
-                                        if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
-                                            log::error!("udp send: {}", e);
-                                        }
-                                    }
-                                    Event::Pong() => {} // dont loop pings
-                                    e => self.consumer.consume(event, client_handle),
-                                }
+                                self.consumer.consume(event, client_handle);
                             } else {
                                 log::warn!("ignoring event from client {addr:?}");
                             }

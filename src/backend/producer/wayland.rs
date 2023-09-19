@@ -330,8 +330,7 @@ impl Source for WaylandEventProducer {
 }
 impl WaylandEventProducer {
     fn read(&mut self) -> bool {
-        log::trace!("reading from wayland-socket");
-        let res = match self.state.read_guard.take().unwrap().read() {
+        match self.state.read_guard.take().unwrap().read() {
             Ok(_) => true,
             Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => false,
             Err(WaylandError::Io(e)) => {
@@ -341,11 +340,7 @@ impl WaylandEventProducer {
             Err(WaylandError::Protocol(e)) => {
                 panic!("wayland protocol violation: {e}")
             }
-        };
-        log::trace!("preparing next read");
-        self.prepare_read();
-        log::trace!("done");
-        res
+        }
     }
 
     fn prepare_read(&mut self) {
@@ -399,12 +394,18 @@ impl EventProducer for WaylandEventProducer {
 
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
         // read events
-        while self.read() {}
-
-        // prepare reading wayland events
+        while self.read() {
+            // prepare next read
+            self.prepare_read();
+        }
+        // dispatch the events
         self.dispatch_events();
 
+        // flush outgoing events
         self.flush_events();
+
+        // prepare for the next read
+        self.prepare_read();
 
         // return the events
         self.state.pending_events.drain(..)
@@ -413,15 +414,13 @@ impl EventProducer for WaylandEventProducer {
     fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(handle, pos) = client_event {
             self.state.add_client(handle, pos);
-            self.queue.flush().unwrap();
-            self.queue.dispatch_pending(&mut self.state).unwrap();
+            self.flush_events();
         }
     }
 
     fn release(&mut self) {
         self.state.ungrab();
-        self.queue.flush().unwrap();
-        self.queue.dispatch_pending(&mut self.state).unwrap();
+        self.flush_events();
     }
 }
 
@@ -457,6 +456,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
+
         match event {
             wl_pointer::Event::Enter {
                 serial,
