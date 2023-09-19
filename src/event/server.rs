@@ -149,7 +149,8 @@ impl Server {
 
                             // let the server know we are still alive once every second
                             let last_replied = self.client_manager.last_replied(handle);
-                            if last_replied.is_some() && last_replied.unwrap() > Duration::from_secs(1) {
+                            if  last_replied.is_none() 
+                            || last_replied.is_some() && last_replied.unwrap() > Duration::from_secs(1) {
                                 self.client_manager.reset_last_replied(handle);
                                 if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                                     log::error!("udp send: {}", e);
