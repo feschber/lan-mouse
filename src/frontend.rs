@@ -51,6 +51,10 @@ impl FrontendAdapter {
         #[cfg(unix)]
         let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
         #[cfg(unix)]
+        log::debug!("remove socket: {:?}", socket_path);
+        #[cfg(unix)]
+        std::fs::remove_file(&socket_path).unwrap();
+        #[cfg(unix)]
         let listener = UnixListener::bind(&socket_path)?;
 
         #[cfg(windows)]
