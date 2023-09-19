@@ -96,25 +96,46 @@ impl Server {
 
     fn handle_udp_rx(&mut self) {
         loop {
-            match self.receive_event() {
-                
-                Ok((Event::Pong(), addr)) => {
-                    if let Some(client_handle) = self.client_manager.get_client(addr) {
-                        self.client_manager.set_default_addr(client_handle, addr);
+            let (event, addr) = match self.receive_event() {
+                Ok(e) => e,
+                Err(e) => {
+                    if e.is::<std::io::Error>() {
+                        if let ErrorKind::WouldBlock = e.downcast_ref::<std::io::Error>()
+                            .unwrap()
+                            .kind() {
+                            return
+                        }
                     }
-                    log::debug!("{addr}: pong");
+                    log::error!("{}", e);
+                    continue
                 }
-                Ok((Event::Ping(), addr)) => {
+            };
+
+            // get handle for addr
+            let handle = match self.client_manager.get_client(addr) {
+                Some(a) => a,
+                None => {
+                    log::warn!("ignoring event from client {addr:?}");
+                    continue
+                }
+            };
+
+            // reset ttl for client and set addr as new default for this client
+            self.client_manager.reset_last_seen(handle);
+            self.client_manager.set_default_addr(handle, addr);
+            match (event, addr) {
+                (Event::Pong(), addr) => log::debug!("{addr}: pong"),
+                (Event::Ping(), addr) => {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                         log::error!("udp send: {}", e);
                     }
                 }
-                Ok((event, addr)) => {
+                (event, addr) => {
                     log::debug!("{addr}: {event:?}");
                     match self.state {
                         State::Sending => {
                             // in sending state, we dont want to process
-                            // any events except to avoid feedback loops,
+                            // any events to avoid feedback loops,
                             // therefore we tell the event producer
                             // to release the pointer and move on
                             // first event -> release pointer
@@ -123,29 +144,20 @@ impl Server {
                             self.state = State::Receiving;
                         }
                         State::Receiving => {
-                            // ignore release event - we are already in receiving state
-                            if let Event::Release() = event { continue }
+                            // consume event
+                            self.consumer.consume(event, handle);
 
-                            // handle events
-                            if let Some(client_handle) = self.client_manager.get_client(addr) {
-                                self.client_manager.set_default_addr(client_handle, addr);
-                                self.consumer.consume(event, client_handle);
-                            } else {
-                                log::warn!("ignoring event from client {addr:?}");
+                            // let the server know we are still alive once every second
+                            let last_replied = self.client_manager.last_replied(handle);
+                            if last_replied.is_some() && last_replied.unwrap() > Duration::from_secs(1) {
+                                self.client_manager.reset_last_replied(handle);
+                                if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
+                                    log::error!("udp send: {}", e);
+                                }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    if e.is::<std::io::Error>() {
-                        match e.downcast_ref::<std::io::Error>().unwrap().kind() {
-                            ErrorKind::WouldBlock => return,
-                            _ => continue,
-                        }
-                    }
-                    log::error!("{}", e);
-                    continue;
-                },
             }
         }
     }
@@ -156,44 +168,43 @@ impl Server {
             // in receiving state, only release events
             // must be transmitted
             match self.state {
-                State::Receiving => {
-                    // in receiving state, only release events must
-                    // be transmitted (when client is entered)
-                    if let Event::Release() = e {
-                        self.state = State::Sending;
-                    }
-                }
+                State::Receiving => self.state = State::Sending,
                 State::Sending => {
+                    // otherwise we should have an address to send to
                     // transmit events to the corrensponding client
                     if let Some(addr) = self.client_manager.get_active_addr(c) {
                         if let Err(e) = Self::send_event(&self.socket, e, addr) {
                             log::error!("udp send: {}", e);
                         }
-                    } else {
-                        // We dont know which ip (interface) is
-                        // the correct one.
-                        // Simply sending to all of them (with multiple potentially unreachable ips)
-                        // causes huge issues and completely blocks us from sending
-                        // after sending a few many packets.
-                        //
-                        // Therefore we send a ping every 500ms
-                        // and wait until some interface replies
-                        if let Some(duration) = self.client_manager.get_last_ping(c) {
-                            if duration < Duration::from_millis(500) {
-                                continue
-                            }
-                        }
-                        // ping all interfaces
-                        self.client_manager.reset_last_ping(c);
-                        if let Some(iter) = self.client_manager.get_addrs(c) {
-                            for addr in iter {
-                                if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
-                                    if e.kind() != ErrorKind::WouldBlock {
-                                        log::error!("udp send: {}", e);
-                                    }
+                    }
+
+                    // if client last responded > 2 seconds ago
+                    // and we have not sent a ping since 500 milliseconds,
+                    // send a ping
+                    let last_seen = self.client_manager.last_seen(c);
+                    let last_ping = self.client_manager.last_ping(c);
+                    if last_seen.is_some() && last_seen.unwrap() < Duration::from_secs(2) {
+                        continue
+                    }
+
+                    // client last seen > 500ms ago
+                    if last_ping.is_some() && last_ping.unwrap() < Duration::from_millis(500) {
+                        continue
+                    }
+
+                    // last ping > 500ms ago -> ping all interfaces
+                    self.client_manager.reset_last_ping(c);
+                    if let Some(iter) = self.client_manager.get_addrs(c) {
+                        for addr in iter {
+                            log::debug!("pinging {addr}");
+                            if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
+                                if e.kind() != ErrorKind::WouldBlock {
+                                    log::error!("udp send: {}", e);
                                 }
                             }
                         }
+                    } else {
+                        // TODO should repeat dns lookup
                     }
                 }
             }

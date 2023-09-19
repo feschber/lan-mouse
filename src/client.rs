@@ -52,6 +52,8 @@ pub struct ClientManager {
     /// probably not beneficial to use a hashmap here
     clients: Vec<Client>,
     last_ping: Vec<(ClientHandle, Option<Instant>)>,
+    last_seen: Vec<(ClientHandle, Option<Instant>)>,
+    last_replied:  Vec<(ClientHandle, Option<Instant>)>,
     next_client_id: u32,
 }
 
@@ -61,6 +63,8 @@ impl ClientManager {
             clients: vec![],
             next_client_id: 0,
             last_ping: vec![],
+            last_seen: vec![],
+            last_replied: vec![],
         }
     }
 
@@ -74,6 +78,8 @@ impl ClientManager {
         let client = Client { handle, active_addr, addrs, pos };
         self.clients.push(client);
         self.last_ping.push((handle, None));
+        self.last_seen.push((handle, None));
+        self.last_replied.push((handle, None));
         handle
     }
 
@@ -112,21 +118,49 @@ impl ClientManager {
         Some(self.get(client)?.addrs.iter().cloned())
     }
 
-    pub fn get_last_ping(&self, client: ClientHandle) -> Option<Duration> {
+    pub fn last_ping(&self, client: ClientHandle) -> Option<Duration> {
         let last_ping = self.last_ping
             .iter()
-            .find(|(c,p)| *c == client)
-            .map(|(_,p)| p.clone())
-            .flatten();
+            .find(|(c,_)| *c == client)
+            .unwrap().1;
         last_ping.map(|p| p.elapsed())
     }
 
+    pub fn last_seen(&self, client: ClientHandle) -> Option<Duration> {
+        let last_seen = self.last_seen
+            .iter()
+            .find(|(c, _)| *c == client)
+            .unwrap().1;
+        last_seen.map(|t| t.elapsed())
+    }
+
+    pub fn last_replied(&self, client: ClientHandle) -> Option<Duration> {
+        let last_replied = self.last_replied
+            .iter()
+            .find(|(c, _)| *c == client)
+            .unwrap().1;
+        last_replied.map(|t| t.elapsed())
+    }
+
     pub fn reset_last_ping(&mut self, client: ClientHandle) {
-        if let Some(i) = self.last_ping
+        self.last_ping
             .iter_mut()
-            .find(|(c,p)| *c == client) {
-            i.1 = Some(Instant::now());
-        }
+            .find(|(c, _)| *c == client)
+            .unwrap().1 = Some(Instant::now());
+    }
+
+    pub fn reset_last_seen(&mut self, client: ClientHandle) {
+        self.last_seen
+            .iter_mut()
+            .find(|(c, _)| *c == client)
+            .unwrap().1 = Some(Instant::now());
+    }
+
+    pub fn reset_last_replied(&mut self, client: ClientHandle) {
+        self.last_replied
+            .iter_mut()
+            .find(|(c, _)| *c == client)
+            .unwrap().1 = Some(Instant::now());
     }
 
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
