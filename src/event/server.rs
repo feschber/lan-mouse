@@ -235,6 +235,7 @@ impl Server {
         }
     }
 
+    #[cfg(not(windows))]
     fn handle_signal(&mut self) -> bool {
         #[cfg(windows)]
         return false;

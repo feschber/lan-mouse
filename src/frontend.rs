@@ -3,8 +3,6 @@ use std::{str, net::SocketAddr};
 
 #[cfg(unix)]
 use std::{env, path::{Path, PathBuf}};
-#[cfg(windows)]
-use std::os::windows::io::AsRawSocket;
 
 use mio::{Registry, Token, event::Source};
 

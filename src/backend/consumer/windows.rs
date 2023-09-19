@@ -44,7 +44,7 @@ impl EventConsumer for WindowsConsumer {
                 KeyboardEvent::Key { time:_, key, state } => { key_event(key, state) }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            Event::Release() => {}
+            _ => {}
         }
     }
 
