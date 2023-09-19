@@ -1,8 +1,8 @@
-use std::io::Result;
-use std::{str, net::SocketAddr, io};
+use std::io::{Read, Result};
+use std::{str, net::SocketAddr};
 
 #[cfg(unix)]
-use std::{env, os::fd::AsRawFd, path::{Path, PathBuf}};
+use std::{env, path::{Path, PathBuf}};
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
 
@@ -12,11 +12,6 @@ use mio::{Registry, Token, event::Source};
 use mio::net::UnixListener;
 #[cfg(windows)]
 use mio::net::TcpListener;
-
-#[cfg(unix)]
-use libc::recv;
-#[cfg(windows)]
-use winapi::um::winsock2::recv;
 
 use serde::{Serialize, Deserialize};
 
@@ -73,23 +68,9 @@ impl FrontendAdapter {
     }
 
     pub fn read_event(&mut self) -> Result<FrontendEvent>{
-        let (stream, _) = self.listener.accept()?;
-        let mut buf = [0u8; 128];
-        stream.try_io(|| {
-            let buf_ptr = &mut buf as *mut _ as *mut _;
-            #[cfg(unix)]
-            let res = unsafe { recv(stream.as_raw_fd(), buf_ptr, buf.len(), 0) };
-            #[cfg(windows)]
-            let res = unsafe { recv(stream.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0) };
-            log::trace!("recvfrom res = {res}");
-            if res != -1 {
-                Ok(res as usize)
-            } else {
-                // If EAGAIN or EWOULDBLOCK is set by libc::recv, the closure
-                // should return `WouldBlock` error.
-                Err(io::Error::last_os_error())
-            }
-        })?;
+        let (mut stream, _) = self.listener.accept()?;
+        let mut buf = [0u8; 128]; // FIXME
+        stream.read(&mut buf)?;
         let json = str::from_utf8(&buf)
             .unwrap()
             .trim_end_matches(char::from(0)); // remove trailing 0-bytes

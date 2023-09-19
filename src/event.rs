@@ -42,10 +42,9 @@ pub enum Event {
     Pointer(PointerEvent),
     Keyboard(KeyboardEvent),
     Release(),
+    Ping(),
+    Pong(),
 }
-
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
 
 impl Event {
     fn event_type(&self) -> EventType {
@@ -53,6 +52,8 @@ impl Event {
             Self::Pointer(_) => EventType::POINTER,
             Self::Keyboard(_) => EventType::KEYBOARD,
             Self::Release() => EventType::RELEASE,
+            Self::Ping() => EventType::PING,
+            Self::Pong() => EventType::PONG,
         }
     }
 }
@@ -91,6 +92,8 @@ enum EventType {
     POINTER,
     KEYBOARD,
     RELEASE,
+    PING,
+    PONG,
 }
 
 impl TryFrom<u8> for PointerEventType {
@@ -130,6 +133,8 @@ impl Into<Vec<u8>> for &Event {
             Event::Pointer(p) => p.into(),
             Event::Keyboard(k) => k.into(),
             Event::Release() => vec![],
+            Event::Ping() => vec![],
+            Event::Pong() => vec![],
         };
         vec![event_id, event_data].concat()
     }
@@ -156,6 +161,8 @@ impl TryFrom<Vec<u8>> for Event {
             i if i == (EventType::POINTER as u8) => Ok(Event::Pointer(value.try_into()?)),
             i if i == (EventType::KEYBOARD as u8) => Ok(Event::Keyboard(value.try_into()?)),
             i if i == (EventType::RELEASE as u8) => Ok(Event::Release()),
+            i if i == (EventType::PING as u8) => Ok(Event::Ping()),
+            i if i == (EventType::PONG as u8) => Ok(Event::Pong()),
             _ => Err(Box::new(ProtocolError {
                 msg: format!("invalid event_id {}", event_id),
             })),

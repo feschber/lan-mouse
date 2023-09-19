@@ -46,7 +46,7 @@ impl EventConsumer for X11Consumer {
                 crate::event::PointerEvent::Frame {} => {}
             },
             Event::Keyboard(_) => {}
-            Event::Release() => {}
+            _ => {}
         }
     }
 

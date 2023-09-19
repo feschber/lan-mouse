@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, collections::HashSet, fmt::Display};
+use std::{net::SocketAddr, collections::{HashSet, hash_set::Iter}, fmt::Display, time::{Instant, Duration}, iter::Cloned};
 
 use serde::{Serialize, Deserialize};
 
@@ -51,6 +51,7 @@ pub type ClientHandle = u32;
 pub struct ClientManager {
     /// probably not beneficial to use a hashmap here
     clients: Vec<Client>,
+    last_ping: Vec<(ClientHandle, Option<Instant>)>,
     next_client_id: u32,
 }
 
@@ -59,6 +60,7 @@ impl ClientManager {
         Self {
             clients: vec![],
             next_client_id: 0,
+            last_ping: vec![],
         }
     }
 
@@ -71,7 +73,7 @@ impl ClientManager {
         // store the client
         let client = Client { handle, active_addr, addrs, pos };
         self.clients.push(client);
-
+        self.last_ping.push((handle, None));
         handle
     }
 
@@ -106,8 +108,25 @@ impl ClientManager {
         self.get(client)?.active_addr
     }
 
-    pub fn get_addrs(&self, client: ClientHandle) -> Option<Vec<SocketAddr>> {
-        Some(self.get(client)?.addrs.iter().cloned().collect())
+    pub fn get_addrs(&self, client: ClientHandle) -> Option<Cloned<Iter<'_, SocketAddr>>> {
+        Some(self.get(client)?.addrs.iter().cloned())
+    }
+
+    pub fn get_last_ping(&self, client: ClientHandle) -> Option<Duration> {
+        let last_ping = self.last_ping
+            .iter()
+            .find(|(c,p)| *c == client)
+            .map(|(_,p)| p.clone())
+            .flatten();
+        last_ping.map(|p| p.elapsed())
+    }
+
+    pub fn reset_last_ping(&mut self, client: ClientHandle) {
+        if let Some(i) = self.last_ping
+            .iter_mut()
+            .find(|(c,p)| *c == client) {
+            i.1 = Some(Instant::now());
+        }
     }
 
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {

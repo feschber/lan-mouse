@@ -1,4 +1,4 @@
-use std::{error::Error, io::Result, collections::HashSet};
+use std::{error::Error, io::Result, collections::HashSet, time::Duration};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket};
 #[cfg(not(windows))]
@@ -55,7 +55,7 @@ impl Server {
 
         #[cfg(not(windows))]
         poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
-        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE)?;
+        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE | Interest::WRITABLE)?;
         poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
         poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
 
@@ -76,7 +76,6 @@ impl Server {
             self.poll.poll(&mut events, None)?;
             for event in &events {
                 if !event.is_readable() { continue }
-
                 match event.token() {
                     UDP_RX => self.handle_udp_rx(),
                     PRODUCER_RX => self.handle_producer_rx(),
@@ -116,8 +115,16 @@ impl Server {
 
                             // handle events
                             if let Some(client_handle) = self.client_manager.get_client(addr) {
-                                self.consumer.consume(event, client_handle);
                                 self.client_manager.set_default_addr(client_handle, addr);
+                                match event {
+                                    Event::Ping() => {
+                                        if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
+                                            log::error!("udp send: {}", e);
+                                        }
+                                    }
+                                    Event::Pong() => {} // dont loop pings
+                                    e => self.consumer.consume(event, client_handle),
+                                }
                             } else {
                                 log::warn!("ignoring event from client {addr:?}");
                             }
@@ -158,11 +165,27 @@ impl Server {
                             log::error!("udp send: {}", e);
                         }
                     } else {
-                        // no address is active -> send to all ips
-                        if let Some(addrs) = self.client_manager.get_addrs(c) {
-                            for addr in addrs {
-                                if let Err(e) = Self::send_event(&self.socket, e, addr) {
-                                    log::error!("udp send: {}", e);
+                        // We dont know which ip (interface) is
+                        // the correct one.
+                        // Simply sending to all of them (with multiple potentially unreachable ips)
+                        // causes huge issues and completely blocks us from sending
+                        // after sending a few many packets.
+                        //
+                        // Therefore we send a ping every 500ms
+                        // and wait until some interface replies
+                        if let Some(duration) = self.client_manager.get_last_ping(c) {
+                            if duration < Duration::from_millis(500) {
+                                continue
+                            }
+                        }
+                        // ping all interfaces
+                        self.client_manager.reset_last_ping(c);
+                        if let Some(iter) = self.client_manager.get_addrs(c) {
+                            for addr in iter {
+                                if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
+                                    if e.kind() != ErrorKind::WouldBlock {
+                                        log::error!("udp send: {}", e);
+                                    }
                                 }
                             }
                         }

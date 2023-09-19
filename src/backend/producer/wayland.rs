@@ -191,10 +191,10 @@ impl WaylandEventProducer {
         };
 
         // flush outgoing events
-        queue.flush().unwrap();
+        queue.flush()?;
 
         // prepare reading wayland events
-        let read_guard = queue.prepare_read().unwrap();
+        let read_guard = queue.prepare_read()?;
         let wayland_fd = read_guard.connection_fd().as_raw_fd();
         let read_guard = Some(read_guard);
 
@@ -328,30 +328,46 @@ impl Source for WaylandEventProducer {
         SourceFd(&self.state.wayland_fd).deregister(registry)
     }
 }
-
-impl EventProducer for WaylandEventProducer {
-    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
-        loop {
-            match self.state.read_guard.take().unwrap().read() {
-                Ok(_) => {
-                    self.state.read_guard = Some(self.queue.prepare_read().unwrap());
-                },
-                Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => break,
-                Err(WaylandError::Io(e)) => {
-                    log::error!("error reading from wayland socket: {e}");
-                }
-                Err(WaylandError::Protocol(e)) => {
-                    log::error!("wayland protocol violation: {e}");
-                }
+impl WaylandEventProducer {
+    fn read(&mut self) -> bool {
+        log::trace!("reading from wayland-socket");
+        let res = match self.state.read_guard.take().unwrap().read() {
+            Ok(_) => true,
+            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => false,
+            Err(WaylandError::Io(e)) => {
+                log::error!("error reading from wayland socket: {e}");
+                false
             }
-        }
+            Err(WaylandError::Protocol(e)) => {
+                panic!("wayland protocol violation: {e}")
+            }
+        };
+        log::trace!("preparing next read");
+        self.prepare_read();
+        log::trace!("done");
+        res
+    }
+
+    fn prepare_read(&mut self) {
+        match self.queue.prepare_read() {
+            Ok(r) => self.state.read_guard = Some(r),
+            Err(WaylandError::Io(e)) => {
+                log::error!("error preparing read from wayland socket: {e}")
+            }
+            Err(WaylandError::Protocol(e)) => {
+                panic!("wayland Protocol violation: {e}")
+            }
+        };
+    }
+
+    fn dispatch_events(&mut self) {
         match self.queue.dispatch_pending(&mut self.state) {
             Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
                 log::error!("Wayland Error: {}", e);
             }
             Err(DispatchError::Backend(e)) => {
-                panic!("{}", e);
+                panic!("backend error: {}", e);
             }
             Err(DispatchError::BadMessage {
                 sender_id,
@@ -361,13 +377,36 @@ impl EventProducer for WaylandEventProducer {
                 panic!("bad message {}, {} , {}", sender_id, interface, opcode);
             }
         }
+    }
+
+    fn flush_events(&mut self) {
         // flush outgoing events
-        self.queue.flush().unwrap();
+        match self.queue.flush() {
+            Ok(_) => (),
+            Err(e) => match e {
+                WaylandError::Io(e) => {
+                    log::error!("error writing to wayland socket: {e}")
+                },
+                WaylandError::Protocol(e) => {
+                    panic!("wayland protocol violation: {e}")
+                },
+            },
+        }
+    }
+}
+
+impl EventProducer for WaylandEventProducer {
+
+    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
+        // read events
+        while self.read() {}
 
         // prepare reading wayland events
-        let _ = self.queue.dispatch_pending(&mut self.state).unwrap();
-        self.state.read_guard = Some(self.queue.prepare_read().unwrap());
+        self.dispatch_events();
 
+        self.flush_events();
+
+        // return the events
         self.state.pending_events.drain(..)
     }
 
@@ -546,6 +585,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             } => {
                 let fd = unsafe { &File::from_raw_fd(fd.as_raw_fd()) };
                 let _mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
+                // TODO keymap
             }
             _ => (),
         }
