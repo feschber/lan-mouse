@@ -4,7 +4,7 @@ use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
     config::{Config, Frontend::{Gtk, Cli}}, event::server::Server,
-    frontend::{FrontendAdapter, cli::CliFrontend},
+    frontend::{FrontendAdapter, cli, gtk},
 };
 
 pub fn main() {
@@ -48,13 +48,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // any threads need to be started after event_server sets up signal handling
     match config.frontend {
-        Gtk => {
-            #[cfg(all(unix, feature = "gtk"))]
-            frontend::gtk::create();
-            #[cfg(not(feature = "gtk"))]
-            panic!("gtk frontend requested but feature not enabled!");
-        },
-        Cli => Box::new(CliFrontend::new()?),
+        #[cfg(all(unix, feature = "gtk"))]
+        Gtk => { gtk::start()?; }
+        #[cfg(not(feature = "gtk"))]
+        Gtk => panic!("gtk frontend requested but feature not enabled!"),
+        Cli => { cli::start()?; }
     };
 
     log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");

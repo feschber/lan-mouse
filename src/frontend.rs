@@ -117,5 +117,3 @@ impl Drop for FrontendAdapter {
         std::fs::remove_file(&self.socket_path).unwrap();
     }
 }
-
-pub trait Frontend { }

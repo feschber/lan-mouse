@@ -39,6 +39,9 @@ adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }
 
+[target.'cfg(unix)'.build-dependencies]
+glib-build-tools = "0.18.0"
+
 [features]
 default = [
 	"wayland",

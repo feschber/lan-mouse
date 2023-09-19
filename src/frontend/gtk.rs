@@ -5,12 +5,14 @@ mod client_row;
 use crate::frontend::gtk::window::Window;
 
 use gtk::{prelude::*, IconTheme, gdk::Display};
-use std::thread;
+use std::{io::Result, thread::{self, JoinHandle}};
 use adw::Application;
 use gtk::{gio, glib, prelude::ApplicationExt};
 
-pub fn start() -> thread::JoinHandle<glib::ExitCode> {
-    thread::spawn(gtk_main)
+pub fn start() -> Result<JoinHandle<glib::ExitCode>> {
+    thread::Builder::new()
+        .name("gtk-thread".into())
+        .spawn(gtk_main)
 }
 
 fn gtk_main() -> glib::ExitCode {

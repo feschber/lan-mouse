@@ -2,6 +2,7 @@
 
 # optional port (defaults to 4242)
 port = 4242
+frontend = "gtk"
 
 # define a client on the right side with host name "iridium"
 [right]
