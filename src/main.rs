@@ -3,9 +3,12 @@ use std::{process, error::Error};
 use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
-    config::{Config, Frontend::{Gtk, Cli}}, event::server::Server,
-    frontend::{FrontendAdapter, cli, gtk},
+    config::{Config, Frontend::{Cli, Gtk}}, event::server::Server,
+    frontend::{FrontendAdapter, cli},
 };
+
+#[cfg(all(unix, feature = "gtk"))]
+use lan_mouse::frontend::gtk;
 
 pub fn main() {
 
@@ -50,7 +53,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     match config.frontend {
         #[cfg(all(unix, feature = "gtk"))]
         Gtk => { gtk::start()?; }
-        #[cfg(not(feature = "gtk"))]
+        #[cfg(any(not(feature = "gtk"), not(unix)))]
         Gtk => panic!("gtk frontend requested but feature not enabled!"),
         Cli => { cli::start()?; }
     };
