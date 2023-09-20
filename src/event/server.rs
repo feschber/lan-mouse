@@ -234,6 +234,12 @@ impl Server {
                             log::error!("udp send: {}", e);
                         }
                     }
+                    // send additional release event, in case client is still in sending mode
+                    if let Err(e) = Self::send_event(&self.socket, Event::Release(), addr) {
+                        if e.kind() != ErrorKind::WouldBlock {
+                            log::error!("udp send: {}", e);
+                        }
+                    }
                 }
             } else {
                 // TODO should repeat dns lookup
