@@ -310,6 +310,7 @@ impl State {
 
     fn add_client(&mut self, client: ClientHandle, pos: Position) {
         let window = Rc::new(Window::new(&self.g, &self.qh, pos));
+        assert!(Rc::strong_count(&window) == 1);
         self.client_for_window.push((window, client));
     }
 }
@@ -426,7 +427,9 @@ impl EventProducer for WaylandEventProducer {
         }
         if let ClientEvent::Destroy(handle) = client_event {
             if let Some(i) = self.state.client_for_window.iter().position(|(_,c)| *c == handle) {
-                self.state.client_for_window.remove(i);
+                let w = self.state.client_for_window.remove(i);
+                self.state.focused = None;
+                assert!(Rc::strong_count(&w.0) == 1);
             }
         }
         self.flush_events();
