@@ -47,8 +47,8 @@ ips = ["192.168.178.189"]
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
-> :warning: Note, that with the gtk frontend, the clients from the config
-> file are currently ignored.
+> :warning: Note that clients from the config
+> file are currently ignored when using the gtk frontend!
 
 
 ## Build and Run
