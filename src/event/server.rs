@@ -149,6 +149,9 @@ impl Server {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                         log::error!("udp send: {}", e);
                     }
+                    // we release the mouse here,
+                    // since its very likely, that we wont get a release event
+                    self.producer.release();
                 }
                 (event, addr) => {
                     match self.state {
