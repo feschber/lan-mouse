@@ -64,6 +64,7 @@ fn find_arg(key: &'static str) -> Result<Option<String>, MissingParameter> {
     Ok(None)
 }
 
+#[derive(PartialEq, Eq)]
 pub enum Frontend {
     Gtk,
     Cli,
