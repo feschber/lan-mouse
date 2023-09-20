@@ -40,7 +40,7 @@ use wayland_client::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface, wl_output,
     },
-    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue, delegate_dispatch,
+    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue,
 };
 
 use tempfile;
