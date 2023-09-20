@@ -49,25 +49,14 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 > :warning: Note, that with the gtk frontend, the clients from the config
 > file are currently ignored.
 
-### Additional options
-Additionally
-- a preferred backend
-- a port override for the default port (4242)
-
-can be specified.
-
-Supported backends currently include "wlroots", "x11" and "windows".
-
-These two options can also be specified via the commandline
-options `--backend` and `--port` respectively.
 
 ## Build and Run
-Build only
+Build in release mode:
 ```sh
 cargo build --release
 ```
 
-Run
+Run directly:
 ```sh
 cargo run --release
 ```
