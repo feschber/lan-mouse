@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
 };
 
-use wayland_protocols::wp::{
+use wayland_protocols::{wp::{
     keyboard_shortcuts_inhibit::zv1::client::{
         zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
         zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
@@ -25,7 +25,7 @@ use wayland_protocols::wp::{
         zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
         zwp_relative_pointer_v1::{self, ZwpRelativePointerV1},
     },
-};
+}, xdg::xdg_output::zv1::client::{zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::{self, ZxdgOutputV1}}};
 
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -38,9 +38,9 @@ use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface,
+        wl_shm_pool, wl_surface, wl_output,
     },
-    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue,
+    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue, delegate_dispatch,
 };
 
 use tempfile;
@@ -55,6 +55,8 @@ struct Globals {
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
     layer_shell: ZwlrLayerShellV1,
+    outputs: Vec<wl_output::WlOutput>,
+    xdg_output_manager: ZxdgOutputManagerV1,
 }
 
 struct State {
@@ -149,14 +151,26 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 
 impl WaylandEventProducer {
     pub fn new() -> Result<Self> {
-        let conn = Connection::connect_to_env().expect("could not connect to wayland compositor");
-        let (g, queue) =
-            registry_queue_init::<State>(&conn).expect("failed to initialize wl_registry");
+        let conn = match Connection::connect_to_env() {
+            Ok(c) => c,
+            Err(e) => return Err(anyhow!("could not connect to wayland compositor: {e:?}")),
+        };
+
+        let (g, mut queue) = match registry_queue_init::<State>(&conn) {
+            Ok(q) => q,
+            Err(e) => return Err(anyhow!("failed to initialize wl_registry: {e:?}")),
+        };
+
         let qh = queue.handle();
 
         let compositor: wl_compositor::WlCompositor = match g.bind(&qh, 4..=5, ()) {
             Ok(compositor) => compositor,
             Err(_) => return Err(anyhow!("wl_compositor >= v4 not supported")),
+        };
+
+        let xdg_output_manager: ZxdgOutputManagerV1 = match g.bind(&qh, 1..=3, ()) {
+            Ok(xdg_output_manager) => xdg_output_manager,
+            Err(_) => return Err(anyhow!("xdg_output not supported!")),
         };
 
         let shm: wl_shm::WlShm = match g.bind(&qh, 1..=1, ()) {
@@ -189,6 +203,8 @@ impl WaylandEventProducer {
             Err(_) => return Err(anyhow!("zwp_keyboard_shortcuts_inhibit_manager_v1 not supported")),
         };
 
+        let outputs = vec![];
+
         let g = Globals {
             compositor,
             shm,
@@ -197,6 +213,8 @@ impl WaylandEventProducer {
             pointer_constraints,
             relative_pointer_manager,
             shortcut_inhibit_manager,
+            outputs,
+            xdg_output_manager,
         };
 
         // flush outgoing events
@@ -205,23 +223,43 @@ impl WaylandEventProducer {
         // prepare reading wayland events
         let read_guard = queue.prepare_read()?;
         let wayland_fd = read_guard.connection_fd().as_raw_fd();
-        let read_guard = Some(read_guard);
+        std::mem::drop(read_guard);
 
-        Ok(WaylandEventProducer {
-            queue,
-            state: State {
-                g,
-                pointer_lock: None,
-                rel_pointer: None,
-                shortcut_inhibitor: None,
-                client_for_window: Vec::new(),
-                focused: None,
-                qh,
-                wayland_fd,
-                read_guard,
-                pending_events: vec![],
-            }
-        })
+        let mut state = State {
+            g,
+            pointer_lock: None,
+            rel_pointer: None,
+            shortcut_inhibitor: None,
+            client_for_window: Vec::new(),
+            focused: None,
+            qh,
+            wayland_fd,
+            read_guard: None,
+            pending_events: vec![],
+        };
+
+        // dispatch registry to () again, in order to read all wl_outputs
+        conn.display().get_registry(&state.qh, ());
+        log::debug!("==============> requested registry");
+
+        // roundtrip to read wl_output globals
+        queue.roundtrip(&mut state)?;
+        log::debug!("==============> roundtrip 1 done");
+
+        // read outputs
+        for output in state.g.outputs.iter() {
+            state.g.xdg_output_manager.get_xdg_output(output, &state.qh, ());
+        }
+
+        // roundtrip to read xdg_output events
+        queue.roundtrip(&mut state)?;
+
+        log::debug!("==============> roundtrip 2 done");
+
+        let read_guard = queue.prepare_read()?;
+        state.read_guard = Some(read_guard);
+
+        Ok(WaylandEventProducer { queue, state })
     }
 }
 
@@ -675,7 +713,6 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
 }
 
 // delegate wl_registry events to App itself
-// delegate_dispatch!(App: [wl_registry::WlRegistry: GlobalListContents] => App);
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
         _state: &mut Self,
@@ -685,6 +722,74 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_registry::Event::Global { name, interface, version: _ } => {
+                match interface.as_str() {
+                    "wl_output" => {
+                        log::debug!("wl_output global");
+                        state.g.outputs.push(registry.bind::<wl_output::WlOutput, _, _>(name, 4, qh, ()))
+                    }
+                    _ => {}
+                }
+            },
+            wl_registry::Event::GlobalRemove { .. } => {},
+            _ => {},
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _wl_output: &wl_output::WlOutput,
+        event: <wl_output::WlOutput as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        log::debug!("wl_output - {event:?}");
+        match event {
+            wl_output::Event::Geometry { .. } => {},
+            wl_output::Event::Mode { .. } => {},
+            wl_output::Event::Done => {},
+            wl_output::Event::Scale { .. } => {},
+            wl_output::Event::Name { .. } => {},
+            wl_output::Event::Description { .. } => {},
+            _ => {},
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZxdgOutputV1,
+        event: <ZxdgOutputV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        log::debug!("xdg-output - {event:?}");
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { .. } => {},
+            zxdg_output_v1::Event::LogicalSize { .. } => {},
+            zxdg_output_v1::Event::Done => {},
+            zxdg_output_v1::Event::Name { .. } => {},
+            zxdg_output_v1::Event::Description { .. } => {},
+            _ => {},
+        }
     }
 }
 
@@ -698,6 +803,7 @@ delegate_noop!(State: ZwpKeyboardShortcutsInhibitManagerV1);
 delegate_noop!(State: ZwpPointerConstraintsV1);
 
 // ignore events
+delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: ignore wl_buffer::WlBuffer);
 delegate_noop!(State: ignore wl_surface::WlSurface);

@@ -44,6 +44,8 @@ ips = ["192.168.178.156"]
 host_name = "thorium"
 # ips for ethernet and wifi
 ips = ["192.168.178.189"]
+# optional port
+port = 4242
 ```
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
