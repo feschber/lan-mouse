@@ -6,7 +6,7 @@ use gtk::glib::{self, Object};
 
 use crate::config::DEFAULT_PORT;
 
-use super::client_object::ClientObject;
+use super::ClientObject;
 
 glib::wrapper! {
     pub struct ClientRow(ObjectSubclass<imp::ClientRow>)
@@ -14,19 +14,21 @@ glib::wrapper! {
     @implements gtk::Accessible, gtk::Actionable, gtk::Buildable, gtk::ConstraintTarget;
 }
 
-impl Default for ClientRow {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ClientRow {
-    pub fn new() -> Self {
-        Object::builder().build()
+    pub fn new(_client_object: &ClientObject) -> Self {
+        Object::builder()
+            // .property("client_object", &client_object)
+            .build()
     }
 
     pub fn bind(&self, client_object: &ClientObject) {
         let mut bindings = self.imp().bindings.borrow_mut();
+
+        let active_binding = client_object
+            .bind_property("active", &self.imp().enable_switch.get(), "state")
+            .bidirectional()
+            .sync_create()
+            .build();
 
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
@@ -81,6 +83,7 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        bindings.push(active_binding);
         bindings.push(hostname_binding);
         bindings.push(title_binding);
         bindings.push(port_binding);

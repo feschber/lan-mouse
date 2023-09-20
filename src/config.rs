@@ -96,6 +96,9 @@ impl Config {
         };
 
         let frontend = match frontend {
+            #[cfg(all(unix, feature = "gtk"))]
+            None => Frontend::Gtk,
+            #[cfg(any(not(feature = "gtk"), not(unix)))]
             None => Frontend::Cli,
             Some(s) => match s.as_str() {
                 "cli" => Frontend::Cli,

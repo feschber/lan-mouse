@@ -55,5 +55,24 @@
 				</property>
 			</object>
 		</child>
+		<!-- delete button -->
+		<child>
+			<object class="AdwActionRow">
+				<!-- <property name="title">delete</property> -->
+				<child>
+					<object class="GtkButton" id="delete_button">
+						<signal name="activate" handler="handle_client_delete" swapped="true"/>
+						<property name="icon-name">user-trash-symbolic</property>
+						<property name="label">Delete</property>
+						<property name="valign">center</property>
+						<property name="halign">center</property>
+						<property name="name">delete-button</property>
+						<!-- <style> -->
+						<!-- 	<class name="destructive-action"/> -->
+						<!-- </style> -->
+					</object>
+				</child>
+			</object>
+		</child>
 	</template>
 </interface>

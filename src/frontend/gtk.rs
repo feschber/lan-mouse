@@ -2,17 +2,15 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Result, Write}, thread::{self, JoinHandle}, os::unix::net::UnixStream};
+use std::{io::Result, thread::{self, JoinHandle}};
 
-use crate::{frontend::gtk::window::Window, client::Position};
+use crate::frontend::gtk::window::Window;
 
-use gtk::{prelude::*, IconTheme, gdk::Display, gio::{SimpleAction, SimpleActionGroup}, glib::clone};
-use adw::{subclass::prelude::*, Application};
+use gtk::{prelude::*, IconTheme, gdk::Display, gio::{SimpleAction, SimpleActionGroup}, glib::clone, CssProvider};
+use adw::Application;
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
-
-use super::FrontendEvent;
 
 pub fn start() -> Result<JoinHandle<glib::ExitCode>> {
     thread::Builder::new()
@@ -29,9 +27,20 @@ fn gtk_main() -> glib::ExitCode {
         .build();
 
     app.connect_startup(|_| load_icons());
+    app.connect_startup(|_| load_css());
     app.connect_activate(build_ui);
 
     app.run()
+}
+
+fn load_css() {
+    let provider = CssProvider::new();
+    provider.load_from_resource("de/feschber/LanMouse/style.css");
+    gtk::style_context_add_provider_for_display(
+    &Display::default().expect("Could not connect to a display."),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 fn load_icons() {
@@ -43,51 +52,39 @@ fn build_ui(app: &Application) {
     let window = Window::new(app);
     let action_client_activate = SimpleAction::new(
         "activate-client",
-        Some(&bool::static_variant_type()),
+        Some(&i32::static_variant_type()),
+    );
+    let action_client_delete = SimpleAction::new(
+        "delete-client",
+        Some(&i32::static_variant_type()),
     );
     action_client_activate.connect_activate(clone!(@weak window => move |_action, param| {
-        let activate = param.unwrap()
-            .get::<bool>()
+        log::debug!("activate-client");
+        let index = param.unwrap()
+            .get::<i32>()
             .unwrap();
-        // let Some(client) = window.clients().item(param) else {
-        //     return;
-        // };
-        let Some(client) = window.clients().item(0) else {
+        let Some(client) = window.clients().item(index as u32) else {
             return;
         };
         let client = client.downcast_ref::<ClientObject>().unwrap();
-        let data = client.get_data();
-        let socket_path = window.imp().socket_path.borrow();
-        let socket_path = socket_path.as_ref().unwrap().as_path();
-        let host_name = data.hostname;
-        let position = match data.position.as_str() {
-            "left" => Position::Left,
-            "right" => Position::Right,
-            "top" => Position::Top,
-            "bottom" => Position::Bottom,
-            _ => {
-                log::error!("invalid position: {}", data.position);
-                return
-            }
-        };
-        let port = data.port;
-        let event = if activate {
-            FrontendEvent::AddClient(host_name, port as u16, position)
-        } else {
-            FrontendEvent::DelClient(host_name, port as u16)
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let Ok(mut stream) = UnixStream::connect(socket_path) else {
-            log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
+        window.update_client(client);
+    }));
+    action_client_delete.connect_activate(clone!(@weak window => move |_action, param| {
+        log::debug!("delete-client");
+        let index = param.unwrap()
+            .get::<i32>()
+            .unwrap();
+        let Some(client) = window.clients().item(index as u32) else {
             return;
         };
-        if let Err(e) = stream.write(json.as_bytes()) {
-            log::error!("error sending message: {e}");
-        };
+        let client = client.downcast_ref::<ClientObject>().unwrap();
+        window.update_client(client);
+        window.clients().remove(index as u32);
     }));
 
     let actions = SimpleActionGroup::new();
     window.insert_action_group("win", Some(&actions));
     actions.add_action(&action_client_activate);
+    actions.add_action(&action_client_delete);
     window.present();
 }

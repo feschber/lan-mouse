@@ -11,7 +11,7 @@ use super::ClientData;
 #[properties(wrapper_type = super::ClientObject)]
 pub struct ClientObject {
     #[property(name = "hostname", get, set, type = String, member = hostname)]
-    #[property(name = "port", get, set, type = u32, member = port)]
+    #[property(name = "port", get, set, type = u32, member = port, maximum = u16::MAX as u32)]
     #[property(name = "active", get, set, type = bool, member = active)]
     #[property(name = "position", get, set, type = String, member = position)]
     pub data: RefCell<ClientData>,

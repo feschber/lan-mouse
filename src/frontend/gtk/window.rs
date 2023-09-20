@@ -1,13 +1,13 @@
 mod imp;
 
-use std::{path::{Path, PathBuf}, env, process};
+use std::{path::{Path, PathBuf}, env, process, os::unix::net::UnixStream, io::Write};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
 
-use crate::{frontend::gtk::client_object::ClientObject, config::DEFAULT_PORT};
+use crate::{frontend::{gtk::client_object::ClientObject, FrontendEvent}, config::DEFAULT_PORT, client::Position};
 
 use super::client_row::ClientRow;
 
@@ -62,14 +62,45 @@ impl Window {
     }
 
     fn create_client_row(&self, client_object: &ClientObject) -> ClientRow {
-        let row = ClientRow::new();
+        let row = ClientRow::new(client_object);
         row.bind(client_object);
         row
     }
 
     fn new_client(&self) {
-        let client = ClientObject::new(String::from(""), DEFAULT_PORT as u32, true, "left".into());
+        let client = ClientObject::new(String::from(""), DEFAULT_PORT as u32, false, "left".into());
         self.clients().append(&client);
+    }
+
+    pub fn update_client(&self, client: &ClientObject) {
+        let data = client.get_data();
+        let socket_path = self.imp().socket_path.borrow();
+        let socket_path = socket_path.as_ref().unwrap().as_path();
+        let host_name = data.hostname;
+        let position = match data.position.as_str() {
+            "left" => Position::Left,
+            "right" => Position::Right,
+            "top" => Position::Top,
+            "bottom" => Position::Bottom,
+            _ => {
+                log::error!("invalid position: {}", data.position);
+                return
+            }
+        };
+        let port = data.port;
+        let event = if client.active() {
+            FrontendEvent::DelClient(host_name, port as u16)
+        } else {
+            FrontendEvent::AddClient(host_name, port as u16, position)
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let Ok(mut stream) = UnixStream::connect(socket_path) else {
+            log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
+            return;
+        };
+        if let Err(e) = stream.write(json.as_bytes()) {
+            log::error!("error sending message: {e}");
+        };
     }
 
     fn setup_callbacks(&self) {

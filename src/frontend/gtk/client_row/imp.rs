@@ -3,10 +3,14 @@ use std::cell::RefCell;
 use glib::{Binding, subclass::InitializingObject};
 use adw::{prelude::*, ComboRow};
 use adw::subclass::prelude::*;
-use gtk::{glib, CompositeTemplate, Switch};
+use gtk::glib::Properties;
+use gtk::{glib, CompositeTemplate, Switch, Button};
 
-#[derive(CompositeTemplate, Default)]
+use crate::frontend::gtk::client_object::ClientObject;
+
+#[derive(Properties, CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
+#[properties(wrapper_type = super::ClientRow)]
 pub struct ClientRow {
     #[template_child]
     pub enable_switch: TemplateChild<gtk::Switch>,
@@ -16,7 +20,11 @@ pub struct ClientRow {
     pub port: TemplateChild<gtk::Entry>,
     #[template_child]
     pub position: TemplateChild<ComboRow>,
+    #[template_child]
+    pub delete_button: TemplateChild<gtk::Button>,
     pub bindings: RefCell<Vec<Binding>>,
+    #[property(get, set)]
+    client_object: RefCell<Option<ClientObject>>,
 }
 
 #[glib::object_subclass]
@@ -46,10 +54,17 @@ impl ObjectImpl for ClientRow {
 impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
-        switch.activate_action("win.activate-client", Some(&state.to_variant())).unwrap();
+        let idx = self.obj().index();
+        switch.activate_action("win.activate-client", Some(&idx.to_variant())).unwrap();
         switch.set_state(state);
-        // dont run default handler
-        true
+
+        true // dont run default handler
+    }
+
+    #[template_callback]
+    fn handle_client_delete(&self, button: &Button) {
+        let idx = self.obj().index();
+        button.activate_action("win.delete-client", Some(&idx.to_variant())).unwrap();
     }
 }
 
