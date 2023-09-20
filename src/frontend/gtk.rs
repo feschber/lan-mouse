@@ -80,6 +80,9 @@ fn build_ui(app: &Application) {
         let client = client.downcast_ref::<ClientObject>().unwrap();
         window.update_client(client);
         window.clients().remove(index as u32);
+        if window.clients().n_items() == 0 {
+            window.set_placeholder_visible(true);
+        }
     }));
 
     let actions = SimpleActionGroup::new();

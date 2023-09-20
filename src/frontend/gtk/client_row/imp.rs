@@ -1,16 +1,13 @@
 use std::cell::RefCell;
 
 use glib::{Binding, subclass::InitializingObject};
-use adw::{prelude::*, ComboRow};
+use adw::{prelude::*, ComboRow, ActionRow};
 use adw::subclass::prelude::*;
-use gtk::glib::Properties;
+use gtk::glib::clone;
 use gtk::{glib, CompositeTemplate, Switch, Button};
 
-use crate::frontend::gtk::client_object::ClientObject;
-
-#[derive(Properties, CompositeTemplate, Default)]
+#[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
-#[properties(wrapper_type = super::ClientRow)]
 pub struct ClientRow {
     #[template_child]
     pub enable_switch: TemplateChild<gtk::Switch>,
@@ -21,10 +18,10 @@ pub struct ClientRow {
     #[template_child]
     pub position: TemplateChild<ComboRow>,
     #[template_child]
+    pub delete_row: TemplateChild<ActionRow>,
+    #[template_child]
     pub delete_button: TemplateChild<gtk::Button>,
     pub bindings: RefCell<Vec<Binding>>,
-    #[property(get, set)]
-    client_object: RefCell<Option<ClientObject>>,
 }
 
 #[glib::object_subclass]
@@ -47,6 +44,9 @@ impl ObjectSubclass for ClientRow {
 impl ObjectImpl for ClientRow {
     fn constructed(&self) {
         self.parent_constructed();
+        self.delete_button.connect_clicked(clone!(@weak self as row => move |button| {
+            row.handle_client_delete(button);
+        }));
     }
 }
 
@@ -63,6 +63,7 @@ impl ClientRow {
 
     #[template_callback]
     fn handle_client_delete(&self, button: &Button) {
+        log::debug!("delete button pressed");
         let idx = self.obj().index();
         button.activate_action("win.delete-client", Some(&idx.to_variant())).unwrap();
     }

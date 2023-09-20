@@ -17,7 +17,6 @@ glib::wrapper! {
 impl ClientRow {
     pub fn new(_client_object: &ClientObject) -> Self {
         Object::builder()
-            // .property("client_object", &client_object)
             .build()
     }
 
