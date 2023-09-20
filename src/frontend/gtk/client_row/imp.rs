@@ -1,12 +1,15 @@
 use std::cell::RefCell;
 
-use glib::Binding;
-use adw::{subclass::prelude::*, ComboRow};
-use gtk::{glib, CompositeTemplate};
+use glib::{Binding, subclass::InitializingObject};
+use adw::{prelude::*, ComboRow};
+use adw::subclass::prelude::*;
+use gtk::{glib, CompositeTemplate, Switch};
 
-#[derive(Default, CompositeTemplate)]
+#[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
 pub struct ClientRow {
+    #[template_child]
+    pub enable_switch: TemplateChild<gtk::Switch>,
     #[template_child]
     pub hostname: TemplateChild<gtk::Entry>,
     #[template_child]
@@ -25,14 +28,40 @@ impl ObjectSubclass for ClientRow {
 
     fn class_init(klass: &mut Self::Class) {
         klass.bind_template();
+        klass.bind_template_callbacks();
     }
 
-    fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
+    fn instance_init(obj: &InitializingObject<Self>) {
         obj.init_template();
     }
 }
 
-impl ObjectImpl for ClientRow {}
+impl ObjectImpl for ClientRow {
+    fn constructed(&self) {
+        self.parent_constructed();
+    }
+}
+
+#[gtk::template_callbacks]
+impl ClientRow {
+    #[template_callback]
+    fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
+        if state {
+            log::info!("activate");
+        } else {
+            log::info!("deactivate");
+        }
+        log::info!("{:?}", self.hostname);
+
+        let idx: u32 = 0;
+        switch.activate_action("win.activate-client", Some(&idx.to_variant())).unwrap();
+
+        switch.set_state(state);
+        // dont run default handler
+        true
+    }
+}
+
 impl WidgetImpl for ClientRow {}
 impl BoxImpl for ClientRow {}
 impl ListBoxRowImpl for ClientRow {}

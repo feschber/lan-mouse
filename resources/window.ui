@@ -103,7 +103,7 @@
 												<property name="use-underline">True</property>
 											</object>
 										</property>
-										<signal name="clicked" handler="handle_add_client" swapped="true"/>
+										<!-- <signal name="clicked" handler="handle_add_client" swapped="true"/> -->
 										<style>
 											<class name="pill"/>
 										</style>

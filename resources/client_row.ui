@@ -4,7 +4,8 @@
 		<property name="title">hostname</property>
 		<!-- enabled -->
 		<child type="prefix">
-			<object class="GtkSwitch">
+			<object class="GtkSwitch" id="enable_switch">
+				<signal name="state_set" handler="handle_client_set_state" swapped="true"/>
 				<property name="valign">center</property>
 				<property name="halign">end</property>
 				<property name="tooltip-text" translatable="yes">enable</property>

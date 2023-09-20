@@ -1,8 +1,10 @@
 mod imp;
 
+use std::{path::{Path, PathBuf}, env, process};
+
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib, gio, NoSelection};
+use gtk::{glib::{self, Value}, gio, NoSelection};
 use glib::{clone, Object};
 
 use crate::{frontend::gtk::client_object::ClientObject, config::DEFAULT_PORT};
@@ -21,7 +23,7 @@ impl Window {
         Object::builder().property("application", app).build()
     }
 
-    fn clients(&self) -> gio::ListStore {
+    pub fn clients(&self) -> gio::ListStore {
         self.imp()
             .clients
             .borrow()
@@ -77,5 +79,18 @@ impl Window {
                 window.new_client();
                 window.set_placeholder_visible(false);
             }));
+    }
+
+    fn connect_stream(&self) {
+        let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("{e}");
+                process::exit(1);
+            }
+        };
+        let socket_path = Path::new(xdg_runtime_dir.as_str())
+            .join("lan-mouse-socket.sock");
+        self.imp().socket_path.borrow_mut().replace(PathBuf::from(socket_path));
     }
 }

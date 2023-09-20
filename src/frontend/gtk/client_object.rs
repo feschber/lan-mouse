@@ -1,6 +1,7 @@
 mod imp;
 
 use gtk::glib::{self, Object};
+use adw::subclass::prelude::*;
 
 glib::wrapper! {
     pub struct ClientObject(ObjectSubclass<imp::ClientObject>);
@@ -15,9 +16,13 @@ impl ClientObject {
             .property("position", position)
             .build()
     }
+
+    pub fn get_data(&self) -> ClientData {
+        self.imp().data.borrow().clone()
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ClientData {
     pub hostname: String,
     pub port: u32,

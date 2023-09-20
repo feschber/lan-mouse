@@ -59,16 +59,33 @@ impl ClientRow {
             .build();
 
 
-        // let position_binding = client_object
-        //     .bind_property("position", &self.imp().position.get(), "selected-item")
-        //     .sync_create()
-        //     .build();
+        let position_binding = client_object
+            .bind_property("position", &self.imp().position.get(), "selected")
+            .transform_from(|_, v: u32| {
+                match v {
+                    1 => Some("right"),
+                    2 => Some("top"),
+                    3 => Some("bottom"),
+                    _ => Some("left"),
+                }
+            })
+            .transform_to(|_, v: String| {
+                match v.as_str() {
+                    "right" => Some(1),
+                    "top" => Some(2u32),
+                    "bottom" => Some(3u32),
+                    _ => Some(0u32),
+                }
+            })
+            .bidirectional()
+            .sync_create()
+            .build();
 
         bindings.push(hostname_binding);
         bindings.push(title_binding);
         bindings.push(port_binding);
         bindings.push(subtitle_binding);
-        // bindings.push(position_binding);
+        bindings.push(position_binding);
     }
 
     pub fn unbind(&self) {
