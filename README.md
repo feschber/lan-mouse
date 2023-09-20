@@ -1,6 +1,7 @@
 # Lan Mouse Share
 
-![image](https://github.com/ferdinandschober/lan-mouse/assets/40996949/99b41c06-2636-4793-9139-98aaf01a766c)
+![image](https://github.com/ferdinandschober/lan-mouse/assets/40996949/ccb33815-4357-4c8d-a5d2-8897ab626a08)
+
 
 Goal of this project is to be an open-source replacement for proprietary tools like [Synergy](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
 
