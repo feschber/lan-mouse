@@ -13,8 +13,8 @@ strip = true
 lto = "fat"
 
 [dependencies]
-tempfile = "3.6"
-trust-dns-resolver = "0.22"
+tempfile = "3.8"
+trust-dns-resolver = "0.23"
 memmap = "0.7"
 toml = "0.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -33,16 +33,30 @@ wayland-protocols-misc = { version="0.1.0", features=["client"], optional = true
 wayland-protocols-plasma = { version="0.1.0", features=["client"], optional = true }
 mio-signals = "0.2.0"
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-gtk = { package = "gtk4", version = "0.7.2", features = ["v4_8"], optional = true }
-adw = { package = "libadwaita", version = "0.5.2", features = ["v1_3"], optional = true }
+gtk = { package = "gtk4", version = "0.7.2", features = ["v4_6"], optional = true }
+adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }
 
+[target.'cfg(unix)'.build-dependencies]
+glib-build-tools = "0.18.0"
+
 [features]
-default = ["wayland", "x11", "xdg_desktop_portal", "libei"]
-wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc", "dep:wayland-protocols-plasma"]
-x11 = ["dep:x11"]
+default = [
+	"wayland",
+	"x11",
+	"xdg_desktop_portal",
+	"libei",
+	"gtk",
+]
+wayland = [
+	"dep:wayland-client",
+	"dep:wayland-protocols",
+	"dep:wayland-protocols-wlr",
+	"dep:wayland-protocols-misc",
+	"dep:wayland-protocols-plasma" ]
+x11 = [ "dep:x11" ]
 xdg_desktop_portal = []
 libei = []
 gtk = ["dep:gtk", "dep:adw"]

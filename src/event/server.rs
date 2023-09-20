@@ -6,7 +6,7 @@ use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
+use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}, dns};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -94,8 +94,23 @@ impl Server {
 
     pub fn add_client(&mut self, addr: HashSet<SocketAddr>, pos: Position) {
         let client = self.client_manager.add_client(addr, pos);
+        log::debug!("add_client {client}");
         self.producer.notify(ClientEvent::Create(client, pos));
         self.consumer.notify(ClientEvent::Create(client, pos));
+    }
+
+    pub fn remove_client(&mut self, host: String, port: u16) {
+        if let Ok(ips) = dns::resolve(host.as_str()) {
+            if let Some(ip) = ips.iter().next() {
+                let addr = SocketAddr::new(*ip, port);
+                if let Some(handle) = self.client_manager.get_client(addr) {
+                    log::debug!("remove_client {handle}");
+                    self.client_manager.remove_client(handle);
+                    self.producer.notify(ClientEvent::Destroy(handle));
+                    self.consumer.notify(ClientEvent::Destroy(handle));
+                }
+            }
+        }
     }
 
     fn handle_udp_rx(&mut self) {
@@ -134,6 +149,9 @@ impl Server {
                     if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                         log::error!("udp send: {}", e);
                     }
+                    // we release the mouse here,
+                    // since its very likely, that we wont get a release event
+                    self.producer.release();
                 }
                 (event, addr) => {
                     match self.state {
@@ -171,6 +189,7 @@ impl Server {
 
     fn handle_producer_rx(&mut self) {
         let events = self.producer.read_events();
+        let mut should_release = false;
         for (c, e) in events.into_iter() {
             // in receiving state, only release events
             // must be transmitted
@@ -200,6 +219,11 @@ impl Server {
                 continue
             }
 
+            // release mouse if client didnt respond to the first ping
+            if last_ping.is_some() && last_ping.unwrap() < Duration::from_secs(1) {
+                should_release = true;
+            }
+
             // last ping > 500ms ago -> ping all interfaces
             self.client_manager.reset_last_ping(c);
             if let Some(iter) = self.client_manager.get_addrs(c) {
@@ -210,27 +234,43 @@ impl Server {
                             log::error!("udp send: {}", e);
                         }
                     }
+                    // send additional release event, in case client is still in sending mode
+                    if let Err(e) = Self::send_event(&self.socket, Event::Release(), addr) {
+                        if e.kind() != ErrorKind::WouldBlock {
+                            log::error!("udp send: {}", e);
+                        }
+                    }
                 }
             } else {
                 // TODO should repeat dns lookup
             }
         }
+
+        if should_release && self.state != State::Receiving {
+            log::info!("client not responding - releasing pointer");
+            self.producer.release();
+            self.state = State::Receiving;
+        }
+
     }
 
     fn handle_frontend_rx(&mut self) -> bool {
         loop {
             match self.frontend.read_event() {
                 Ok(event) => match event {
-                    FrontendEvent::RequestPortChange(_) => todo!(),
-                    FrontendEvent::RequestClientAdd(addr, pos) => {
-                        self.add_client(HashSet::from_iter(&mut [addr].into_iter()), pos);
+                    FrontendEvent::AddClient(host, port, pos) => {
+                        if let Ok(ips) = dns::resolve(host.as_str()) {
+                            let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                            self.add_client(HashSet::from_iter(addrs), pos);
+                        }
                     }
-                    FrontendEvent::RequestClientDelete(_) => todo!(),
-                    FrontendEvent::RequestClientUpdate(_) => todo!(),
-                    FrontendEvent::RequestShutdown() => {
+                    FrontendEvent::DelClient(host, port) => self.remove_client(host, port),
+                    FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
                     },
+                    FrontendEvent::ChangePort(_) => todo!(),
+                    FrontendEvent::AddIp(_, _) => todo!(),
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => return false,
                 Err(e) => {

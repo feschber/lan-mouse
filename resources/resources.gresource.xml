@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/de/feschber/LanMouse">
+    <file compressed="true" preprocess="xml-stripblanks">window.ui</file>
+    <file compressed="true" preprocess="xml-stripblanks">client_row.ui</file>
+    <file compressed="true">style.css</file>
+    <file compressed="true">style-dark.css</file>
+  </gresource>
+  <gresource prefix="/de/feschber/LanMouse/icons">
+	<file compressed="true" preprocess="xml-stripblanks">mouse-icon.svg</file>
+  </gresource>
+</gresources>

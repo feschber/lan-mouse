@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+	<template class="ClientRow" parent="AdwExpanderRow">
+		<property name="title">hostname</property>
+		<!-- enabled -->
+		<child type="prefix">
+			<object class="GtkSwitch" id="enable_switch">
+				<signal name="state_set" handler="handle_client_set_state" swapped="true"/>
+				<property name="valign">center</property>
+				<property name="halign">end</property>
+				<property name="tooltip-text" translatable="yes">enable</property>
+			</object>
+		</child>
+		<!-- host -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title">hostname</property>
+				<property name="subtitle">port</property>
+				<!-- hostname -->
+				<child>
+					<object class="GtkEntry" id="hostname">
+						<!-- <property name="title" translatable="yes">hostname</property> -->
+						<property name="xalign">0.5</property>
+						<property name="valign">center</property>
+						<property name="placeholder-text">hostname</property>
+						<property name="width-chars">-1</property>
+					</object>
+				</child>
+				<!-- port -->
+				<child>
+					<object class="GtkEntry" id="port">
+						<!-- <property name="title" translatable="yes">port</property> -->
+						<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
+						<property name="xalign">0.5</property>
+						<property name="valign">center</property>
+						<property name="placeholder-text">4242</property>
+						<property name="width-chars">5</property>
+					</object>
+				</child>
+			</object>
+		</child>
+		<!-- position -->
+		<child>
+			<object class="AdwComboRow" id="position">
+				<property name="title" translatable="yes">position</property>
+				<property name="model">
+					<object class="GtkStringList">
+						<items>
+							<item>Left</item>
+							<item>Right</item>
+							<item>Top</item>
+							<item>Bottom</item>
+						</items>
+					</object>
+				</property>
+			</object>
+		</child>
+		<!-- delete button -->
+		<child>
+			<object class="AdwActionRow" id="delete_row">
+				<property name="title">delete this client</property>
+				<child>
+					<object class="GtkButton" id="delete_button">
+						<signal name="activate" handler="handle_client_delete" object="delete_row" swapped="true"/>
+						<property name="icon-name">user-trash-symbolic</property>
+						<property name="valign">center</property>
+						<property name="halign">center</property>
+						<property name="name">delete-button</property>
+					</object>
+				</child>
+			</object>
+		</child>
+	</template>
+</interface>
