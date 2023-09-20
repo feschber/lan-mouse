@@ -4,7 +4,7 @@ use std::{path::{Path, PathBuf}, env, process};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib::{self, Value}, gio, NoSelection};
+use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
 
 use crate::{frontend::gtk::client_object::ClientObject, config::DEFAULT_PORT};

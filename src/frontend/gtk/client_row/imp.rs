@@ -46,16 +46,7 @@ impl ObjectImpl for ClientRow {
 impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
-        if state {
-            log::info!("activate");
-        } else {
-            log::info!("deactivate");
-        }
-        log::info!("{:?}", self.hostname);
-
-        let idx: u32 = 0;
-        switch.activate_action("win.activate-client", Some(&idx.to_variant())).unwrap();
-
+        switch.activate_action("win.activate-client", Some(&state.to_variant())).unwrap();
         switch.set_state(state);
         // dont run default handler
         true

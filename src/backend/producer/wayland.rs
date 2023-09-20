@@ -129,6 +129,15 @@ impl Window {
     }
 }
 
+impl Drop for Window {
+    fn drop(&mut self) {
+        log::debug!("destroying window!");
+        self.layer_surface.destroy();
+        self.surface.destroy();
+        self.buffer.destroy();
+    }
+}
+
 fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for _ in 0..height {
@@ -414,8 +423,13 @@ impl EventProducer for WaylandEventProducer {
     fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(handle, pos) = client_event {
             self.state.add_client(handle, pos);
-            self.flush_events();
         }
+        if let ClientEvent::Destroy(handle) = client_event {
+            if let Some(i) = self.state.client_for_window.iter().position(|(_,c)| *c == handle) {
+                self.state.client_for_window.remove(i);
+            }
+        }
+        self.flush_events();
     }
 
     fn release(&mut self) {
@@ -466,15 +480,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             } => {
                 // get client corresponding to the focused surface
                 log::trace!("produce: enter()");
-
                 {
-                    let (window, client) = app
+                    if let Some((window, client)) = app
                         .client_for_window
                         .iter()
-                        .find(|(w, _c)| w.surface == surface)
-                        .unwrap();
-                    app.focused = Some((window.clone(), *client));
-                    app.grab(&surface, pointer, serial.clone(), qh);
+                        .find(|(w, _c)| w.surface == surface) {
+                        app.focused = Some((window.clone(), *client));
+                        app.grab(&surface, pointer, serial.clone(), qh);
+                    } else {
+                        return;
+                    }
                 }
                 let (_, client) = app
                     .client_for_window
@@ -641,17 +656,17 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
-            let (window, _client) = app
+            if let Some((window, _client)) = app
                 .client_for_window
                 .iter()
-                .find(|(w, _c)| &w.layer_surface == layer_surface)
-                .unwrap();
-            // client corresponding to the layer_surface
-            let surface = &window.surface;
-            let buffer = &window.buffer;
-            surface.attach(Some(&buffer), 0, 0);
-            layer_surface.ack_configure(serial);
-            surface.commit();
+                .find(|(w, _c)| &w.layer_surface == layer_surface) {
+                // client corresponding to the layer_surface
+                let surface = &window.surface;
+                let buffer = &window.buffer;
+                surface.attach(Some(&buffer), 0, 0);
+                layer_surface.ack_configure(serial);
+                surface.commit();
+            }
         }
     }
 }

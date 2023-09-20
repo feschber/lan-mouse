@@ -121,46 +121,46 @@ impl ClientManager {
     pub fn last_ping(&self, client: ClientHandle) -> Option<Duration> {
         let last_ping = self.last_ping
             .iter()
-            .find(|(c,_)| *c == client)
-            .unwrap().1;
+            .find(|(c,_)| *c == client)?.1;
         last_ping.map(|p| p.elapsed())
     }
 
     pub fn last_seen(&self, client: ClientHandle) -> Option<Duration> {
         let last_seen = self.last_seen
             .iter()
-            .find(|(c, _)| *c == client)
-            .unwrap().1;
+            .find(|(c, _)| *c == client)?.1;
         last_seen.map(|t| t.elapsed())
     }
 
     pub fn last_replied(&self, client: ClientHandle) -> Option<Duration> {
         let last_replied = self.last_replied
             .iter()
-            .find(|(c, _)| *c == client)
-            .unwrap().1;
+            .find(|(c, _)| *c == client)?.1;
         last_replied.map(|t| t.elapsed())
     }
 
     pub fn reset_last_ping(&mut self, client: ClientHandle) {
-        self.last_ping
+        if let Some(c) = self.last_ping
             .iter_mut()
-            .find(|(c, _)| *c == client)
-            .unwrap().1 = Some(Instant::now());
+            .find(|(c, _)| *c == client) {
+                c.1 = Some(Instant::now());
+            }
     }
 
     pub fn reset_last_seen(&mut self, client: ClientHandle) {
-        self.last_seen
+        if let Some(c) = self.last_seen
             .iter_mut()
-            .find(|(c, _)| *c == client)
-            .unwrap().1 = Some(Instant::now());
+            .find(|(c, _)| *c == client) {
+                c.1 = Some(Instant::now());
+            }
     }
 
     pub fn reset_last_replied(&mut self, client: ClientHandle) {
-        self.last_replied
+        if let Some(c) = self.last_replied
             .iter_mut()
-            .find(|(c, _)| *c == client)
-            .unwrap().1 = Some(Instant::now());
+            .find(|(c, _)| *c == client) {
+                c.1 = Some(Instant::now());
+            }
     }
 
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
@@ -168,6 +168,15 @@ impl ClientManager {
             .iter()
             .find(|c| c.addrs.contains(&addr))
             .map(|c| c.handle)
+    }
+
+    pub fn remove_client(&mut self, client: ClientHandle) {
+        if let Some(i) = self.clients.iter().position(|c| c.handle == client) {
+            self.clients.remove(i);
+            self.last_ping.remove(i);
+            self.last_seen.remove(i);
+            self.last_replied.remove(i);
+        }
     }
 
     fn next_id(&mut self) -> ClientHandle {

@@ -1,5 +1,6 @@
 use std::io::{Read, Result};
-use std::{str, net::SocketAddr};
+use std::net::IpAddr;
+use std::str;
 
 #[cfg(unix)]
 use std::{env, path::{Path, PathBuf}};
@@ -24,11 +25,11 @@ pub mod gtk;
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
-    RequestPortChange(u16),
-    RequestClientAdd(SocketAddr, Position),
-    RequestClientDelete(Client),
-    RequestClientUpdate(Client),
-    RequestShutdown(),
+    ChangePort(u16),
+    AddClient(String, u16, Position),
+    DelClient(String, u16),
+    AddIp(String, Option<IpAddr>),
+    Shutdown(),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +79,7 @@ impl FrontendAdapter {
         let json = str::from_utf8(&buf)
             .unwrap()
             .trim_end_matches(char::from(0)); // remove trailing 0-bytes
+        log::debug!("{json}");
         let event = serde_json::from_str(json).unwrap();
         log::debug!("{:?}", event);
         Ok(event)

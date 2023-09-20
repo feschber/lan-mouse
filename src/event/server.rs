@@ -6,7 +6,7 @@ use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}};
+use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}, dns};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -96,6 +96,19 @@ impl Server {
         let client = self.client_manager.add_client(addr, pos);
         self.producer.notify(ClientEvent::Create(client, pos));
         self.consumer.notify(ClientEvent::Create(client, pos));
+    }
+
+    pub fn remove_client(&mut self, host: String, port: u16) {
+        if let Ok(ips) = dns::resolve(host.as_str()) {
+            if let Some(ip) = ips.iter().next() {
+                let addr = SocketAddr::new(*ip, port);
+                if let Some(handle) = self.client_manager.get_client(addr) {
+                    self.client_manager.remove_client(handle);
+                    self.producer.notify(ClientEvent::Destroy(handle));
+                    self.consumer.notify(ClientEvent::Destroy(handle));
+                }
+            }
+        }
     }
 
     fn handle_udp_rx(&mut self) {
@@ -221,16 +234,19 @@ impl Server {
         loop {
             match self.frontend.read_event() {
                 Ok(event) => match event {
-                    FrontendEvent::RequestPortChange(_) => todo!(),
-                    FrontendEvent::RequestClientAdd(addr, pos) => {
-                        self.add_client(HashSet::from_iter(&mut [addr].into_iter()), pos);
+                    FrontendEvent::AddClient(host, port, pos) => {
+                        if let Ok(ips) = dns::resolve(host.as_str()) {
+                            let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                            self.add_client(HashSet::from_iter(addrs), pos);
+                        }
                     }
-                    FrontendEvent::RequestClientDelete(_) => todo!(),
-                    FrontendEvent::RequestClientUpdate(_) => todo!(),
-                    FrontendEvent::RequestShutdown() => {
+                    FrontendEvent::DelClient(host, port) => self.remove_client(host, port),
+                    FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
                     },
+                    FrontendEvent::ChangePort(_) => todo!(),
+                    FrontendEvent::AddIp(_, _) => todo!(),
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => return false,
                 Err(e) => {

@@ -2,9 +2,9 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Result, Write}, thread::{self, JoinHandle}, net::SocketAddr, os::unix::net::UnixStream};
+use std::{io::{Result, Write}, thread::{self, JoinHandle}, os::unix::net::UnixStream};
 
-use crate::{frontend::gtk::window::Window, dns, client::Position};
+use crate::{frontend::gtk::window::Window, client::Position};
 
 use gtk::{prelude::*, IconTheme, gdk::Display, gio::{SimpleAction, SimpleActionGroup}, glib::clone};
 use adw::{subclass::prelude::*, Application};
@@ -43,31 +43,23 @@ fn build_ui(app: &Application) {
     let window = Window::new(app);
     let action_client_activate = SimpleAction::new(
         "activate-client",
-        Some(&u32::static_variant_type()),
+        Some(&bool::static_variant_type()),
     );
     action_client_activate.connect_activate(clone!(@weak window => move |_action, param| {
-        let param = param.unwrap()
-            .get::<u32>()
+        let activate = param.unwrap()
+            .get::<bool>()
             .unwrap();
         // let Some(client) = window.clients().item(param) else {
         //     return;
         // };
-        let Some(client) = window.clients().item(param) else {
+        let Some(client) = window.clients().item(0) else {
             return;
         };
         let client = client.downcast_ref::<ClientObject>().unwrap();
         let data = client.get_data();
         let socket_path = window.imp().socket_path.borrow();
         let socket_path = socket_path.as_ref().unwrap().as_path();
-        let Ok(ips) = dns::resolve(data.hostname.as_str()) else {
-            log::error!("could not resolve host");
-            return
-        };
-        let Some(ip) = ips.get(0) else {
-            log::error!("0 ip addresses found for {}", data.hostname);
-            return
-        };
-        let addr = SocketAddr::new(*ip, data.port as u16);
+        let host_name = data.hostname;
         let position = match data.position.as_str() {
             "left" => Position::Left,
             "right" => Position::Right,
@@ -78,7 +70,12 @@ fn build_ui(app: &Application) {
                 return
             }
         };
-        let event = FrontendEvent::RequestClientAdd(addr, position);
+        let port = data.port;
+        let event = if activate {
+            FrontendEvent::AddClient(host_name, port as u16, position)
+        } else {
+            FrontendEvent::DelClient(host_name, port as u16)
+        };
         let json = serde_json::to_string(&event).unwrap();
         let Ok(mut stream) = UnixStream::connect(socket_path) else {
             log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
