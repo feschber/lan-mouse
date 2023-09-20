@@ -10,6 +10,8 @@ Of course ***blazingly fast™*** and stable, because it's written in rust.
 
 For an alternative (with slightly different goals) you may check out [Input Leap](https://github.com/input-leap).
 
+_Now with a gtk frontend_
+
 ## Configuration
 Configuration is done through the file `config.toml`,
 which must be located in the current working directory when
@@ -19,12 +21,33 @@ executing lan-mouse.
 A minimal config file could look like this:
 
 ```toml
+# example configuration
+
+# optional port (defaults to 4242)
+port = 4242
+# optional frontend -> defaults to gtk if available
+# frontend = "gtk"
+
+# define a client on the right side with host name "iridium"
+[right]
+# hostname
+host_name = "iridium"
+# optional list of (known) ip addresses
+ips = ["192.168.178.156"]
+
+# define a client on the left side with IP address 192.168.178.189
 [left]
-host_name = "my-laptop"
+# The hostname is optional: When no hostname is specified,
+# at least one ip address needs to be specified.
+host_name = "thorium"
+# ips for ethernet and wifi
+ips = ["192.168.178.189"]
 ```
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+> [!WARNING] Note, that with the gtk frontend the clients from the config
+> file are currently ignored.
 
 ### Additional options
 Additionally
@@ -136,12 +159,8 @@ This is to be looked into in the future.
 (this works natively on sway versions >= 1.8)
 
 ## Windows support
-Currently windows can receive mouse and keyboard events, however unlike
-with the wlroots back-end,
-
-the scancodes are not translated between keyboard layouts.
-
-Event emitting is WIP.
+Currently windows can receive mouse and keyboard events,
+event producing on windows is WIP.
 
 
 ## TODOS
@@ -154,11 +173,11 @@ Event emitting is WIP.
 - [x] Button support
 - [ ] Latency measurement + logging
 - [ ] Bandwidth usage approximation + logging
-- [ ] Multiple IP addresses -> check which one is reachable
+- [x] Multiple IP addresses -> check which one is reachable
 - [x] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
-- [ ] Liveness tracking (automatically ungrab mouse when client unreachable)
+- [x] Liveness tracking (automatically ungrab mouse when client unreachable)
 - [ ] Clipboard support
-- [ ] Graphical frontend (gtk?)
+- [x] Graphical frontend (gtk?)
 - [ ] *Encrytion*
 - [ ] Gnome Shell Extension (layer shell is not supported)
 - [ ] respect xdg-config-home for config file location.
