@@ -25,7 +25,8 @@ A minimal config file could look like this:
 
 # optional port (defaults to 4242)
 port = 4242
-# optional frontend -> defaults to gtk if available
+# # optional frontend -> defaults to gtk if available
+# # possible values are "cli" and "gtk" 
 # frontend = "gtk"
 
 # define a client on the right side with host name "iridium"
