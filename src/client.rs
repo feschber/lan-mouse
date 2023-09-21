@@ -9,6 +9,18 @@ pub enum Position {
     Top,
     Bottom,
 }
+
+impl Position {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Position::Left => Self::Right,
+            Position::Right => Self::Left,
+            Position::Top => Self::Bottom,
+            Position::Bottom => Self::Top,
+        }
+    }
+}
+
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", match self {

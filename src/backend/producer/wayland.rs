@@ -38,7 +38,7 @@ use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface, wl_output,
+        wl_shm_pool, wl_surface, wl_output::{self, WlOutput},
     },
     Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue,
 };
@@ -59,6 +59,23 @@ struct Globals {
     xdg_output_manager: ZxdgOutputManagerV1,
 }
 
+#[derive(Debug, Clone)]
+struct OutputInfo {
+    name: String,
+    position: (i32, i32),
+    size: (i32, i32),
+}
+
+impl OutputInfo {
+    fn new() -> Self {
+        Self {
+            name: "".to_string(),
+            position: (0,0),
+            size: (0,0),
+        }
+    }
+}
+
 struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
@@ -70,6 +87,7 @@ struct State {
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: Vec<(ClientHandle, Event)>,
+    output_info: Vec<(WlOutput, OutputInfo)>,
 }
 
 pub struct WaylandEventProducer {
@@ -84,8 +102,13 @@ struct Window {
 }
 
 impl Window {
-    fn new(g: &Globals, qh: &QueueHandle<State>, pos: Position) -> Window {
-        let (width, height) = (1, 1440);
+    fn new(state: &State, qh: &QueueHandle<State>, output: &WlOutput, pos: Position, size: (i32, i32)) -> Window {
+        let g = &state.g;
+
+        let (width, height) = match pos {
+            Position::Left | Position::Right => (1, size.1 as u32),
+            Position::Top | Position::Bottom => (size.0 as u32, 1),
+        };
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
         let pool = g
@@ -104,7 +127,7 @@ impl Window {
 
         let layer_surface = g.layer_shell.get_layer_surface(
             &surface,
-            None,
+            Some(&output),
             Layer::Top,
             "LAN Mouse Sharing".into(),
             qh,
@@ -118,7 +141,7 @@ impl Window {
         };
 
         layer_surface.set_anchor(anchor);
-        layer_surface.set_size(1, 1440);
+        layer_surface.set_size(width, height);
         layer_surface.set_exclusive_zone(0);
         layer_surface.set_margin(0, 0, 0, 0);
         surface.set_input_region(None);
@@ -138,6 +161,35 @@ impl Drop for Window {
         self.surface.destroy();
         self.buffer.destroy();
     }
+}
+
+fn get_edges(outputs: &[(WlOutput, OutputInfo)], pos: Position) -> Vec<(WlOutput, i32)> {
+    outputs.iter().map(|(o, i)| {
+        (o.clone(),
+        match pos {
+            Position::Left => i.position.0,
+            Position::Right => i.position.0 + i.size.0,
+            Position::Top => i.position.1,
+            Position::Bottom => i.position.1 + i.size.1,
+        })
+    }).collect()
+}
+
+fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, OutputInfo)> {
+    // get all output edges corresponding to the position
+    let edges = get_edges(&state.output_info, pos);
+    let opposite_edges = get_edges(&state.output_info, pos.opposite());
+
+    // remove those edges that are at the same position
+    // as an opposite edge of a different output
+    let outputs: Vec<WlOutput> = edges.iter().filter(|(_,edge)| {
+        opposite_edges.iter().map(|(_,e)| *e).find(|e| e == edge).is_none()
+    }).map(|(o,_)| o.clone()).collect();
+    state.output_info
+        .iter()
+        .filter(|(o,_)| outputs.contains(o))
+        .map(|(o, i)| (o.clone(), i.clone()))
+        .collect()
 }
 
 fn draw(f: &mut File, (width, height): (u32, u32)) {
@@ -236,6 +288,7 @@ impl WaylandEventProducer {
             wayland_fd,
             read_guard: None,
             pending_events: vec![],
+            output_info: vec![],
         };
 
         // dispatch registry to () again, in order to read all wl_outputs
@@ -248,13 +301,16 @@ impl WaylandEventProducer {
 
         // read outputs
         for output in state.g.outputs.iter() {
-            state.g.xdg_output_manager.get_xdg_output(output, &state.qh, ());
+            state.g.xdg_output_manager.get_xdg_output(output, &state.qh, output.clone());
         }
 
         // roundtrip to read xdg_output events
         queue.roundtrip(&mut state)?;
 
         log::debug!("==============> roundtrip 2 done");
+        for i in &state.output_info {
+            log::debug!("{:#?}", i.1);
+        }
 
         let read_guard = queue.prepare_read()?;
         state.read_guard = Some(read_guard);
@@ -347,9 +403,15 @@ impl State {
     }
 
     fn add_client(&mut self, client: ClientHandle, pos: Position) {
-        let window = Rc::new(Window::new(&self.g, &self.qh, pos));
-        assert!(Rc::strong_count(&window) == 1);
-        self.client_for_window.push((window, client));
+
+        let outputs = get_output_configuration(self, pos);
+
+        outputs.iter().for_each(|(o, i)| {
+            let window = Window::new(&self, &self.qh, &o, pos, i.size);
+            let window = Rc::new(window);
+            self.client_for_window.push((window, client));
+        });
+
     }
 }
 
@@ -464,10 +526,14 @@ impl EventProducer for WaylandEventProducer {
             self.state.add_client(handle, pos);
         }
         if let ClientEvent::Destroy(handle) = client_event {
-            if let Some(i) = self.state.client_for_window.iter().position(|(_,c)| *c == handle) {
-                let w = self.state.client_for_window.remove(i);
-                self.state.focused = None;
-                assert!(Rc::strong_count(&w.0) == 1);
+            loop {
+                // remove all windows corresponding to this client
+                if let Some(i) = self.state.client_for_window.iter().position(|(_,c)| *c == handle) {
+                    self.state.client_for_window.remove(i);
+                    self.state.focused = None;
+                } else {
+                    break
+                }
             }
         }
         self.flush_events();
@@ -750,43 +816,39 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for State {
+impl Dispatch<ZxdgOutputV1, WlOutput> for State {
     fn event(
-        _state: &mut Self,
-        _wl_output: &wl_output::WlOutput,
-        event: <wl_output::WlOutput as wayland_client::Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-        log::debug!("wl_output - {event:?}");
-        match event {
-            wl_output::Event::Geometry { .. } => {},
-            wl_output::Event::Mode { .. } => {},
-            wl_output::Event::Done => {},
-            wl_output::Event::Scale { .. } => {},
-            wl_output::Event::Name { .. } => {},
-            wl_output::Event::Description { .. } => {},
-            _ => {},
-        }
-    }
-}
-
-impl Dispatch<ZxdgOutputV1, ()> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &ZxdgOutputV1,
+        state: &mut Self,
+        _: &ZxdgOutputV1,
         event: <ZxdgOutputV1 as wayland_client::Proxy>::Event,
-        _data: &(),
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
+        wl_output: &WlOutput,
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         log::debug!("xdg-output - {event:?}");
+        let output_info = match state
+            .output_info
+            .iter_mut()
+            .find(|(o, _)| o == wl_output) {
+            Some((_,c)) => c,
+            None => {
+                let output_info = OutputInfo::new();
+                state.output_info.push((wl_output.clone(), output_info));
+                &mut state.output_info.last_mut().unwrap().1
+            }
+        };
+
         match event {
-            zxdg_output_v1::Event::LogicalPosition { .. } => {},
-            zxdg_output_v1::Event::LogicalSize { .. } => {},
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                output_info.position = (x, y);
+            },
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                output_info.size = (width, height);
+            },
             zxdg_output_v1::Event::Done => {},
-            zxdg_output_v1::Event::Name { .. } => {},
+            zxdg_output_v1::Event::Name { name } => {
+                output_info.name = name;
+            },
             zxdg_output_v1::Event::Description { .. } => {},
             _ => {},
         }
@@ -803,6 +865,7 @@ delegate_noop!(State: ZwpKeyboardShortcutsInhibitManagerV1);
 delegate_noop!(State: ZwpPointerConstraintsV1);
 
 // ignore events
+delegate_noop!(State: ignore wl_output::WlOutput);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: ignore wl_buffer::WlBuffer);
