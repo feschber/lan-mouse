@@ -142,7 +142,7 @@ impl Window {
 
         layer_surface.set_anchor(anchor);
         layer_surface.set_size(width, height);
-        layer_surface.set_exclusive_zone(1);
+        layer_surface.set_exclusive_zone(-1);
         layer_surface.set_margin(0,0,0,0);
         surface.set_input_region(None);
         surface.commit();
