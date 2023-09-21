@@ -128,7 +128,7 @@ impl Window {
         let layer_surface = g.layer_shell.get_layer_surface(
             &surface,
             Some(&output),
-            Layer::Top,
+            Layer::Overlay,
             "LAN Mouse Sharing".into(),
             qh,
             (),
@@ -142,8 +142,8 @@ impl Window {
 
         layer_surface.set_anchor(anchor);
         layer_surface.set_size(width, height);
-        layer_surface.set_exclusive_zone(0);
-        layer_surface.set_margin(0, 0, 0, 0);
+        layer_surface.set_exclusive_zone(1);
+        layer_surface.set_margin(0,0,0,0);
         surface.set_input_region(None);
         surface.commit();
         Window {
@@ -196,7 +196,7 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for _ in 0..height {
         for _ in 0..width {
-            buf.write_all(&0x44FbF1C7u32.to_ne_bytes()).unwrap();
+            buf.write_all(&0x00000000u32.to_ne_bytes()).unwrap();
         }
     }
 }
