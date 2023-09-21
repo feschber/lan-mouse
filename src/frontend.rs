@@ -116,6 +116,6 @@ impl Source for FrontendAdapter {
 impl Drop for FrontendAdapter {
     fn drop(&mut self) {
         log::debug!("remove socket: {:?}", self.socket_path);
-        std::fs::remove_file(&self.socket_path).unwrap();
+        let _ = std::fs::remove_file(&self.socket_path);
     }
 }

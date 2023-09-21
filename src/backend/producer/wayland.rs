@@ -1,7 +1,7 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 use mio::{event::Source, unix::SourceFd};
 
-use std::{os::fd::RawFd, vec::Drain, io::ErrorKind};
+use std::{os::fd::RawFd, vec::Drain, io::ErrorKind, env};
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
 
@@ -196,7 +196,13 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     let mut buf = BufWriter::new(f);
     for _ in 0..height {
         for _ in 0..width {
-            buf.write_all(&0x00000000u32.to_ne_bytes()).unwrap();
+            if env::var("LM_DEBUG_LAYER_SHELL").ok().is_some() {
+                // AARRGGBB
+                buf.write_all(&0xFF11d116u32.to_ne_bytes()).unwrap();
+            } else {
+                // AARRGGBB
+                buf.write_all(&0x00000000u32.to_ne_bytes()).unwrap();
+            }
         }
     }
 }
