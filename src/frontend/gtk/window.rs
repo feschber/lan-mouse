@@ -81,6 +81,7 @@ impl Window {
                 false
             }
         }) else {
+            log::warn!("could not find client with handle {handle}");
             return;
         };
 
@@ -115,6 +116,17 @@ impl Window {
             FrontendEvent::AddClient(Some(host_name), port as u16, position)
         };
         self.request(event);
+    }
+    
+    pub fn request_client_delete(&self, idx: u32) {
+        if let Some(obj) = self.clients().item(idx) {
+            let client_object: &ClientObject = obj
+                .downcast_ref()
+                .expect("Expected object of type `ClientObject`.");
+            let handle = client_object.handle();
+            let event = FrontendEvent::DelClient(handle);
+            self.request(event);
+        }
     }
 
     fn request(&self, event: FrontendEvent)  {

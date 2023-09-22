@@ -64,7 +64,7 @@ impl ClientRow {
     #[template_callback]
     fn handle_client_delete(&self, button: &Button) {
         log::debug!("delete button pressed");
-        let idx = self.obj().index();
+        let idx = self.obj().index() as u32;
         button
             .activate_action("win.request-client-delete", Some(&idx.to_variant()))
             .unwrap();

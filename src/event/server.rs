@@ -104,10 +104,10 @@ impl Server {
         client
     }
 
-    pub fn remove_client(&mut self, client: ClientHandle) {
+    pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientHandle> {
         self.producer.notify(ClientEvent::Destroy(client));
         self.consumer.notify(ClientEvent::Destroy(client));
-        self.client_manager.remove_client(client);
+        self.client_manager.remove_client(client).map(|s| s.client.handle)
     }
 
     fn handle_udp_rx(&mut self) {
@@ -313,7 +313,15 @@ impl Server {
                             };
                         }
                     }
-                    FrontendEvent::DelClient(client) => self.remove_client(client),
+                    FrontendEvent::DelClient(client) => {
+                        if let Some(client) = self.remove_client(client) {
+                            let notify = FrontendNotify::NotifyClientDelete(client);
+                            log::debug!("{notify:?}");
+                            if let Err(e) = self.frontend.notify_all(notify) {
+                                log::error!("{e}");
+                            }
+                        };
+                    }
                     FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;

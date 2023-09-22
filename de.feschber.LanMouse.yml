@@ -1,0 +1,14 @@
+app-id: de.feschber.LanMouse
+runtime: org.freedesktop.Platform
+runtime-version: '22.08'
+sdk: org.freedesktop.Sdk
+command: target/release/lan-mouse
+modules:
+  - name: hello
+    buildsystem: simple
+    build-commands:
+      - cargo build --release
+      - install -D lan-mouse /app/bin/lan-mouse
+    sources:
+      - type: file
+        path: target/release/lan-mouse

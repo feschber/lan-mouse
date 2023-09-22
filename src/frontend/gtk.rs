@@ -119,7 +119,7 @@ fn build_ui(app: &Application) {
 
     // remove client
     let action_client_delete = SimpleAction::new(
-        "delete-client",
+        "request-client-delete",
         Some(&u32::static_variant_type()),
     );
 
@@ -138,10 +138,10 @@ fn build_ui(app: &Application) {
 
     action_client_delete.connect_activate(clone!(@weak window => move |_action, param| {
         log::debug!("delete-client");
-        let handle = param.unwrap()
+        let idx = param.unwrap()
             .get::<u32>()
             .unwrap();
-        window.delete_client(handle);
+        window.request_client_delete(idx);
     }));
 
     let actions = SimpleActionGroup::new();
