@@ -61,15 +61,13 @@ pub struct Client {
 pub enum ClientEvent {
     Create(ClientHandle, Position),
     Destroy(ClientHandle),
-    UpdatePos(ClientHandle, Position),
-    AddAddr(ClientHandle, SocketAddr),
-    RemoveAddr(ClientHandle, SocketAddr),
 }
 
 pub type ClientHandle = u32;
 
 pub struct ClientState {
     pub client: Client,
+    pub active: bool,
     pub last_ping: Option<Instant>,
     pub last_seen: Option<Instant>,
     pub last_replied: Option<Instant>,
@@ -110,6 +108,7 @@ impl ClientManager {
             last_ping: None,
             last_seen: None,
             last_replied: None,
+            active: false,
         };
 
         self.clients.push(Some(client_state));

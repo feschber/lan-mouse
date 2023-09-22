@@ -28,10 +28,10 @@ pub mod gtk;
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
-    ChangePort(u16),
     AddClient(Option<String>, u16, Position),
+    ActivateClient(ClientHandle, bool),
+    UpdateClient(ClientHandle, Option<String>, u16, Position),
     DelClient(ClientHandle),
-    AddIp(String, Option<IpAddr>),
     Shutdown(),
 }
 
@@ -96,12 +96,16 @@ impl FrontendListener {
         }
     }
 
-    pub fn notify(&self, _event: FrontendNotify) { }
-
     pub(crate) fn notify_all(&mut self, notify: FrontendNotify) -> Result<()> {
+        // encode event
         let json = serde_json::to_string(&notify).unwrap();
+        let payload = json.as_bytes();
+        let len = payload.len().to_ne_bytes();
+
         for con in self.frontend_connections.values_mut() {
-            con.stream.write(json.as_bytes())?;
+            // write len + payload
+            con.stream.write(&len)?;
+            con.stream.write(payload)?;
         }
         Ok(())
     }

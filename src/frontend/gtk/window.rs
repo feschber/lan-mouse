@@ -98,7 +98,6 @@ impl Window {
 
     pub fn request_client_update(&self, client: &ClientObject) {
         let data = client.get_data();
-        let host_name = data.hostname;
         let position = match data.position.as_str() {
             "left" => Position::Left,
             "right" => Position::Right,
@@ -109,12 +108,15 @@ impl Window {
                 return
             }
         };
-        let port = data.port;
-        let event = if client.active() {
-            FrontendEvent::DelClient(client.handle())
-        } else {
-            FrontendEvent::AddClient(Some(host_name), port as u16, position)
+        let hostname = match data.hostname.as_str() {
+            "" => None,
+            s => Some(s.to_string()),
         };
+        let port = data.port as u16;
+        let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
+        self.request(event);
+
+        let event = FrontendEvent::ActivateClient(client.handle(), !client.active());
         self.request(event);
     }
     

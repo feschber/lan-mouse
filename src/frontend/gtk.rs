@@ -2,7 +2,7 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Result, Read}, thread::{self, JoinHandle}, env, process, path::Path, os::unix::net::UnixStream, str, cell::RefCell};
+use std::{io::{Result, Read, ErrorKind}, thread::{self, JoinHandle}, env, process, path::Path, os::unix::net::UnixStream, str};
 
 use crate::frontend::gtk::window::Window;
 
@@ -75,17 +75,34 @@ fn build_ui(app: &Application) {
     let (sender, receiver) = MainContext::channel::<FrontendNotify>(Priority::default());
 
     gio::spawn_blocking(move || {
-        loop {
-            let mut buf = [0u8; 256];
-            if let Ok(_) = rx.read(&mut buf) {
-                let json = str::from_utf8(&buf)
-                    .unwrap()
-                    .trim_end_matches(char::from(0)); // remove trailing 0-bytes
-                match serde_json::from_str(json) {
-                    Ok(notify) => sender.send(notify).unwrap(),
-                    Err(e) => log::error!("{e}"),
-                }
+        match loop {
+            // read length
+            let mut len = [0u8; 8];
+            match rx.read_exact(&mut len) {
+                Ok(_) => (),
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
+                Err(e) => break Err(e),
             };
+            let len = usize::from_ne_bytes(len);
+
+            // read payload
+            let mut buf = [0u8; 256];
+            match rx.read_exact(&mut buf[..len]) {
+                Ok(_) => (),
+                Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
+                Err(e) => break Err(e),
+            };
+
+            // parse json
+            let json = str::from_utf8(&buf[..len])
+                .unwrap();
+            match serde_json::from_str(json) {
+                Ok(notify) => sender.send(notify).unwrap(),
+                Err(e) => log::error!("{e}"),
+            }
+        } {
+            Ok(()) => {},
+            Err(e) => log::error!("{e}"),
         }
     });
 

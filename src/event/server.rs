@@ -99,8 +99,6 @@ impl Server {
     pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
         let client = self.client_manager.add_client(hostname, addr, pos);
         log::debug!("add_client {client}");
-        self.producer.notify(ClientEvent::Create(client, pos));
-        self.consumer.notify(ClientEvent::Create(client, pos));
         client
     }
 
@@ -295,9 +293,9 @@ impl Server {
                     return false;
                 }
             };
-            log::debug!("frontend: {event:?}");
-            match event {
-                Some(event) => match event {
+            if let Some(event) = event {
+                log::debug!("frontend: {event:?}");
+                    match event {
                     FrontendEvent::AddClient(hostname, port, pos) => {
                         if let Some(hostname) = hostname {
                             if let Ok(ips) = dns::resolve(hostname.as_str()) {
@@ -313,6 +311,18 @@ impl Server {
                             };
                         }
                     }
+                    FrontendEvent::ActivateClient(client, active) => {
+                        if let Some(state) = self.client_manager.get_mut(client) {
+                            state.active = active;
+                            if state.active {
+                                self.producer.notify(ClientEvent::Create(client, state.client.pos));
+                                self.consumer.notify(ClientEvent::Create(client, state.client.pos));
+                            } else {
+                                self.producer.notify(ClientEvent::Destroy(client));
+                                self.consumer.notify(ClientEvent::Destroy(client));
+                            }
+                        }
+                    }
                     FrontendEvent::DelClient(client) => {
                         if let Some(client) = self.remove_client(client) {
                             let notify = FrontendNotify::NotifyClientDelete(client);
@@ -322,18 +332,30 @@ impl Server {
                             }
                         };
                     }
+                    FrontendEvent::UpdateClient(client, hostname, port, pos) => {
+                        let Some(state) = self.client_manager.get_mut(client) else {
+                            continue
+                        };
+                        if pos != state.client.pos && state.active {
+                            self.producer.notify(ClientEvent::Destroy(client));
+                            self.consumer.notify(ClientEvent::Destroy(client));
+                            self.producer.notify(ClientEvent::Create(client, state.client.pos));
+                            self.consumer.notify(ClientEvent::Create(client, state.client.pos));
+                        }
+                        if let Some(hostname) = hostname {
+                            if let Ok(ips) = dns::resolve(hostname.as_str()) {
+                                let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                                state.client.hostname = Some(hostname);
+                                state.client.pos = pos;
+                                state.client.addrs = HashSet::from_iter(addrs);
+                            }
+                        }
+                    }
                     FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
                     },
-                    FrontendEvent::ChangePort(_) => {
-                        log::warn!("not yet implemented");
-                    },
-                    FrontendEvent::AddIp(_, _) => {
-                        log::warn!("not yet implemented");
-                    },
                 }
-                None => continue,
             }
         }
     }
