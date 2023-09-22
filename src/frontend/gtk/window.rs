@@ -1,13 +1,13 @@
 mod imp;
 
-use std::{path::{Path, PathBuf}, env, process, os::unix::net::UnixStream, io::Write};
+use std::io::Write;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
 
-use crate::{frontend::{gtk::client_object::ClientObject, FrontendEvent}, config::DEFAULT_PORT, client::Position};
+use crate::{frontend::{gtk::client_object::ClientObject, FrontendEvent}, client::{Position, ClientHandle}, config::DEFAULT_PORT};
 
 use super::client_row::ClientRow;
 
@@ -67,15 +67,36 @@ impl Window {
         row
     }
 
-    fn new_client(&self) {
-        let client = ClientObject::new(String::from(""), DEFAULT_PORT as u32, false, "left".into());
+    pub fn new_client(&self, handle: ClientHandle, hostname: Option<String>, port: u16, position: Position) {
+        let client = ClientObject::new(handle, hostname.unwrap_or("".to_string()), port as u32, false, position.to_string());
         self.clients().append(&client);
+        self.set_placeholder_visible(false);
     }
 
-    pub fn update_client(&self, client: &ClientObject) {
+    pub fn delete_client(&self, handle: ClientHandle) {
+        let Some(idx) = self.clients().iter::<ClientObject>().position(|c| {
+            if let Ok(c) = c {
+                c.handle() == handle
+            } else {
+                false
+            }
+        }) else {
+            return;
+        };
+
+        self.clients().remove(idx as u32);
+        if self.clients().n_items() == 0 {
+            self.set_placeholder_visible(true);
+        }
+    }
+
+    pub fn request_client_create(&self) {
+        let event = FrontendEvent::AddClient(None, DEFAULT_PORT, Position::default());
+        self.request(event);
+    }
+
+    pub fn request_client_update(&self, client: &ClientObject) {
         let data = client.get_data();
-        let socket_path = self.imp().socket_path.borrow();
-        let socket_path = socket_path.as_ref().unwrap().as_path();
         let host_name = data.hostname;
         let position = match data.position.as_str() {
             "left" => Position::Left,
@@ -89,16 +110,24 @@ impl Window {
         };
         let port = data.port;
         let event = if client.active() {
-            FrontendEvent::DelClient(host_name, port as u16)
+            FrontendEvent::DelClient(client.handle())
         } else {
-            FrontendEvent::AddClient(host_name, port as u16, position)
+            FrontendEvent::AddClient(Some(host_name), port as u16, position)
         };
+        self.request(event);
+    }
+
+    fn request(&self, event: FrontendEvent)  {
         let json = serde_json::to_string(&event).unwrap();
-        let Ok(mut stream) = UnixStream::connect(socket_path) else {
-            log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
-            return;
+        log::debug!("requesting {json}");
+        let mut stream = self.imp().stream.borrow_mut();
+        let stream = stream.as_mut().unwrap();
+        let bytes = json.as_bytes();
+        let len = bytes.len().to_ne_bytes();
+        if let Err(e) = stream.write(&len) {
+            log::error!("error sending message: {e}");
         };
-        if let Err(e) = stream.write(json.as_bytes()) {
+        if let Err(e) = stream.write(bytes) {
             log::error!("error sending message: {e}");
         };
     }
@@ -107,21 +136,7 @@ impl Window {
         self.imp()
             .add_client_button
             .connect_clicked(clone!(@weak self as window => move |_| {
-                window.new_client();
-                window.set_placeholder_visible(false);
+                window.request_client_create();
             }));
-    }
-
-    fn connect_stream(&self) {
-        let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
-            Ok(v) => v,
-            Err(e) => {
-                log::error!("{e}");
-                process::exit(1);
-            }
-        };
-        let socket_path = Path::new(xdg_runtime_dir.as_str())
-            .join("lan-mouse-socket.sock");
-        self.imp().socket_path.borrow_mut().replace(PathBuf::from(socket_path));
     }
 }

@@ -36,7 +36,12 @@ pub fn start() -> Result<JoinHandle<()>> {
                             continue;
                         };
                         let json = serde_json::to_string(&event).unwrap();
-                        if let Err(e) = stream.write(json.as_bytes()) {
+                        let bytes = json.as_bytes();
+                        let len = bytes.len().to_ne_bytes();
+                        if let Err(e) = stream.write(&len) {
+                            log::error!("error sending message: {e}");
+                        };
+                        if let Err(e) = stream.write(bytes) {
                             log::error!("error sending message: {e}");
                         };
                         if event == FrontendEvent::Shutdown() {
@@ -78,18 +83,17 @@ fn parse_cmd(s: String, len: usize) -> Option<FrontendEvent> {
                 }
                 None => DEFAULT_PORT,
             };
-            Some(FrontendEvent::AddClient(host, port, pos))
+            Some(FrontendEvent::AddClient(Some(host), port, pos))
         }
         "disconnect" => {
-            let host = l.next()?.to_owned();
-            let port = match l.next()?.parse() {
+            let client = match l.next()?.parse() {
                 Ok(p) => p,
                 Err(e) => {
                     log::error!("{e}");
                     return None;
                 }
             };
-            Some(FrontendEvent::DelClient(host, port))
+            Some(FrontendEvent::DelClient(client))
         }
         _ => {
             log::error!("unknown command: {s}");

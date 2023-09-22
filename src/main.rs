@@ -4,7 +4,7 @@ use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
     config::{Config, Frontend::{Cli, Gtk}}, event::server::Server,
-    frontend::{FrontendAdapter, cli},
+    frontend::{FrontendListener, cli},
 };
 
 #[cfg(all(unix, feature = "gtk"))]
@@ -31,7 +31,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let consumer = consumer::create()?;
 
     // create frontend communication adapter
-    let frontend_adapter = FrontendAdapter::new()?;
+    let frontend_adapter = FrontendListener::new()?;
 
     // start sending and receiving events
     let mut event_server = Server::new(config.port, producer, consumer, frontend_adapter)?;
@@ -52,15 +52,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     } else {
         // add clients from config
         config.get_clients().into_iter().for_each(|(c, h, p)| {
-            let host_name = match h {
-                Some(h) => format!(" '{}'", h),
-                None => "".to_owned(),
-            };
             if c.len() == 0 {
-                log::warn!("ignoring client{} with 0 assigned ips!", host_name);
+                log::warn!("ignoring client {p}: host_name: '{}' with 0 assigned ips!", h.as_deref().unwrap_or(""));
             }
-            log::info!("adding client [{}]{} @ {:?}", p, host_name, c);
-            event_server.add_client(c, p);
+            log::info!("adding client [{}]{} @ {:?}", p, h.as_deref().unwrap_or(""), c);
+            event_server.add_client(h, c, p);
         });
     }
 

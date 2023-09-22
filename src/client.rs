@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, collections::{HashSet, hash_set::Iter}, fmt::Display, time::{Instant, Duration}, iter::Cloned};
+use std::{net::SocketAddr, collections::HashSet, fmt::Display, time::Instant};
 
 use serde::{Serialize, Deserialize};
 
@@ -8,6 +8,12 @@ pub enum Position {
     Right,
     Top,
     Bottom,
+}
+
+impl Default for Position {
+    fn default() -> Self {
+        Self::Left
+    }
 }
 
 impl Position {
@@ -34,7 +40,9 @@ impl Display for Position {
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Client {
-    /// handle to refer to the client.
+    /// hostname of this client
+    pub hostname: Option<String>,
+    /// unique handle to refer to the client.
     /// This way any event consumer / producer backend does not
     /// need to know anything about a client other than its handle.
     pub handle: ClientHandle,
@@ -60,152 +68,94 @@ pub enum ClientEvent {
 
 pub type ClientHandle = u32;
 
+pub struct ClientState {
+    pub client: Client,
+    pub last_ping: Option<Instant>,
+    pub last_seen: Option<Instant>,
+    pub last_replied: Option<Instant>,
+}
+
 pub struct ClientManager {
-    /// probably not beneficial to use a hashmap here
-    clients: Vec<Client>,
-    last_ping: Vec<(ClientHandle, Option<Instant>)>,
-    last_seen: Vec<(ClientHandle, Option<Instant>)>,
-    last_replied:  Vec<(ClientHandle, Option<Instant>)>,
-    next_client_id: u32,
+    clients: Vec<Option<ClientState>>, // HashMap likely not beneficial
+    client_id_in_use: Vec<ClientHandle>, // HashSet likely not beneficial
 }
 
 impl ClientManager {
     pub fn new() -> Self {
         Self {
             clients: vec![],
-            next_client_id: 0,
-            last_ping: vec![],
-            last_seen: vec![],
-            last_replied: vec![],
+            client_id_in_use: Vec::new(),
         }
     }
 
     /// add a new client to this manager
-    pub fn add_client(&mut self, addrs: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
-        let handle = self.next_id();
+    pub fn add_client(
+        &mut self,
+        hostname: Option<String>,
+        addrs: HashSet<SocketAddr>,
+        pos: Position,
+    ) -> ClientHandle {
+        // get a new client_handle
+        let handle = self.free_id();
+
         // we dont know, which IP is initially active
         let active_addr = None;
 
         // store the client
-        let client = Client { handle, active_addr, addrs, pos };
-        self.clients.push(client);
-        self.last_ping.push((handle, None));
-        self.last_seen.push((handle, None));
-        self.last_replied.push((handle, None));
+        let client = Client { hostname, handle, active_addr, addrs, pos };
+
+        // client was never seen, nor pinged
+        let client_state = ClientState {
+            client,
+            last_ping: None,
+            last_seen: None,
+            last_replied: None,
+        };
+
+        self.clients.push(Some(client_state));
         handle
     }
 
-    /// add a socket address to the given client
-    pub fn add_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
-        if let Some(client) = self.get_mut(client) {
-            client.addrs.insert(addr);
-        }
-    }
-
-    /// remove socket address from the given client
-    pub fn remove_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
-        if let Some(client) = self.get_mut(client) {
-            client.addrs.remove(&addr);
-        }
-    }
-
-    pub fn set_default_addr(&mut self, client: ClientHandle, addr: SocketAddr) {
-        if let Some(client) = self.get_mut(client) {
-            client.active_addr = Some(addr)
-        }
-    }
-
-    /// update the position of a client
-    pub fn update_pos(&mut self, client: ClientHandle, pos: Position) {
-        if let Some(client) = self.get_mut(client) {
-            client.pos = pos;
-        }
-    }
-
-    pub fn get_active_addr(&self, client: ClientHandle) -> Option<SocketAddr> {
-        self.get(client)?.active_addr
-    }
-
-    pub fn get_addrs(&self, client: ClientHandle) -> Option<Cloned<Iter<'_, SocketAddr>>> {
-        Some(self.get(client)?.addrs.iter().cloned())
-    }
-
-    pub fn last_ping(&self, client: ClientHandle) -> Option<Duration> {
-        let last_ping = self.last_ping
-            .iter()
-            .find(|(c,_)| *c == client)?.1;
-        last_ping.map(|p| p.elapsed())
-    }
-
-    pub fn last_seen(&self, client: ClientHandle) -> Option<Duration> {
-        let last_seen = self.last_seen
-            .iter()
-            .find(|(c, _)| *c == client)?.1;
-        last_seen.map(|t| t.elapsed())
-    }
-
-    pub fn last_replied(&self, client: ClientHandle) -> Option<Duration> {
-        let last_replied = self.last_replied
-            .iter()
-            .find(|(c, _)| *c == client)?.1;
-        last_replied.map(|t| t.elapsed())
-    }
-
-    pub fn reset_last_ping(&mut self, client: ClientHandle) {
-        if let Some(c) = self.last_ping
-            .iter_mut()
-            .find(|(c, _)| *c == client) {
-                c.1 = Some(Instant::now());
-            }
-    }
-
-    pub fn reset_last_seen(&mut self, client: ClientHandle) {
-        if let Some(c) = self.last_seen
-            .iter_mut()
-            .find(|(c, _)| *c == client) {
-                c.1 = Some(Instant::now());
-            }
-    }
-
-    pub fn reset_last_replied(&mut self, client: ClientHandle) {
-        if let Some(c) = self.last_replied
-            .iter_mut()
-            .find(|(c, _)| *c == client) {
-                c.1 = Some(Instant::now());
-            }
-    }
-
+    /// find a client by its address
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
+        // since there shouldn't be more than a handful of clients at any given
+        // time this is likely faster than using a HashMap
         self.clients
             .iter()
-            .find(|c| c.addrs.contains(&addr))
-            .map(|c| c.handle)
+            .filter_map(|c| c.as_ref())
+            .position(|c| c.client.addrs.contains(&addr))
+            .map(|p| p as ClientHandle)
     }
 
-    pub fn remove_client(&mut self, client: ClientHandle) {
-        if let Some(i) = self.clients.iter().position(|c| c.handle == client) {
-            self.clients.remove(i);
-            self.last_ping.remove(i);
-            self.last_seen.remove(i);
-            self.last_replied.remove(i);
+    /// remove a client from the list
+    pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientState> {
+        // remove id from occupied ids
+        if let Some(idx) = self.client_id_in_use.iter().position(|c| *c == client) {
+            self.client_id_in_use.remove(idx as usize);
         }
+        // remove client_state from the list
+        self.clients.get_mut(client as usize)?.take()
     }
 
-    fn next_id(&mut self) -> ClientHandle {
-        let handle = self.next_client_id;
-        self.next_client_id += 1;
-        handle
+    /// get a free slot in the client list
+    fn free_id(&mut self) -> ClientHandle {
+        for i in 0..u32::MAX {
+            if !self.client_id_in_use.contains(&i) {
+                // add the id to the occupied list and return it
+                self.client_id_in_use.push(i);
+                return i;
+            }
+        }
+        panic!("Out of client ids");
     }
 
-    fn get<'a>(&'a self, client: ClientHandle) -> Option<&'a Client> {
-        self.clients
-            .iter()
-            .find(|c| c.handle == client)
+    // returns an immutable reference to the client state corresponding to `client`
+    pub fn get<'a>(&'a self, client: ClientHandle) -> Option<&'a ClientState> {
+        self.clients.get(client as usize)?.as_ref()
     }
 
-    fn get_mut<'a>(&'a mut self, client: ClientHandle) -> Option<&'a mut Client> {
-        self.clients
-            .iter_mut()
-            .find(|c| c.handle == client)
+    /// returns a mutable reference to the client state corresponding to `client`
+    pub fn get_mut<'a>(&'a mut self, client: ClientHandle) -> Option<&'a mut ClientState> {
+        self.clients.get_mut(client as usize)?.as_mut()
     }
 }

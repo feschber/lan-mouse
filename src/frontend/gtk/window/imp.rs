@@ -1,4 +1,4 @@
-use std::{cell::{Cell, RefCell}, path::PathBuf};
+use std::{cell::{Cell, RefCell}, os::unix::net::UnixStream};
 
 use glib::subclass::InitializingObject;
 use adw::{prelude::*, ActionRow};
@@ -16,7 +16,7 @@ pub struct Window {
     #[template_child]
     pub client_placeholder: TemplateChild<ActionRow>,
     pub clients: RefCell<Option<gio::ListStore>>,
-    pub socket_path: RefCell<Option<PathBuf>>,
+    pub stream: RefCell<Option<UnixStream>>,
 }
 
 #[glib::object_subclass]
@@ -54,7 +54,6 @@ impl ObjectImpl for Window {
         obj.setup_icon();
         obj.setup_clients();
         obj.setup_callbacks();
-        obj.connect_stream();
     }
 }
 

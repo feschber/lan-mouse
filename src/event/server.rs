@@ -1,12 +1,12 @@
-use std::{error::Error, io::Result, collections::HashSet, time::Duration};
+use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}};
 use log;
-use mio::{Events, Poll, Interest, Token, net::UdpSocket};
+use mio::{Events, Poll, Interest, Token, net::UdpSocket, event::Source};
 #[cfg(not(windows))]
 use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendAdapter}, dns};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify}, dns};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -24,9 +24,10 @@ pub struct Server {
     consumer: Box<dyn EventConsumer>,
     #[cfg(not(windows))]
     signals: Signals,
-    frontend: FrontendAdapter,
+    frontend: FrontendListener,
     client_manager: ClientManager,
     state: State,
+    next_token: usize,
 }
 
 const UDP_RX: Token = Token(0);
@@ -35,12 +36,14 @@ const PRODUCER_RX: Token = Token(2);
 #[cfg(not(windows))]
 const SIGNAL: Token = Token(3);
 
+const MAX_TOKEN: usize = 4;
+
 impl Server {
     pub fn new(
         port: u16,
         mut producer: Box<dyn EventProducer>,
         consumer: Box<dyn EventConsumer>,
-        mut frontend: FrontendAdapter,
+        mut frontend: FrontendListener,
     ) -> Result<Self> {
         // bind the udp socket
         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
@@ -55,7 +58,7 @@ impl Server {
 
         #[cfg(not(windows))]
         poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
-        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE | Interest::WRITABLE)?;
+        poll.registry().register(&mut socket, UDP_RX, Interest::WRITABLE)?;
         poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
         poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
 
@@ -67,6 +70,7 @@ impl Server {
             signals, frontend,
             client_manager,
             state: State::Receiving,
+            next_token: MAX_TOKEN,
         })
     }
 
@@ -83,34 +87,27 @@ impl Server {
                 match event.token() {
                     UDP_RX => self.handle_udp_rx(),
                     PRODUCER_RX => self.handle_producer_rx(),
-                    FRONTEND_RX => if self.handle_frontend_rx() { return Ok(()) },
+                    FRONTEND_RX => self.handle_frontend_incoming(),
                     #[cfg(not(windows))]
                     SIGNAL => if self.handle_signal() { return Ok(()) },
-                    _ => panic!("what happened here?")
+                    _ => if self.handle_frontend_event(event.token()) { return Ok(()) },
                 }
             }
         }
     }
 
-    pub fn add_client(&mut self, addr: HashSet<SocketAddr>, pos: Position) {
-        let client = self.client_manager.add_client(addr, pos);
+    pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
+        let client = self.client_manager.add_client(hostname, addr, pos);
         log::debug!("add_client {client}");
         self.producer.notify(ClientEvent::Create(client, pos));
         self.consumer.notify(ClientEvent::Create(client, pos));
+        client
     }
 
-    pub fn remove_client(&mut self, host: String, port: u16) {
-        if let Ok(ips) = dns::resolve(host.as_str()) {
-            if let Some(ip) = ips.iter().next() {
-                let addr = SocketAddr::new(*ip, port);
-                if let Some(handle) = self.client_manager.get_client(addr) {
-                    log::debug!("remove_client {handle}");
-                    self.client_manager.remove_client(handle);
-                    self.producer.notify(ClientEvent::Destroy(handle));
-                    self.consumer.notify(ClientEvent::Destroy(handle));
-                }
-            }
-        }
+    pub fn remove_client(&mut self, client: ClientHandle) {
+        self.producer.notify(ClientEvent::Destroy(client));
+        self.consumer.notify(ClientEvent::Destroy(client));
+        self.client_manager.remove_client(client);
     }
 
     fn handle_udp_rx(&mut self) {
@@ -139,10 +136,18 @@ impl Server {
                     continue
                 }
             };
+            let state = match self.client_manager.get_mut(handle) {
+                Some(s) => s,
+                None => {
+                    log::error!("unknown handle");
+                    continue
+                }
+            };
 
-            // reset ttl for client and set addr as new default for this client
-            self.client_manager.reset_last_seen(handle);
-            self.client_manager.set_default_addr(handle, addr);
+            // reset ttl for client and 
+            state.last_seen = Some(Instant::now());
+            // set addr as new default for this client
+            state.client.active_addr = Some(addr);
             match (event, addr) {
                 (Event::Pong(), _) => {},
                 (Event::Ping(), addr) => {
@@ -172,10 +177,11 @@ impl Server {
                             self.consumer.consume(event, handle);
 
                             // let the server know we are still alive once every second
-                            let last_replied = self.client_manager.last_replied(handle);
+                            let last_replied = state.last_replied;
                             if  last_replied.is_none() 
-                            || last_replied.is_some() && last_replied.unwrap() > Duration::from_secs(1) {
-                                self.client_manager.reset_last_replied(handle);
+                            || last_replied.is_some()
+                            && last_replied.unwrap().elapsed() > Duration::from_secs(1) {
+                                state.last_replied = Some(Instant::now());
                                 if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
                                     log::error!("udp send: {}", e);
                                 }
@@ -196,9 +202,17 @@ impl Server {
             if let Event::Release() = e {
                 self.state = State::Sending;
             }
+
+            let state = match self.client_manager.get_mut(c) {
+                Some(state) => state,
+                None => {
+                    log::warn!("unknown client!");
+                    continue
+                }
+            };
             // otherwise we should have an address to send to
             // transmit events to the corrensponding client
-            if let Some(addr) = self.client_manager.get_active_addr(c) {
+            if let Some(addr) = state.client.active_addr {
                 log::trace!("{:20} ------>->->-> {addr}", e.to_string());
                 if let Err(e) = Self::send_event(&self.socket, e, addr) {
                     log::error!("udp send: {}", e);
@@ -208,41 +222,38 @@ impl Server {
             // if client last responded > 2 seconds ago
             // and we have not sent a ping since 500 milliseconds,
             // send a ping
-            let last_seen = self.client_manager.last_seen(c);
-            let last_ping = self.client_manager.last_ping(c);
-            if last_seen.is_some() && last_seen.unwrap() < Duration::from_secs(2) {
+            if state.last_seen.is_some()
+            && state.last_seen.unwrap().elapsed() < Duration::from_secs(2) {
                 continue
             }
 
             // client last seen > 500ms ago
-            if last_ping.is_some() && last_ping.unwrap() < Duration::from_millis(500) {
+            if state.last_ping.is_some()
+            && state.last_ping.unwrap().elapsed() < Duration::from_millis(500) {
                 continue
             }
 
             // release mouse if client didnt respond to the first ping
-            if last_ping.is_some() && last_ping.unwrap() < Duration::from_secs(1) {
+            if state.last_ping.is_some()
+            && state.last_ping.unwrap().elapsed() < Duration::from_secs(1) {
                 should_release = true;
             }
 
             // last ping > 500ms ago -> ping all interfaces
-            self.client_manager.reset_last_ping(c);
-            if let Some(iter) = self.client_manager.get_addrs(c) {
-                for addr in iter {
-                    log::debug!("pinging {addr}");
-                    if let Err(e) = Self::send_event(&self.socket, Event::Ping(), addr) {
-                        if e.kind() != ErrorKind::WouldBlock {
-                            log::error!("udp send: {}", e);
-                        }
-                    }
-                    // send additional release event, in case client is still in sending mode
-                    if let Err(e) = Self::send_event(&self.socket, Event::Release(), addr) {
-                        if e.kind() != ErrorKind::WouldBlock {
-                            log::error!("udp send: {}", e);
-                        }
+            state.last_ping = Some(Instant::now());
+            for addr in state.client.addrs.iter() {
+                log::debug!("pinging {addr}");
+                if let Err(e) = Self::send_event(&self.socket, Event::Ping(), *addr) {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        log::error!("udp send: {}", e);
                     }
                 }
-            } else {
-                // TODO should repeat dns lookup
+                // send additional release event, in case client is still in sending mode
+                if let Err(e) = Self::send_event(&self.socket, Event::Release(), *addr) {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        log::error!("udp send: {}", e);
+                    }
+                }
             }
         }
 
@@ -254,28 +265,67 @@ impl Server {
 
     }
 
-    fn handle_frontend_rx(&mut self) -> bool {
+    fn handle_frontend_incoming(&mut self) {
         loop {
-            match self.frontend.read_event() {
-                Ok(event) => match event {
-                    FrontendEvent::AddClient(host, port, pos) => {
-                        if let Ok(ips) = dns::resolve(host.as_str()) {
-                            let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                            self.add_client(HashSet::from_iter(addrs), pos);
+            let token = self.fresh_token();
+            let poll = &mut self.poll;
+            match self.frontend.handle_incoming(|s, i| {
+                poll.registry().register(s, token, i)?;
+                Ok(token)
+            }) {
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) =>  {
+                    log::error!("{e}");
+                    break
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    fn handle_frontend_event(&mut self, token: Token) -> bool {
+        loop {
+            let event = match self.frontend.read_event(token) {
+                Ok(event) => event,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => return false,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    log::error!("{e}");
+                    return false;
+                }
+            };
+            log::debug!("frontend: {event:?}");
+            match event {
+                Some(event) => match event {
+                    FrontendEvent::AddClient(hostname, port, pos) => {
+                        if let Some(hostname) = hostname {
+                            if let Ok(ips) = dns::resolve(hostname.as_str()) {
+                                let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                                self.add_client(Some(hostname), HashSet::from_iter(addrs), pos);
+                            }
+                        } else {
+                            // ips can be added later
+                            let client = self.add_client(None, HashSet::new(), pos);
+                            let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
+                            if let Err(e) = self.frontend.notify_all(notify) {
+                                log::error!("{e}");
+                            };
                         }
                     }
-                    FrontendEvent::DelClient(host, port) => self.remove_client(host, port),
+                    FrontendEvent::DelClient(client) => self.remove_client(client),
                     FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
                     },
-                    FrontendEvent::ChangePort(_) => todo!(),
-                    FrontendEvent::AddIp(_, _) => todo!(),
+                    FrontendEvent::ChangePort(_) => {
+                        log::warn!("not yet implemented");
+                    },
+                    FrontendEvent::AddIp(_, _) => {
+                        log::warn!("not yet implemented");
+                    },
                 }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => return false,
-                Err(e) => {
-                    log::error!("frontend: {e}");
-                }
+                None => continue,
             }
         }
     }
@@ -318,5 +368,17 @@ impl Server {
             Ok((_amt, src)) => Ok((Event::try_from(buf)?, src)),
             Err(e) => Err(Box::new(e)),
         }
+    }
+
+    fn fresh_token(&mut self) ->  Token {
+        let token = self.next_token as usize;
+        self.next_token += 1;
+        Token(token)
+    }
+
+    pub fn register_frontend(&mut self, source: &mut dyn Source, interests: Interest) -> Result<Token> {
+        let token = self.fresh_token();
+        self.poll.registry().register(source, token, interests)?;
+        Ok(token)
     }
 }

@@ -54,8 +54,8 @@ impl ObjectImpl for ClientRow {
 impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
-        let idx = self.obj().index();
-        switch.activate_action("win.activate-client", Some(&idx.to_variant())).unwrap();
+        let idx = self.obj().index() as u32;
+        switch.activate_action("win.request-client-update", Some(&idx.to_variant())).unwrap();
         switch.set_state(state);
 
         true // dont run default handler
@@ -65,7 +65,9 @@ impl ClientRow {
     fn handle_client_delete(&self, button: &Button) {
         log::debug!("delete button pressed");
         let idx = self.obj().index();
-        button.activate_action("win.delete-client", Some(&idx.to_variant())).unwrap();
+        button
+            .activate_action("win.request-client-delete", Some(&idx.to_variant()))
+            .unwrap();
     }
 }
 
