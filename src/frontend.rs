@@ -17,7 +17,7 @@ use mio::net::TcpListener;
 
 use serde::{Serialize, Deserialize};
 
-use crate::client::{Position, ClientHandle};
+use crate::client::{Position, ClientHandle, Client};
 
 /// cli frontend
 pub mod cli;
@@ -28,10 +28,17 @@ pub mod gtk;
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
+    /// add a new client
     AddClient(Option<String>, u16, Position),
+    /// activate/deactivate client
     ActivateClient(ClientHandle, bool),
+    /// update a client (hostname, port, position)
     UpdateClient(ClientHandle, Option<String>, u16, Position),
+    /// remove a client
     DelClient(ClientHandle),
+    /// request an enumertaion of all clients
+    Enumerate(),
+    /// service shutdown
     Shutdown(),
 }
 
@@ -40,6 +47,7 @@ pub enum FrontendNotify {
     NotifyClientCreate(ClientHandle, Option<String>, u16, Position),
     NotifyClientUpdate(ClientHandle, Option<String>, u16, Position),
     NotifyClientDelete(ClientHandle),
+    Enumerate(Vec<(Client, bool)>),
     NotifyError(String),
 }
 
@@ -101,6 +109,7 @@ impl FrontendListener {
         let json = serde_json::to_string(&notify).unwrap();
         let payload = json.as_bytes();
         let len = payload.len().to_ne_bytes();
+        log::debug!("json: {json}, len: {}", payload.len());
 
         for con in self.frontend_connections.values_mut() {
             // write len + payload

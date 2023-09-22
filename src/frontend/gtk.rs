@@ -124,6 +124,9 @@ fn build_ui(app: &Application) {
                 FrontendNotify::NotifyClientDelete(client) => {
                     window.delete_client(client);
                 }
+                FrontendNotify::Enumerate(_clients) => {
+                    // ignore for now
+                },
             }
             glib::ControlFlow::Continue
         }

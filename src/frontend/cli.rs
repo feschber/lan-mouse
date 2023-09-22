@@ -74,7 +74,7 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                 let len = usize::from_ne_bytes(len);
 
                 // read payload
-                let mut buf: Vec<u8> = Vec::with_capacity(len);
+                let mut buf: Vec<u8> = vec![0u8; len];
                 match rx.read_exact(&mut buf[..len]) {
                     Ok(()) => (),
                     Err(e) => break log::error!("{e}"),
@@ -97,6 +97,9 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                     FrontendNotify::NotifyError(e) => {
                         log::warn!("{e}");
                     },
+                    FrontendNotify::Enumerate(e) => {
+                        log::info!("{e:#?}");
+                    }
                 }
             }
         })?;
@@ -110,14 +113,17 @@ fn parse_cmd(s: String, len: usize) -> Option<FrontendEvent> {
     let mut l = s.split_whitespace();
     let cmd = l.next()?;
     match cmd {
-        "exit" => Some(FrontendEvent::Shutdown()),
         "help" => {
-            println!("available commands:");
-            println!("connect <host> left|right|top|bottom [port]");
-            println!("disconnect <client>");
-            println!("exit");
+            println!("list                                                 list clients");
+            println!("connect <host> left|right|top|bottom [port]          add a new client");
+            println!("disconnect <client>                                  remove a client");
+            println!("activate <client>                                    activate a client");
+            println!("deactivate <client>                                  deactivate a client");
+            println!("exit                                                 exit lan-mouse");
             None
         }
+        "exit" => Some(FrontendEvent::Shutdown()),
+        "list" => Some(FrontendEvent::Enumerate()),
         "connect" => {
             let host = l.next()?.to_owned();
             let pos = match l.next()? {
@@ -147,6 +153,26 @@ fn parse_cmd(s: String, len: usize) -> Option<FrontendEvent> {
                 }
             };
             Some(FrontendEvent::DelClient(client))
+        }
+        "activate" => {
+            let client = match l.next()?.parse() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("{e}");
+                    return None;
+                }
+            };
+            Some(FrontendEvent::ActivateClient(client, true))
+        }
+        "deactivate" => {
+            let client = match l.next()?.parse() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("{e}");
+                    return None;
+                }
+            };
+            Some(FrontendEvent::ActivateClient(client, false))
         }
         _ => {
             log::error!("unknown command: {s}");

@@ -65,6 +65,7 @@ pub enum ClientEvent {
 
 pub type ClientHandle = u32;
 
+#[derive(Clone)]
 pub struct ClientState {
     pub client: Client,
     pub active: bool,
@@ -156,5 +157,13 @@ impl ClientManager {
     /// returns a mutable reference to the client state corresponding to `client`
     pub fn get_mut<'a>(&'a mut self, client: ClientHandle) -> Option<&'a mut ClientState> {
         self.clients.get_mut(client as usize)?.as_mut()
+    }
+
+    pub fn enumerate(&self) -> Vec<(Client, bool)> {
+        self.clients
+            .iter()
+            .filter_map(|s|s.as_ref())
+            .map(|s| (s.client.clone(), s.active))
+            .collect()
     }
 }

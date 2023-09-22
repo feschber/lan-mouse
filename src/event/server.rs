@@ -351,6 +351,12 @@ impl Server {
                             }
                         }
                     }
+                    FrontendEvent::Enumerate() => {
+                        let clients = self.client_manager.enumerate();
+                        if let Err(e) = self.frontend.notify_all(FrontendNotify::Enumerate(clients)) {
+                            log::error!("{e}");
+                        }
+                    }
                     FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
