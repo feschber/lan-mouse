@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::io::{Read, Result, Write};
-use std::net::IpAddr;
 use std::str;
 
 #[cfg(unix)]
