@@ -50,9 +50,6 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
-> :warning: Note that clients from the config
-> file are currently ignored when using the gtk frontend!
-
 
 ## Build and Run
 Build in release mode:

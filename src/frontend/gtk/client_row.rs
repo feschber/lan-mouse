@@ -40,6 +40,7 @@ impl ClientRow {
 
         let title_binding = client_object
             .bind_property("hostname", self, "title")
+            .sync_create()
             .build();
 
         let port_binding = client_object
@@ -52,6 +53,7 @@ impl ClientRow {
                 }
             })
             .bidirectional()
+            .sync_create()
             .build();
 
         let subtitle_binding = client_object

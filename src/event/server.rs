@@ -6,7 +6,7 @@ use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify}, dns};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify}, dns, config::DEFAULT_PORT};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -97,8 +97,13 @@ impl Server {
     }
 
     pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
-        let client = self.client_manager.add_client(hostname, addr, pos);
+        let port = addr.iter().next().map(|s| s.port()).unwrap_or(DEFAULT_PORT);
+        let client = self.client_manager.add_client(hostname.clone(), addr, pos);
         log::debug!("add_client {client}");
+        let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
+        if let Err(e) = self.frontend.notify_all(notify) {
+            log::error!("{e}");
+        };
         client
     }
 
@@ -280,6 +285,8 @@ impl Server {
                 _ => continue,
             }
         }
+        // notify new frontend connections of current clients
+        self.enumerate();
     }
 
     fn handle_frontend_event(&mut self, token: Token) -> bool {
@@ -304,11 +311,7 @@ impl Server {
                             }
                         } else {
                             // ips can be added later
-                            let client = self.add_client(None, HashSet::new(), pos);
-                            let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
-                            if let Err(e) = self.frontend.notify_all(notify) {
-                                log::error!("{e}");
-                            };
+                            self.add_client(None, HashSet::new(), pos);
                         }
                     }
                     FrontendEvent::ActivateClient(client, active) => {
@@ -351,18 +354,20 @@ impl Server {
                             }
                         }
                     }
-                    FrontendEvent::Enumerate() => {
-                        let clients = self.client_manager.enumerate();
-                        if let Err(e) = self.frontend.notify_all(FrontendNotify::Enumerate(clients)) {
-                            log::error!("{e}");
-                        }
-                    }
+                    FrontendEvent::Enumerate() => self.enumerate(),
                     FrontendEvent::Shutdown() => {
                         log::info!("terminating gracefully...");
                         return true;
                     },
                 }
             }
+        }
+    }
+
+    fn enumerate(&mut self) {
+        let clients = self.client_manager.enumerate();
+        if let Err(e) = self.frontend.notify_all(FrontendNotify::Enumerate(clients)) {
+            log::error!("{e}");
         }
     }
 

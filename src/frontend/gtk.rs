@@ -4,7 +4,7 @@ mod client_row;
 
 use std::{io::{Result, Read, ErrorKind}, thread::{self, JoinHandle}, env, process, path::Path, os::unix::net::UnixStream, str};
 
-use crate::frontend::gtk::window::Window;
+use crate::{frontend::gtk::window::Window, config::DEFAULT_PORT};
 
 use gtk::{prelude::*, IconTheme, gdk::Display, gio::{SimpleAction, SimpleActionGroup}, glib::{clone, MainContext, Priority}, CssProvider, subclass::prelude::ObjectSubclassIsExt};
 use adw::Application;
@@ -86,15 +86,15 @@ fn build_ui(app: &Application) {
             let len = usize::from_ne_bytes(len);
 
             // read payload
-            let mut buf = [0u8; 256];
-            match rx.read_exact(&mut buf[..len]) {
+            let mut buf = vec![0u8; len];
+            match rx.read_exact(&mut buf) {
                 Ok(_) => (),
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
                 Err(e) => break Err(e),
             };
 
             // parse json
-            let json = str::from_utf8(&buf[..len])
+            let json = str::from_utf8(&buf)
                 .unwrap();
             match serde_json::from_str(json) {
                 Ok(notify) => sender.send(notify).unwrap(),
@@ -112,7 +112,7 @@ fn build_ui(app: &Application) {
         move |notify| {
             match notify {
                 FrontendNotify::NotifyClientCreate(client, hostname, port, position) => {
-                    window.new_client(client, hostname, port, position);
+                    window.new_client(client, hostname, port, position, false);
                 },
                 FrontendNotify::NotifyClientUpdate(client, hostname, port, position) => {
                     log::info!("client updated: {client}, {}:{port}, {position}", hostname.unwrap_or("".to_string()));
@@ -124,8 +124,23 @@ fn build_ui(app: &Application) {
                 FrontendNotify::NotifyClientDelete(client) => {
                     window.delete_client(client);
                 }
-                FrontendNotify::Enumerate(_clients) => {
-                    // ignore for now
+                FrontendNotify::Enumerate(clients) => {
+                    for (client, active) in clients {
+                        if window.client_idx(client.handle).is_some() {
+                            continue
+                        }
+                        window.new_client(
+                            client.handle,
+                            client.hostname,
+                            client.addrs
+                                .iter()
+                                .next()
+                                .map(|s| s.port())
+                                .unwrap_or(DEFAULT_PORT),
+                            client.pos,
+                            active,
+                        );
+                    }
                 },
             }
             glib::ControlFlow::Continue

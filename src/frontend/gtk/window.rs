@@ -67,20 +67,27 @@ impl Window {
         row
     }
 
-    pub fn new_client(&self, handle: ClientHandle, hostname: Option<String>, port: u16, position: Position) {
-        let client = ClientObject::new(handle, hostname.unwrap_or("".to_string()), port as u32, false, position.to_string());
+    pub fn new_client(&self, handle: ClientHandle, hostname: Option<String>, port: u16, position: Position, active: bool) {
+        let client = ClientObject::new(handle, hostname.unwrap_or("".to_string()), port as u32, position.to_string(), active);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
     }
 
+    pub fn client_idx(&self, handle: ClientHandle) -> Option<usize> {
+        self.clients()
+            .iter::<ClientObject>()
+            .position(|c| {
+                if let Ok(c) = c {
+                    c.handle() == handle
+                } else {
+                    false
+                }
+            })
+            .map(|p| p as usize)
+    }
+
     pub fn delete_client(&self, handle: ClientHandle) {
-        let Some(idx) = self.clients().iter::<ClientObject>().position(|c| {
-            if let Ok(c) = c {
-                c.handle() == handle
-            } else {
-                false
-            }
-        }) else {
+        let Some(idx) = self.client_idx(handle) else {
             log::warn!("could not find client with handle {handle}");
             return;
         };

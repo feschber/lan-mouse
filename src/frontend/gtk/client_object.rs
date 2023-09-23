@@ -10,7 +10,7 @@ glib::wrapper! {
 }
 
 impl ClientObject {
-    pub fn new(handle: ClientHandle, hostname: String, port: u32, active: bool, position: String) -> Self {
+    pub fn new(handle: ClientHandle, hostname: String, port: u32, position: String, active: bool) -> Self {
         Object::builder()
             .property("handle", handle)
             .property("hostname", hostname)
