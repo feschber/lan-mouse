@@ -345,6 +345,7 @@ impl Server {
                             self.producer.notify(ClientEvent::Create(client, state.client.pos));
                             self.consumer.notify(ClientEvent::Create(client, state.client.pos));
                         }
+                        state.client.pos = pos;
                         if let Some(hostname) = hostname {
                             if let Ok(ips) = dns::resolve(hostname.as_str()) {
                                 let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
