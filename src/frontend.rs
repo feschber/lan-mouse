@@ -182,7 +182,14 @@ impl FrontendConnection {
 
     #[cfg(windows)]
     pub fn new(stream: TcpStream) -> Self {
-        Self { stream, recieve_buf: [0u8; 256], pos: 0 }
+        Self {
+            stream,
+            state: ReceiveState::Len,
+            len: 0,
+            len_buf: [0u8; std::mem::size_of::<usize>()],
+            recieve_buf: [0u8; 256],
+            pos: 0,
+        }
     }
 
     pub fn handle_event(&mut self) -> Result<Option<FrontendEvent>> {
