@@ -190,6 +190,7 @@ impl Server {
                 }
             }
         }
+        log::debug!("client updated: {:?}", state);
     }
 
     fn handle_udp_rx(&mut self) {

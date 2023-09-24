@@ -67,7 +67,7 @@ pub enum ClientEvent {
 
 pub type ClientHandle = u32;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClientState {
     pub client: Client,
     pub active: bool,
