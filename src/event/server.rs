@@ -1,4 +1,4 @@
-use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}};
+use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
 use mio::{Events, Poll, Interest, Token, net::UdpSocket, event::Source};
 #[cfg(not(windows))]
@@ -6,7 +6,7 @@ use mio_signals::{Signals, Signal, SignalSet};
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify}, dns, config::DEFAULT_PORT};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify}, dns::{self, DnsResolver}};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -22,6 +22,7 @@ pub struct Server {
     socket: UdpSocket,
     producer: Box<dyn EventProducer>,
     consumer: Box<dyn EventConsumer>,
+    resolver: DnsResolver,
     #[cfg(not(windows))]
     signals: Signals,
     frontend: FrontendListener,
@@ -44,10 +45,13 @@ impl Server {
         mut producer: Box<dyn EventProducer>,
         consumer: Box<dyn EventConsumer>,
         mut frontend: FrontendListener,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         // bind the udp socket
         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
         let mut socket = UdpSocket::bind(listen_addr)?;
+
+        // create dns resolver
+        let resolver = dns::DnsResolver::new()?;
 
         // register event sources
         let poll = Poll::new()?;
@@ -66,6 +70,7 @@ impl Server {
         let client_manager = ClientManager::new();
         Ok(Server {
             poll, socket, consumer, producer,
+            resolver,
             #[cfg(not(windows))]
             signals, frontend,
             client_manager,
@@ -96,9 +101,13 @@ impl Server {
         }
     }
 
-    pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<SocketAddr>, pos: Position) -> ClientHandle {
-        let port = addr.iter().next().map(|s| s.port()).unwrap_or(DEFAULT_PORT);
-        let client = self.client_manager.add_client(hostname.clone(), addr, pos);
+    pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<IpAddr>, port: u16, pos: Position) -> ClientHandle {
+        let ips = if let Some(hostname) = hostname.as_ref() {
+            HashSet::from_iter(self.resolver.resolve(hostname.as_str()).ok().iter().flatten().cloned())
+        } else {
+            HashSet::new()
+        };
+        let client = self.client_manager.add_client(hostname.clone(), addr, port, pos);
         log::debug!("add_client {client}");
         let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
         if let Err(e) = self.frontend.notify_all(notify) {
@@ -304,15 +313,7 @@ impl Server {
                 log::debug!("frontend: {event:?}");
                     match event {
                     FrontendEvent::AddClient(hostname, port, pos) => {
-                        if let Some(hostname) = hostname {
-                            if let Ok(ips) = dns::resolve(hostname.as_str()) {
-                                let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                                self.add_client(Some(hostname), HashSet::from_iter(addrs), pos);
-                            }
-                        } else {
-                            // ips can be added later
-                            self.add_client(None, HashSet::new(), pos);
-                        }
+                        self.add_client(hostname, ips, port, pos);
                     }
                     FrontendEvent::ActivateClient(client, active) => {
                         if let Some(state) = self.client_manager.get_mut(client) {
@@ -336,23 +337,46 @@ impl Server {
                         };
                     }
                     FrontendEvent::UpdateClient(client, hostname, port, pos) => {
+                        // retrieve state
                         let Some(state) = self.client_manager.get_mut(client) else {
                             continue
                         };
-                        if pos != state.client.pos && state.active {
+
+                        // update pos
+                        state.client.pos = pos;
+                        if state.active {
                             self.producer.notify(ClientEvent::Destroy(client));
                             self.consumer.notify(ClientEvent::Destroy(client));
-                            self.producer.notify(ClientEvent::Create(client, state.client.pos));
-                            self.consumer.notify(ClientEvent::Create(client, state.client.pos));
+                            self.producer.notify(ClientEvent::Create(client, pos));
+                            self.consumer.notify(ClientEvent::Create(client, pos));
                         }
-                        state.client.pos = pos;
-                        if let Some(hostname) = hostname {
-                            if let Ok(ips) = dns::resolve(hostname.as_str()) {
-                                let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                                state.client.hostname = Some(hostname);
-                                state.client.pos = pos;
-                                state.client.addrs = HashSet::from_iter(addrs);
+
+                        // update port
+                        if state.client.port != port {
+                            state.client.port = port;
+                            state.client.addrs = state.client.addrs
+                                .iter()
+                                .cloned()
+                                .map(|mut a| { a.set_port(port); a })
+                                .collect();
+                            state.client.active_addr.map(|mut a| { a.set_port(port); a });
+                        }
+
+                        // update hostname
+                        if state.client.hostname != hostname {
+                            if let Some(hostname) = hostname.as_ref() {
+                                if let Ok(ips) = self.resolver.resolve(hostname.as_str()) {
+                                    let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                                    state.client.addrs = HashSet::from_iter(addrs);
+                                    state.client.active_addr = None;
+                                } else {
+                                    state.client.addrs = HashSet::new();
+                                }
+                            } else {
+                                state.client.addrs = HashSet::new();
+                                state.client.active_addr = None;
                             }
+                            state.client.hostname = hostname;
                         }
                     }
                     FrontendEvent::Enumerate() => self.enumerate(),

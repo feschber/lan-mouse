@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, collections::HashSet, fmt::Display, time::Instant};
+use std::{net::{SocketAddr, IpAddr}, collections::HashSet, fmt::Display, time::Instant};
 
 use serde::{Serialize, Deserialize};
 
@@ -54,6 +54,8 @@ pub struct Client {
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
     pub addrs: HashSet<SocketAddr>,
+    /// both active_addr and addrs can be None / empty so port needs to be stored seperately
+    pub port: u16,
     /// position of a client on screen
     pub pos: Position,
 }
@@ -91,7 +93,8 @@ impl ClientManager {
     pub fn add_client(
         &mut self,
         hostname: Option<String>,
-        addrs: HashSet<SocketAddr>,
+        addrs: HashSet<IpAddr>,
+        port: u16,
         pos: Position,
     ) -> ClientHandle {
         // get a new client_handle
@@ -100,8 +103,15 @@ impl ClientManager {
         // we dont know, which IP is initially active
         let active_addr = None;
 
+        // map ip addresses to socket addresses
+        let addrs = HashSet::from_iter(
+            addrs
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, port))
+        );
+
         // store the client
-        let client = Client { hostname, handle, active_addr, addrs, pos };
+        let client = Client { hostname, handle, active_addr, addrs, port, pos };
 
         // client was never seen, nor pinged
         let client_state = ClientState {
