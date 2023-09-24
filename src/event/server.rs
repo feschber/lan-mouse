@@ -62,7 +62,7 @@ impl Server {
 
         #[cfg(not(windows))]
         poll.registry().register(&mut signals, SIGNAL, Interest::READABLE)?;
-        poll.registry().register(&mut socket, UDP_RX, Interest::WRITABLE)?;
+        poll.registry().register(&mut socket, UDP_RX, Interest::READABLE)?;
         poll.registry().register(&mut producer, PRODUCER_RX, Interest::READABLE)?;
         poll.registry().register(&mut frontend, FRONTEND_RX, Interest::READABLE)?;
 
@@ -241,33 +241,31 @@ impl Server {
                     // since its very likely, that we wont get a release event
                     self.producer.release();
                 }
-                (event, addr) => {
-                    match self.state {
-                        State::Sending => {
-                            // in sending state, we dont want to process
-                            // any events to avoid feedback loops,
-                            // therefore we tell the event producer
-                            // to release the pointer and move on
-                            // first event -> release pointer
-                            if let Event::Release() = event {
-                                log::debug!("releasing pointer ...");
-                                self.producer.release();
-                                self.state = State::Receiving;
-                            }
+                (event, addr) => match self.state {
+                    State::Sending => {
+                        // in sending state, we dont want to process
+                        // any events to avoid feedback loops,
+                        // therefore we tell the event producer
+                        // to release the pointer and move on
+                        // first event -> release pointer
+                        if let Event::Release() = event {
+                            log::debug!("releasing pointer ...");
+                            self.producer.release();
+                            self.state = State::Receiving;
                         }
-                        State::Receiving => {
-                            // consume event
-                            self.consumer.consume(event, handle);
+                    }
+                    State::Receiving => {
+                        // consume event
+                        self.consumer.consume(event, handle);
 
-                            // let the server know we are still alive once every second
-                            let last_replied = state.last_replied;
-                            if  last_replied.is_none() 
-                            || last_replied.is_some()
-                            && last_replied.unwrap().elapsed() > Duration::from_secs(1) {
-                                state.last_replied = Some(Instant::now());
-                                if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
-                                    log::error!("udp send: {}", e);
-                                }
+                        // let the server know we are still alive once every second
+                        let last_replied = state.last_replied;
+                        if  last_replied.is_none() 
+                        || last_replied.is_some()
+                        && last_replied.unwrap().elapsed() > Duration::from_secs(1) {
+                            state.last_replied = Some(Instant::now());
+                            if let Err(e) = Self::send_event(&self.socket, Event::Pong(), addr) {
+                                log::error!("udp send: {}", e);
                             }
                         }
                     }
@@ -296,7 +294,6 @@ impl Server {
             // otherwise we should have an address to send to
             // transmit events to the corrensponding client
             if let Some(addr) = state.client.active_addr {
-                log::trace!("{:20} ------>->->-> {addr}", e.to_string());
                 if let Err(e) = Self::send_event(&self.socket, e, addr) {
                     log::error!("udp send: {}", e);
                 }
@@ -438,6 +435,7 @@ impl Server {
     }
 
     fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize> {
+        log::trace!("{:20} ------>->->-> {addr}", e.to_string());
         let data: Vec<u8> = (&e).into();
         // We are currently abusing a blocking send to get the lowest possible latency.
         // It may be better to set the socket to non-blocking and only send when ready.
