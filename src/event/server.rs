@@ -107,7 +107,8 @@ impl Server {
         } else {
             HashSet::new()
         };
-        addr.extend(ips);
+        addr.extend(ips.iter());
+        log::info!("adding client [{}]{} @ {:?}", pos, hostname.as_deref().unwrap_or(""), &ips);
         let client = self.client_manager.add_client(hostname.clone(), addr, port, pos);
         log::debug!("add_client {client}");
         let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);

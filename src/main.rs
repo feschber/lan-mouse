@@ -47,10 +47,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // add clients from config
     config.get_clients().into_iter().for_each(|(c, h, port, p)| {
-        if c.len() == 0 {
-            log::warn!("ignoring client {p}: host_name: '{}' with 0 assigned ips!", h.as_deref().unwrap_or(""));
-        }
-        log::info!("adding client [{}]{} @ {:?}", p, h.as_deref().unwrap_or(""), c);
         event_server.add_client(h, c, port, p);
     });
 
