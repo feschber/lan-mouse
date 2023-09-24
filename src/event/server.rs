@@ -101,12 +101,13 @@ impl Server {
         }
     }
 
-    pub fn add_client(&mut self, hostname: Option<String>, addr: HashSet<IpAddr>, port: u16, pos: Position) -> ClientHandle {
+    pub fn add_client(&mut self, hostname: Option<String>, mut addr: HashSet<IpAddr>, port: u16, pos: Position) -> ClientHandle {
         let ips = if let Some(hostname) = hostname.as_ref() {
             HashSet::from_iter(self.resolver.resolve(hostname.as_str()).ok().iter().flatten().cloned())
         } else {
             HashSet::new()
         };
+        addr.extend(ips);
         let client = self.client_manager.add_client(hostname.clone(), addr, port, pos);
         log::debug!("add_client {client}");
         let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
@@ -116,10 +117,32 @@ impl Server {
         client
     }
 
+    pub fn activate_client(&mut self, client: ClientHandle, active: bool) {
+        if let Some(state) = self.client_manager.get_mut(client) {
+            state.active = active;
+            if state.active {
+                self.producer.notify(ClientEvent::Create(client, state.client.pos));
+                self.consumer.notify(ClientEvent::Create(client, state.client.pos));
+            } else {
+                self.producer.notify(ClientEvent::Destroy(client));
+                self.consumer.notify(ClientEvent::Destroy(client));
+            }
+        }
+    }
+
     pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientHandle> {
         self.producer.notify(ClientEvent::Destroy(client));
         self.consumer.notify(ClientEvent::Destroy(client));
-        self.client_manager.remove_client(client).map(|s| s.client.handle)
+        if let Some(client) = self.client_manager.remove_client(client).map(|s| s.client.handle) {
+            let notify = FrontendNotify::NotifyClientDelete(client);
+            log::debug!("{notify:?}");
+            if let Err(e) = self.frontend.notify_all(notify) {
+                log::error!("{e}");
+            }
+            Some(client)
+        } else {
+            None
+        }
     }
 
     fn handle_udp_rx(&mut self) {
@@ -313,28 +336,13 @@ impl Server {
                 log::debug!("frontend: {event:?}");
                     match event {
                     FrontendEvent::AddClient(hostname, port, pos) => {
-                        self.add_client(hostname, ips, port, pos);
+                        self.add_client(hostname, HashSet::new(), port, pos);
                     }
                     FrontendEvent::ActivateClient(client, active) => {
-                        if let Some(state) = self.client_manager.get_mut(client) {
-                            state.active = active;
-                            if state.active {
-                                self.producer.notify(ClientEvent::Create(client, state.client.pos));
-                                self.consumer.notify(ClientEvent::Create(client, state.client.pos));
-                            } else {
-                                self.producer.notify(ClientEvent::Destroy(client));
-                                self.consumer.notify(ClientEvent::Destroy(client));
-                            }
-                        }
+                        self.activate_client(client, active)
                     }
                     FrontendEvent::DelClient(client) => {
-                        if let Some(client) = self.remove_client(client) {
-                            let notify = FrontendNotify::NotifyClientDelete(client);
-                            log::debug!("{notify:?}");
-                            if let Err(e) = self.frontend.notify_all(notify) {
-                                log::error!("{e}");
-                            }
-                        };
+                        self.remove_client(client);
                     }
                     FrontendEvent::UpdateClient(client, hostname, port, pos) => {
                         // retrieve state
