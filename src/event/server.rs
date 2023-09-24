@@ -145,6 +145,52 @@ impl Server {
         }
     }
 
+    pub fn update_client(
+        &mut self,
+        client: ClientHandle,
+        hostname: Option<String>,
+        port: u16,
+        pos: Position,
+    ) {
+        // retrieve state
+        let Some(state) = self.client_manager.get_mut(client) else {
+            return
+        };
+
+        // update pos
+        state.client.pos = pos;
+        if state.active {
+            self.producer.notify(ClientEvent::Destroy(client));
+            self.consumer.notify(ClientEvent::Destroy(client));
+            self.producer.notify(ClientEvent::Create(client, pos));
+            self.consumer.notify(ClientEvent::Create(client, pos));
+        }
+
+        // update port
+        if state.client.port != port {
+            state.client.port = port;
+            state.client.addrs = state.client.addrs
+                .iter()
+                .cloned()
+                .map(|mut a| { a.set_port(port); a })
+                .collect();
+            state.client.active_addr.map(|mut a| { a.set_port(port); a });
+        }
+
+        // update hostname
+        if state.client.hostname != hostname {
+            state.client.addrs = HashSet::new();
+            state.client.active_addr = None;
+            state.client.hostname = hostname;
+            if let Some(hostname) = state.client.hostname.as_ref() {
+                if let Ok(ips) = self.resolver.resolve(hostname.as_str()) {
+                    let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                    state.client.addrs = HashSet::from_iter(addrs);
+                }
+            }
+        }
+    }
+
     fn handle_udp_rx(&mut self) {
         loop {
             let (event, addr) = match self.receive_event() {
@@ -339,53 +385,13 @@ impl Server {
                         self.add_client(hostname, HashSet::new(), port, pos);
                     }
                     FrontendEvent::ActivateClient(client, active) => {
-                        self.activate_client(client, active)
+                        self.activate_client(client, active);
                     }
                     FrontendEvent::DelClient(client) => {
                         self.remove_client(client);
                     }
                     FrontendEvent::UpdateClient(client, hostname, port, pos) => {
-                        // retrieve state
-                        let Some(state) = self.client_manager.get_mut(client) else {
-                            continue
-                        };
-
-                        // update pos
-                        state.client.pos = pos;
-                        if state.active {
-                            self.producer.notify(ClientEvent::Destroy(client));
-                            self.consumer.notify(ClientEvent::Destroy(client));
-                            self.producer.notify(ClientEvent::Create(client, pos));
-                            self.consumer.notify(ClientEvent::Create(client, pos));
-                        }
-
-                        // update port
-                        if state.client.port != port {
-                            state.client.port = port;
-                            state.client.addrs = state.client.addrs
-                                .iter()
-                                .cloned()
-                                .map(|mut a| { a.set_port(port); a })
-                                .collect();
-                            state.client.active_addr.map(|mut a| { a.set_port(port); a });
-                        }
-
-                        // update hostname
-                        if state.client.hostname != hostname {
-                            if let Some(hostname) = hostname.as_ref() {
-                                if let Ok(ips) = self.resolver.resolve(hostname.as_str()) {
-                                    let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                                    state.client.addrs = HashSet::from_iter(addrs);
-                                    state.client.active_addr = None;
-                                } else {
-                                    state.client.addrs = HashSet::new();
-                                }
-                            } else {
-                                state.client.addrs = HashSet::new();
-                                state.client.active_addr = None;
-                            }
-                            state.client.hostname = hostname;
-                        }
+                        self.update_client(client, hostname, port, pos);
                     }
                     FrontendEvent::Enumerate() => self.enumerate(),
                     FrontendEvent::Shutdown() => {
