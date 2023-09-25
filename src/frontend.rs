@@ -6,11 +6,14 @@ use std::str;
 use std::{env, path::{Path, PathBuf}};
 
 use mio::Interest;
-use mio::net::UnixStream;
 use mio::{Registry, Token, event::Source};
 
 #[cfg(unix)]
+use mio::net::UnixStream;
+#[cfg(unix)]
 use mio::net::UnixListener;
+#[cfg(windows)]
+use mio::net::TcpStream;
 #[cfg(windows)]
 use mio::net::TcpListener;
 
@@ -86,8 +89,19 @@ impl FrontendListener {
         Ok(adapter)
     }
 
+    #[cfg(unix)]
     pub fn handle_incoming<F>(&mut self, register_frontend: F) -> Result<()>
     where F: Fn(&mut UnixStream, Interest) -> Result<Token> {
+        let (mut stream, _) = self.listener.accept()?;
+        let token = register_frontend(&mut stream, Interest::READABLE)?;
+        let con = FrontendConnection::new(stream);
+        self.frontend_connections.insert(token, con);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub fn handle_incoming<F>(&mut self, register_frontend: F) -> Result<()>
+    where F: Fn(&mut TcpStream, Interest) -> Result<Token> {
         let (mut stream, _) = self.listener.accept()?;
         let token = register_frontend(&mut stream, Interest::READABLE)?;
         let con = FrontendConnection::new(stream);

@@ -22,9 +22,8 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
     };
 
     #[cfg(windows)]
-    let Ok(mut stream) = TcpStream::connect("127.0.0.1:5252".parse::<SocketAddrV4>().unwrap()) else {
-        log::error!("Could not connect to lan-mouse-server");
-        continue;
+    let Ok(mut tx) = TcpStream::connect("127.0.0.1:5252".parse::<SocketAddrV4>().unwrap()) else {
+        return Err(anyhow!("Could not connect to lan-mouse-socket"));
     };
 
     let mut rx = tx.try_clone()?;
