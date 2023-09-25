@@ -31,8 +31,19 @@ impl ClientRow {
 
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
+            .transform_to(|_, v: Option<String>| {
+                if let Some(hostname) = v {
+                    Some(hostname)
+                } else {
+                    Some("".to_string())
+                }
+            })
             .transform_from(|_, v: String| {
-                if v == "" { Some("hostname".into()) } else { Some(v) }
+                if v.as_str().trim() == "" {
+                    Some(None)
+                } else {
+                    Some(Some(v))
+                }
             })
             .bidirectional()
             .sync_create()
@@ -40,18 +51,34 @@ impl ClientRow {
 
         let title_binding = client_object
             .bind_property("hostname", self, "title")
+            .transform_to(|_, v: Option<String>| {
+                if let Some(hostname) = v {
+                    Some(hostname)
+                } else {
+                    Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>".to_string())
+                }
+            })
+            .sync_create()
             .build();
 
         let port_binding = client_object
             .bind_property("port", &self.imp().port.get(), "text")
             .transform_from(|_, v: String| {
                 if v == "" {
-                    Some(4242)
+                    Some(DEFAULT_PORT as u32)
                 } else {
                     Some(v.parse::<u16>().unwrap_or(DEFAULT_PORT) as u32)
                 }
             })
+            .transform_to(|_, v: u32| {
+                if v == 4242 {
+                    Some("".to_string())
+                } else {
+                    Some(v.to_string())
+                }
+            })
             .bidirectional()
+            .sync_create()
             .build();
 
         let subtitle_binding = client_object

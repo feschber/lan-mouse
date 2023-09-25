@@ -1,4 +1,4 @@
-# Lan Mouse Share
+# Lan Mouse
 
 ![image](https://github.com/ferdinandschober/lan-mouse/assets/40996949/ccb33815-4357-4c8d-a5d2-8897ab626a08)
 
@@ -19,7 +19,7 @@ which must be located in the current working directory when
 executing lan-mouse.
 
 ### Example config
-A minimal config file could look like this:
+A config file could look like this:
 
 ```toml
 # example configuration
@@ -49,9 +49,6 @@ port = 4242
 ```
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
-
-> :warning: Note that clients from the config
-> file are currently ignored when using the gtk frontend!
 
 
 ## Build and Run

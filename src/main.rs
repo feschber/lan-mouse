@@ -4,7 +4,7 @@ use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
     config::{Config, Frontend::{Cli, Gtk}}, event::server::Server,
-    frontend::{FrontendAdapter, cli},
+    frontend::{FrontendListener, cli},
 };
 
 #[cfg(all(unix, feature = "gtk"))]
@@ -31,7 +31,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let consumer = consumer::create()?;
 
     // create frontend communication adapter
-    let frontend_adapter = FrontendAdapter::new()?;
+    let frontend_adapter = FrontendListener::new()?;
 
     // start sending and receiving events
     let mut event_server = Server::new(config.port, producer, consumer, frontend_adapter)?;
@@ -45,24 +45,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         Cli => { cli::start()?; }
     };
 
-    // this currently causes issues, because the clients from
-    // the config arent communicated to gtk yet.
-    if config.frontend == Gtk {
-        log::warn!("clients defined in config currently have no effect with the gtk frontend");
-    } else {
-        // add clients from config
-        config.get_clients().into_iter().for_each(|(c, h, p)| {
-            let host_name = match h {
-                Some(h) => format!(" '{}'", h),
-                None => "".to_owned(),
-            };
-            if c.len() == 0 {
-                log::warn!("ignoring client{} with 0 assigned ips!", host_name);
-            }
-            log::info!("adding client [{}]{} @ {:?}", p, host_name, c);
-            event_server.add_client(c, p);
-        });
-    }
+    // add clients from config
+    config.get_clients().into_iter().for_each(|(c, h, port, p)| {
+        event_server.add_client(h, c, port, p);
+    });
 
     log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
     // run event loop

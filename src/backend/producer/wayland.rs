@@ -528,17 +528,23 @@ impl EventProducer for WaylandEventProducer {
     }
 
     fn notify(&mut self, client_event: ClientEvent) {
-        if let ClientEvent::Create(handle, pos) = client_event {
-            self.state.add_client(handle, pos);
-        }
-        if let ClientEvent::Destroy(handle) = client_event {
-            loop {
-                // remove all windows corresponding to this client
-                if let Some(i) = self.state.client_for_window.iter().position(|(_,c)| *c == handle) {
-                    self.state.client_for_window.remove(i);
-                    self.state.focused = None;
-                } else {
-                    break
+        match client_event {
+            ClientEvent::Create(handle, pos) => {
+                self.state.add_client(handle, pos);
+            }
+            ClientEvent::Destroy(handle) => {
+                loop {
+                    // remove all windows corresponding to this client
+                    if let Some(i) = self
+                        .state
+                        .client_for_window
+                        .iter()
+                        .position(|(_,c)| *c == handle) {
+                        self.state.client_for_window.remove(i);
+                        self.state.focused = None;
+                    } else {
+                        break
+                    }
                 }
             }
         }
