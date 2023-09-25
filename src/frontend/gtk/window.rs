@@ -68,7 +68,7 @@ impl Window {
     }
 
     pub fn new_client(&self, handle: ClientHandle, hostname: Option<String>, port: u16, position: Position, active: bool) {
-        let client = ClientObject::new(handle, hostname.unwrap_or("".to_string()), port as u32, position.to_string(), active);
+        let client = ClientObject::new(handle, hostname, port as u32, position.to_string(), active);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
     }
@@ -115,10 +115,7 @@ impl Window {
                 return
             }
         };
-        let hostname = match data.hostname.as_str() {
-            "" => None,
-            s => Some(s.to_string()),
-        };
+        let hostname = data.hostname;
         let port = data.port as u16;
         let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
         self.request(event);

@@ -31,8 +31,19 @@ impl ClientRow {
 
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
+            .transform_to(|_, v: Option<String>| {
+                if let Some(hostname) = v {
+                    Some(hostname)
+                } else {
+                    Some("".to_string())
+                }
+            })
             .transform_from(|_, v: String| {
-                if v == "" { Some("hostname".into()) } else { Some(v) }
+                if v.as_str().trim() == "" {
+                    Some(None)
+                } else {
+                    Some(Some(v))
+                }
             })
             .bidirectional()
             .sync_create()
@@ -40,6 +51,13 @@ impl ClientRow {
 
         let title_binding = client_object
             .bind_property("hostname", self, "title")
+            .transform_to(|_, v: Option<String>| {
+                if let Some(hostname) = v {
+                    Some(hostname)
+                } else {
+                    Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"goldenrod\">missing hostname!</span>".to_string())
+                }
+            })
             .sync_create()
             .build();
 

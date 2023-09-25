@@ -10,7 +10,7 @@ glib::wrapper! {
 }
 
 impl ClientObject {
-    pub fn new(handle: ClientHandle, hostname: String, port: u32, position: String, active: bool) -> Self {
+    pub fn new(handle: ClientHandle, hostname: Option<String>, port: u32, position: String, active: bool) -> Self {
         Object::builder()
             .property("handle", handle)
             .property("hostname", hostname)
@@ -28,7 +28,7 @@ impl ClientObject {
 #[derive(Default, Clone)]
 pub struct ClientData {
     pub handle: ClientHandle,
-    pub hostname: String,
+    pub hostname: Option<String>,
     pub port: u32,
     pub active: bool,
     pub position: String,
