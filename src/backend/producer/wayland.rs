@@ -652,11 +652,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             }
             wl_pointer::Event::Frame {} => {
                 log::trace!("produce: frame()");
-                let (_, client) = app.focused.as_ref().unwrap();
-                app.pending_events.push((
-                    *client,
-                    Event::Pointer(PointerEvent::Frame {}),
-                ));
+                // TODO properly handle frame events
+                // we simply insert a frame event on the client side
+                // after each event for now
             }
             _ => {}
         }

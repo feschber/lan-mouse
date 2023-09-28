@@ -165,64 +165,73 @@ enum VirtualInput {
 impl VirtualInput {
     fn consume_event(&self, event: Event) -> Result<(),()> {
         match event {
-            Event::Pointer(e) => match e {
-                PointerEvent::Motion {
-                    time,
-                    relative_x,
-                    relative_y,
-                } => match self {
-                    VirtualInput::Wlroots {
-                        pointer,
-                        keyboard: _,
-                    } => {
-                        pointer.motion(time, relative_x, relative_y);
-                    }
-                    VirtualInput::Kde { fake_input } => {
-                        fake_input.pointer_motion(relative_y, relative_y);
-                    }
-                },
-                PointerEvent::Button {
-                    time,
-                    button,
-                    state,
-                } => {
-                    let state: ButtonState = state.try_into()?;
-                    match self {
+            Event::Pointer(e) => {
+                match e {
+                    PointerEvent::Motion {
+                        time,
+                        relative_x,
+                        relative_y,
+                    } => match self {
                         VirtualInput::Wlroots {
                             pointer,
                             keyboard: _,
                         } => {
-                            pointer.button(time, button, state);
+                            pointer.motion(time, relative_x, relative_y);
                         }
                         VirtualInput::Kde { fake_input } => {
-                            fake_input.button(button, state as u32);
+                            fake_input.pointer_motion(relative_y, relative_y);
+                        }
+                    },
+                    PointerEvent::Button {
+                        time,
+                        button,
+                        state,
+                    } => {
+                        let state: ButtonState = state.try_into()?;
+                        match self {
+                            VirtualInput::Wlroots {
+                                pointer,
+                                keyboard: _,
+                            } => {
+                                pointer.button(time, button, state);
+                            }
+                            VirtualInput::Kde { fake_input } => {
+                                fake_input.button(button, state as u32);
+                            }
                         }
                     }
-                }
-                PointerEvent::Axis { time, axis, value } => {
-                    let axis: Axis = (axis as u32).try_into()?;
-                    match self {
+                    PointerEvent::Axis { time, axis, value } => {
+                        let axis: Axis = (axis as u32).try_into()?;
+                        match self {
+                            VirtualInput::Wlroots {
+                                pointer,
+                                keyboard: _,
+                            } => {
+                                pointer.axis(time, axis, value);
+                                pointer.frame();
+                            }
+                            VirtualInput::Kde { fake_input } => {
+                                fake_input.axis(axis as u32, value);
+                            }
+                        }
+                    }
+                    PointerEvent::Frame {} => match self {
                         VirtualInput::Wlroots {
                             pointer,
                             keyboard: _,
                         } => {
-                            pointer.axis(time, axis, value);
                             pointer.frame();
                         }
-                        VirtualInput::Kde { fake_input } => {
-                            fake_input.axis(axis as u32, value);
-                        }
-                    }
+                        VirtualInput::Kde { fake_input: _ } => {}
+                    },
                 }
-                PointerEvent::Frame {} => match self {
-                    VirtualInput::Wlroots {
-                        pointer,
-                        keyboard: _,
-                    } => {
+                match self {
+                    VirtualInput::Wlroots { pointer, .. } => {
+                        // insert a frame event after each mouse event
                         pointer.frame();
                     }
-                    VirtualInput::Kde { fake_input: _ } => {}
-                },
+                    _ => {},
+                }
             },
             Event::Keyboard(e) => match e {
                 KeyboardEvent::Key { time, key, state } => match self {
