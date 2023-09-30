@@ -43,7 +43,7 @@ ips = ["192.168.178.156"]
 # at least one ip address needs to be specified.
 host_name = "thorium"
 # ips for ethernet and wifi
-ips = ["192.168.178.189"]
+ips = ["192.168.178.189", "192.168.178.172"]
 # optional port
 port = 4242
 ```
