@@ -141,7 +141,7 @@ impl Window {
         let mut stream = self.imp().stream.borrow_mut();
         let stream = stream.as_mut().unwrap();
         let bytes = json.as_bytes();
-        let len = bytes.len().to_ne_bytes();
+        let len = bytes.len().to_be_bytes();
         if let Err(e) = stream.write(&len) {
             log::error!("error sending message: {e}");
         };

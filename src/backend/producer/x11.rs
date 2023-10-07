@@ -1,12 +1,10 @@
+use std::os::fd::AsRawFd;
 use std::vec::Drain;
 
-use mio::{Token, Registry};
-use mio::event::Source;
-use std::io::Result;
-
+use crate::event::Event;
 use crate::producer::EventProducer;
 
-use crate::{client::{ClientHandle, ClientEvent}, event::Event};
+use crate::client::{ClientEvent, ClientHandle};
 
 pub struct X11Producer {
     pending_events: Vec<(ClientHandle, Event)>,
@@ -20,27 +18,9 @@ impl X11Producer {
     }
 }
 
-impl Source for X11Producer {
-    fn register(
-        &mut self,
-        _registry: &Registry,
-        _token: Token,
-        _interests: mio::Interest,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn reregister(
-        &mut self,
-        _registry: &Registry,
-        _token: Token,
-        _interests: mio::Interest,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn deregister(&mut self, _registry: &Registry) -> Result<()> {
-        Ok(())
+impl AsRawFd for X11Producer {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        todo!()
     }
 }
 

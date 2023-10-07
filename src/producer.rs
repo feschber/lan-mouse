@@ -1,5 +1,4 @@
-use mio::event::Source;
-use std::{error::Error, vec::Drain};
+use std::{error::Error, vec::Drain, os::fd::AsRawFd};
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 use crate::backend::producer;
 
@@ -49,7 +48,7 @@ pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
     }
 }
 
-pub trait EventProducer: Source {
+pub trait EventProducer: AsRawFd {
     /// notify event producer of configuration changes
     fn notify(&mut self, event: ClientEvent);
 

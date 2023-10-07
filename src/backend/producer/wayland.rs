@@ -1,5 +1,4 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
-use mio::{event::Source, unix::SourceFd};
 
 use std::{os::fd::RawFd, vec::Drain, io::ErrorKind, env};
 use memmap::MmapOptions;
@@ -421,29 +420,12 @@ impl State {
     }
 }
 
-impl Source for WaylandEventProducer {
-    fn register(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).register(registry, token, interests)
-    }
-
-    fn reregister(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).reregister(registry, token, interests)
-    }
-
-    fn deregister(&mut self, registry: &mio::Registry) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).deregister(registry)
+impl AsRawFd for WaylandEventProducer {
+    fn as_raw_fd(&self) -> RawFd {
+        self.state.wayland_fd
     }
 }
+
 impl WaylandEventProducer {
     fn read(&mut self) -> bool {
         match self.state.read_guard.take().unwrap().read() {

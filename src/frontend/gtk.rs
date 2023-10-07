@@ -15,6 +15,7 @@ use self::client_object::ClientObject;
 use super::FrontendNotify;
 
 pub fn start() -> Result<JoinHandle<glib::ExitCode>> {
+    log::debug!("starting gtk frontend");
     thread::Builder::new()
         .name("gtk-thread".into())
         .spawn(gtk_main)
@@ -58,6 +59,7 @@ fn build_ui(app: &Application) {
             process::exit(1);
         }
     };
+    log::debug!("connecting to lan-mouse-socket ... ");
     let socket_path = Path::new(xdg_runtime_dir.as_str())
         .join("lan-mouse-socket.sock");
     let Ok(mut rx) = UnixStream::connect(&socket_path) else {
@@ -71,6 +73,7 @@ fn build_ui(app: &Application) {
             process::exit(1);
         }
     };
+    log::debug!("connected to lan-mouse-socket");
     
     let (sender, receiver) = MainContext::channel::<FrontendNotify>(Priority::default());
 
@@ -83,7 +86,7 @@ fn build_ui(app: &Application) {
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
                 Err(e) => break Err(e),
             };
-            let len = usize::from_ne_bytes(len);
+            let len = usize::from_be_bytes(len);
 
             // read payload
             let mut buf = vec![0u8; len];
