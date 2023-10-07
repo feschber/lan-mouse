@@ -70,8 +70,16 @@ impl Server {
                         Err(e) => log::error!("error reading event: {e}"),
                     }
                 }
-                _read_guard = producer_fd.readable() => {
+                read_guard = producer_fd.readable() => {
+                    let mut guard = match read_guard {
+                        Ok(g) => g,
+                        Err(e) => {
+                            log::error!("wayland_fd read_guard: {e}");
+                            continue
+                        }
+                    };
                     self.handle_producer_rx().await;
+                    guard.clear_ready_matching(tokio::io::Ready::READABLE);
                 }
                 stream = self.frontend.accept() => {
                     match stream {
