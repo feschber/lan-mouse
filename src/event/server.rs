@@ -101,7 +101,13 @@ impl Server {
 
     pub async fn add_client(&mut self, hostname: Option<String>, mut addr: HashSet<IpAddr>, port: u16, pos: Position) -> ClientHandle {
         let ips = if let Some(hostname) = hostname.as_ref() {
-            HashSet::from_iter(self.resolver.resolve(hostname.as_str()).await.ok().iter().flatten().cloned())
+            match self.resolver.resolve(hostname.as_str()).await {
+                Ok(ips) => HashSet::from_iter(ips.iter().cloned()),
+                Err(e) => {
+                    log::warn!("could not resolve host: {e}");
+                    HashSet::new()
+                }
+            }
         } else {
             HashSet::new()
         };
