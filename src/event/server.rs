@@ -188,9 +188,14 @@ impl Server {
             state.client.active_addr = None;
             state.client.hostname = hostname;
             if let Some(hostname) = state.client.hostname.as_ref() {
-                if let Ok(ips) = self.resolver.resolve(hostname.as_str()).await {
-                    let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                    state.client.addrs = HashSet::from_iter(addrs);
+                match self.resolver.resolve(hostname.as_str()).await {
+                    Ok(ips) => {
+                        let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
+                        state.client.addrs = HashSet::from_iter(addrs);
+                    }
+                    Err(e) => {
+                        log::warn!("could not resolve host: {e}");
+                    }
                 }
             }
         }
