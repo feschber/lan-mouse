@@ -685,11 +685,10 @@ dependencies = [
  "libc",
  "log",
  "memmap",
- "mio",
- "mio-signals",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "toml",
  "trust-dns-resolver",
  "wayland-client",
@@ -842,20 +841,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "927a765cd3fc26206e66b296465fa9d3e5ab003e651c1b3c060e7956d96b19d2"
 dependencies = [
  "libc",
- "log",
  "wasi",
  "windows-sys",
-]
-
-[[package]]
-name = "mio-signals"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21e9524e26c8749824640a1282b68a695b21d55862efa6d465b5f71107c93368"
-dependencies = [
- "libc",
- "log",
- "mio",
 ]
 
 [[package]]
@@ -1346,7 +1333,19 @@ dependencies = [
  "num_cpus",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "windows-sys",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "630bdcf245f78637c13ec01ffae6187cca34625e8c63150d424b59e55af2675e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.37",
 ]
 
 [[package]]

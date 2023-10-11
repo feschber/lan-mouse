@@ -1,8 +1,4 @@
-use std::vec::Drain;
-
-use mio::{Token, Registry};
-use mio::event::Source;
-use std::io::Result;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::{
     client::{ClientHandle, ClientEvent},
@@ -11,48 +7,24 @@ use crate::{
 };
 
 pub struct WindowsProducer {
-    pending_events: Vec<(ClientHandle, Event)>,
+    _tx: Sender<(ClientHandle, Event)>,
+    rx: Option<Receiver<(ClientHandle, Event)>>,
 }
-
-impl Source for WindowsProducer {
-    fn register(
-        &mut self,
-        _registry: &Registry,
-        _token: Token,
-        _interests: mio::Interest,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn reregister(
-        &mut self,
-        _registry: &Registry,
-        _token: Token,
-        _interests: mio::Interest,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn deregister(&mut self, _registry: &Registry) -> Result<()> {
-        Ok(())
-    }
-}
-
 
 impl EventProducer for WindowsProducer {
     fn notify(&mut self, _: ClientEvent) { }
 
-    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
-        self.pending_events.drain(..)
-    }
-
     fn release(&mut self) { }
+    
+    fn get_wait_channel(&mut self) -> Option<mpsc::Receiver<(ClientHandle, Event)>> {
+        self.rx.take()
+    }
 }
 
 impl WindowsProducer {
     pub(crate) fn new() -> Self {
-        Self {
-            pending_events: vec![],
-        }
+        let (_tx, rx) = mpsc::channel(1);
+        let rx = Some(rx);
+        Self { _tx, rx }
     }
 }

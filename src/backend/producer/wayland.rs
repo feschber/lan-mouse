@@ -1,9 +1,9 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
-use mio::{event::Source, unix::SourceFd};
 
-use std::{os::fd::RawFd, vec::Drain, io::ErrorKind, env};
+use std::{os::fd::RawFd, vec::Drain, io::{ErrorKind, self}, env};
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
+use tokio::io::unix::AsyncFd;
 
 use std::{
     fs::File,
@@ -421,29 +421,12 @@ impl State {
     }
 }
 
-impl Source for WaylandEventProducer {
-    fn register(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).register(registry, token, interests)
-    }
-
-    fn reregister(
-        &mut self,
-        registry: &mio::Registry,
-        token: mio::Token,
-        interests: mio::Interest,
-    ) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).reregister(registry, token, interests)
-    }
-
-    fn deregister(&mut self, registry: &mio::Registry) -> std::io::Result<()> {
-        SourceFd(&self.state.wayland_fd).deregister(registry)
+impl AsRawFd for WaylandEventProducer {
+    fn as_raw_fd(&self) -> RawFd {
+        self.state.wayland_fd
     }
 }
+
 impl WaylandEventProducer {
     fn read(&mut self) -> bool {
         match self.state.read_guard.take().unwrap().read() {
@@ -507,6 +490,10 @@ impl WaylandEventProducer {
 }
 
 impl EventProducer for WaylandEventProducer {
+
+    fn get_async_fd(&self) -> io::Result<AsyncFd<RawFd>> {
+        AsyncFd::new(self.as_raw_fd())
+    }
 
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
         // read events

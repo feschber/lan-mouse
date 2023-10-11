@@ -42,7 +42,7 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                         for event in events.iter() {
                             let json = serde_json::to_string(&event).unwrap();
                             let bytes = json.as_bytes();
-                            let len = bytes.len().to_ne_bytes();
+                            let len = bytes.len().to_be_bytes();
                             if let Err(e) = tx.write(&len) {
                                 log::error!("error sending message: {e}");
                             };
@@ -77,7 +77,7 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                     Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
                     Err(e) => break log::error!("{e}"),
                 };
-                let len = usize::from_ne_bytes(len);
+                let len = usize::from_be_bytes(len);
 
                 // read payload
                 let mut buf: Vec<u8> = vec![0u8; len];

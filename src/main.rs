@@ -9,6 +9,7 @@ use lan_mouse::{
 
 #[cfg(all(unix, feature = "gtk"))]
 use lan_mouse::frontend::gtk;
+use tokio::task::LocalSet;
 
 pub fn main() {
 
@@ -30,29 +31,39 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let producer = producer::create()?;
     let consumer = consumer::create()?;
 
-    // create frontend communication adapter
-    let frontend_adapter = FrontendListener::new()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
 
-    // start sending and receiving events
-    let mut event_server = Server::new(config.port, producer, consumer, frontend_adapter)?;
+    // run async event loop
+    runtime.block_on(LocalSet::new().run_until(async {
+        // create frontend communication adapter
+        let frontend_adapter = FrontendListener::new().await?;
 
-    // any threads need to be started after event_server sets up signal handling
-    match config.frontend {
-        #[cfg(all(unix, feature = "gtk"))]
-        Gtk => { gtk::start()?; }
-        #[cfg(any(not(feature = "gtk"), not(unix)))]
-        Gtk => panic!("gtk frontend requested but feature not enabled!"),
-        Cli => { cli::start()?; }
-    };
+        // start frontend
+        match config.frontend {
+            #[cfg(all(unix, feature = "gtk"))]
+            Gtk => { gtk::start()?; }
+            #[cfg(any(not(feature = "gtk"), not(unix)))]
+            Gtk => panic!("gtk frontend requested but feature not enabled!"),
+            Cli => { cli::start()?; }
+        };
 
-    // add clients from config
-    config.get_clients().into_iter().for_each(|(c, h, port, p)| {
-        event_server.add_client(h, c, port, p);
-    });
+        // start sending and receiving events
+        let mut event_server = Server::new(config.port, frontend_adapter, consumer, producer).await?;
 
-    log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
-    // run event loop
-    event_server.run()?;
+        // add clients from config
+        for (c,h,port,p) in config.get_clients().into_iter() {
+            event_server.add_client(h, c, port, p).await;
+        }
+
+        log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
+        // run event loop
+        event_server.run().await?;
+        Result::<_, Box<dyn Error>>::Ok(())
+    }))?;
+    log::debug!("exiting main");
 
     Ok(())
 }
