@@ -66,7 +66,7 @@ pub struct FrontendListener {
 }
 
 impl FrontendListener {
-    pub fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
         #[cfg(unix)]
         let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
         #[cfg(unix)]
@@ -79,7 +79,7 @@ impl FrontendListener {
         let listener = UnixListener::bind(&socket_path)?;
 
         #[cfg(windows)]
-        let listener = TcpListener::bind("127.0.0.1:5252".parse().unwrap())?; // abuse tcp
+        let listener = TcpListener::bind("127.0.0.1:5252").await?; // abuse tcp
 
         let adapter = Self {
             listener,
@@ -101,8 +101,11 @@ impl FrontendListener {
     }
 
     #[cfg(windows)]
-    pub async fn accept(&mut self) -> Result<TcpStream> {
-        Ok(self.listener.accept().await?.0)
+    pub async fn accept(&mut self) -> Result<ReadHalf<TcpStream>> {
+        let stream = self.listener.accept().await?.0;
+        let (rx, tx) = tokio::io::split(stream);
+        self.tx_streams.push(tx);
+        Ok(rx)
     }
 
 
@@ -141,10 +144,10 @@ pub async fn read_event(stream: &mut ReadHalf<UnixStream>) -> Result<FrontendEve
 }
 
 #[cfg(windows)]
-pub async fn read_event(stream: TcpStream) -> Result<FrontendEvent> {
+pub async fn read_event(stream: &mut ReadHalf<TcpStream>) -> Result<FrontendEvent> {
     let len = stream.read_u64().await?;
     let mut buf = [0u8; 256];
-    stream.read_exact(&mut buf[..len as usize]).await;
+    stream.read_exact(&mut buf[..len as usize]).await?;
     Ok(serde_json::from_slice(&buf[..len as usize])?)
 }
 

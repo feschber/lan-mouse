@@ -1,7 +1,12 @@
 use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
-use tokio::{net::{UdpSocket, UnixStream}, io::ReadHalf, sync::mpsc::{Sender, Receiver}};
-use tokio::io::unix::AsyncFd;
+use tokio::{net::UdpSocket, io::ReadHalf, sync::mpsc::{Sender, Receiver}};
+
+#[cfg(unix)]
+use tokio::net::UnixStream;
+
+#[cfg(windows)]
+use tokio::net::TcpStream;
 
 use std::{net::SocketAddr, io::ErrorKind};
 
@@ -60,8 +65,11 @@ impl Server {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let producer_fd = self.producer.as_raw_fd();
-        let producer_fd = AsyncFd::new(producer_fd)?;
+
+        #[cfg(unix)]
+        let producer_fd = self.producer.get_async_fd()?;
+
+        #[cfg(unix)]
         loop {
             tokio::select! {
                 udp_event = receive_event(&self.socket) => {
@@ -96,6 +104,40 @@ impl Server {
                 }
             }
         }
+
+        #[cfg(windows)]
+        let mut channel = self.producer.get_wait_channel().unwrap();
+
+        #[cfg(windows)]
+        loop {
+            tokio::select! {
+                udp_event = receive_event(&self.socket) => {
+                    match udp_event {
+                        Ok(e) => self.handle_udp_rx(e).await,
+                        Err(e) => log::error!("error reading event: {e}"),
+                    }
+                }
+                event = channel.recv() => {
+                    if let Some((c,e)) = event {
+                        self.handle_producer_event(c,e).await;
+                    }
+                }
+                stream = self.frontend.accept() => {
+                    match stream {
+                        Ok(s) => self.handle_frontend_stream(s).await,
+                        Err(e) => log::error!("error connecting to frontend: {e}"),
+                    }
+                }
+                frontend_event = self.frontend_rx.recv() => {
+                    if let Some(event) = frontend_event {
+                        if self.handle_frontend_event(event).await {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -269,66 +311,71 @@ impl Server {
         }
     }
 
+    #[cfg(unix)]
     async fn handle_producer_rx(&mut self) {
-        let events = self.producer.read_events();
-        let mut should_release = false;
+        let events: Vec<(ClientHandle, Event)> = self.producer.read_events().collect();
         for (c,e) in events.into_iter() {
-            // in receiving state, only release events
-            // must be transmitted
-            if let Event::Release() = e {
-                self.state = State::Sending;
-            }
+            self.handle_producer_event(c,e).await;
+        }
+    }
 
-            log::trace!("producer: ({c}) {e:?}");
-            let state = match self.client_manager.get_mut(c) {
-                Some(state) => state,
-                None => {
-                    log::warn!("unknown client!");
-                    continue
-                }
-            };
-            // otherwise we should have an address to send to
-            // transmit events to the corrensponding client
-            if let Some(addr) = state.client.active_addr {
-                if let Err(e) = send_event(&self.socket, e, addr).await {
+    async fn handle_producer_event(&mut self, c: ClientHandle, e: Event) {
+        let mut should_release = false;
+        // in receiving state, only release events
+        // must be transmitted
+        if let Event::Release() = e {
+            self.state = State::Sending;
+        }
+
+        log::trace!("producer: ({c}) {e:?}");
+        let state = match self.client_manager.get_mut(c) {
+            Some(state) => state,
+            None => {
+                log::warn!("unknown client!");
+                return
+            }
+        };
+        // otherwise we should have an address to send to
+        // transmit events to the corrensponding client
+        if let Some(addr) = state.client.active_addr {
+            if let Err(e) = send_event(&self.socket, e, addr).await {
+                log::error!("udp send: {}", e);
+            }
+        }
+
+        // if client last responded > 2 seconds ago
+        // and we have not sent a ping since 500 milliseconds,
+        // send a ping
+        if state.last_seen.is_some()
+        && state.last_seen.unwrap().elapsed() < Duration::from_secs(2) {
+            return
+        }
+
+        // client last seen > 500ms ago
+        if state.last_ping.is_some()
+        && state.last_ping.unwrap().elapsed() < Duration::from_millis(500) {
+            return
+        }
+
+        // release mouse if client didnt respond to the first ping
+        if state.last_ping.is_some()
+        && state.last_ping.unwrap().elapsed() < Duration::from_secs(1) {
+            should_release = true;
+        }
+
+        // last ping > 500ms ago -> ping all interfaces
+        state.last_ping = Some(Instant::now());
+        for addr in state.client.addrs.iter() {
+            log::debug!("pinging {addr}");
+            if let Err(e) = send_event(&self.socket, Event::Ping(), *addr).await {
+                if e.kind() != ErrorKind::WouldBlock {
                     log::error!("udp send: {}", e);
                 }
             }
-
-            // if client last responded > 2 seconds ago
-            // and we have not sent a ping since 500 milliseconds,
-            // send a ping
-            if state.last_seen.is_some()
-            && state.last_seen.unwrap().elapsed() < Duration::from_secs(2) {
-                continue
-            }
-
-            // client last seen > 500ms ago
-            if state.last_ping.is_some()
-            && state.last_ping.unwrap().elapsed() < Duration::from_millis(500) {
-                continue
-            }
-
-            // release mouse if client didnt respond to the first ping
-            if state.last_ping.is_some()
-            && state.last_ping.unwrap().elapsed() < Duration::from_secs(1) {
-                should_release = true;
-            }
-
-            // last ping > 500ms ago -> ping all interfaces
-            state.last_ping = Some(Instant::now());
-            for addr in state.client.addrs.iter() {
-                log::debug!("pinging {addr}");
-                if let Err(e) = send_event(&self.socket, Event::Ping(), *addr).await {
-                    if e.kind() != ErrorKind::WouldBlock {
-                        log::error!("udp send: {}", e);
-                    }
-                }
-                // send additional release event, in case client is still in sending mode
-                if let Err(e) = send_event(&self.socket, Event::Release(), *addr).await {
-                    if e.kind() != ErrorKind::WouldBlock {
-                        log::error!("udp send: {}", e);
-                    }
+            // send additional release event, in case client is still in sending mode
+            if let Err(e) = send_event(&self.socket, Event::Release(), *addr).await {
+                if e.kind() != ErrorKind::WouldBlock {
+                    log::error!("udp send: {}", e);
                 }
             }
         }
@@ -340,7 +387,23 @@ impl Server {
         }
     }
 
+    #[cfg(unix)]
     async fn handle_frontend_stream(&mut self, mut stream: ReadHalf<UnixStream>) {
+        let tx = self.frontend_tx.clone();
+        tokio::task::spawn_local(async move {
+            loop {
+                let event = frontend::read_event(&mut stream).await;
+                match event {
+                    Ok(event) => tx.send(event).await.unwrap(),
+                    Err(e) => log::error!("error reading frontend event: {e}"),
+                }
+            }
+        });
+        self.enumerate().await;
+    }
+
+    #[cfg(windows)]
+    async fn handle_frontend_stream(&mut self, mut stream: ReadHalf<TcpStream>) {
         let tx = self.frontend_tx.clone();
         tokio::task::spawn_local(async move {
             loop {

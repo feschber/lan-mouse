@@ -1,5 +1,8 @@
-use std::os::fd::AsRawFd;
+use std::io::Result;
+use std::os::fd::{AsRawFd, self};
 use std::vec::Drain;
+
+use tokio::io::unix::AsyncFd;
 
 use crate::event::Event;
 use crate::producer::EventProducer;
@@ -19,7 +22,7 @@ impl X11Producer {
 }
 
 impl AsRawFd for X11Producer {
-    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+    fn as_raw_fd(&self) -> fd::RawFd {
         todo!()
     }
 }
@@ -32,4 +35,8 @@ impl EventProducer for X11Producer {
     }
 
     fn release(&mut self) {}
+
+    fn get_async_fd(&self) -> Result<AsyncFd<fd::RawFd>> {
+        todo!()
+    }
 }

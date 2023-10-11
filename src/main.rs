@@ -39,7 +39,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // run async event loop
     runtime.block_on(LocalSet::new().run_until(async {
         // create frontend communication adapter
-        let frontend_adapter = FrontendListener::new()?;
+        let frontend_adapter = FrontendListener::new().await?;
 
         // start frontend
         match config.frontend {

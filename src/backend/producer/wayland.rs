@@ -1,8 +1,9 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 
-use std::{os::fd::RawFd, vec::Drain, io::ErrorKind, env};
+use std::{os::fd::RawFd, vec::Drain, io::{ErrorKind, self}, env};
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
+use tokio::io::unix::AsyncFd;
 
 use std::{
     fs::File,
@@ -489,6 +490,10 @@ impl WaylandEventProducer {
 }
 
 impl EventProducer for WaylandEventProducer {
+
+    fn get_async_fd(&self) -> io::Result<AsyncFd<RawFd>> {
+        AsyncFd::new(self.as_raw_fd())
+    }
 
     fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
         // read events
