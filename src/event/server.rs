@@ -139,6 +139,10 @@ impl Server {
                         }
                     }
                 }
+                _ = signal::ctrl_c() => {
+                    log::info!("terminating gracefully ...");
+                    break;
+                }
             }
         }
 

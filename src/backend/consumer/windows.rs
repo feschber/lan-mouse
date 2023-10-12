@@ -1,4 +1,4 @@
-use crate::{event::{KeyboardEvent, PointerEvent}, consumer::EventConsumer};
+use crate::{event::{KeyboardEvent, PointerEvent}, consumer::SyncConsumer};
 use winapi::{
     self,
     um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
@@ -25,7 +25,7 @@ impl WindowsConsumer {
     pub fn new() -> Self { Self {  } }
 }
 
-impl EventConsumer for WindowsConsumer {
+impl SyncConsumer for WindowsConsumer {
     fn consume(&mut self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
