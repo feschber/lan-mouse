@@ -32,6 +32,7 @@ pub trait SyncConsumer {
 pub trait AsyncConsumer {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle);
     async fn notify(&mut self, client_event: ClientEvent);
+    async fn destroy(&mut self);
 }
 
 pub async fn create() -> Result<EventConsumer> {

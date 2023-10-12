@@ -1,6 +1,6 @@
 use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
-use tokio::{net::UdpSocket, io::ReadHalf, sync::mpsc::{Sender, Receiver}};
+use tokio::{net::UdpSocket, io::ReadHalf, signal, sync::mpsc::{Sender, Receiver}};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -102,6 +102,10 @@ impl Server {
                         }
                     }
                 }
+                _ = signal::ctrl_c() => {
+                    log::info!("terminating gracefully ...");
+                    break;
+                }
             }
         }
 
@@ -136,6 +140,11 @@ impl Server {
                     }
                 }
             }
+        }
+
+        // destroy consumer
+        if let EventConsumer::Async(c) = &mut self.consumer {
+            c.destroy().await;
         }
 
         Ok(())

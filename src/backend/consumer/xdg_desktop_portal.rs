@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use anyhow::Result;
-use ashpd::{desktop::remote_desktop::{RemoteDesktop, DeviceType, KeyState}, WindowIdentifier, enumflags2::BitFlags};
+use ashpd::{desktop::{remote_desktop::{RemoteDesktop, DeviceType, KeyState, Axis}, Session}, WindowIdentifier};
 
 use crate::consumer::AsyncConsumer;
 
 pub struct DesktopPortalConsumer<'a> {
-    devices: BitFlags<DeviceType>,
     proxy: RemoteDesktop<'a>,
-    session: ashpd::desktop::Session<'a>,
+    session: Session<'a>,
 }
 
 impl<'a> DesktopPortalConsumer<'a> {
@@ -18,14 +17,12 @@ impl<'a> DesktopPortalConsumer<'a> {
             .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
             .await?;
 
-        let response = proxy
+        let _ = proxy
             .start(&session, &WindowIdentifier::default())
             .await?
             .response()?;
 
-        let devices = response.devices();
-
-        Ok(Self { devices, proxy, session })
+        Ok(Self { proxy, session })
     }
 }
 
@@ -50,14 +47,12 @@ impl<'a> AsyncConsumer for DesktopPortalConsumer<'a> {
                         }
                     },
                     crate::event::PointerEvent::Axis { time: _, axis, value } => {
-                        let (dx, dy) = match axis {
-                            0 => (value, 0.),
-                            1 => (0., value),
-                            _ => panic!("invalid axis"),
+                        let axis = match axis {
+                            0 => Axis::Vertical,
+                            _ => Axis::Horizontal,
                         };
-                        // TODO finished
                         // TODO smooth scrolling
-                        if let Err(e) = self.proxy.notify_pointer_axis(&self.session, dx, dy, true).await {
+                        if let Err(e) = self.proxy.notify_pointer_axis_discrete(&self.session, axis, value as i32).await {
                             log::warn!("{e}");
                         }
 
@@ -85,7 +80,12 @@ impl<'a> AsyncConsumer for DesktopPortalConsumer<'a> {
         }
     }
 
-    async fn notify(&mut self, _client: crate::client::ClientEvent) {
+    async fn notify(&mut self, _client: crate::client::ClientEvent) { }
 
+    async fn destroy(&mut self) {
+        log::debug!("closing remote desktop session");
+        if let Err(e) = self.session.close().await {
+            log::error!("failed to close remote desktop session: {e}");
+        }
     }
 }
