@@ -1,7 +1,9 @@
 use wayland_client::WEnum;
+use wayland_client::backend::WaylandError;
 use crate::client::{ClientHandle, ClientEvent};
 use crate::consumer::EventConsumer;
 use std::collections::HashMap;
+use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::prelude::AsRawFd;
 
@@ -46,6 +48,7 @@ struct State {
 
 // App State, implements Dispatch event handlers
 pub(crate) struct WlrootsConsumer {
+    last_flush_failed: bool,
     state: State,
     queue: EventQueue<State>,
 }
@@ -89,6 +92,7 @@ impl WlrootsConsumer {
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
 
         let mut consumer = WlrootsConsumer {
+            last_flush_failed: false,
             state: State {
                 keymap: None,
                 input_for_client,
@@ -137,11 +141,36 @@ impl State {
 }
 
 impl EventConsumer for WlrootsConsumer {
-    fn consume(&self, event: Event, client_handle: ClientHandle) {
+    fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
+            if self.last_flush_failed {
+                if let Err(WaylandError::Io(e)) = self.queue.flush() {
+                    if e.kind() == io::ErrorKind::WouldBlock {
+                        /*
+                         * outgoing buffer is full - sending more events
+                         * will overwhelm the output buffer and leave the
+                         * wayland connection in a broken state
+                         */
+                        log::warn!("can't keep up, discarding event: ({client_handle}) - {event:?}");
+                        return
+                    }
+                }
+            }
             virtual_input.consume_event(event).unwrap();
-            if let Err(e) = self.queue.flush() {
-                log::error!("{}", e);
+            match self.queue.flush() {
+                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.last_flush_failed = true;
+                    log::warn!("can't keep up, retrying ...");
+                }
+                Err(WaylandError::Io(e)) => {
+                    log::error!("{e}")
+                },
+                Err(WaylandError::Protocol(e)) => {
+                    panic!("wayland protocol violation: {e}")
+                }
+                Ok(()) => {
+                    self.last_flush_failed = false;
+                },
             }
         }
     }

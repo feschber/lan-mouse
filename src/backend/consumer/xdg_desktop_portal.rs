@@ -7,7 +7,7 @@ impl DesktopPortalConsumer {
 }
 
 impl EventConsumer for DesktopPortalConsumer {
-    fn consume(&self, _: crate::event::Event, _: crate::client::ClientHandle) {
+    fn consume(&mut self, _: crate::event::Event, _: crate::client::ClientHandle) {
         log::error!("xdg_desktop_portal backend not yet implemented!");
     }
 

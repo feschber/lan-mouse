@@ -7,7 +7,7 @@ impl LibeiConsumer {
 }
 
 impl EventConsumer for LibeiConsumer {
-    fn consume(&self, _: crate::event::Event, _: crate::client::ClientHandle) {
+    fn consume(&mut self, _: crate::event::Event, _: crate::client::ClientHandle) {
         log::error!("libei backend not yet implemented!");
         todo!()
     }

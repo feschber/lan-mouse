@@ -15,7 +15,7 @@ enum Backend {
 
 pub trait EventConsumer {
     /// Event corresponding to an abstract `client_handle`
-    fn consume(&self, event: Event, client_handle: ClientHandle);
+    fn consume(&mut self, event: Event, client_handle: ClientHandle);
 
     /// Event corresponding to a configuration change
     fn notify(&mut self, client_event: ClientEvent);
