@@ -26,7 +26,7 @@ impl WindowsConsumer {
 }
 
 impl EventConsumer for WindowsConsumer {
-    fn consume(&self, event: Event, _: ClientHandle) {
+    fn consume(&mut self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
