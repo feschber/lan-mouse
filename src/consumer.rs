@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+
 #[cfg(unix)]
 use std::env;
 
@@ -13,7 +15,12 @@ enum Backend {
     Libei,
 }
 
-pub trait EventConsumer {
+pub enum EventConsumer {
+    Sync(Box<dyn SyncConsumer>),
+    Async(Box<dyn AsyncConsumer>),
+}
+
+pub trait SyncConsumer {
     /// Event corresponding to an abstract `client_handle`
     fn consume(&mut self, event: Event, client_handle: ClientHandle);
 
@@ -21,9 +28,16 @@ pub trait EventConsumer {
     fn notify(&mut self, client_event: ClientEvent);
 }
 
-pub fn create() -> Result<Box<dyn EventConsumer>> {
+#[async_trait]
+pub trait AsyncConsumer {
+    async fn consume(&mut self, event: Event, client_handle: ClientHandle);
+    async fn notify(&mut self, client_event: ClientEvent);
+    async fn destroy(&mut self);
+}
+
+pub async fn create() -> Result<EventConsumer> {
     #[cfg(windows)]
-    return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
+    return Ok(EventConsumer::Sync(Box::new(consumer::windows::WindowsConsumer::new())));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
@@ -75,25 +89,25 @@ pub fn create() -> Result<Box<dyn EventConsumer>> {
             #[cfg(not(feature = "libei"))]
             panic!("feature libei not enabled");
             #[cfg(feature = "libei")]
-            Ok(Box::new(consumer::libei::LibeiConsumer::new()))
+            Ok(EventConsumer::Sync(Box::new(consumer::libei::LibeiConsumer::new())))
         },
         Backend::RemoteDesktopPortal => {
             #[cfg(not(feature = "xdg_desktop_portal"))]
             panic!("feature xdg_desktop_portal not enabled");
             #[cfg(feature = "xdg_desktop_portal")]
-            Ok(Box::new(consumer::xdg_desktop_portal::DesktopPortalConsumer::new()))
+            Ok(EventConsumer::Async(Box::new(consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?)))
         },
         Backend::Wlroots => {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
-            Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()?))
+            Ok(EventConsumer::Sync(Box::new(consumer::wlroots::WlrootsConsumer::new()?)))
         },
         Backend::X11 => {
             #[cfg(not(feature = "x11"))]
             panic!("feature x11 not enabled");
             #[cfg(feature = "x11")]
-            Ok(Box::new(consumer::x11::X11Consumer::new()))
+            Ok(EventConsumer::Sync(Box::new(consumer::x11::X11Consumer::new())))
         },
     }
 }

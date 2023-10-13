@@ -1,6 +1,6 @@
 use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
-use tokio::{net::UdpSocket, io::ReadHalf, sync::mpsc::{Sender, Receiver}};
+use tokio::{net::UdpSocket, io::ReadHalf, signal, sync::mpsc::{Sender, Receiver}};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -26,7 +26,7 @@ pub struct Server {
     client_manager: ClientManager,
     state: State,
     frontend: FrontendListener,
-    consumer: Box<dyn EventConsumer>,
+    consumer: EventConsumer,
     producer: Box<dyn EventProducer>,
     socket: UdpSocket,
     frontend_rx: Receiver<FrontendEvent>,
@@ -37,7 +37,7 @@ impl Server {
     pub async fn new(
         port: u16,
         frontend: FrontendListener,
-        consumer: Box<dyn EventConsumer>,
+        consumer: EventConsumer,
         producer: Box<dyn EventProducer>,
     ) -> anyhow::Result<Self> {
 
@@ -102,6 +102,10 @@ impl Server {
                         }
                     }
                 }
+                _ = signal::ctrl_c() => {
+                    log::info!("terminating gracefully ...");
+                    break;
+                }
             }
         }
 
@@ -135,7 +139,16 @@ impl Server {
                         }
                     }
                 }
+                _ = signal::ctrl_c() => {
+                    log::info!("terminating gracefully ...");
+                    break;
+                }
             }
+        }
+
+        // destroy consumer
+        if let EventConsumer::Async(c) = &mut self.consumer {
+            c.destroy().await;
         }
 
         Ok(())
@@ -164,22 +177,31 @@ impl Server {
         client
     }
 
-    pub fn activate_client(&mut self, client: ClientHandle, active: bool) {
+    pub async fn activate_client(&mut self, client: ClientHandle, active: bool) {
         if let Some(state) = self.client_manager.get_mut(client) {
             state.active = active;
             if state.active {
                 self.producer.notify(ClientEvent::Create(client, state.client.pos));
-                self.consumer.notify(ClientEvent::Create(client, state.client.pos));
+                match &mut self.consumer {
+                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)),
+                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)).await,
+                }
             } else {
                 self.producer.notify(ClientEvent::Destroy(client));
-                self.consumer.notify(ClientEvent::Destroy(client));
+                match &mut self.consumer {
+                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
+                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
+                }
             }
         }
     }
 
     pub async fn remove_client(&mut self, client: ClientHandle) -> Option<ClientHandle> {
         self.producer.notify(ClientEvent::Destroy(client));
-        self.consumer.notify(ClientEvent::Destroy(client));
+        match &mut self.consumer {
+            EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
+            EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
+        }
         if let Some(client) = self.client_manager.remove_client(client).map(|s| s.client.handle) {
             let notify = FrontendNotify::NotifyClientDelete(client);
             log::debug!("{notify:?}");
@@ -208,9 +230,15 @@ impl Server {
         state.client.pos = pos;
         if state.active {
             self.producer.notify(ClientEvent::Destroy(client));
-            self.consumer.notify(ClientEvent::Destroy(client));
+            match &mut self.consumer {
+                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
+                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
+            }
             self.producer.notify(ClientEvent::Create(client, pos));
-            self.consumer.notify(ClientEvent::Create(client, pos));
+            match &mut self.consumer {
+                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, pos)),
+                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, pos)).await,
+            }
         }
 
         // update port
@@ -294,7 +322,10 @@ impl Server {
                 }
                 State::Receiving => {
                     // consume event
-                    self.consumer.consume(event, handle);
+                    match &mut self.consumer {
+                        EventConsumer::Sync(consumer) => consumer.consume(event, handle),
+                        EventConsumer::Async(consumer) => consumer.consume(event, handle).await,
+                    }
 
                     // let the server know we are still alive once every second
                     let last_replied = state.last_replied;
@@ -421,7 +452,7 @@ impl Server {
         log::debug!("frontend: {event:?}");
         match event {
             FrontendEvent::AddClient(hostname, port, pos) => { self.add_client(hostname, HashSet::new(), port, pos).await; },
-            FrontendEvent::ActivateClient(client, active) => self.activate_client(client, active),
+            FrontendEvent::ActivateClient(client, active) => self.activate_client(client, active).await,
             FrontendEvent::DelClient(client) => { self.remove_client(client).await; },
             FrontendEvent::UpdateClient(client, hostname, port, pos) => self.update_client(client, hostname, port, pos).await,
             FrontendEvent::Enumerate() => self.enumerate().await,

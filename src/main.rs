@@ -27,10 +27,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // parse config file
     let config = Config::new()?;
 
-    // start producing and consuming events
-    let producer = producer::create()?;
-    let consumer = consumer::create()?;
-
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -38,6 +34,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // run async event loop
     runtime.block_on(LocalSet::new().run_until(async {
+        // start producing and consuming events
+        let producer = producer::create()?;
+        let consumer = consumer::create().await?;
+
         // create frontend communication adapter
         let frontend_adapter = FrontendListener::new().await?;
 

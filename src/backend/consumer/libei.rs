@@ -1,4 +1,4 @@
-use crate::consumer::EventConsumer;
+use crate::consumer::SyncConsumer;
 
 pub struct LibeiConsumer {}
 
@@ -6,7 +6,7 @@ impl LibeiConsumer {
     pub fn new() -> Self { Self {  } }
 }
 
-impl EventConsumer for LibeiConsumer {
+impl SyncConsumer for LibeiConsumer {
     fn consume(&mut self, _: crate::event::Event, _: crate::client::ClientHandle) {
         log::error!("libei backend not yet implemented!");
         todo!()

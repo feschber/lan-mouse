@@ -1,7 +1,7 @@
 use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 use crate::client::{ClientHandle, ClientEvent};
-use crate::consumer::EventConsumer;
+use crate::consumer::SyncConsumer;
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
@@ -140,7 +140,7 @@ impl State {
     }
 }
 
-impl EventConsumer for WlrootsConsumer {
+impl SyncConsumer for WlrootsConsumer {
     fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             if self.last_flush_failed {
