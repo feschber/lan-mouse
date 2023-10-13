@@ -50,8 +50,8 @@ pub async fn create() -> Result<EventConsumer> {
                 log::info!("XDG_SESSION_TYPE = wayland -> using wayland event consumer");
                 match env::var("XDG_CURRENT_DESKTOP") {
                     Ok(current_desktop) => match current_desktop.as_str() {
-                        "gnome" => {
-                            log::info!("XDG_CURRENT_DESKTOP = gnome -> using libei backend");
+                        "GNOME" => {
+                            log::info!("XDG_CURRENT_DESKTOP = GNOME -> using libei backend");
                             Backend::Libei
                         }
                         "KDE" => {
