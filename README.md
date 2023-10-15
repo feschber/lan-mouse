@@ -25,7 +25,6 @@ on different operating systems:
 | Windows                   | (:heavy_check_mark:)     | TODO                                 |
 | MacOS                     | TODO (I dont own a Mac)  | TODO (I dont own a Mac)              |
 
-
 ## Build and Run
 Build in release mode:
 ```sh
@@ -54,6 +53,30 @@ E.g. if only wayland support is needed, the following command produces
 an executable with just support for wayland:
 ```sh
 cargo build --no-default-features --features wayland
+```
+
+## Usage
+### Gtk Frontend
+By default the gtk frontend will open when running `lan-mouse`.
+
+To add a new connection, simply click the `Add` button on *both* devices,
+enter the corresponding hostname and activate it.
+
+If the mouse does can not be moved onto a device, make sure you have port `4242` (or the one selected)
+opened up in your firewall.
+
+The cli interface can be enabled using `--frontend cli` as commandline arguments.
+Type `help` to list the available commands.
+
+E.g.:
+```
+$ cargo run --release -- --frontend cli
+(...)
+> connect <host> left|right|top|bottom
+(...)
+> list
+(...)
+> activate 0
 ```
 
 ## Configuration
