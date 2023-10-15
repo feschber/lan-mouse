@@ -62,7 +62,7 @@ By default the gtk frontend will open when running `lan-mouse`.
 To add a new connection, simply click the `Add` button on *both* devices,
 enter the corresponding hostname and activate it.
 
-If the mouse does can not be moved onto a device, make sure you have port `4242` (or the one selected)
+If the mouse can not be moved onto a device, make sure you have port `4242` (or the one selected)
 opened up in your firewall.
 
 The cli interface can be enabled using `--frontend cli` as commandline arguments.
