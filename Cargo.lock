@@ -1434,7 +1434,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe4a6024586e1bd2257dda13e5b2e84bbdbe88e6cae2dcb4f305038074cb2760"
 dependencies = [
- "rustix",
+ "rustix 0.38.13",
 ]
 
 [[package]]

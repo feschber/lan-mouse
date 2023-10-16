@@ -14,7 +14,8 @@ use std::env;
 
 #[cfg(unix)]
 enum Backend {
-    Wayland,
+    LayerShell,
+    Libei,
     X11,
 }
 
@@ -31,7 +32,22 @@ pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
             },
             "wayland" => {
                 log::info!("XDG_SESSION_TYPE = wayland -> using wayland event producer");
-                Backend::Wayland
+                match env::var("XDG_CURRENT_DESKTOP") {
+                    Ok(desktop) => match desktop.as_str() {
+                        "GNOME" => {
+                            log::info!("XDG_CURRENT_DESKTOP = GNOME -> using libei backend");
+                            Backend::Libei
+                        }
+                        d => {
+                            log::info!("XDG_CURRENT_DESKTOP = {d} -> using layer_shell backend");
+                            Backend::LayerShell
+                        }
+                    }
+                    Err(_) => {
+                        log::warn!("XDG_CURRENT_DESKTOP not set! Assuming layer_shell support -> using layer_shell backend");
+                        Backend::LayerShell
+                    }
+                }
             }
             _ => panic!("unknown XDG_SESSION_TYPE"),
         },
@@ -46,12 +62,18 @@ pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
             #[cfg(feature = "x11")]
             Ok(Box::new(producer::x11::X11Producer::new()))
         }
-        Backend::Wayland => {
+        Backend::LayerShell => {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
             Ok(Box::new(producer::wayland::WaylandEventProducer::new()?))
         }
+        Backend::Libei => {
+            #[cfg(not(feature = "libei"))]
+            panic!("feature libei not enabled");
+            #[cfg(feature = "libei")]
+            Ok(Box::new(producer::libei::LibeiProducer::new()?))
+        },
     }
 }
 

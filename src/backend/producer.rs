@@ -1,3 +1,5 @@
+#[cfg(all(unix, feature = "libei"))]
+pub mod libei;
 #[cfg(all(unix, feature = "wayland"))]
 pub mod wayland;
 #[cfg(windows)]
