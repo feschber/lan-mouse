@@ -453,13 +453,38 @@ impl Server {
         match event {
             FrontendEvent::AddClient(hostname, port, pos) => { self.add_client(hostname, HashSet::new(), port, pos).await; },
             FrontendEvent::ActivateClient(client, active) => self.activate_client(client, active).await,
+            FrontendEvent::ChangePort(port) => {
+                let current_port = self.socket.local_addr().unwrap().port();
+                if current_port == port {
+                    if let Err(e) = self.frontend.notify_all(FrontendNotify::NotifyPortChange(port, None)).await {
+                        log::warn!("error notifying frontend: {e}");
+                    }
+                    return false;
+                }
+                let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+                match UdpSocket::bind(listen_addr).await {
+                    Ok(socket) => {
+                        self.socket = socket;
+                        if let Err(e) = self.frontend.notify_all(FrontendNotify::NotifyPortChange(port, None)).await {
+                            log::warn!("error notifying frontend: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("could not change port: {e}");
+                        let port = self.socket.local_addr().unwrap().port();
+                        if let Err(e) = self.frontend.notify_all(FrontendNotify::NotifyPortChange(port, Some(format!("could not change port: {e}")))).await {
+                            log::error!("error notifying frontend: {e}");
+                        }
+                    }
+                }
+            },
             FrontendEvent::DelClient(client) => { self.remove_client(client).await; },
-            FrontendEvent::UpdateClient(client, hostname, port, pos) => self.update_client(client, hostname, port, pos).await,
             FrontendEvent::Enumerate() => self.enumerate().await,
             FrontendEvent::Shutdown() => {
                 log::info!("terminating gracefully...");
                 return true;
             },
+            FrontendEvent::UpdateClient(client, hostname, port, pos) => self.update_client(client, hostname, port, pos).await,
         }
         false
     }

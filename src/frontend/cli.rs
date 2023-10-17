@@ -115,6 +115,12 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                                 .join(", ")
                             );
                         }
+                    },
+                    FrontendNotify::NotifyPortChange(port, msg) => {
+                        match msg {
+                            Some(msg) => log::info!("could not change port: {msg}"),
+                            None => log::info!("port changed: {port}"),
+                        }
                     }
                 }
                 prompt();

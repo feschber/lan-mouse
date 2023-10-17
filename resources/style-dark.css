@@ -1,3 +1,11 @@
 #delete-button {
   color: @red_1;
 }
+
+#port-edit-cancel {
+  color: @red_1;
+}
+
+#port-edit-apply {
+  color: @green_1;
+}

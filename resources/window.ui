@@ -8,114 +8,143 @@
 			<attribute name="action">window.close</attribute>
 		</item>
 	</menu>
-	<template class="LanMouseWindow" parent="GtkApplicationWindow">
+	<template class="LanMouseWindow" parent="AdwApplicationWindow">
 		<property name="width-request">600</property>
 		<property name="title" translatable="yes">Lan Mouse</property>
 		<property name="show-menubar">True</property>
-		<child type="titlebar">
-			<object class="GtkHeaderBar">
-				<child type ="end">
-					<object class="GtkMenuButton">
-						<property name="icon-name">open-menu-symbolic</property>
-						<property name="menu-model">main-menu</property>
+		<property name="content">
+			<object class="AdwToolbarView">
+				<child type="top">
+					<object class="AdwHeaderBar">
+						<child type ="end">
+							<object class="GtkMenuButton">
+								<property name="icon-name">open-menu-symbolic</property>
+								<property name="menu-model">main-menu</property>
+							</object>
+						</child>
+						<style>
+							<class name="flat"/>
+						</style>
 					</object>
 				</child>
-				<style>
-					<class name="flat"/>
-				</style>
-			</object>
-		</child>
-		<child>
-			<object class="AdwStatusPage">
-				<property name="title" translatable="yes">Lan Mouse</property>
-				<property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
-				<property name="icon-name">mouse-icon</property>
-				<property name="child">
-				  <object class="AdwClamp">
-					<property name="maximum-size">600</property>
-					<property name="tightening-threshold">0</property>
-					<property name="child">
-					  <object class="GtkBox">
-						<property name="orientation">vertical</property>
-						<property name="spacing">12</property>
+				<property name="content">
+					<object class="AdwToastOverlay" id="toast_overlay">
 						<child>
-							<object class="AdwPreferencesGroup">
-								<property name="title" translatable="yes">General</property>
-								<child>
-									<object class="AdwActionRow">
-										<property name="title" translatable="yes">enable</property>
-										<child type="suffix">
-											<object class="GtkSwitch">
-												<property name="valign">center</property>
-												<property name="tooltip-text" translatable="yes">enable</property>
-											</object>
-										</child>
-									</object>
-								</child>
-								<child>
-									<object class="AdwActionRow">
-										<property name="title">port</property>
+							<object class="AdwStatusPage">
+								<property name="title" translatable="yes">Lan Mouse</property>
+								<property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
+								<property name="icon-name">mouse-icon</property>
+								<property name="child">
+								  <object class="AdwClamp">
+									<property name="maximum-size">600</property>
+									<property name="tightening-threshold">0</property>
+									<property name="child">
+									  <object class="GtkBox">
+										<property name="orientation">vertical</property>
+										<property name="spacing">12</property>
 										<child>
-											<object class="GtkEntry">
-												<!-- <property name="title" translatable="yes">port</property> -->
-												<property name="placeholder-text">4242</property>
-												<property name="width-chars">5</property>
-												<property name="xalign">0.5</property>
-												<property name="valign">center</property>
-												<!-- <property name="show-apply-button">True</property> -->
-												<property name="input-purpose">GTK_INPUT_PURPOSE_DIGITS</property>
+											<object class="AdwPreferencesGroup">
+												<property name="title" translatable="yes">General</property>
+												<child>
+													<object class="AdwActionRow">
+														<property name="title" translatable="yes">enable</property>
+														<child type="suffix">
+															<object class="GtkSwitch">
+																<property name="valign">center</property>
+																<property name="tooltip-text" translatable="yes">enable</property>
+															</object>
+														</child>
+													</object>
+												</child>
+												<child>
+													<object class="AdwActionRow">
+														<property name="title">port</property>
+														<child>
+															<object class="GtkEntry" id="port_entry">
+																<signal name="activate" handler="handle_port_edit_apply" swapped="true"/>
+																<signal name="changed" handler="handle_port_changed" swapped="true"/>
+																<!-- <signal name="delete-text" handler="handle_port_changed" swapped="true"/> -->
+																<!-- <property name="title" translatable="yes">port</property> -->
+																<property name="placeholder-text">4242</property>
+																<property name="width-chars">5</property>
+																<property name="xalign">0.5</property>
+																<property name="valign">center</property>
+																<!-- <property name="show-apply-button">True</property> -->
+																<property name="input-purpose">GTK_INPUT_PURPOSE_DIGITS</property>
+															</object>
+														</child>
+														<child>
+															<object class="GtkButton" id="port_edit_apply">
+																<signal name="clicked" handler="handle_port_edit_apply" swapped="true"/>
+																<property name="icon-name">object-select-symbolic</property>
+																<property name="valign">center</property>
+																<property name="visible">false</property>
+																<property name="name">port-edit-apply</property>
+															</object>
+														</child>
+														<child>
+															<object class="GtkButton" id="port_edit_cancel">
+																<signal name="clicked" handler="handle_port_edit_cancel" swapped="true"/>
+																<property name="icon-name">process-stop-symbolic</property>
+																<property name="valign">center</property>
+																<property name="visible">false</property>
+																<property name="name">port-edit-cancel</property>
+															</object>
+														</child>
+													</object>
+												</child>
 											</object>
 										</child>
-									</object>
-								</child>
-							</object>
-						</child>
-						<child>
-							<object class="AdwPreferencesGroup">
-								<property name="title" translatable="yes">Connections</property>
-								<child>
-								  <object class="GtkListBox" id="client_list">
-										<property name="selection-mode">none</property>
-										<child type="placeholder">
-											<object class="AdwActionRow" id="client_placeholder">
-												<property name="title">No connections!</property>
-												<property name="subtitle">add a new client via the button below</property>
+										<child>
+											<object class="AdwPreferencesGroup">
+												<property name="title" translatable="yes">Connections</property>
+												<child>
+												  <object class="GtkListBox" id="client_list">
+														<property name="selection-mode">none</property>
+														<child type="placeholder">
+															<object class="AdwActionRow" id="client_placeholder">
+																<property name="title">No connections!</property>
+																<property name="subtitle">add a new client via the button below</property>
+															</object>
+														</child>
+														<style>
+															<class name="boxed-list" />
+														</style>
+												  </object>
+												</child>
 											</object>
 										</child>
-										<style>
-											<class name="boxed-list" />
-										</style>
+										<child>
+											<object class="AdwPreferencesGroup">
+												<child>
+													<object class="GtkButton" id="add_client_button">
+														<property name="halign">center</property>
+														<property name="valign">center</property>
+														<property name="tooltip-text">connect a new computer</property>
+														<property name="child">
+															<object class="AdwButtonContent">
+																<property name="icon-name">list-add-symbolic</property>
+																<property name="label" translatable="yes">Add</property>
+																<property name="use-underline">True</property>
+															</object>
+														</property>
+														<signal name="clicked" handler="handle_add_client_pressed" swapped="true"/>
+														<style>
+															<class name="pill"/>
+														</style>
+													</object>
+												</child>
+											</object>
+										</child>
+									  </object>
+									</property>
 								  </object>
-								</child>
+							  </property>
 							</object>
 						</child>
-						<child>
-							<object class="AdwPreferencesGroup">
-								<child>
-									<object class="GtkButton" id="add_client_button">
-										<property name="halign">center</property>
-										<property name="valign">center</property>
-										<property name="tooltip-text">connect a new computer</property>
-										<property name="child">
-											<object class="AdwButtonContent">
-												<property name="icon-name">list-add-symbolic</property>
-												<property name="label" translatable="yes">Add</property>
-												<property name="use-underline">True</property>
-											</object>
-										</property>
-										<!-- <signal name="clicked" handler="handle_add_client" swapped="true"/> -->
-										<style>
-											<class name="pill"/>
-										</style>
-									</object>
-								</child>
-							</object>
-						</child>
-					  </object>
-					</property>
-				  </object>
-			  </property>
+					</object>
+				</property>
 			</object>
-		</child>
+		</property>
 	</template>
 </interface>

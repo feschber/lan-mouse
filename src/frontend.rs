@@ -33,14 +33,16 @@ pub enum FrontendEvent {
     AddClient(Option<String>, u16, Position),
     /// activate/deactivate client
     ActivateClient(ClientHandle, bool),
-    /// update a client (hostname, port, position)
-    UpdateClient(ClientHandle, Option<String>, u16, Position),
+    /// change the listen port (recreate udp listener)
+    ChangePort(u16),
     /// remove a client
     DelClient(ClientHandle),
     /// request an enumertaion of all clients
     Enumerate(),
     /// service shutdown
     Shutdown(),
+    /// update a client (hostname, port, position)
+    UpdateClient(ClientHandle, Option<String>, u16, Position),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +50,8 @@ pub enum FrontendNotify {
     NotifyClientCreate(ClientHandle, Option<String>, u16, Position),
     NotifyClientUpdate(ClientHandle, Option<String>, u16, Position),
     NotifyClientDelete(ClientHandle),
+    /// new port, reason of failure (if failed)
+    NotifyPortChange(u16, Option<String>),
     Enumerate(Vec<(Client, bool)>),
     NotifyError(String),
 }
