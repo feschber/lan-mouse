@@ -115,6 +115,12 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                                 .join(", ")
                             );
                         }
+                    },
+                    FrontendNotify::NotifyPortChange(port, msg) => {
+                        match msg {
+                            Some(msg) => log::info!("could not change port: {msg}"),
+                            None => log::info!("port changed: {port}"),
+                        }
                     }
                 }
                 prompt();
@@ -142,6 +148,7 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
             log::info!("activate <client>                                    activate a client");
             log::info!("deactivate <client>                                  deactivate a client");
             log::info!("exit                                                 exit lan-mouse");
+            log::info!("setport <port>                                       change port");
             None
         }
         "exit" => return Some(vec![FrontendEvent::Shutdown()]),
@@ -150,13 +157,14 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
         "disconnect" => Some(parse_disconnect(l)),
         "activate" => Some(parse_activate(l)),
         "deactivate" => Some(parse_deactivate(l)),
+        "setport" => Some(parse_port(l)),
         _ => {
             log::error!("unknown command: {s}");
             None
         }
     };
     match res {
-        Some(Ok(e)) => Some(vec![e, FrontendEvent::Enumerate()]),
+        Some(Ok(e)) => Some(e),
         Some(Err(e)) => {
             log::warn!("{e}");
             None
@@ -165,7 +173,7 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
     }
 }
 
-fn parse_connect(mut l: SplitWhitespace) -> Result<FrontendEvent> {
+fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let usage = "usage: connect <host> left|right|top|bottom [port]";
     let host = l.next().context(usage)?.to_owned();
     let pos = match l.next().context(usage)? {
@@ -179,19 +187,25 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<FrontendEvent> {
     } else {
         DEFAULT_PORT
     };
-    Ok(FrontendEvent::AddClient(Some(host), port, pos))
+    Ok(vec![FrontendEvent::AddClient(Some(host), port, pos), FrontendEvent::Enumerate()])
 }
 
-fn parse_disconnect(mut l: SplitWhitespace) -> Result<FrontendEvent> {
+fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: disconnect <client_id>")?.parse()?;
-    Ok(FrontendEvent::DelClient(client))
+    Ok(vec![FrontendEvent::DelClient(client), FrontendEvent::Enumerate()])
 }
 
-fn parse_activate(mut l: SplitWhitespace) -> Result<FrontendEvent> {
+fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: activate <client_id>")?.parse()?;
-    Ok(FrontendEvent::ActivateClient(client, true))
+    Ok(vec![FrontendEvent::ActivateClient(client, true), FrontendEvent::Enumerate()])
 }
-fn parse_deactivate(mut l: SplitWhitespace) -> Result<FrontendEvent> {
+
+fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: deactivate <client_id>")?.parse()?;
-    Ok(FrontendEvent::ActivateClient(client, false))
+    Ok(vec![FrontendEvent::ActivateClient(client, false), FrontendEvent::Enumerate()])
+}
+
+fn parse_port(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+    let port = l.next().context("usage: setport <port>")?.parse()?;
+    Ok(vec![FrontendEvent::ChangePort(port)])
 }

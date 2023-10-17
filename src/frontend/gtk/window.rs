@@ -100,7 +100,17 @@ impl Window {
 
     pub fn request_client_create(&self) {
         let event = FrontendEvent::AddClient(None, DEFAULT_PORT, Position::default());
+        self.imp().set_port(DEFAULT_PORT);
         self.request(event);
+    }
+
+    pub fn request_port_change(&self) {
+        let port = self.imp().port_entry.get().text().to_string();
+        if let Ok(port) = u16::from_str_radix(port.as_str(), 10) {
+            self.request(FrontendEvent::ChangePort(port));
+        } else {
+            self.request(FrontendEvent::ChangePort(DEFAULT_PORT));
+        }
     }
 
     pub fn request_client_update(&self, client: &ClientObject) {
@@ -150,11 +160,9 @@ impl Window {
         };
     }
 
-    fn setup_callbacks(&self) {
-        self.imp()
-            .add_client_button
-            .connect_clicked(clone!(@weak self as window => move |_| {
-                window.request_client_create();
-            }));
+    pub fn show_toast(&self, msg: &str) {
+        let toast = adw::Toast::new(msg);
+        let toast_overlay = &self.imp().toast_overlay;
+        toast_overlay.add_toast(toast);
     }
 }

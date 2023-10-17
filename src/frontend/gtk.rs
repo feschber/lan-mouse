@@ -145,6 +145,13 @@ fn build_ui(app: &Application) {
                         );
                     }
                 },
+                FrontendNotify::NotifyPortChange(port, msg) => {
+                    match msg {
+                        None => window.show_toast(format!("port changed: {port}").as_str()),
+                        Some(msg) => window.show_toast(msg.as_str()),
+                    }
+                    window.imp().set_port(port);
+                }
             }
             glib::ControlFlow::Continue
         }
