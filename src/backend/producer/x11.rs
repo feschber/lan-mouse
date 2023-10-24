@@ -26,7 +26,7 @@ impl EventProducer for X11Producer {
 impl Stream for X11Producer {
     type Item = io::Result<(ClientHandle, Event)>;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
         Poll::Pending
     }
 }

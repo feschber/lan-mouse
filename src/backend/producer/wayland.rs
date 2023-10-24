@@ -1,6 +1,6 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 
-use std::{os::fd::OwnedFd, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll}, collections::VecDeque};
+use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll}, collections::VecDeque};
 use futures_core::Stream;
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
@@ -84,17 +84,25 @@ struct State {
     client_for_window: Vec<(Rc<Window>, ClientHandle)>,
     focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-    async_fd: AsyncFd<OwnedFd>,
+    wayland_fd: OwnedFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: VecDeque<(ClientHandle, Event)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
 }
 
-pub struct WaylandEventProducer {
+struct Inner {
     state: State,
     queue: EventQueue<State>,
 }
+
+impl AsRawFd for Inner {
+    fn as_raw_fd(&self) -> RawFd {
+        self.state.wayland_fd.as_raw_fd()
+    }
+}
+
+pub struct WaylandEventProducer(AsyncFd<Inner>);
 
 struct Window {
     buffer: wl_buffer::WlBuffer,
@@ -283,7 +291,6 @@ impl WaylandEventProducer {
         let read_guard = queue.prepare_read()?;
         let wayland_fd = read_guard.connection_fd().try_clone_to_owned().unwrap();
         std::mem::drop(read_guard);
-        let async_fd = AsyncFd::new(wayland_fd)?;
 
         let mut state = State {
             g,
@@ -293,7 +300,7 @@ impl WaylandEventProducer {
             client_for_window: Vec::new(),
             focused: None,
             qh,
-            async_fd,
+            wayland_fd,
             read_guard: None,
             pending_events: VecDeque::new(),
             output_info: vec![],
@@ -323,7 +330,9 @@ impl WaylandEventProducer {
         let read_guard = queue.prepare_read()?;
         state.read_guard = Some(read_guard);
 
-        Ok(WaylandEventProducer { queue, state })
+        let inner = AsyncFd::new(Inner { queue, state })?;
+
+        Ok(WaylandEventProducer(inner))
     }
 }
 
@@ -423,7 +432,7 @@ impl State {
     }
 }
 
-impl WaylandEventProducer {
+impl Inner {
     fn read(&mut self) -> bool {
         match self.state.read_guard.take().unwrap().read() {
             Ok(_) => true,
@@ -490,30 +499,33 @@ impl EventProducer for WaylandEventProducer {
     fn notify(&mut self, client_event: ClientEvent) {
         match client_event {
             ClientEvent::Create(handle, pos) => {
-                self.state.add_client(handle, pos);
+                self.0.get_mut().state.add_client(handle, pos);
             }
             ClientEvent::Destroy(handle) => {
+                let inner = self.0.get_mut();
                 loop {
                     // remove all windows corresponding to this client
-                    if let Some(i) = self
+                    if let Some(i) = inner
                         .state
                         .client_for_window
                         .iter()
                         .position(|(_,c)| *c == handle) {
-                        self.state.client_for_window.remove(i);
-                        self.state.focused = None;
+                        inner.state.client_for_window.remove(i);
+                        inner.state.focused = None;
                     } else {
                         break
                     }
                 }
             }
         }
-        self.flush_events();
+        let inner = self.0.get_mut();
+        inner.flush_events();
     }
 
     fn release(&mut self) {
-        self.state.ungrab();
-        self.flush_events();
+        let inner = self.0.get_mut();
+        inner.state.ungrab();
+        inner.flush_events();
     }
 }
 
@@ -522,37 +534,39 @@ impl Stream for WaylandEventProducer {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 
-        if let Some(event) = self.state.pending_events.pop_front() {
+        if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
             return Poll::Ready(Some(Ok(event)));
         }
 
-        if let Poll::Ready(guard) = Pin::new(&self.state.async_fd).poll_read_ready(cx) {
+        if let Poll::Ready(guard) = Pin::new(&mut self.0).poll_read_ready_mut(cx) {
             let mut guard = match guard {
                 Ok(guard) => guard,
                 Err(e) => return Poll::Ready(Some(Err(e))),
             };
-            let producer = guard.get_inner();
+            {
+                let inner = guard.get_inner_mut();
 
-            // read events
-            while self.read() {
-                // prepare next read
-                self.prepare_read();
+                // read events
+                while inner.read() {
+                    // prepare next read
+                    inner.prepare_read();
+                }
+
+                // dispatch the events
+                inner.dispatch_events();
+
+                // flush outgoing events
+                inner.flush_events();
+
+                // prepare for the next read
+                inner.prepare_read();
             }
-
-            // dispatch the events
-            self.dispatch_events();
-
-            // flush outgoing events
-            self.flush_events();
-
-            // prepare for the next read
-            self.prepare_read();
 
             // clear read readiness for tokio read guard
             guard.clear_ready_matching(Ready::READABLE);
 
             // if an event has been queued during dispatch_events() we return it
-            match self.state.pending_events.pop_front() {
+            match guard.get_inner_mut().state.pending_events.pop_front() {
                 Some(event) => Poll::Ready(Some(Ok(event))),
                 None => Poll::Pending,
             }

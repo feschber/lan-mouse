@@ -23,7 +23,7 @@ impl EventProducer for LibeiProducer {
 impl Stream for LibeiProducer {
     type Item = io::Result<(ClientHandle, Event)>;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
         Poll::Pending
     }
 }
