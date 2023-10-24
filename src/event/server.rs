@@ -1,6 +1,7 @@
 use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
 use tokio::{net::UdpSocket, io::ReadHalf, signal, sync::mpsc::{Sender, Receiver}};
+use futures::stream::StreamExt;
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -67,9 +68,6 @@ impl Server {
     pub async fn run(&mut self) -> Result<()> {
 
         #[cfg(unix)]
-        let producer_fd = self.producer.get_async_fd()?;
-
-        #[cfg(unix)]
         loop {
             tokio::select! {
                 udp_event = receive_event(&self.socket) => {
@@ -78,16 +76,14 @@ impl Server {
                         Err(e) => log::error!("error reading event: {e}"),
                     }
                 }
-                read_guard = producer_fd.readable() => {
-                    let mut guard = match read_guard {
-                        Ok(g) => g,
-                        Err(e) => {
-                            log::error!("wayland_fd read_guard: {e}");
-                            continue
-                        }
-                    };
-                    self.handle_producer_rx().await;
-                    guard.clear_ready_matching(tokio::io::Ready::READABLE);
+                res = self.producer.next() => {
+                    match res {
+                        Some(Ok((client, event))) => {
+                            self.handle_producer_event(client,event).await;
+                        },
+                        Some(Err(e)) => log::error!("{e}"),
+                        _ => break,
+                    }
                 }
                 stream = self.frontend.accept() => {
                     match stream {
@@ -339,14 +335,6 @@ impl Server {
                     }
                 }
             }
-        }
-    }
-
-    #[cfg(unix)]
-    async fn handle_producer_rx(&mut self) {
-        let events: Vec<(ClientHandle, Event)> = self.producer.read_events().collect();
-        for (c,e) in events.into_iter() {
-            self.handle_producer_event(c,e).await;
         }
     }
 

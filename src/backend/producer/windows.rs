@@ -15,10 +15,6 @@ impl EventProducer for WindowsProducer {
     fn notify(&mut self, _: ClientEvent) { }
 
     fn release(&mut self) { }
-    
-    fn get_wait_channel(&mut self) -> Option<mpsc::Receiver<(ClientHandle, Event)>> {
-        self.rx.take()
-    }
 }
 
 impl WindowsProducer {

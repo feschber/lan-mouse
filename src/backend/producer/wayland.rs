@@ -1,9 +1,10 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 
-use std::{os::fd::RawFd, vec::Drain, io::{ErrorKind, self}, env};
+use std::{os::fd::OwnedFd, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll}, collections::VecDeque};
+use futures_core::Stream;
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
-use tokio::io::unix::AsyncFd;
+use tokio::io::{unix::AsyncFd, Ready};
 
 use std::{
     fs::File,
@@ -83,10 +84,10 @@ struct State {
     client_for_window: Vec<(Rc<Window>, ClientHandle)>,
     focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-    wayland_fd: RawFd,
+    async_fd: AsyncFd<OwnedFd>,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
-    pending_events: Vec<(ClientHandle, Event)>,
+    pending_events: VecDeque<(ClientHandle, Event)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
 }
 
@@ -280,8 +281,9 @@ impl WaylandEventProducer {
 
         // prepare reading wayland events
         let read_guard = queue.prepare_read()?;
-        let wayland_fd = read_guard.connection_fd().as_raw_fd();
+        let wayland_fd = read_guard.connection_fd().try_clone_to_owned().unwrap();
         std::mem::drop(read_guard);
+        let async_fd = AsyncFd::new(wayland_fd)?;
 
         let mut state = State {
             g,
@@ -291,9 +293,9 @@ impl WaylandEventProducer {
             client_for_window: Vec::new(),
             focused: None,
             qh,
-            wayland_fd,
+            async_fd,
             read_guard: None,
-            pending_events: vec![],
+            pending_events: VecDeque::new(),
             output_info: vec![],
         };
 
@@ -421,12 +423,6 @@ impl State {
     }
 }
 
-impl AsRawFd for WaylandEventProducer {
-    fn as_raw_fd(&self) -> RawFd {
-        self.state.wayland_fd
-    }
-}
-
 impl WaylandEventProducer {
     fn read(&mut self) -> bool {
         match self.state.read_guard.take().unwrap().read() {
@@ -491,29 +487,6 @@ impl WaylandEventProducer {
 
 impl EventProducer for WaylandEventProducer {
 
-    fn get_async_fd(&self) -> io::Result<AsyncFd<RawFd>> {
-        AsyncFd::new(self.as_raw_fd())
-    }
-
-    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
-        // read events
-        while self.read() {
-            // prepare next read
-            self.prepare_read();
-        }
-        // dispatch the events
-        self.dispatch_events();
-
-        // flush outgoing events
-        self.flush_events();
-
-        // prepare for the next read
-        self.prepare_read();
-
-        // return the events
-        self.state.pending_events.drain(..)
-    }
-
     fn notify(&mut self, client_event: ClientEvent) {
         match client_event {
             ClientEvent::Create(handle, pos) => {
@@ -541,6 +514,51 @@ impl EventProducer for WaylandEventProducer {
     fn release(&mut self) {
         self.state.ungrab();
         self.flush_events();
+    }
+}
+
+impl Stream for WaylandEventProducer {
+    type Item = io::Result<(ClientHandle, Event)>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+
+        if let Some(event) = self.state.pending_events.pop_front() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+
+        if let Poll::Ready(guard) = Pin::new(&self.state.async_fd).poll_read_ready(cx) {
+            let mut guard = match guard {
+                Ok(guard) => guard,
+                Err(e) => return Poll::Ready(Some(Err(e))),
+            };
+            let producer = guard.get_inner();
+
+            // read events
+            while self.read() {
+                // prepare next read
+                self.prepare_read();
+            }
+
+            // dispatch the events
+            self.dispatch_events();
+
+            // flush outgoing events
+            self.flush_events();
+
+            // prepare for the next read
+            self.prepare_read();
+
+            // clear read readiness for tokio read guard
+            guard.clear_ready_matching(Ready::READABLE);
+
+            // if an event has been queued during dispatch_events() we return it
+            match self.state.pending_events.pop_front() {
+                Some(event) => Poll::Ready(Some(Ok(event))),
+                None => Poll::Pending,
+            }
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -601,7 +619,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     .iter()
                     .find(|(w, _c)| w.surface == surface)
                     .unwrap();
-                app.pending_events.push((*client, Event::Release()));
+                app.pending_events.push_back((*client, Event::Release()));
             }
             wl_pointer::Event::Leave { .. } => {
                 app.ungrab();
@@ -613,7 +631,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state,
             } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Button {
                         time,
@@ -624,7 +642,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             }
             wl_pointer::Event::Axis { time, axis, value } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Axis {
                         time,
@@ -664,7 +682,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 state,
             } => {
                 if let Some(client) = client {
-                    app.pending_events.push((
+                    app.pending_events.push_back((
                         *client,
                         Event::Keyboard(KeyboardEvent::Key {
                             time,
@@ -682,7 +700,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 group,
             } => {
                 if let Some(client) = client {
-                    app.pending_events.push((
+                    app.pending_events.push_back((
                         *client,
                         Event::Keyboard(KeyboardEvent::Modifiers {
                             mods_depressed,
@@ -731,7 +749,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
         {
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Motion {
                         time,

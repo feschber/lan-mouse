@@ -1,10 +1,8 @@
-use std::error::Error;
+use std::{error::Error, io};
 
 #[cfg(unix)]
-use std::{io, os::fd::RawFd, vec::Drain};
 
-#[cfg(unix)]
-use tokio::io::unix::AsyncFd;
+use futures_core::Stream;
 
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 use crate::backend::producer;
@@ -77,24 +75,10 @@ pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
     }
 }
 
-pub trait EventProducer {
-
+pub trait EventProducer: Stream<Item = io::Result<(ClientHandle, Event)>> + Unpin {
     /// notify event producer of configuration changes
     fn notify(&mut self, event: ClientEvent);
 
     /// release mouse
     fn release(&mut self);
-
-    /// unix only
-    #[cfg(unix)]
-    fn get_async_fd(&self) -> io::Result<AsyncFd<RawFd>>;
-
-    /// read an event
-    /// this function must be invoked to retrieve an Event after
-    /// the eventfd indicates a pending Event
-    #[cfg(unix)]
-    fn read_events(&mut self) -> Drain<(ClientHandle, Event)>;
-
-    #[cfg(not(unix))]
-    fn get_wait_channel(&mut self) -> Option<tokio::sync::mpsc::Receiver<(ClientHandle, Event)>>;
 }

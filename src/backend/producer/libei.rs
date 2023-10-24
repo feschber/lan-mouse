@@ -1,6 +1,8 @@
-use std::{error::Error, result::Result};
+use std::{error::Error, io, result::Result, task::Poll};
 
-use crate::producer::EventProducer;
+use futures_core::Stream;
+
+use crate::{producer::EventProducer, event::Event, client::ClientHandle};
 
 pub struct LibeiProducer {}
 
@@ -16,10 +18,12 @@ impl EventProducer for LibeiProducer {
 
     fn release(&mut self) {
     }
+}
 
-    fn get_async_fd(&self) -> std::io::Result<tokio::io::unix::AsyncFd<std::os::fd::RawFd>> {
-    }
+impl Stream for LibeiProducer {
+    type Item = io::Result<(ClientHandle, Event)>;
 
-    fn read_events(&mut self) -> std::vec::Drain<(crate::client::ClientHandle, crate::event::Event)> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        Poll::Pending
     }
 }
