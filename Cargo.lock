@@ -1452,10 +1452,11 @@ checksum = "dbb5fb1acd8a1a18b3dd5be62d25485eb770e05afb408a9627d14d451bae12da"
 [[package]]
 name = "reis"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe4a6024586e1bd2257dda13e5b2e84bbdbe88e6cae2dcb4f305038074cb2760"
+source = "git+https://github.com/ids1024/reis#62fbbd626305eb5affd5959214b9a9dd889360ed"
 dependencies = [
+ "futures-core",
  "rustix 0.38.13",
+ "tokio",
 ]
 
 [[package]]

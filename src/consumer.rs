@@ -89,7 +89,7 @@ pub async fn create() -> Result<EventConsumer> {
             #[cfg(not(feature = "libei"))]
             panic!("feature libei not enabled");
             #[cfg(feature = "libei")]
-            Ok(EventConsumer::Sync(Box::new(consumer::libei::LibeiConsumer::new())))
+            Ok(EventConsumer::Async(Box::new(consumer::libei::LibeiConsumer::new().await?)))
         },
         Backend::RemoteDesktopPortal => {
             #[cfg(not(feature = "xdg_desktop_portal"))]
