@@ -1,7 +1,5 @@
 use std::{error::Error, io};
 
-#[cfg(unix)]
-
 use futures_core::Stream;
 
 use crate::{client::{ClientHandle, ClientEvent}, event::Event};

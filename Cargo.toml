@@ -47,7 +47,7 @@ winapi = { version = "0.3.9", features = ["winuser"] }
 glib-build-tools = "0.18.0"
 
 [features]
-default = ["wayland", "x11", "xdg_desktop_portal", "libei"] #, "gtk"]
+default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
 wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc", "dep:wayland-protocols-plasma"]
 x11 = ["dep:x11"]
 xdg_desktop_portal = ["dep:ashpd"]
