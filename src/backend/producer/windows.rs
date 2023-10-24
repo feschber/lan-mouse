@@ -1,4 +1,5 @@
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use futures::Stream;
 
 use crate::{
     client::{ClientHandle, ClientEvent},
