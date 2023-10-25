@@ -82,6 +82,10 @@ impl<'a> AsyncConsumer for DesktopPortalConsumer<'a> {
 
     async fn notify(&mut self, _client: crate::client::ClientEvent) { }
 
+    async fn dispatch(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     async fn destroy(&mut self) {
         log::debug!("closing remote desktop session");
         if let Err(e) = self.session.close().await {

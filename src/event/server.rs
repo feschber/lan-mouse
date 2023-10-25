@@ -65,7 +65,7 @@ impl Server {
         })
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
 
         #[cfg(unix)]
         loop {
@@ -96,6 +96,14 @@ impl Server {
                         if self.handle_frontend_event(event).await {
                             break;
                         }
+                    }
+                }
+                e = match &mut self.consumer {
+                    EventConsumer::Async(c) => c.dispatch(),
+                    _ => Box::pin(async { Ok(()) }),
+                } => {
+                    if let Err(e) = e {
+                        return Err(e);
                     }
                 }
                 _ = signal::ctrl_c() => {
