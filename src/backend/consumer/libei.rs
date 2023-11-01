@@ -5,7 +5,7 @@ use futures::StreamExt;
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use async_trait::async_trait;
 
-use reis::{ei::{self, handshake::ContextType}, tokio::EiEventStream, PendingRequestResult};
+use reis::{ei::{self, handshake::ContextType, keyboard::KeyState}, tokio::EiEventStream, PendingRequestResult};
 
 use crate::{consumer::AsyncConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
@@ -15,8 +15,12 @@ pub struct LibeiConsumer {
     events: EiEventStream,
     pointer: Option<(ei::Device, ei::Pointer)>,
     has_pointer: bool,
-    button: Option<ei::Button>,
+    scroll: Option<(ei::Device, ei::Scroll)>,
+    has_scroll: bool,
+    button: Option<(ei::Device, ei::Button)>,
     has_button: bool,
+    keyboard: Option<(ei::Device, ei::Keyboard)>,
+    has_keyboard: bool,
     capabilities: HashMap<String, u64>,
     capability_mask: u64,
     sequence: u32,
@@ -41,9 +45,14 @@ impl LibeiConsumer {
         return Ok(Self {
             handshake: false,
             context, events,
-            pointer: None, button: None,
+            pointer: None,
+            button: None,
+            scroll: None,
+            keyboard: None,
             has_pointer: false,
             has_button: false,
+            has_scroll: false,
+            has_keyboard: false,
             capabilities: HashMap::new(),
             capability_mask: 0,
             sequence: 0,
@@ -70,7 +79,19 @@ impl AsyncConsumer for LibeiConsumer {
                 crate::event::PointerEvent::Axis { time: _, axis: _, value: _ } => {},
                 crate::event::PointerEvent::Frame {  } => {},
             },
-            Event::Keyboard(_) => {},
+            Event::Keyboard(k) => match k {
+                crate::event::KeyboardEvent::Key { time: _, key, state } => {
+                    if !self.has_keyboard {
+                        return;
+                    }
+                    if let Some((d, k)) = &mut self.keyboard {
+                        k.key(key, match state { 0 => KeyState::Press, _ => KeyState::Released });
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
+                        d.frame(self.serial, now);
+                    }
+                },
+                crate::event::KeyboardEvent::Modifiers { .. } => {},
+            },
             Event::Release() => {},
             Event::Ping() => {},
             Event::Pong() => {},
@@ -99,17 +120,16 @@ impl AsyncConsumer for LibeiConsumer {
                         handshake.context_type(ContextType::Sender);
                         handshake.name("lan-mouse");
                         handshake.interface_version("ei_connection", 1);
-                        // handshake.interface_version("ei_handshake", 1);
                         handshake.interface_version("ei_callback", 1);
                         handshake.interface_version("ei_pingpong", 1);
                         handshake.interface_version("ei_seat", 1);
                         handshake.interface_version("ei_device", 2);
                         handshake.interface_version("ei_pointer", 1);
-                        // handshake.interface_version("ei_pointer_absolute", 1);
-                        // handshake.interface_version("ei_scroll", 1);
-                        // handshake.interface_version("ei_button", 1);
-                        // handshake.interface_version("ei_keyboard", 1);
-                        // handshake.interface_version("ei_touchscreen", 1);
+                        handshake.interface_version("ei_pointer_absolute", 1);
+                        handshake.interface_version("ei_scroll", 1);
+                        handshake.interface_version("ei_button", 1);
+                        handshake.interface_version("ei_keyboard", 1);
+                        handshake.interface_version("ei_touchscreen", 1);
                         handshake.finish();
                         self.handshake = true;
                     }
@@ -143,18 +163,40 @@ impl AsyncConsumer for LibeiConsumer {
                         if object.interface().eq("ei_pointer") {
                             self.pointer.replace((device, object.downcast().unwrap()));
                         } else if object.interface().eq("ei_button") {
-                            self.button.replace(object.downcast().unwrap());
+                            self.button.replace((device, object.downcast().unwrap()));
+                        } else if object.interface().eq("ei_scroll") {
+                            self.scroll.replace((device, object.downcast().unwrap()));
+                        } else if object.interface().eq("ei_keyboard") {
+                            self.keyboard.replace((device, object.downcast().unwrap()));
                         }
                     }
                     ei::device::Event::Done => { },
                     ei::device::Event::Resumed { serial } => {
                         self.serial = serial;
+                        device.start_emulating(serial, self.sequence);
+                        self.sequence += 1;
                         if let Some((d,_)) = &mut self.pointer {
                             if d == &device {
                                 log::debug!("pointer resumed {serial}");
-                                self.sequence += 1;
-                                d.start_emulating(serial, self.sequence);
                                 self.has_pointer = true;
+                            }
+                        }
+                        if let Some((d,_)) = &mut self.button {
+                            if d == &device {
+                                log::debug!("button resumed {serial}");
+                                self.has_button = true;
+                            }
+                        }
+                        if let Some((d,_)) = &mut self.scroll {
+                            if d == &device {
+                                log::debug!("scroll resumed {serial}");
+                                self.has_scroll = true;
+                            }
+                        }
+                        if let Some((d,_)) = &mut self.keyboard {
+                            if d == &device {
+                                log::debug!("keyboard resumed {serial}");
+                                self.has_keyboard = true;
                             }
                         }
                     }

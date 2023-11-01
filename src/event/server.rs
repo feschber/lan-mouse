@@ -98,9 +98,11 @@ impl Server {
                         }
                     }
                 }
-                // _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(5)) => {
+                // _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
                 //     if let EventConsumer::Async(c) = &mut self.consumer {
-                //         let event = Event::Pointer(PointerEvent::Motion { time: 0, relative_x: 1., relative_y: 0.});
+                //         let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
+                //         c.consume(event, 0).await;
+                //         let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
                 //         c.consume(event, 0).await;
                 //     }
                 // }
