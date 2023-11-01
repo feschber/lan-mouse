@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}, event::PointerEvent};
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -98,6 +98,12 @@ impl Server {
                         }
                     }
                 }
+                // _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(5)) => {
+                //     if let EventConsumer::Async(c) = &mut self.consumer {
+                //         let event = Event::Pointer(PointerEvent::Motion { time: 0, relative_x: 1., relative_y: 0.});
+                //         c.consume(event, 0).await;
+                //     }
+                // }
                 e = match &mut self.consumer {
                     EventConsumer::Async(c) => c.dispatch(),
                     _ => Box::pin(async { Ok(()) }),

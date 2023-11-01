@@ -10,11 +10,10 @@ use reis::{ei::{self, handshake::ContextType}, tokio::EiEventStream, PendingRequ
 use crate::{consumer::AsyncConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
 pub struct LibeiConsumer {
-    device: Vec<ei::Device>,
     handshake: bool,
     context: ei::Context,
     events: EiEventStream,
-    pointer: Option<ei::Pointer>,
+    pointer: Option<(ei::Device, ei::Pointer)>,
     has_pointer: bool,
     button: Option<ei::Button>,
     has_button: bool,
@@ -40,7 +39,6 @@ impl LibeiConsumer {
         context.flush()?;
         let events = EiEventStream::new(context.clone())?;
         return Ok(Self {
-            device: vec![],
             handshake: false,
             context, events,
             pointer: None, button: None,
@@ -60,11 +58,11 @@ impl AsyncConsumer for LibeiConsumer {
         match event {
             Event::Pointer(p) => match p {
                 crate::event::PointerEvent::Motion { time:_, relative_x, relative_y } => {
-                    if let Some(p) = self.pointer.as_mut() {
-                        if self.has_pointer {
+                    if self.has_pointer {
+                        if let Some((d, p)) = self.pointer.as_mut() {
                             p.motion_relative(relative_x as f32, relative_y as f32);
                             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
-                            self.device.iter_mut().for_each(|d| d.frame(self.serial, now));
+                            d.frame(self.serial, now);
                         }
                     }
                 },
@@ -135,7 +133,7 @@ impl AsyncConsumer for LibeiConsumer {
                 }
                 ei::Event::Device(device, request) => match request {
                     ei::device::Event::Destroyed { serial } => { log::debug!("destroyed {serial}") },
-                    ei::device::Event::Name { name } => {log::debug!("{name}")},
+                    ei::device::Event::Name { name } => {log::debug!("device name: {name}")},
                     ei::device::Event::DeviceType { device_type } => log::debug!("{device_type:?}"),
                     ei::device::Event::Dimensions { width, height } => log::debug!("{width}x{height}"),
                     ei::device::Event::Region { offset_x, offset_y, width, hight, scale } => log::debug!("region: {width}x{hight} @ ({offset_x},{offset_y}), scale: {scale}"),
@@ -143,26 +141,22 @@ impl AsyncConsumer for LibeiConsumer {
                         log::debug!("OBJECT: {object:?}");
                         log::debug!("INTERFACE: {}", object.interface());
                         if object.interface().eq("ei_pointer") {
-                            self.pointer.replace(object.downcast().unwrap());
+                            self.pointer.replace((device, object.downcast().unwrap()));
                         } else if object.interface().eq("ei_button") {
                             self.button.replace(object.downcast().unwrap());
                         }
                     }
                     ei::device::Event::Done => { },
                     ei::device::Event::Resumed { serial } => {
-                        log::debug!("resumed {serial}");
-                        self.sequence += 1;
-                        device.start_emulating(serial, self.sequence);
                         self.serial = serial;
-                        self.has_button = true;
-                        if let Some(p) = self.pointer.as_mut() {
-                            p.motion_relative(1.0, 0.0);
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
-                            log::info!("frame({}, {})", self.serial, now);
-                            device.frame(self.serial, now);
-                            self.has_pointer = true;
+                        if let Some((d,_)) = &mut self.pointer {
+                            if d == &device {
+                                log::debug!("pointer resumed {serial}");
+                                self.sequence += 1;
+                                d.start_emulating(serial, self.sequence);
+                                self.has_pointer = true;
+                            }
                         }
-                        self.device.push(device);
                     }
                     ei::device::Event::Paused { serial } => {
                         self.has_pointer = false;
