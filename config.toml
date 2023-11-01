@@ -5,19 +5,19 @@ port = 4242
 # optional frontend -> defaults to gtk if available
 # frontend = "gtk"
 
-# # define a client on the right side with host name "iridium"
-# [right]
-# # hostname
-# host_name = "iridium"
-# # optional list of (known) ip addresses
-# ips = ["192.168.178.156"]
+# define a client on the right side with host name "iridium"
+[right]
+# hostname
+host_name = "iridium"
+# optional list of (known) ip addresses
+ips = ["192.168.178.156"]
 
-# # define a client on the left side with IP address 192.168.178.189
-# [left]
-# # The hostname is optional: When no hostname is specified,
-# # at least one ip address needs to be specified.
-# host_name = "thorium"
-# # ips for ethernet and wifi
-# ips = ["192.168.178.189", "192.168.178.172"]
-# # optional port
-# port = 4242
+# define a client on the left side with IP address 192.168.178.189
+[left]
+# The hostname is optional: When no hostname is specified,
+# at least one ip address needs to be specified.
+host_name = "thorium"
+# ips for ethernet and wifi
+ips = ["192.168.178.189", "192.168.178.172"]
+# optional port
+port = 4242
