@@ -27,7 +27,7 @@ pub struct Server {
     client_manager: ClientManager,
     state: State,
     frontend: FrontendListener,
-    consumer: EventConsumer,
+    consumer: Box<dyn EventConsumer>,
     producer: Box<dyn EventProducer>,
     socket: UdpSocket,
     frontend_rx: Receiver<FrontendEvent>,
@@ -38,7 +38,7 @@ impl Server {
     pub async fn new(
         port: u16,
         frontend: FrontendListener,
-        consumer: EventConsumer,
+        consumer: Box<dyn EventConsumer>,
         producer: Box<dyn EventProducer>,
     ) -> anyhow::Result<Self> {
 
@@ -106,10 +106,7 @@ impl Server {
                 //         c.consume(event, 0).await;
                 //     }
                 // }
-                e = match &mut self.consumer {
-                    EventConsumer::Async(c) => c.dispatch(),
-                    _ => Box::pin(async { Ok(()) }),
-                } => {
+                e = self.consumer.dispatch() => {
                     if let Err(e) = e {
                         return Err(e);
                     }
@@ -160,9 +157,7 @@ impl Server {
         }
 
         // destroy consumer
-        if let EventConsumer::Async(c) = &mut self.consumer {
-            c.destroy().await;
-        }
+        self.consumer.destroy().await;
 
         Ok(())
     }
@@ -195,26 +190,17 @@ impl Server {
             state.active = active;
             if state.active {
                 self.producer.notify(ClientEvent::Create(client, state.client.pos));
-                match &mut self.consumer {
-                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)),
-                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)).await,
-                }
+                self.consumer.notify(ClientEvent::Create(client, state.client.pos)).await;
             } else {
                 self.producer.notify(ClientEvent::Destroy(client));
-                match &mut self.consumer {
-                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-                }
+                self.consumer.notify(ClientEvent::Destroy(client)).await;
             }
         }
     }
 
     pub async fn remove_client(&mut self, client: ClientHandle) -> Option<ClientHandle> {
         self.producer.notify(ClientEvent::Destroy(client));
-        match &mut self.consumer {
-            EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-            EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-        }
+        self.consumer.notify(ClientEvent::Destroy(client)).await;
         if let Some(client) = self.client_manager.remove_client(client).map(|s| s.client.handle) {
             let notify = FrontendNotify::NotifyClientDelete(client);
             log::debug!("{notify:?}");
@@ -243,15 +229,9 @@ impl Server {
         state.client.pos = pos;
         if state.active {
             self.producer.notify(ClientEvent::Destroy(client));
-            match &mut self.consumer {
-                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-            }
+            self.consumer.notify(ClientEvent::Destroy(client)).await;
             self.producer.notify(ClientEvent::Create(client, pos));
-            match &mut self.consumer {
-                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, pos)),
-                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, pos)).await,
-            }
+            self.consumer.notify(ClientEvent::Create(client, pos)).await;
         }
 
         // update port
@@ -335,10 +315,7 @@ impl Server {
                 }
                 State::Receiving => {
                     // consume event
-                    match &mut self.consumer {
-                        EventConsumer::Sync(consumer) => consumer.consume(event, handle),
-                        EventConsumer::Async(consumer) => consumer.consume(event, handle).await,
-                    }
+                    self.consumer.consume(event, handle).await;
 
                     // let the server know we are still alive once every second
                     let last_replied = state.last_replied;

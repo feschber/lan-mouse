@@ -1,11 +1,13 @@
+use async_trait::async_trait;
 use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 use crate::client::{ClientHandle, ClientEvent};
-use crate::consumer::SyncConsumer;
+use crate::consumer::EventConsumer;
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::prelude::AsRawFd;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
@@ -140,8 +142,9 @@ impl State {
     }
 }
 
-impl SyncConsumer for WlrootsConsumer {
-    fn consume(&mut self, event: Event, client_handle: ClientHandle) {
+#[async_trait]
+impl EventConsumer for WlrootsConsumer {
+    async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             if self.last_flush_failed {
                 if let Err(WaylandError::Io(e)) = self.queue.flush() {
@@ -175,13 +178,21 @@ impl SyncConsumer for WlrootsConsumer {
         }
     }
 
-    fn notify(&mut self, client_event: ClientEvent) {
+    async fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(client, _) = client_event {
             self.state.add_client(client);
             if let Err(e) = self.queue.flush() {
                 log::error!("{}", e);
             }
         }
+    }
+    async fn dispatch(&mut self) -> Result<()> {
+        // Ok(tokio::time::sleep(Duration::from_secs(1000)).await)
+        Ok(())
+    }
+
+    async fn destroy(&mut self) {
+
     }
 }
 

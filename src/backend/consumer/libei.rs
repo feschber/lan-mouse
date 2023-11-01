@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use reis::{ei::{self, handshake::ContextType, keyboard::KeyState}, tokio::EiEventStream, PendingRequestResult};
 
-use crate::{consumer::AsyncConsumer, event::Event, client::{ClientHandle, ClientEvent}};
+use crate::{consumer::EventConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
 pub struct LibeiConsumer {
     handshake: bool,
@@ -62,7 +62,7 @@ impl LibeiConsumer {
 }
 
 #[async_trait]
-impl AsyncConsumer for LibeiConsumer {
+impl EventConsumer for LibeiConsumer {
     async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
         match event {
             Event::Pointer(p) => match p {

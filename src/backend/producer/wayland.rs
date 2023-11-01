@@ -4,7 +4,7 @@ use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::
 use futures_core::Stream;
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
-use tokio::io::{unix::AsyncFd, Ready};
+use tokio::io::unix::AsyncFd;
 
 use std::{
     fs::File,
@@ -543,6 +543,7 @@ impl Stream for WaylandEventProducer {
                 Ok(guard) => guard,
                 Err(e) => return Poll::Ready(Some(Err(e))),
             };
+
             {
                 let inner = guard.get_inner_mut();
 
@@ -563,7 +564,8 @@ impl Stream for WaylandEventProducer {
             }
 
             // clear read readiness for tokio read guard
-            guard.clear_ready_matching(Ready::READABLE);
+            // guard.clear_ready_matching(Ready::READABLE);
+            guard.clear_ready();
 
             // if an event has been queued during dispatch_events() we return it
             match guard.get_inner_mut().state.pending_events.pop_front() {
