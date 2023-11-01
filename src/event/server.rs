@@ -112,6 +112,7 @@ impl Server {
                 }
             }
         }
+        
 
         #[cfg(windows)]
         let mut channel = self.producer.get_wait_channel().unwrap();

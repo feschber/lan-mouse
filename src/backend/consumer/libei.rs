@@ -1,15 +1,16 @@
-use std::{os::{fd::{RawFd, FromRawFd}, unix::net::UnixStream}, collections::HashMap, time::{Instant, Duration, UNIX_EPOCH, SystemTime}};
+use std::{os::{fd::{RawFd, FromRawFd}, unix::net::UnixStream}, collections::HashMap, time::{UNIX_EPOCH, SystemTime}};
 
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use async_trait::async_trait;
 
-use reis::{ei::{self, handshake::ContextType}, tokio::EiEventStream, PendingRequestResult, Object};
+use reis::{ei::{self, handshake::ContextType}, tokio::EiEventStream, PendingRequestResult};
 
 use crate::{consumer::AsyncConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
 pub struct LibeiConsumer {
+    device: Vec<ei::Device>,
     handshake: bool,
     context: ei::Context,
     events: EiEventStream,
@@ -20,6 +21,7 @@ pub struct LibeiConsumer {
     capabilities: HashMap<String, u64>,
     capability_mask: u64,
     sequence: u32,
+    serial: u32,
 }
 
 async fn get_ei_fd() -> Result<RawFd, ashpd::Error> {
@@ -38,6 +40,7 @@ impl LibeiConsumer {
         context.flush()?;
         let events = EiEventStream::new(context.clone())?;
         return Ok(Self {
+            device: vec![],
             handshake: false,
             context, events,
             pointer: None, button: None,
@@ -46,14 +49,35 @@ impl LibeiConsumer {
             capabilities: HashMap::new(),
             capability_mask: 0,
             sequence: 0,
+            serial: 0,
         })
     }
 }
 
 #[async_trait]
 impl AsyncConsumer for LibeiConsumer {
-    async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
-        log::warn!("ignoring ({client_handle:?}, {event:?}) - not yet implemented")
+    async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
+        match event {
+            Event::Pointer(p) => match p {
+                crate::event::PointerEvent::Motion { time:_, relative_x, relative_y } => {
+                    if let Some(p) = self.pointer.as_mut() {
+                        if self.has_pointer {
+                            p.motion_relative(relative_x as f32, relative_y as f32);
+                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
+                            self.device.iter_mut().for_each(|d| d.frame(self.serial, now));
+                        }
+                    }
+                },
+                crate::event::PointerEvent::Button { time: _, button: _, state: _ } => {},
+                crate::event::PointerEvent::Axis { time: _, axis: _, value: _ } => {},
+                crate::event::PointerEvent::Frame {  } => {},
+            },
+            Event::Keyboard(_) => {},
+            Event::Release() => {},
+            Event::Ping() => {},
+            Event::Pong() => {},
+        }
+        self.context.flush().unwrap();
     }
 
     async fn dispatch(&mut self) -> Result<()> {
@@ -120,28 +144,30 @@ impl AsyncConsumer for LibeiConsumer {
                         log::debug!("INTERFACE: {}", object.interface());
                         if object.interface().eq("ei_pointer") {
                             self.pointer.replace(object.downcast().unwrap());
-                            self.has_pointer = true;
                         } else if object.interface().eq("ei_button") {
                             self.button.replace(object.downcast().unwrap());
-                            self.has_button = true;
                         }
                     }
                     ei::device::Event::Done => { },
                     ei::device::Event::Resumed { serial } => {
                         log::debug!("resumed {serial}");
-                        device.start_emulating(serial, self.sequence);
                         self.sequence += 1;
+                        device.start_emulating(serial, self.sequence);
+                        self.serial = serial;
+                        self.has_button = true;
                         if let Some(p) = self.pointer.as_mut() {
-                            if self.has_pointer {
-                                p.motion_relative(100.0, 0.0);
-                                device.frame(self.sequence, SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64);
-                                self.sequence += 1;
-                            }
+                            p.motion_relative(1.0, 0.0);
+                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
+                            log::info!("frame({}, {})", self.serial, now);
+                            device.frame(self.serial, now);
+                            self.has_pointer = true;
                         }
+                        self.device.push(device);
                     }
-                    ei::device::Event::Paused { serial: _ } => {
+                    ei::device::Event::Paused { serial } => {
                         self.has_pointer = false;
                         self.has_button = false;
+                        self.serial = serial;
                     },
                     ei::device::Event::StartEmulating { serial, sequence } => log::debug!("start emulating {serial}, {sequence}"),
                     ei::device::Event::StopEmulating { serial } => log::debug!("stop emulating {serial}"),
@@ -152,7 +178,8 @@ impl AsyncConsumer for LibeiConsumer {
                     e => log::debug!("invalid event: {e:?}"),
                 }
                 ei::Event::Seat(seat, request) => match request {
-                    ei::seat::Event::Destroyed { serial:_ } => {
+                    ei::seat::Event::Destroyed { serial } => {
+                        self.serial = serial;
                         log::debug!("seat destroyed");
                     },
                     ei::seat::Event::Name { name } => {
