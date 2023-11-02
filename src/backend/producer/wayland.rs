@@ -533,7 +533,7 @@ impl Stream for WaylandEventProducer {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        log::debug!("producer.next()");
+        log::trace!("producer.next()");
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
             return Poll::Ready(Some(Ok(event)));
         }
