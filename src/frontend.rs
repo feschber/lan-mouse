@@ -97,6 +97,7 @@ impl FrontendListener {
 
     #[cfg(unix)]
     pub async fn accept(&mut self) -> Result<ReadHalf<UnixStream>> {
+        log::trace!("frontend.accept()");
 
         let stream = self.listener.accept().await?.0;
         let (rx, tx) = tokio::io::split(stream);

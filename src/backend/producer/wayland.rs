@@ -1,6 +1,6 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 
-use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll}, collections::VecDeque};
+use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll, ready}, collections::VecDeque};
 use futures_core::Stream;
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
@@ -533,16 +533,13 @@ impl Stream for WaylandEventProducer {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-
+        log::debug!("producer.next()");
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
             return Poll::Ready(Some(Ok(event)));
         }
 
-        if let Poll::Ready(guard) = Pin::new(&mut self.0).poll_read_ready_mut(cx) {
-            let mut guard = match guard {
-                Ok(guard) => guard,
-                Err(e) => return Poll::Ready(Some(Err(e))),
-            };
+        loop {
+            let mut guard = ready!(self.0.poll_read_ready_mut(cx))?;
 
             {
                 let inner = guard.get_inner_mut();
@@ -569,11 +566,9 @@ impl Stream for WaylandEventProducer {
 
             // if an event has been queued during dispatch_events() we return it
             match guard.get_inner_mut().state.pending_events.pop_front() {
-                Some(event) => Poll::Ready(Some(Ok(event))),
-                None => Poll::Pending,
+                Some(event) => return Poll::Ready(Some(Ok(event))),
+                None => continue,
             }
-        } else {
-            Poll::Pending
         }
     }
 }

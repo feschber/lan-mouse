@@ -188,6 +188,7 @@ impl EventConsumer for WlrootsConsumer {
     }
     async fn dispatch(&mut self) -> Result<()> {
         // Ok(tokio::time::sleep(Duration::from_secs(1000)).await)
+        log::trace!("consumer.dispatch()");
         Ok(())
     }
 
