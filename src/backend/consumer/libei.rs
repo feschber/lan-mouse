@@ -5,7 +5,7 @@ use futures::StreamExt;
 use ashpd::desktop::remote_desktop::RemoteDesktop;
 use async_trait::async_trait;
 
-use reis::{ei::{self, handshake::ContextType, keyboard::KeyState}, tokio::EiEventStream, PendingRequestResult};
+use reis::{ei::{self, handshake::ContextType, keyboard::KeyState, button::ButtonState}, tokio::EiEventStream, PendingRequestResult};
 
 use crate::{consumer::EventConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
@@ -64,37 +64,46 @@ impl LibeiConsumer {
 #[async_trait]
 impl EventConsumer for LibeiConsumer {
     async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
         match event {
             Event::Pointer(p) => match p {
                 crate::event::PointerEvent::Motion { time:_, relative_x, relative_y } => {
-                    if self.has_pointer {
-                        if let Some((d, p)) = self.pointer.as_mut() {
-                            p.motion_relative(relative_x as f32, relative_y as f32);
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
-                            d.frame(self.serial, now);
-                        }
+                    if !self.has_pointer { return }
+                    if let Some((d, p)) = self.pointer.as_mut() {
+                        p.motion_relative(relative_x as f32, relative_y as f32);
+                        d.frame(self.serial, now);
                     }
                 },
-                crate::event::PointerEvent::Button { time: _, button: _, state: _ } => {},
-                crate::event::PointerEvent::Axis { time: _, axis: _, value: _ } => {},
+                crate::event::PointerEvent::Button { time: _, button, state } => {
+                    if !self.has_button { return }
+                    if let Some((d, b)) = self.button.as_mut() {
+                        b.button(button, match state { 0 => ButtonState::Released, _ => ButtonState::Press });
+                        d.frame(self.serial, now);
+                    }
+                },
+                crate::event::PointerEvent::Axis { time: _, axis, value } => {
+                    if !self.has_scroll { return }
+                    if let Some((d, s)) = self.scroll.as_mut() {
+                        match axis {
+                            0 => s.scroll(0., value as f32),
+                            _ => s.scroll(value as f32, 0.),
+                        }
+                        d.frame(self.serial, now);
+                    }
+                },
                 crate::event::PointerEvent::Frame {  } => {},
             },
             Event::Keyboard(k) => match k {
                 crate::event::KeyboardEvent::Key { time: _, key, state } => {
-                    if !self.has_keyboard {
-                        return;
-                    }
+                    if !self.has_keyboard { return }
                     if let Some((d, k)) = &mut self.keyboard {
                         k.key(key, match state { 0 => KeyState::Press, _ => KeyState::Released });
-                        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64;
                         d.frame(self.serial, now);
                     }
                 },
-                crate::event::KeyboardEvent::Modifiers { .. } => {},
+                crate::event::KeyboardEvent::Modifiers { .. } => { },
             },
-            Event::Release() => {},
-            Event::Ping() => {},
-            Event::Pong() => {},
+            _ => {}
         }
         self.context.flush().unwrap();
     }

@@ -111,12 +111,12 @@ impl Server {
                 //         c.consume(event, 0).await;
                 //     }
                 // }
-                // e = self.consumer.dispatch() => {
-                //     log::trace!("-> consumer.dispatch()");
-                //     if let Err(e) = e {
-                //         return Err(e);
-                //     }
-                // }
+                e = self.consumer.dispatch() => {
+                    log::trace!("-> consumer.dispatch()");
+                    if let Err(e) = e {
+                        return Err(e);
+                    }
+                }
                 _ = signal::ctrl_c() => {
                     log::info!("terminating gracefully ...");
                     break;
