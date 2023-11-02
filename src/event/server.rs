@@ -11,7 +11,8 @@ use tokio::net::TcpStream;
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}, event::PointerEvent};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}};
+// use crate::event::PointerEvent;
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -67,7 +68,6 @@ impl Server {
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
 
-        #[cfg(unix)]
         loop {
             log::trace!("polling ...");
             tokio::select! {
@@ -124,44 +124,6 @@ impl Server {
             }
         }
         
-
-        #[cfg(windows)]
-        let mut channel = self.producer.get_wait_channel().unwrap();
-
-        #[cfg(windows)]
-        loop {
-            tokio::select! {
-                udp_event = receive_event(&self.socket) => {
-                    match udp_event {
-                        Ok(e) => self.handle_udp_rx(e).await,
-                        Err(e) => log::error!("error reading event: {e}"),
-                    }
-                }
-                event = channel.recv() => {
-                    if let Some((c,e)) = event {
-                        self.handle_producer_event(c,e).await;
-                    }
-                }
-                stream = self.frontend.accept() => {
-                    match stream {
-                        Ok(s) => self.handle_frontend_stream(s).await,
-                        Err(e) => log::error!("error connecting to frontend: {e}"),
-                    }
-                }
-                frontend_event = self.frontend_rx.recv() => {
-                    if let Some(event) = frontend_event {
-                        if self.handle_frontend_event(event).await {
-                            break;
-                        }
-                    }
-                }
-                _ = signal::ctrl_c() => {
-                    log::info!("terminating gracefully ...");
-                    break;
-                }
-            }
-        }
-
         // destroy consumer
         self.consumer.destroy().await;
 

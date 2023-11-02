@@ -1,4 +1,6 @@
-use crate::{event::{KeyboardEvent, PointerEvent}, consumer::SyncConsumer};
+use anyhow::Result;
+use async_trait::async_trait;
+use crate::{event::{KeyboardEvent, PointerEvent}, consumer::EventConsumer};
 use winapi::{
     self,
     um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
@@ -25,8 +27,9 @@ impl WindowsConsumer {
     pub fn new() -> Self { Self {  } }
 }
 
-impl SyncConsumer for WindowsConsumer {
-    fn consume(&mut self, event: Event, _: ClientHandle) {
+#[async_trait]
+impl EventConsumer for WindowsConsumer {
+    async fn consume(&mut self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -48,9 +51,14 @@ impl SyncConsumer for WindowsConsumer {
         }
     }
 
-    fn notify(&mut self, _: ClientEvent) {
+    async fn notify(&mut self, _: ClientEvent) {
         // nothing to do
     }
+    
+    async fn dispatch(&mut self) -> Result<()> {
+        Ok(())
+    }
+    async fn destroy(&mut self) {}
 }
 
 fn send_mouse_input(mi: MOUSEINPUT) {

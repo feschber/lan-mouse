@@ -1,5 +1,7 @@
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use std::io::Result;
+use std::pin::Pin;
 use futures::Stream;
+use core::task::{Context, Poll};
 
 use crate::{
     client::{ClientHandle, ClientEvent},
@@ -7,10 +9,7 @@ use crate::{
     producer::EventProducer,
 };
 
-pub struct WindowsProducer {
-    _tx: Sender<(ClientHandle, Event)>,
-    rx: Option<Receiver<(ClientHandle, Event)>>,
-}
+pub struct WindowsProducer { }
 
 impl EventProducer for WindowsProducer {
     fn notify(&mut self, _: ClientEvent) { }
@@ -20,8 +19,13 @@ impl EventProducer for WindowsProducer {
 
 impl WindowsProducer {
     pub(crate) fn new() -> Self {
-        let (_tx, rx) = mpsc::channel(1);
-        let rx = Some(rx);
-        Self { _tx, rx }
+        Self {}
+    }
+}
+
+impl Stream for WindowsProducer {
+    type Item = Result<(ClientHandle, Event)>;
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Poll::Pending
     }
 }

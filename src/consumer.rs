@@ -27,7 +27,7 @@ pub trait EventConsumer {
 
 pub async fn create() -> Result<Box<dyn EventConsumer>> {
     #[cfg(windows)]
-    return Ok(EventConsumer::Sync(Box::new(consumer::windows::WindowsConsumer::new())));
+    return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
