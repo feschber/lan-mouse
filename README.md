@@ -129,7 +129,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] Liveness tracking (automatically ungrab mouse when client unreachable)
 - [ ] Clipboard support
 - [x] Graphical frontend (gtk?)
-- [ ] *Encrytion*
+- [ ] *Encryption*
 - [ ] Gnome Shell Extension (layer shell is not supported)
 - [ ] respect xdg-config-home for config file location.
 
