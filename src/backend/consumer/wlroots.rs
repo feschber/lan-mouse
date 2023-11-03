@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::prelude::AsRawFd;
-use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use wayland_client::globals::BindError;
@@ -186,15 +185,8 @@ impl EventConsumer for WlrootsConsumer {
             }
         }
     }
-    async fn dispatch(&mut self) -> Result<()> {
-        // Ok(tokio::time::sleep(Duration::from_secs(1000)).await)
-        log::trace!("consumer.dispatch()");
-        Ok(())
-    }
 
-    async fn destroy(&mut self) {
-
-    }
+    async fn destroy(&mut self) { }
 }
 
 

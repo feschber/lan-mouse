@@ -55,9 +55,6 @@ impl EventConsumer for WindowsConsumer {
         // nothing to do
     }
     
-    async fn dispatch(&mut self) -> Result<()> {
-        Ok(())
-    }
     async fn destroy(&mut self) {}
 }
 

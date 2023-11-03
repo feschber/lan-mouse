@@ -70,7 +70,7 @@ impl Server {
 
         loop {
             log::trace!("polling ...");
-            tokio::select! {
+            tokio::select! { biased;
                 udp_event = receive_event(&self.socket) => {
                     log::trace!("-> receive_event");
                     match udp_event {

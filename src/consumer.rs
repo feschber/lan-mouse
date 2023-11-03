@@ -1,3 +1,4 @@
+use std::future;
 use async_trait::async_trait;
 
 #[cfg(unix)]
@@ -16,12 +17,16 @@ enum Backend {
 }
 
 #[async_trait]
-pub trait EventConsumer {
+pub trait EventConsumer: Send {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle);
     async fn notify(&mut self, client_event: ClientEvent);
     /// this function is waited on continuously and can be used to handle
     /// events
-    async fn dispatch(&mut self) -> Result<()>;
+    async fn dispatch(&mut self) -> Result<()> {
+        let _: () = future::pending().await;
+        Ok(())
+    }
+
     async fn destroy(&mut self);
 }
 

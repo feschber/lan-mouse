@@ -58,10 +58,6 @@ impl EventConsumer for X11Consumer {
         // for our purposes it does not matter what client sent the event
     }
 
-    async fn dispatch(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     async fn destroy(&mut self) {}
 }
 
