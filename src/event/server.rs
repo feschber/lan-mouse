@@ -71,6 +71,7 @@ impl Server {
         loop {
             log::trace!("polling ...");
             tokio::select! { biased;
+                // safety: cancellation safe
                 udp_event = receive_event(&self.socket) => {
                     log::trace!("-> receive_event");
                     match udp_event {
@@ -78,6 +79,7 @@ impl Server {
                         Err(e) => log::error!("error reading event: {e}"),
                     }
                 }
+                // safety: cancellation safe
                 res = self.producer.next() => {
                     log::trace!("-> producer.next()");
                     match res {
@@ -88,6 +90,7 @@ impl Server {
                         _ => break,
                     }
                 }
+                // safety: cancellation safe
                 stream = self.frontend.accept() => {
                     log::trace!("-> frontend.accept()");
                     match stream {
@@ -95,6 +98,7 @@ impl Server {
                         Err(e) => log::error!("error connecting to frontend: {e}"),
                     }
                 }
+                // safety: cancellation safe
                 frontend_event = self.frontend_rx.recv() => {
                     log::trace!("-> frontend.recv()");
                     if let Some(event) = frontend_event {
@@ -103,20 +107,22 @@ impl Server {
                         }
                     }
                 }
-                // _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
-                //     if let EventConsumer::Async(c) = &mut self.consumer {
-                //         let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
-                //         c.consume(event, 0).await;
-                //         let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
-                //         c.consume(event, 0).await;
-                //     }
-                // }
+//                _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
+//                    if let EventConsumer::Async(c) = &mut self.consumer {
+//                        let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
+//                        c.consume(event, 0).await;
+//                        let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
+//                        c.consume(event, 0).await;
+//                    }
+//                }
+                // safety: cancellation safe
                 e = self.consumer.dispatch() => {
                     log::trace!("-> consumer.dispatch()");
                     if let Err(e) = e {
                         return Err(e);
                     }
                 }
+                // safety: cancellation safe
                 _ = signal::ctrl_c() => {
                     log::info!("terminating gracefully ...");
                     break;

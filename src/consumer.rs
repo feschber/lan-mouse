@@ -20,8 +20,7 @@ enum Backend {
 pub trait EventConsumer: Send {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle);
     async fn notify(&mut self, client_event: ClientEvent);
-    /// this function is waited on continuously and can be used to handle
-    /// events
+    /// this function is waited on continuously and can be used to handle events
     async fn dispatch(&mut self) -> Result<()> {
         let _: () = future::pending().await;
         Ok(())
