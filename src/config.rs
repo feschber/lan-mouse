@@ -44,6 +44,7 @@ impl Error for MissingParameter {}
 impl ConfigToml {
     pub fn new(path: &str) -> Result<ConfigToml, Box<dyn Error>> {
         let config = fs::read_to_string(path)?;
+        log::info!("using config: \"{path}\"");
         Ok(toml::from_str::<_>(&config)?)
     }
 }
@@ -89,6 +90,9 @@ impl Config {
                 .unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
             format!("{app_data}\\lan-mouse\\{config_file}")
         };
+
+        // --config <file> overrules default location
+        let config_path = find_arg("--config")?.unwrap_or(config_path);
 
         let config_toml = match ConfigToml::new(config_path.as_str()) {
             Err(e) => {
