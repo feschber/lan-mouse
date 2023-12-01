@@ -77,10 +77,22 @@ pub struct Config {
 
 impl Config {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        let config_path = "config.toml";
-        let config_toml = match ConfigToml::new(config_path) {
+        let config_file = "config.toml";
+        #[cfg(unix)] let config_path = {
+            let xdg_config_home = env::var("XDG_CONFIG_HOME")
+                .unwrap_or(format!("{}/.config", env::var("HOME")?));
+            format!("{xdg_config_home}/lan-mouse/{config_file}")
+        };
+
+        #[cfg(not(unix))] let config_path = {
+            let app_data = env::var("LOCALAPPDATA")
+                .unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
+            format!("{app_data}\\lan-mouse\\{config_file}")
+        };
+
+        let config_toml = match ConfigToml::new(config_path.as_str()) {
             Err(e) => {
-                log::error!("config.toml: {e}");
+                log::error!("{config_path}: {e}");
                 log::warn!("Continuing without config file ...");
                 None
             },
