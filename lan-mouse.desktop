@@ -1,0 +1,12 @@
+[Desktop Entry]
+Categories=Utility;
+Comment[en_US]=Software KVM Switch / mouse & keyboard sharing software for Local Area Networks
+Exec=lan-mouse
+Icon=mouse-icon.svg
+Name[en_US]=Lan Mouse
+Name=Lan Mouse Test
+Path=$HOME/.config/lan-mouse/
+StartupNotify=true
+Terminal=false
+Type=Application
+Version=0.3.3
