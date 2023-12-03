@@ -7,16 +7,16 @@ Goal of this project is to be an open-source replacement for proprietary tools l
 
 Focus lies on performance and a clean, manageable implementation that can easily be expanded to support additional backends like e.g. Android, iOS, ... .
 
-***blazingly fast™*** and ***stable™***, because it's written in rust.
+***blazingly fast™*** because it's written in rust.
 
 For an alternative (with slightly different goals) you may check out [Input Leap](https://github.com/input-leap).
 
 ## OS Support
 
-The following table shows support for Event receiving and event Emitting
-on different operating systems:
+The following table shows support for input emulation (to emulate events received from other clients) and
+input capture (to send events *to* other clients) on different operating systems:
 
-| Backend                   | Event Receiving          | Event Emitting                       |
+| Backend                   | input emulation          | input capture                        |
 |---------------------------|--------------------------|--------------------------------------|
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
@@ -130,8 +130,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [ ] Clipboard support
 - [x] Graphical frontend (gtk?)
 - [ ] *Encryption*
-- [ ] Gnome Shell Extension (layer shell is not supported)
-- [ ] respect xdg-config-home for config file location.
+- [x] respect xdg-config-home for config file location.
 
 ## Protocol
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
@@ -228,11 +227,6 @@ both wlroots based compositors and KDE.
 
 Gnome unfortunately does not support this protocol
 and [likely won't ever support it](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/1141).
-
-So there is currently no way of doing this in Wayland, aside from a custom Gnome-Shell
-extension, which is not a very elegant solution.
-
-This is to be looked into in the future.
 
 ~In order for layershell surfaces to be able to lock the pointer using the pointer\_constraints protocol [this patch](https://github.com/swaywm/sway/pull/7178) needs to be applied to sway.~
 (this works natively on sway versions >= 1.8)
