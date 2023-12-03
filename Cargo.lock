@@ -465,12 +465,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23342abe12aba583913b2e62f22225ff9c950774065e4bfb61a19cd9770fec40"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "955518d47e09b25bbebc7a18df10b81f0c766eaf4c4f1cccef2fca5f2a4fb5f2"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -540,10 +556,13 @@ version = "0.3.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b01e40b772d54cf6c6d721c1d1abd0647a0106a12ecaa1c186273392a69533"
 dependencies = [
+ "futures-channel",
  "futures-core",
+ "futures-io",
  "futures-macro",
  "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "pin-utils",
  "slab",
@@ -962,12 +981,15 @@ dependencies = [
  "ashpd",
  "async-trait",
  "env_logger",
+ "futures",
+ "futures-core",
  "glib-build-tools",
  "gtk4",
  "libadwaita",
  "libc",
  "log",
  "memmap",
+ "reis",
  "serde",
  "serde_json",
  "tempfile",
@@ -1426,6 +1448,16 @@ name = "regex-syntax"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbb5fb1acd8a1a18b3dd5be62d25485eb770e05afb408a9627d14d451bae12da"
+
+[[package]]
+name = "reis"
+version = "0.1.0"
+source = "git+https://github.com/ids1024/reis#62fbbd626305eb5affd5959214b9a9dd889360ed"
+dependencies = [
+ "futures-core",
+ "rustix 0.38.13",
+ "tokio",
+]
 
 [[package]]
 name = "resolv-conf"

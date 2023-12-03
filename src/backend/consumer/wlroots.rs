@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 use crate::client::{ClientHandle, ClientEvent};
-use crate::consumer::SyncConsumer;
+use crate::consumer::EventConsumer;
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
@@ -140,8 +141,9 @@ impl State {
     }
 }
 
-impl SyncConsumer for WlrootsConsumer {
-    fn consume(&mut self, event: Event, client_handle: ClientHandle) {
+#[async_trait]
+impl EventConsumer for WlrootsConsumer {
+    async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             if self.last_flush_failed {
                 if let Err(WaylandError::Io(e)) = self.queue.flush() {
@@ -175,7 +177,7 @@ impl SyncConsumer for WlrootsConsumer {
         }
     }
 
-    fn notify(&mut self, client_event: ClientEvent) {
+    async fn notify(&mut self, client_event: ClientEvent) {
         if let ClientEvent::Create(client, _) = client_event {
             self.state.add_client(client);
             if let Err(e) = self.queue.flush() {
@@ -183,6 +185,8 @@ impl SyncConsumer for WlrootsConsumer {
             }
         }
     }
+
+    async fn destroy(&mut self) { }
 }
 
 

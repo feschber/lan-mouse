@@ -1,6 +1,7 @@
 use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
 
-use std::{os::fd::RawFd, vec::Drain, io::{ErrorKind, self}, env};
+use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll, ready}, collections::VecDeque};
+use futures_core::Stream;
 use memmap::MmapOptions;
 use anyhow::{anyhow, Result};
 use tokio::io::unix::AsyncFd;
@@ -83,17 +84,25 @@ struct State {
     client_for_window: Vec<(Rc<Window>, ClientHandle)>,
     focused: Option<(Rc<Window>, ClientHandle)>,
     g: Globals,
-    wayland_fd: RawFd,
+    wayland_fd: OwnedFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
-    pending_events: Vec<(ClientHandle, Event)>,
+    pending_events: VecDeque<(ClientHandle, Event)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
 }
 
-pub struct WaylandEventProducer {
+struct Inner {
     state: State,
     queue: EventQueue<State>,
 }
+
+impl AsRawFd for Inner {
+    fn as_raw_fd(&self) -> RawFd {
+        self.state.wayland_fd.as_raw_fd()
+    }
+}
+
+pub struct WaylandEventProducer(AsyncFd<Inner>);
 
 struct Window {
     buffer: wl_buffer::WlBuffer,
@@ -280,7 +289,7 @@ impl WaylandEventProducer {
 
         // prepare reading wayland events
         let read_guard = queue.prepare_read()?;
-        let wayland_fd = read_guard.connection_fd().as_raw_fd();
+        let wayland_fd = read_guard.connection_fd().try_clone_to_owned().unwrap();
         std::mem::drop(read_guard);
 
         let mut state = State {
@@ -293,7 +302,7 @@ impl WaylandEventProducer {
             qh,
             wayland_fd,
             read_guard: None,
-            pending_events: vec![],
+            pending_events: VecDeque::new(),
             output_info: vec![],
         };
 
@@ -321,7 +330,9 @@ impl WaylandEventProducer {
         let read_guard = queue.prepare_read()?;
         state.read_guard = Some(read_guard);
 
-        Ok(WaylandEventProducer { queue, state })
+        let inner = AsyncFd::new(Inner { queue, state })?;
+
+        Ok(WaylandEventProducer(inner))
     }
 }
 
@@ -421,13 +432,7 @@ impl State {
     }
 }
 
-impl AsRawFd for WaylandEventProducer {
-    fn as_raw_fd(&self) -> RawFd {
-        self.state.wayland_fd
-    }
-}
-
-impl WaylandEventProducer {
+impl Inner {
     fn read(&mut self) -> bool {
         match self.state.read_guard.take().unwrap().read() {
             Ok(_) => true,
@@ -491,56 +496,80 @@ impl WaylandEventProducer {
 
 impl EventProducer for WaylandEventProducer {
 
-    fn get_async_fd(&self) -> io::Result<AsyncFd<RawFd>> {
-        AsyncFd::new(self.as_raw_fd())
-    }
-
-    fn read_events(&mut self) -> Drain<(ClientHandle, Event)> {
-        // read events
-        while self.read() {
-            // prepare next read
-            self.prepare_read();
-        }
-        // dispatch the events
-        self.dispatch_events();
-
-        // flush outgoing events
-        self.flush_events();
-
-        // prepare for the next read
-        self.prepare_read();
-
-        // return the events
-        self.state.pending_events.drain(..)
-    }
-
     fn notify(&mut self, client_event: ClientEvent) {
         match client_event {
             ClientEvent::Create(handle, pos) => {
-                self.state.add_client(handle, pos);
+                self.0.get_mut().state.add_client(handle, pos);
             }
             ClientEvent::Destroy(handle) => {
+                let inner = self.0.get_mut();
                 loop {
                     // remove all windows corresponding to this client
-                    if let Some(i) = self
+                    if let Some(i) = inner
                         .state
                         .client_for_window
                         .iter()
                         .position(|(_,c)| *c == handle) {
-                        self.state.client_for_window.remove(i);
-                        self.state.focused = None;
+                        inner.state.client_for_window.remove(i);
+                        inner.state.focused = None;
                     } else {
                         break
                     }
                 }
             }
         }
-        self.flush_events();
+        let inner = self.0.get_mut();
+        inner.flush_events();
     }
 
     fn release(&mut self) {
-        self.state.ungrab();
-        self.flush_events();
+        let inner = self.0.get_mut();
+        inner.state.ungrab();
+        inner.flush_events();
+    }
+}
+
+impl Stream for WaylandEventProducer {
+    type Item = io::Result<(ClientHandle, Event)>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        log::trace!("producer.next()");
+        if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+
+        loop {
+            let mut guard = ready!(self.0.poll_read_ready_mut(cx))?;
+
+            {
+                let inner = guard.get_inner_mut();
+
+                // read events
+                while inner.read() {
+                    // prepare next read
+                    inner.prepare_read();
+                }
+
+                // dispatch the events
+                inner.dispatch_events();
+
+                // flush outgoing events
+                inner.flush_events();
+
+                // prepare for the next read
+                inner.prepare_read();
+            }
+
+            // clear read readiness for tokio read guard
+            // guard.clear_ready_matching(Ready::READABLE);
+            guard.clear_ready();
+
+            // if an event has been queued during dispatch_events() we return it
+            match guard.get_inner_mut().state.pending_events.pop_front() {
+                Some(event) => return Poll::Ready(Some(Ok(event))),
+                None => continue,
+            }
+        }
     }
 }
 
@@ -601,7 +630,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     .iter()
                     .find(|(w, _c)| w.surface == surface)
                     .unwrap();
-                app.pending_events.push((*client, Event::Release()));
+                app.pending_events.push_back((*client, Event::Release()));
             }
             wl_pointer::Event::Leave { .. } => {
                 app.ungrab();
@@ -613,7 +642,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state,
             } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Button {
                         time,
@@ -624,7 +653,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             }
             wl_pointer::Event::Axis { time, axis, value } => {
                 let (_, client) = app.focused.as_ref().unwrap();
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Axis {
                         time,
@@ -664,7 +693,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 state,
             } => {
                 if let Some(client) = client {
-                    app.pending_events.push((
+                    app.pending_events.push_back((
                         *client,
                         Event::Keyboard(KeyboardEvent::Key {
                             time,
@@ -682,7 +711,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 group,
             } => {
                 if let Some(client) = client {
-                    app.pending_events.push((
+                    app.pending_events.push_back((
                         *client,
                         Event::Keyboard(KeyboardEvent::Modifiers {
                             mods_depressed,
@@ -731,7 +760,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
         {
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
-                app.pending_events.push((
+                app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Motion {
                         time,

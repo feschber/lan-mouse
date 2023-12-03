@@ -52,6 +52,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
         // start sending and receiving events
         let mut event_server = Server::new(config.port, frontend_adapter, consumer, producer).await?;
+        log::debug!("created server");
 
         // add clients from config
         for (c,h,port,p) in config.get_clients().into_iter() {

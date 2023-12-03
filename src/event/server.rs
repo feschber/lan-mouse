@@ -1,6 +1,7 @@
 use std::{error::Error, io::Result, collections::HashSet, time::{Duration, Instant}, net::IpAddr};
 use log;
 use tokio::{net::UdpSocket, io::ReadHalf, signal, sync::mpsc::{Sender, Receiver}};
+use futures::stream::StreamExt;
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -11,6 +12,7 @@ use tokio::net::TcpStream;
 use std::{net::SocketAddr, io::ErrorKind};
 
 use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}};
+// use crate::event::PointerEvent;
 use super::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -26,7 +28,7 @@ pub struct Server {
     client_manager: ClientManager,
     state: State,
     frontend: FrontendListener,
-    consumer: EventConsumer,
+    consumer: Box<dyn EventConsumer>,
     producer: Box<dyn EventProducer>,
     socket: UdpSocket,
     frontend_rx: Receiver<FrontendEvent>,
@@ -37,7 +39,7 @@ impl Server {
     pub async fn new(
         port: u16,
         frontend: FrontendListener,
-        consumer: EventConsumer,
+        consumer: Box<dyn EventConsumer>,
         producer: Box<dyn EventProducer>,
     ) -> anyhow::Result<Self> {
 
@@ -64,92 +66,64 @@ impl Server {
         })
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
 
-        #[cfg(unix)]
-        let producer_fd = self.producer.get_async_fd()?;
-
-        #[cfg(unix)]
         loop {
+            log::trace!("polling ...");
             tokio::select! {
+                // safety: cancellation safe
                 udp_event = receive_event(&self.socket) => {
+                    log::trace!("-> receive_event");
                     match udp_event {
                         Ok(e) => self.handle_udp_rx(e).await,
                         Err(e) => log::error!("error reading event: {e}"),
                     }
                 }
-                read_guard = producer_fd.readable() => {
-                    let mut guard = match read_guard {
-                        Ok(g) => g,
-                        Err(e) => {
-                            log::error!("wayland_fd read_guard: {e}");
-                            continue
-                        }
-                    };
-                    self.handle_producer_rx().await;
-                    guard.clear_ready_matching(tokio::io::Ready::READABLE);
+                // safety: cancellation safe
+                res = self.producer.next() => {
+                    log::trace!("-> producer.next()");
+                    match res {
+                        Some(Ok((client, event))) => {
+                            self.handle_producer_event(client,event).await;
+                        },
+                        Some(Err(e)) => log::error!("{e}"),
+                        _ => break,
+                    }
                 }
+                // safety: cancellation safe
                 stream = self.frontend.accept() => {
+                    log::trace!("-> frontend.accept()");
                     match stream {
                         Ok(s) => self.handle_frontend_stream(s).await,
                         Err(e) => log::error!("error connecting to frontend: {e}"),
                     }
                 }
+                // safety: cancellation safe
                 frontend_event = self.frontend_rx.recv() => {
+                    log::trace!("-> frontend.recv()");
                     if let Some(event) = frontend_event {
                         if self.handle_frontend_event(event).await {
                             break;
                         }
                     }
                 }
+                // safety: cancellation safe
+                e = self.consumer.dispatch() => {
+                    log::trace!("-> consumer.dispatch()");
+                    if let Err(e) = e {
+                        return Err(e);
+                    }
+                }
+                // safety: cancellation safe
                 _ = signal::ctrl_c() => {
                     log::info!("terminating gracefully ...");
                     break;
                 }
             }
         }
-
-        #[cfg(windows)]
-        let mut channel = self.producer.get_wait_channel().unwrap();
-
-        #[cfg(windows)]
-        loop {
-            tokio::select! {
-                udp_event = receive_event(&self.socket) => {
-                    match udp_event {
-                        Ok(e) => self.handle_udp_rx(e).await,
-                        Err(e) => log::error!("error reading event: {e}"),
-                    }
-                }
-                event = channel.recv() => {
-                    if let Some((c,e)) = event {
-                        self.handle_producer_event(c,e).await;
-                    }
-                }
-                stream = self.frontend.accept() => {
-                    match stream {
-                        Ok(s) => self.handle_frontend_stream(s).await,
-                        Err(e) => log::error!("error connecting to frontend: {e}"),
-                    }
-                }
-                frontend_event = self.frontend_rx.recv() => {
-                    if let Some(event) = frontend_event {
-                        if self.handle_frontend_event(event).await {
-                            break;
-                        }
-                    }
-                }
-                _ = signal::ctrl_c() => {
-                    log::info!("terminating gracefully ...");
-                    break;
-                }
-            }
-        }
-
+        
         // destroy consumer
-        if let EventConsumer::Async(c) = &mut self.consumer {
-            c.destroy().await;
-        }
+        self.consumer.destroy().await;
 
         Ok(())
     }
@@ -182,26 +156,17 @@ impl Server {
             state.active = active;
             if state.active {
                 self.producer.notify(ClientEvent::Create(client, state.client.pos));
-                match &mut self.consumer {
-                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)),
-                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, state.client.pos)).await,
-                }
+                self.consumer.notify(ClientEvent::Create(client, state.client.pos)).await;
             } else {
                 self.producer.notify(ClientEvent::Destroy(client));
-                match &mut self.consumer {
-                    EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-                    EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-                }
+                self.consumer.notify(ClientEvent::Destroy(client)).await;
             }
         }
     }
 
     pub async fn remove_client(&mut self, client: ClientHandle) -> Option<ClientHandle> {
         self.producer.notify(ClientEvent::Destroy(client));
-        match &mut self.consumer {
-            EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-            EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-        }
+        self.consumer.notify(ClientEvent::Destroy(client)).await;
         if let Some(client) = self.client_manager.remove_client(client).map(|s| s.client.handle) {
             let notify = FrontendNotify::NotifyClientDelete(client);
             log::debug!("{notify:?}");
@@ -230,15 +195,9 @@ impl Server {
         state.client.pos = pos;
         if state.active {
             self.producer.notify(ClientEvent::Destroy(client));
-            match &mut self.consumer {
-                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Destroy(client)),
-                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Destroy(client)).await,
-            }
+            self.consumer.notify(ClientEvent::Destroy(client)).await;
             self.producer.notify(ClientEvent::Create(client, pos));
-            match &mut self.consumer {
-                EventConsumer::Sync(consumer) => consumer.notify(ClientEvent::Create(client, pos)),
-                EventConsumer::Async(consumer) => consumer.notify(ClientEvent::Create(client, pos)).await,
-            }
+            self.consumer.notify(ClientEvent::Create(client, pos)).await;
         }
 
         // update port
@@ -322,10 +281,7 @@ impl Server {
                 }
                 State::Receiving => {
                     // consume event
-                    match &mut self.consumer {
-                        EventConsumer::Sync(consumer) => consumer.consume(event, handle),
-                        EventConsumer::Async(consumer) => consumer.consume(event, handle).await,
-                    }
+                    self.consumer.consume(event, handle).await;
 
                     // let the server know we are still alive once every second
                     let last_replied = state.last_replied;
@@ -339,14 +295,6 @@ impl Server {
                     }
                 }
             }
-        }
-    }
-
-    #[cfg(unix)]
-    async fn handle_producer_rx(&mut self) {
-        let events: Vec<(ClientHandle, Event)> = self.producer.read_events().collect();
-        for (c,e) in events.into_iter() {
-            self.handle_producer_event(c,e).await;
         }
     }
 
@@ -498,6 +446,7 @@ impl Server {
 }
 
 async fn receive_event(socket: &UdpSocket) -> std::result::Result<(Event, SocketAddr), Box<dyn Error>> {
+    log::trace!("receive_event");
     let mut buf = vec![0u8; 22];
     match socket.recv_from(&mut buf).await {
         Ok((_amt, src)) => Ok((Event::try_from(buf)?, src)),

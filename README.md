@@ -20,10 +20,10 @@ on different operating systems:
 |---------------------------|--------------------------|--------------------------------------|
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
-| Wayland (Gnome)           | TODO (libei support #33)     | TODO (libei support #33) |
+| Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
 | X11                       | (WIP)                    | TODO                                 |
 | Windows                   | (:heavy_check_mark:)     | TODO                                 |
-| MacOS                     | TODO (I dont own a Mac)  | TODO (I dont own a Mac)              |
+| MacOS                     | TODO                     | TODO                                 |
 
 ## Build and Run
 Build in release mode:
@@ -129,7 +129,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] Liveness tracking (automatically ungrab mouse when client unreachable)
 - [ ] Clipboard support
 - [x] Graphical frontend (gtk?)
-- [ ] *Encrytion*
+- [ ] *Encryption*
 - [ ] Gnome Shell Extension (layer shell is not supported)
 - [ ] respect xdg-config-home for config file location.
 

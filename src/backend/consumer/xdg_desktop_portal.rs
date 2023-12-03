@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use anyhow::Result;
 use ashpd::{desktop::{remote_desktop::{RemoteDesktop, DeviceType, KeyState, Axis}, Session}, WindowIdentifier};
 
-use crate::consumer::AsyncConsumer;
+use crate::consumer::EventConsumer;
 
 pub struct DesktopPortalConsumer<'a> {
     proxy: RemoteDesktop<'a>,
@@ -27,7 +27,7 @@ impl<'a> DesktopPortalConsumer<'a> {
 }
 
 #[async_trait]
-impl<'a> AsyncConsumer for DesktopPortalConsumer<'a> {
+impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
     async fn consume(&mut self, event: crate::event::Event, _client: crate::client::ClientHandle) {
         match event {
             crate::event::Event::Pointer(p) => {

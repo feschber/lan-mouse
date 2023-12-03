@@ -1,3 +1,4 @@
+use std::future;
 use async_trait::async_trait;
 
 #[cfg(unix)]
@@ -15,29 +16,22 @@ enum Backend {
     Libei,
 }
 
-pub enum EventConsumer {
-    Sync(Box<dyn SyncConsumer>),
-    Async(Box<dyn AsyncConsumer>),
-}
-
-pub trait SyncConsumer {
-    /// Event corresponding to an abstract `client_handle`
-    fn consume(&mut self, event: Event, client_handle: ClientHandle);
-
-    /// Event corresponding to a configuration change
-    fn notify(&mut self, client_event: ClientEvent);
-}
-
 #[async_trait]
-pub trait AsyncConsumer {
+pub trait EventConsumer: Send {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle);
     async fn notify(&mut self, client_event: ClientEvent);
+    /// this function is waited on continuously and can be used to handle events
+    async fn dispatch(&mut self) -> Result<()> {
+        let _: () = future::pending().await;
+        Ok(())
+    }
+
     async fn destroy(&mut self);
 }
 
-pub async fn create() -> Result<EventConsumer> {
+pub async fn create() -> Result<Box<dyn EventConsumer>> {
     #[cfg(windows)]
-    return Ok(EventConsumer::Sync(Box::new(consumer::windows::WindowsConsumer::new())));
+    return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 
     #[cfg(unix)]
     let backend = match env::var("XDG_SESSION_TYPE") {
@@ -50,8 +44,8 @@ pub async fn create() -> Result<EventConsumer> {
                 log::info!("XDG_SESSION_TYPE = wayland -> using wayland event consumer");
                 match env::var("XDG_CURRENT_DESKTOP") {
                     Ok(current_desktop) => match current_desktop.as_str() {
-                        "gnome" => {
-                            log::info!("XDG_CURRENT_DESKTOP = gnome -> using libei backend");
+                        "GNOME" => {
+                            log::info!("XDG_CURRENT_DESKTOP = GNOME -> using libei backend");
                             Backend::Libei
                         }
                         "KDE" => {
@@ -89,25 +83,25 @@ pub async fn create() -> Result<EventConsumer> {
             #[cfg(not(feature = "libei"))]
             panic!("feature libei not enabled");
             #[cfg(feature = "libei")]
-            Ok(EventConsumer::Sync(Box::new(consumer::libei::LibeiConsumer::new())))
+            Ok(Box::new(consumer::libei::LibeiConsumer::new().await?))
         },
         Backend::RemoteDesktopPortal => {
             #[cfg(not(feature = "xdg_desktop_portal"))]
             panic!("feature xdg_desktop_portal not enabled");
             #[cfg(feature = "xdg_desktop_portal")]
-            Ok(EventConsumer::Async(Box::new(consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?)))
+            Ok(Box::new(consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?))
         },
         Backend::Wlroots => {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
-            Ok(EventConsumer::Sync(Box::new(consumer::wlroots::WlrootsConsumer::new()?)))
+            Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()?))
         },
         Backend::X11 => {
             #[cfg(not(feature = "x11"))]
             panic!("feature x11 not enabled");
             #[cfg(feature = "x11")]
-            Ok(EventConsumer::Sync(Box::new(consumer::x11::X11Consumer::new())))
+            Ok(Box::new(consumer::x11::X11Consumer::new()))
         },
     }
 }
