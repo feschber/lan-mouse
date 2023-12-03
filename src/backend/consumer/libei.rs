@@ -1,4 +1,4 @@
-use std::{os::{fd::{RawFd, FromRawFd}, unix::net::UnixStream}, collections::HashMap, time::{UNIX_EPOCH, SystemTime}};
+use std::{os::{fd::{RawFd, FromRawFd}, unix::net::UnixStream}, collections::HashMap, time::{UNIX_EPOCH, SystemTime}, io};
 
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
@@ -36,7 +36,16 @@ async fn get_ei_fd() -> Result<RawFd, ashpd::Error> {
 
 impl LibeiConsumer {
     pub async fn new() -> Result<Self> {
+        // fd is owned by the message, so we need to dup it
         let eifd = get_ei_fd().await?;
+        let eifd = unsafe {
+            let ret = libc::dup(eifd);
+            if ret < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(ret)
+            }
+        }?;
         let stream = unsafe { UnixStream::from_raw_fd(eifd) };
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
@@ -118,132 +127,145 @@ impl EventConsumer for LibeiConsumer {
             PendingRequestResult::ProtocolError(e) => return Err(anyhow!("libei protocol violation: {e}")),
             PendingRequestResult::InvalidObject(e) => return Err(anyhow!("invalid object {e}")),
         };
-        log::debug!("{event:?}");
-        if !self.handshake {
-            match event {
-                ei::Event::Handshake(handshake, request) => match request {
-                    ei::handshake::Event::HandshakeVersion { version } => {
-                        log::info!("libei version {}", version);
-                        // sender means we are sending events _to_ the eis server
-                        handshake.handshake_version(version); // FIXME
-                        handshake.context_type(ContextType::Sender);
-                        handshake.name("lan-mouse");
-                        handshake.interface_version("ei_connection", 1);
-                        handshake.interface_version("ei_callback", 1);
-                        handshake.interface_version("ei_pingpong", 1);
-                        handshake.interface_version("ei_seat", 1);
-                        handshake.interface_version("ei_device", 2);
-                        handshake.interface_version("ei_pointer", 1);
-                        handshake.interface_version("ei_pointer_absolute", 1);
-                        handshake.interface_version("ei_scroll", 1);
-                        handshake.interface_version("ei_button", 1);
-                        handshake.interface_version("ei_keyboard", 1);
-                        handshake.interface_version("ei_touchscreen", 1);
-                        handshake.finish();
-                        self.handshake = true;
-                    }
-                    r => log::debug!("{r:?}"),
+        match event {
+            ei::Event::Handshake(handshake, request) => match request {
+                ei::handshake::Event::HandshakeVersion { version } => {
+                    if self.handshake { return Ok(()) }
+                    log::info!("libei version {}", version);
+                    // sender means we are sending events _to_ the eis server
+                    handshake.handshake_version(version); // FIXME
+                    handshake.context_type(ContextType::Sender);
+                    handshake.name("ei-demo-client");
+                    handshake.interface_version("ei_connection", 1);
+                    handshake.interface_version("ei_callback", 1);
+                    handshake.interface_version("ei_pingpong", 1);
+                    handshake.interface_version("ei_seat", 1);
+                    handshake.interface_version("ei_device", 2);
+                    handshake.interface_version("ei_pointer", 1);
+                    handshake.interface_version("ei_pointer_absolute", 1);
+                    handshake.interface_version("ei_scroll", 1);
+                    handshake.interface_version("ei_button", 1);
+                    handshake.interface_version("ei_keyboard", 1);
+                    handshake.interface_version("ei_touchscreen", 1);
+                    handshake.finish();
+                    self.handshake = true;
                 }
-                _ => return Ok(()),
+                ei::handshake::Event::InterfaceVersion { name, version } => {
+                    log::debug!("handshake: Interface {name} @ {version}");
+                }
+                ei::handshake::Event::Connection { serial, connection } => {
+                    connection.sync(1);
+                    self.serial = serial;
+                }
+                _ => unreachable!()
             }
-        } else {
-            match event {
-                ei::Event::Connection(_connection, request) => match request {
-                    ei::connection::Event::Seat { seat } => {
-                        log::debug!("{seat:?}");
-                    }
-                    ei::connection::Event::Ping { ping } => {
-                        ping.done(0);
-                    }
-                    ei::connection::Event::Disconnected { last_serial: _, reason, explanation } => {
-                        log::debug!("ei - disconnected: reason: {reason:?}: {explanation}")
-                    }
-                    _ => {}
+            ei::Event::Connection(_connection, request) => match request {
+                ei::connection::Event::Seat { seat } => {
+                    log::debug!("connected to seat: {seat:?}");
                 }
-                ei::Event::Device(device, request) => match request {
-                    ei::device::Event::Destroyed { serial } => { log::debug!("destroyed {serial}") },
-                    ei::device::Event::Name { name } => {log::debug!("device name: {name}")},
-                    ei::device::Event::DeviceType { device_type } => log::debug!("{device_type:?}"),
-                    ei::device::Event::Dimensions { width, height } => log::debug!("{width}x{height}"),
-                    ei::device::Event::Region { offset_x, offset_y, width, hight, scale } => log::debug!("region: {width}x{hight} @ ({offset_x},{offset_y}), scale: {scale}"),
-                    ei::device::Event::Interface { object } => {
-                        log::debug!("OBJECT: {object:?}");
-                        log::debug!("INTERFACE: {}", object.interface());
-                        if object.interface().eq("ei_pointer") {
-                            self.pointer.replace((device, object.downcast().unwrap()));
-                        } else if object.interface().eq("ei_button") {
-                            self.button.replace((device, object.downcast().unwrap()));
-                        } else if object.interface().eq("ei_scroll") {
-                            self.scroll.replace((device, object.downcast().unwrap()));
-                        } else if object.interface().eq("ei_keyboard") {
-                            self.keyboard.replace((device, object.downcast().unwrap()));
-                        }
-                    }
-                    ei::device::Event::Done => { },
-                    ei::device::Event::Resumed { serial } => {
-                        self.serial = serial;
-                        device.start_emulating(serial, self.sequence);
-                        self.sequence += 1;
-                        if let Some((d,_)) = &mut self.pointer {
-                            if d == &device {
-                                log::debug!("pointer resumed {serial}");
-                                self.has_pointer = true;
-                            }
-                        }
-                        if let Some((d,_)) = &mut self.button {
-                            if d == &device {
-                                log::debug!("button resumed {serial}");
-                                self.has_button = true;
-                            }
-                        }
-                        if let Some((d,_)) = &mut self.scroll {
-                            if d == &device {
-                                log::debug!("scroll resumed {serial}");
-                                self.has_scroll = true;
-                            }
-                        }
-                        if let Some((d,_)) = &mut self.keyboard {
-                            if d == &device {
-                                log::debug!("keyboard resumed {serial}");
-                                self.has_keyboard = true;
-                            }
-                        }
-                    }
-                    ei::device::Event::Paused { serial } => {
-                        self.has_pointer = false;
-                        self.has_button = false;
-                        self.serial = serial;
-                    },
-                    ei::device::Event::StartEmulating { serial, sequence } => log::debug!("start emulating {serial}, {sequence}"),
-                    ei::device::Event::StopEmulating { serial } => log::debug!("stop emulating {serial}"),
-                    ei::device::Event::Frame { serial, timestamp } => {
-                        log::debug!("frame: {serial}, {timestamp}");
-                    }
-                    ei::device::Event::RegionMappingId { mapping_id } => log::debug!("RegionMappingId {mapping_id}"),
-                    e => log::debug!("invalid event: {e:?}"),
+                ei::connection::Event::Ping { ping } => {
+                    ping.done(0);
                 }
-                ei::Event::Seat(seat, request) => match request {
-                    ei::seat::Event::Destroyed { serial } => {
-                        self.serial = serial;
-                        log::debug!("seat destroyed");
-                    },
-                    ei::seat::Event::Name { name } => {
-                        log::debug!("connected to seat {name}");
-                    },
-                    ei::seat::Event::Capability { mask, interface } => {
-                        self.capabilities.insert(interface, mask);
-                        self.capability_mask |= mask;
-                    },
-                    ei::seat::Event::Done => {
-                        seat.bind(self.capability_mask);
-                    },
-                    ei::seat::Event::Device { device } => {
-                        log::debug!("new device: {device:?}");
-                    },
-                    _ => todo!(),
+                ei::connection::Event::Disconnected { last_serial: _, reason, explanation } => {
+                    log::debug!("ei - disconnected: reason: {reason:?}: {explanation}")
                 }
-                e => log::debug!("{e:?}"),
+                ei::connection::Event::InvalidObject { last_serial, invalid_id } => {
+                    return Err(anyhow!("invalid object: id: {invalid_id}, serial: {last_serial}"));
+                }
+                _ => unreachable!()
             }
+            ei::Event::Device(device, request) => match request {
+                ei::device::Event::Destroyed { serial } => { log::debug!("device destroyed: {device:?} - serial: {serial}") },
+                ei::device::Event::Name { name } => {log::debug!("device name: {name}")},
+                ei::device::Event::DeviceType { device_type } => log::debug!("device type: {device_type:?}"),
+                ei::device::Event::Dimensions { width, height } => log::debug!("device dimensions: {width}x{height}"),
+                ei::device::Event::Region { offset_x, offset_y, width, hight, scale } => log::debug!("device region: {width}x{hight} @ ({offset_x},{offset_y}), scale: {scale}"),
+                ei::device::Event::Interface { object } => {
+                    log::debug!("device interface: {object:?}");
+                    if object.interface().eq("ei_pointer") {
+                        log::debug!("GOT POINTER DEVICE");
+                        self.pointer.replace((device, object.downcast().unwrap()));
+                    } else if object.interface().eq("ei_button") {
+                        log::debug!("GOT BUTTON DEVICE");
+                        self.button.replace((device, object.downcast().unwrap()));
+                    } else if object.interface().eq("ei_scroll") {
+                        log::debug!("GOT SCROLL DEVICE");
+                        self.scroll.replace((device, object.downcast().unwrap()));
+                    } else if object.interface().eq("ei_keyboard") {
+                        log::debug!("GOT KEYBOARD DEVICE");
+                        self.keyboard.replace((device, object.downcast().unwrap()));
+                    }
+                }
+                ei::device::Event::Done => {
+                    log::debug!("device: done {device:?}");
+                },
+                ei::device::Event::Resumed { serial } => {
+                    self.serial = serial;
+                    device.start_emulating(serial, self.sequence);
+                    self.sequence += 1;
+                    log::debug!("resumed: {device:?}");
+                    if let Some((d,_)) = &mut self.pointer {
+                        if d == &device {
+                            log::debug!("pointer resumed {serial}");
+                            self.has_pointer = true;
+                        }
+                    }
+                    if let Some((d,_)) = &mut self.button {
+                        if d == &device {
+                            log::debug!("button resumed {serial}");
+                            self.has_button = true;
+                        }
+                    }
+                    if let Some((d,_)) = &mut self.scroll {
+                        if d == &device {
+                            log::debug!("scroll resumed {serial}");
+                            self.has_scroll = true;
+                        }
+                    }
+                    if let Some((d,_)) = &mut self.keyboard {
+                        if d == &device {
+                            log::debug!("keyboard resumed {serial}");
+                            self.has_keyboard = true;
+                        }
+                    }
+                }
+                ei::device::Event::Paused { serial } => {
+                    self.has_pointer = false;
+                    self.has_button = false;
+                    self.serial = serial;
+                },
+                ei::device::Event::StartEmulating { serial, sequence } => log::debug!("start emulating {serial}, {sequence}"),
+                ei::device::Event::StopEmulating { serial } => log::debug!("stop emulating {serial}"),
+                ei::device::Event::Frame { serial, timestamp } => {
+                    log::debug!("frame: {serial}, {timestamp}");
+                }
+                ei::device::Event::RegionMappingId { mapping_id } => log::debug!("RegionMappingId {mapping_id}"),
+                e => log::debug!("invalid event: {e:?}"),
+            }
+            ei::Event::Seat(seat, request) => match request {
+                ei::seat::Event::Destroyed { serial } => {
+                    self.serial = serial;
+                    log::debug!("seat destroyed: {seat:?}");
+                },
+                ei::seat::Event::Name { name } => {
+                    log::debug!("seat name: {name}");
+                },
+                ei::seat::Event::Capability { mask, interface } => {
+                    log::debug!("seat capabilities: {mask}, interface: {interface:?}");
+                    self.capabilities.insert(interface, mask);
+                    self.capability_mask |= mask;
+                },
+                ei::seat::Event::Done => {
+                    log::debug!("seat done");
+                    log::debug!("binding capabilities: {}", self.capability_mask);
+                    seat.bind(self.capability_mask);
+                },
+                ei::seat::Event::Device { device } => {
+                    log::debug!("seat: new device - {device:?}");
+                },
+                _ => todo!(),
+            }
+            e => log::debug!("unhandled event: {e:?}"),
         }
         self.context.flush()?;
         Ok(())

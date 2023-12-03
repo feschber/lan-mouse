@@ -70,7 +70,7 @@ impl Server {
 
         loop {
             log::trace!("polling ...");
-            tokio::select! { biased;
+            tokio::select! {
                 // safety: cancellation safe
                 udp_event = receive_event(&self.socket) => {
                     log::trace!("-> receive_event");
@@ -107,14 +107,12 @@ impl Server {
                         }
                     }
                 }
-//                _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
-//                    if let EventConsumer::Async(c) = &mut self.consumer {
-//                        let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
-//                        c.consume(event, 0).await;
-//                        let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
-//                        c.consume(event, 0).await;
-//                    }
-//                }
+                _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
+                    let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
+                    self.consumer.consume(event, 0).await;
+                    let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
+                    self.consumer.consume(event, 0).await;
+                }
                 // safety: cancellation safe
                 e = self.consumer.dispatch() => {
                     log::trace!("-> consumer.dispatch()");
