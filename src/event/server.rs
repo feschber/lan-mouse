@@ -107,12 +107,6 @@ impl Server {
                         }
                     }
                 }
-                _ = tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(50)) => {
-                    let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 1 });
-                    self.consumer.consume(event, 0).await;
-                    let event = Event::Keyboard(crate::event::KeyboardEvent::Key { time: 0, key: 30, state: 0 });
-                    self.consumer.consume(event, 0).await;
-                }
                 // safety: cancellation safe
                 e = self.consumer.dispatch() => {
                     log::trace!("-> consumer.dispatch()");

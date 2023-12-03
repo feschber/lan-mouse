@@ -140,35 +140,20 @@ impl EventConsumer for LibeiConsumer {
                     log::info!("libei version {}", version);
                     // sender means we are sending events _to_ the eis server
                     handshake.handshake_version(version); // FIXME
-                    self.context.flush()?;
                     handshake.context_type(ContextType::Sender);
-                    self.context.flush()?;
                     handshake.name("ei-demo-client");
-                    self.context.flush()?;
                     handshake.interface_version("ei_connection", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_callback", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_pingpong", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_seat", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_device", 2);
-                    self.context.flush()?;
                     handshake.interface_version("ei_pointer", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_pointer_absolute", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_scroll", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_button", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_keyboard", 1);
-                    self.context.flush()?;
                     handshake.interface_version("ei_touchscreen", 1);
-                    self.context.flush()?;
                     handshake.finish();
-                    self.context.flush()?;
                     self.handshake = true;
                 }
                 ei::handshake::Event::InterfaceVersion { name, version } => {
@@ -176,7 +161,6 @@ impl EventConsumer for LibeiConsumer {
                 }
                 ei::handshake::Event::Connection { serial, connection } => {
                     connection.sync(1);
-                    self.context.flush()?;
                     self.serial = serial;
                 }
                 _ => unreachable!()
@@ -187,7 +171,6 @@ impl EventConsumer for LibeiConsumer {
                 }
                 ei::connection::Event::Ping { ping } => {
                     ping.done(0);
-                    self.context.flush()?;
                 }
                 ei::connection::Event::Disconnected { last_serial: _, reason, explanation } => {
                     log::debug!("ei - disconnected: reason: {reason:?}: {explanation}")
@@ -282,7 +265,6 @@ impl EventConsumer for LibeiConsumer {
                     log::debug!("seat done");
                     log::debug!("binding capabilities: {}", self.capability_mask);
                     seat.bind(self.capability_mask);
-                    self.context.flush()?;
                 },
                 ei::seat::Event::Device { device } => {
                     log::debug!("seat: new device - {device:?}");
