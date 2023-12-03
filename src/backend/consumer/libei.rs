@@ -112,7 +112,7 @@ impl EventConsumer for LibeiConsumer {
                 crate::event::KeyboardEvent::Key { time: _, key, state } => {
                     if !self.has_keyboard { return }
                     if let Some((d, k)) = &mut self.keyboard {
-                        k.key(key, match state { 0 => KeyState::Press, _ => KeyState::Released });
+                        k.key(key, match state { 0 => KeyState::Released, _ => KeyState::Press });
                         d.frame(self.serial, now);
                     }
                 },
