@@ -12,8 +12,7 @@ use tokio::net::TcpStream;
 use std::{net::SocketAddr, io::ErrorKind};
 
 use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}};
-// use crate::event::PointerEvent;
-use super::Event;
+use crate::event::Event;
 
 /// keeps track of state to prevent a feedback loop
 /// of continuously sending and receiving the same event.

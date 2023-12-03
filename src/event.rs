@@ -1,7 +1,5 @@
 use std::{error::Error, fmt::{self, Display}};
 
-pub mod server;
-
 #[derive(Debug, Clone, Copy)]
 pub enum PointerEvent {
     Motion {

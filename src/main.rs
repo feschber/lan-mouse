@@ -3,7 +3,7 @@ use std::{process, error::Error};
 use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
-    config::{Config, Frontend::{Cli, Gtk}}, event::server::Server,
+    config::{Config, Frontend::{Cli, Gtk}}, server::Server,
     frontend::{FrontendListener, cli},
 };
 
