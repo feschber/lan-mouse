@@ -80,8 +80,10 @@ $ cargo run --release -- --frontend cli
 ```
 
 ## Configuration
-To automatically load clients on startup, the file `config.toml` is parsed.
-(must be in the directory where lan-mouse is executed).
+To automatically load clients on startup, the file `$XDG_CONFIG_HOME/lan-mouse/config.toml` is parsed.
+`$XDG_CONFIG_HOME` defaults to `~/.config/`.
+
+To create this file you can copy the following example config:
 
 ### Example config
 
