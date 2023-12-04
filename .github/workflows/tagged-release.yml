@@ -51,7 +51,7 @@ jobs:
 
   tagged-release:
     name: "Tagged Release"
-    needs: [windows-release-build, linux-release-build]
+    needs: [windows-release-build, linux-release-build, macos-release-build]
     runs-on: "ubuntu-latest"
     steps:
     - name: Download build artifacts
