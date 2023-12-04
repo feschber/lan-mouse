@@ -13,5 +13,5 @@ pub mod xdg_desktop_portal;
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 pub mod libei;
 
-#[cfg(all(unix, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub mod macos;
