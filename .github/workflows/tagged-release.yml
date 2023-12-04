@@ -35,6 +35,20 @@ jobs:
         name: lan-mouse-windows
         path: target/release/lan-mouse.exe
 
+  macos-release-build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: install dependencies
+      run: brew install gtk4 libadwaita
+    - name: Release Build
+      run: cargo build --release
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: lan-mouse-macos
+        path: target/release/lan-mouse
+
   tagged-release:
     name: "Tagged Release"
     needs: [windows-release-build, linux-release-build]
@@ -50,3 +64,4 @@ jobs:
         files: |
           lan-mouse-linux/lan-mouse
           lan-mouse-windows/lan-mouse.exe
+          lan-mouse-macos/lan-mouse
