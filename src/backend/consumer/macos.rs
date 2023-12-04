@@ -3,9 +3,9 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use crate::client::{ClientEvent, ClientHandle};
 use crate::consumer::EventConsumer;
-use crate::event::{Event, PointerEvent};
+use crate::event::{Event, KeyboardEvent, PointerEvent};
 use core_graphics::display::{CGPoint};
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, CGScrollEventUnit, ScrollEventUnit};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, ScrollEventUnit};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 pub struct MacOSConsumer {
@@ -144,7 +144,24 @@ impl EventConsumer for MacOSConsumer {
                 }
                 PointerEvent::Frame { .. } => {}
             }
-            Event::Keyboard(_) => {}
+            Event::Keyboard(keyboard_event) => match keyboard_event {
+                KeyboardEvent::Key { time: _, key, state } => {
+                    let code = CGKeyCode::from_le(key as u16); // FIXME byteorder
+                    let event = match CGEvent::new_keyboard_event(
+                        self.event_source.clone(),
+                        code,
+                        match state { 1 => true, _ => false }
+                    ) {
+                        Ok(e) => e,
+                        Err(_) => {
+                            log::warn!("unable to create key event");
+                            return
+                        }
+                    };
+                    event.post(CGEventTapLocation::HID);
+                }
+                KeyboardEvent::Modifiers { .. } => {}
+            }
             Event::Release() => {}
             Event::Ping() => {}
             Event::Pong() => {}
