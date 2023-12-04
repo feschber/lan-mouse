@@ -9,10 +9,10 @@ use crate::{
     event::Event,
 };
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os="macos")))]
 use std::env;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 enum Backend {
     LayerShell,
     Libei,
@@ -20,10 +20,13 @@ enum Backend {
 }
 
 pub async fn create() -> Result<Box<dyn EventProducer>> {
+    #[cfg(target_os = "macos")]
+    return Ok(Box::new(producer::macos::MacOSProducer::new()));
+
     #[cfg(windows)]
     return Ok(Box::new(producer::windows::WindowsProducer::new()));
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let backend = match env::var("XDG_SESSION_TYPE") {
         Ok(session_type) => match session_type.as_str() {
             "x11" => {
@@ -56,7 +59,7 @@ pub async fn create() -> Result<Box<dyn EventProducer>> {
         }
     };
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     match backend {
         Backend::X11 => {
             #[cfg(not(feature = "x11"))]

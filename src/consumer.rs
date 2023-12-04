@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::future;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::env;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::Result;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug)]
 enum Backend {
     Wlroots,
@@ -37,7 +37,10 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
     #[cfg(windows)]
     return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    return Ok(Box::new(consumer::macos::MacOSConsumer::new()));
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     let backend = match env::var("XDG_SESSION_TYPE") {
         Ok(session_type) => match session_type.as_str() {
             "x11" => {
@@ -87,7 +90,7 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
         }
     };
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     match backend {
         Backend::Libei => {
             #[cfg(not(feature = "libei"))]
