@@ -38,7 +38,7 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
     return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
 
     #[cfg(target_os = "macos")]
-    return Ok(Box::new(consumer::macos::MacOSConsumer::new()));
+    return Ok(Box::new(consumer::macos::MacOSConsumer::new()?));
 
     #[cfg(all(unix, not(target_os = "macos")))]
     let backend = match env::var("XDG_SESSION_TYPE") {
