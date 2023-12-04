@@ -5,7 +5,7 @@ use crate::client::{ClientEvent, ClientHandle};
 use crate::consumer::EventConsumer;
 use crate::event::{Event, PointerEvent};
 use core_graphics::display::{CGPoint};
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, CGScrollEventUnit, ScrollEventUnit};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 pub struct MacOSConsumer {
@@ -123,7 +123,25 @@ impl EventConsumer for MacOSConsumer {
                     };
                     event.post(CGEventTapLocation::HID);
                 }
-                PointerEvent::Axis { .. } => {}
+                PointerEvent::Axis { time: _, axis, value } => {
+                    let value = value as i32 / 10; // FIXME: high precision scroll events
+                    let (count, wheel1, wheel2, wheel3) = match axis {
+                        0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                        1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
+                        _ => {
+                            log::warn!("invalid scroll event: {axis}, {value}");
+                            return
+                        }
+                    };
+                    let event = match CGEvent::new_scroll_event(self.event_source.clone(), ScrollEventUnit::LINE, count, wheel1, wheel2, wheel3) {
+                        Ok(e) => e,
+                        Err(()) => {
+                            log::warn!("scroll event creation failed!");
+                            return
+                        }
+                    };
+                    event.post(CGEventTapLocation::HID);
+                }
                 PointerEvent::Frame { .. } => {}
             }
             Event::Keyboard(_) => {}
