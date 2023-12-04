@@ -100,7 +100,7 @@ impl EventConsumer for MacOSConsumer {
                 PointerEvent::Button { time: _, button, state } => {
                     let (event_type, mouse_button) = match (button, state) {
                         (b, 1) if b == crate::event::BTN_LEFT => (CGEventType::LeftMouseDown, CGMouseButton::Left),
-                        (b, 0) if b == crate::event::BTN_LEFT => (CGEventType::LeftMouseUp, CGMouseButton::Right),
+                        (b, 0) if b == crate::event::BTN_LEFT => (CGEventType::LeftMouseUp, CGMouseButton::Left),
                         (b, 1) if b == crate::event::BTN_RIGHT => (CGEventType::RightMouseDown, CGMouseButton::Right),
                         (b, 0) if b == crate::event::BTN_RIGHT => (CGEventType::RightMouseUp, CGMouseButton::Right),
                         (b, 1) if b == crate::event::BTN_MIDDLE => (CGEventType::OtherMouseDown, CGMouseButton::Center),
