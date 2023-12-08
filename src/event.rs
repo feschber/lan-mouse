@@ -1,4 +1,7 @@
-use std::{error::Error, fmt::{self, Display}};
+use std::{
+    error::Error,
+    fmt::{self, Display},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum PointerEvent {
@@ -47,10 +50,22 @@ pub enum Event {
 impl Display for PointerEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PointerEvent::Motion { time: _ , relative_x, relative_y } => write!(f, "motion({relative_x},{relative_y})"),
-            PointerEvent::Button { time: _ , button, state } => write!(f, "button({button}, {state})"),
-            PointerEvent::Axis { time: _, axis, value } => write!(f, "scroll({axis}, {value})"),
-            PointerEvent::Frame { } => write!(f, "frame()"),
+            PointerEvent::Motion {
+                time: _,
+                relative_x,
+                relative_y,
+            } => write!(f, "motion({relative_x},{relative_y})"),
+            PointerEvent::Button {
+                time: _,
+                button,
+                state,
+            } => write!(f, "button({button}, {state})"),
+            PointerEvent::Axis {
+                time: _,
+                axis,
+                value,
+            } => write!(f, "scroll({axis}, {value})"),
+            PointerEvent::Frame {} => write!(f, "frame()"),
         }
     }
 }
@@ -58,8 +73,20 @@ impl Display for PointerEvent {
 impl Display for KeyboardEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            KeyboardEvent::Key { time: _, key, state } => write!(f, "key({key}, {state})"),
-            KeyboardEvent::Modifiers { mods_depressed, mods_latched, mods_locked, group } => write!(f, "modifiers({mods_depressed},{mods_latched},{mods_locked},{group})"),
+            KeyboardEvent::Key {
+                time: _,
+                key,
+                state,
+            } => write!(f, "key({key}, {state})"),
+            KeyboardEvent::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            } => write!(
+                f,
+                "modifiers({mods_depressed},{mods_latched},{mods_locked},{group})"
+            ),
         }
     }
 }

@@ -1,7 +1,6 @@
 use std::io;
 use std::task::Poll;
 
-
 use futures_core::Stream;
 
 use crate::event::Event;
@@ -9,16 +8,16 @@ use crate::producer::EventProducer;
 
 use crate::client::{ClientEvent, ClientHandle};
 
-pub struct X11Producer { }
+pub struct X11Producer {}
 
 impl X11Producer {
     pub fn new() -> Self {
-        Self { }
+        Self {}
     }
 }
 
 impl EventProducer for X11Producer {
-    fn notify(&mut self, _: ClientEvent) { }
+    fn notify(&mut self, _: ClientEvent) {}
 
     fn release(&mut self) {}
 }
@@ -26,7 +25,10 @@ impl EventProducer for X11Producer {
 impl Stream for X11Producer {
     type Item = io::Result<(ClientHandle, Event)>;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
         Poll::Pending
     }
 }

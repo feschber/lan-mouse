@@ -3,8 +3,11 @@ use std::io;
 
 use futures_core::Stream;
 
-use crate::{client::{ClientHandle, ClientEvent}, event::Event};
 use crate::backend::producer;
+use crate::{
+    client::{ClientEvent, ClientHandle},
+    event::Event,
+};
 
 #[cfg(unix)]
 use std::env;
@@ -26,7 +29,7 @@ pub async fn create() -> Result<Box<dyn EventProducer>> {
             "x11" => {
                 log::info!("XDG_SESSION_TYPE = x11 -> using X11 event producer");
                 Backend::X11
-            },
+            }
             "wayland" => {
                 log::info!("XDG_SESSION_TYPE = wayland -> using wayland event producer");
                 match env::var("XDG_CURRENT_DESKTOP") {
@@ -39,7 +42,7 @@ pub async fn create() -> Result<Box<dyn EventProducer>> {
                             log::info!("XDG_CURRENT_DESKTOP = {d} -> using layer_shell backend");
                             Backend::LayerShell
                         }
-                    }
+                    },
                     Err(_) => {
                         log::warn!("XDG_CURRENT_DESKTOP not set! Assuming layer_shell support -> using layer_shell backend");
                         Backend::LayerShell
@@ -48,7 +51,9 @@ pub async fn create() -> Result<Box<dyn EventProducer>> {
             }
             _ => panic!("unknown XDG_SESSION_TYPE"),
         },
-        Err(_) => panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!"),
+        Err(_) => {
+            panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!")
+        }
     };
 
     #[cfg(unix)]
@@ -70,7 +75,7 @@ pub async fn create() -> Result<Box<dyn EventProducer>> {
             panic!("feature libei not enabled");
             #[cfg(feature = "libei")]
             Ok(Box::new(producer::libei::LibeiProducer::new()?))
-        },
+        }
     }
 }
 

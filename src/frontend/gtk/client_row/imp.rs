@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 
-use glib::{Binding, subclass::InitializingObject};
-use adw::{prelude::*, ComboRow, ActionRow};
 use adw::subclass::prelude::*;
+use adw::{prelude::*, ActionRow, ComboRow};
+use glib::{subclass::InitializingObject, Binding};
 use gtk::glib::clone;
-use gtk::{glib, CompositeTemplate, Switch, Button};
+use gtk::{glib, Button, CompositeTemplate, Switch};
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
@@ -44,9 +44,10 @@ impl ObjectSubclass for ClientRow {
 impl ObjectImpl for ClientRow {
     fn constructed(&self) {
         self.parent_constructed();
-        self.delete_button.connect_clicked(clone!(@weak self as row => move |button| {
-            row.handle_client_delete(button);
-        }));
+        self.delete_button
+            .connect_clicked(clone!(@weak self as row => move |button| {
+                row.handle_client_delete(button);
+            }));
     }
 }
 
@@ -55,7 +56,9 @@ impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
         let idx = self.obj().index() as u32;
-        switch.activate_action("win.request-client-update", Some(&idx.to_variant())).unwrap();
+        switch
+            .activate_action("win.request-client-update", Some(&idx.to_variant()))
+            .unwrap();
         switch.set_state(state);
 
         true // dont run default handler

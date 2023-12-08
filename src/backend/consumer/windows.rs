@@ -1,16 +1,15 @@
+use crate::{
+    consumer::EventConsumer,
+    event::{KeyboardEvent, PointerEvent},
+};
 use async_trait::async_trait;
-use crate::{event::{KeyboardEvent, PointerEvent}, consumer::EventConsumer};
 use winapi::{
     self,
-    um::winuser::{INPUT, INPUT_MOUSE, LPINPUT, MOUSEEVENTF_MOVE, MOUSEINPUT,
-        MOUSEEVENTF_LEFTDOWN,
-        MOUSEEVENTF_RIGHTDOWN,
-        MOUSEEVENTF_MIDDLEDOWN,
-        MOUSEEVENTF_LEFTUP,
-        MOUSEEVENTF_RIGHTUP,
-        MOUSEEVENTF_MIDDLEUP,
-        MOUSEEVENTF_WHEEL,
-        MOUSEEVENTF_HWHEEL, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_SCANCODE, KEYEVENTF_KEYUP,
+    um::winuser::{
+        INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+        LPINPUT, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
+        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
     },
 };
 
@@ -19,11 +18,12 @@ use crate::{
     event::Event,
 };
 
-
 pub struct WindowsConsumer {}
 
 impl WindowsConsumer {
-    pub fn new() -> Self { Self {  } }
+    pub fn new() -> Self {
+        Self {}
+    }
 }
 
 #[async_trait]
@@ -38,12 +38,24 @@ impl EventConsumer for WindowsConsumer {
                 } => {
                     rel_mouse(relative_x as i32, relative_y as i32);
                 }
-                PointerEvent::Button { time:_, button, state } => { mouse_button(button, state)}
-                PointerEvent::Axis { time:_, axis, value } => { scroll(axis, value) }
+                PointerEvent::Button {
+                    time: _,
+                    button,
+                    state,
+                } => mouse_button(button, state),
+                PointerEvent::Axis {
+                    time: _,
+                    axis,
+                    value,
+                } => scroll(axis, value),
                 PointerEvent::Frame {} => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
-                KeyboardEvent::Key { time:_, key, state } => { key_event(key, state) }
+                KeyboardEvent::Key {
+                    time: _,
+                    key,
+                    state,
+                } => key_event(key, state),
                 KeyboardEvent::Modifiers { .. } => {}
             },
             _ => {}
@@ -53,7 +65,7 @@ impl EventConsumer for WindowsConsumer {
     async fn notify(&mut self, _: ClientEvent) {
         // nothing to do
     }
-    
+
     async fn destroy(&mut self) {}
 }
 
@@ -90,18 +102,19 @@ fn mouse_button(button: u32, state: u32) {
             0x110 => MOUSEEVENTF_LEFTUP,
             0x111 => MOUSEEVENTF_RIGHTUP,
             0x112 => MOUSEEVENTF_MIDDLEUP,
-            _ => return
-        }
+            _ => return,
+        },
         1 => match button {
             0x110 => MOUSEEVENTF_LEFTDOWN,
             0x111 => MOUSEEVENTF_RIGHTDOWN,
             0x112 => MOUSEEVENTF_MIDDLEDOWN,
-            _ => return
-        }
-        _ => return
+            _ => return,
+        },
+        _ => return,
     };
     let mi = MOUSEINPUT {
-        dx: 0, dy: 0, // no movement
+        dx: 0,
+        dy: 0, // no movement
         mouseData: 0,
         dwFlags: dw_flags,
         time: 0,
@@ -114,10 +127,11 @@ fn scroll(axis: u8, value: f64) {
     let event_type = match axis {
         0 => MOUSEEVENTF_WHEEL,
         1 => MOUSEEVENTF_HWHEEL,
-        _ => return
+        _ => return,
     };
     let mi = MOUSEINPUT {
-        dx: 0, dy: 0,
+        dx: 0,
+        dy: 0,
         mouseData: (-value * 15.0) as i32 as u32,
         dwFlags: event_type,
         time: 0,
@@ -130,11 +144,12 @@ fn key_event(key: u32, state: u8) {
     let ki = KEYBDINPUT {
         wVk: 0,
         wScan: key as u16,
-        dwFlags: KEYEVENTF_SCANCODE | match state {
-            0 => KEYEVENTF_KEYUP,
-            1 => 0u32,
-            _ => return
-        },
+        dwFlags: KEYEVENTF_SCANCODE
+            | match state {
+                0 => KEYEVENTF_KEYUP,
+                1 => 0u32,
+                _ => return,
+            },
         time: 0,
         dwExtraInfo: 0,
     };

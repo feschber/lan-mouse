@@ -1,9 +1,15 @@
-use std::{cell::{Cell, RefCell}, os::unix::net::UnixStream};
+use std::{
+    cell::{Cell, RefCell},
+    os::unix::net::UnixStream,
+};
 
-use glib::subclass::InitializingObject;
-use adw::{ActionRow, ToastOverlay, prelude::{WidgetExt, EditableExt}};
 use adw::subclass::prelude::*;
-use gtk::{glib, Button, CompositeTemplate, ListBox, gio, Entry};
+use adw::{
+    prelude::{EditableExt, WidgetExt},
+    ActionRow, ToastOverlay,
+};
+use glib::subclass::InitializingObject;
+use gtk::{gio, glib, Button, CompositeTemplate, Entry, ListBox};
 
 use crate::config::DEFAULT_PORT;
 
@@ -65,7 +71,8 @@ impl Window {
     #[template_callback]
     fn handle_port_edit_cancel(&self) {
         log::debug!("cancel port edit");
-        self.port_entry.set_text(self.port.get().to_string().as_str());
+        self.port_entry
+            .set_text(self.port.get().to_string().as_str());
         self.port_edit_apply.set_visible(false);
         self.port_edit_cancel.set_visible(false);
     }
@@ -81,7 +88,6 @@ impl Window {
         self.port_edit_cancel.set_visible(false);
     }
 }
-
 
 impl ObjectImpl for Window {
     fn constructed(&self) {

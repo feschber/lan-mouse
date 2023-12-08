@@ -1,11 +1,15 @@
-use std::future;
 use async_trait::async_trait;
+use std::future;
 
 #[cfg(unix)]
 use std::env;
 
+use crate::{
+    backend::consumer,
+    client::{ClientEvent, ClientHandle},
+    event::Event,
+};
 use anyhow::Result;
-use crate::{backend::consumer, client::{ClientHandle, ClientEvent}, event::Event};
 
 #[cfg(unix)]
 #[derive(Debug)]
@@ -49,7 +53,9 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
                             Backend::Libei
                         }
                         "KDE" => {
-                            log::info!("XDG_CURRENT_DESKTOP = KDE -> using xdg_desktop_portal backend");
+                            log::info!(
+                                "XDG_CURRENT_DESKTOP = KDE -> using xdg_desktop_portal backend"
+                            );
                             Backend::RemoteDesktopPortal
                         }
                         "sway" => {
@@ -61,10 +67,12 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
                             Backend::Wlroots
                         }
                         _ => {
-                            log::warn!("unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend");
+                            log::warn!(
+                                "unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend"
+                            );
                             Backend::Wlroots
                         }
-                    }
+                    },
                     // default to wlroots backend for now
                     _ => {
                         log::warn!("unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend");
@@ -74,7 +82,9 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
             }
             _ => panic!("unknown XDG_SESSION_TYPE"),
         },
-        Err(_) => panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!"),
+        Err(_) => {
+            panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!")
+        }
     };
 
     #[cfg(unix)]
@@ -84,24 +94,26 @@ pub async fn create() -> Result<Box<dyn EventConsumer>> {
             panic!("feature libei not enabled");
             #[cfg(feature = "libei")]
             Ok(Box::new(consumer::libei::LibeiConsumer::new().await?))
-        },
+        }
         Backend::RemoteDesktopPortal => {
             #[cfg(not(feature = "xdg_desktop_portal"))]
             panic!("feature xdg_desktop_portal not enabled");
             #[cfg(feature = "xdg_desktop_portal")]
-            Ok(Box::new(consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?))
-        },
+            Ok(Box::new(
+                consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?,
+            ))
+        }
         Backend::Wlroots => {
             #[cfg(not(feature = "wayland"))]
             panic!("feature wayland not enabled");
             #[cfg(feature = "wayland")]
             Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()?))
-        },
+        }
         Backend::X11 => {
             #[cfg(not(feature = "x11"))]
             panic!("feature x11 not enabled");
             #[cfg(feature = "x11")]
             Ok(Box::new(consumer::x11::X11Consumer::new()))
-        },
+        }
     }
 }

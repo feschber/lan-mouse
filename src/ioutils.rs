@@ -2,9 +2,8 @@ use std::io::{self, Write};
 
 use crate::client::Position;
 
-
 pub fn ask_confirmation(default: bool) -> Result<bool, io::Error> {
-    eprint!("{}", if default {" [Y,n] "} else { " [y,N] "});
+    eprint!("{}", if default { " [Y,n] " } else { " [y,N] " });
     io::stderr().flush()?;
     let answer = loop {
         let mut buffer = String::new();
@@ -18,7 +17,7 @@ pub fn ask_confirmation(default: bool) -> Result<bool, io::Error> {
             _ => {
                 eprint!("Enter y for Yes or n for No: ");
                 io::stderr().flush()?;
-                continue
+                continue;
             }
         }
     };
@@ -41,7 +40,7 @@ pub fn ask_position() -> Result<Position, io::Error> {
             _ => {
                 eprint!("Invalid position: {answer} - enter top (t) | bottom (b) | left(l) | right(r): ");
                 io::stderr().flush()?;
-                continue
+                continue;
             }
         };
     };

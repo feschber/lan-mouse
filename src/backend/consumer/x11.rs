@@ -1,11 +1,8 @@
-use std::ptr;
 use async_trait::async_trait;
+use std::ptr;
 use x11::{xlib, xtest};
 
-use crate::{
-    client::ClientHandle,
-    event::Event, consumer::EventConsumer,
-};
+use crate::{client::ClientHandle, consumer::EventConsumer, event::Event};
 
 pub struct X11Consumer {
     display: *mut xlib::Display,
@@ -60,4 +57,3 @@ impl EventConsumer for X11Consumer {
 
     async fn destroy(&mut self) {}
 }
-

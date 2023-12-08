@@ -4,10 +4,14 @@ use std::io::Write;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib, gio, NoSelection};
 use glib::{clone, Object};
+use gtk::{gio, glib, NoSelection};
 
-use crate::{frontend::{gtk::client_object::ClientObject, FrontendEvent}, client::{Position, ClientHandle}, config::DEFAULT_PORT};
+use crate::{
+    client::{ClientHandle, Position},
+    config::DEFAULT_PORT,
+    frontend::{gtk::client_object::ClientObject, FrontendEvent},
+};
 
 use super::client_row::ClientRow;
 
@@ -67,7 +71,14 @@ impl Window {
         row
     }
 
-    pub fn new_client(&self, handle: ClientHandle, hostname: Option<String>, port: u16, position: Position, active: bool) {
+    pub fn new_client(
+        &self,
+        handle: ClientHandle,
+        hostname: Option<String>,
+        port: u16,
+        position: Position,
+        active: bool,
+    ) {
         let client = ClientObject::new(handle, hostname, port as u32, position.to_string(), active);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
@@ -122,7 +133,7 @@ impl Window {
             "bottom" => Position::Bottom,
             _ => {
                 log::error!("invalid position: {}", data.position);
-                return
+                return;
             }
         };
         let hostname = data.hostname;
@@ -133,7 +144,7 @@ impl Window {
         let event = FrontendEvent::ActivateClient(client.handle(), !client.active());
         self.request(event);
     }
-    
+
     pub fn request_client_delete(&self, idx: u32) {
         if let Some(obj) = self.clients().item(idx) {
             let client_object: &ClientObject = obj
@@ -145,7 +156,7 @@ impl Window {
         }
     }
 
-    fn request(&self, event: FrontendEvent)  {
+    fn request(&self, event: FrontendEvent) {
         let json = serde_json::to_string(&event).unwrap();
         log::debug!("requesting {json}");
         let mut stream = self.imp().stream.borrow_mut();

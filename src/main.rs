@@ -1,17 +1,18 @@
 use anyhow::Result;
-use std::process::{self, Command, Child};
+use std::process::{self, Child, Command};
 
 use env_logger::Env;
 use lan_mouse::{
-    consumer, producer,
-    config::Config, server::Server,
-    frontend::{FrontendListener, self},
+    config::Config,
+    consumer,
+    frontend::{self, FrontendListener},
+    producer,
+    server::Server,
 };
 
-use tokio::{task::LocalSet, join};
+use tokio::{join, task::LocalSet};
 
 pub fn main() {
-
     // init logging
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
     env_logger::init_from_env(env);
@@ -30,7 +31,6 @@ pub fn start_service() -> Result<Child> {
     Ok(child)
 }
 
-
 pub fn run() -> Result<()> {
     // parse config file + cli args
     let config = Config::new()?;
@@ -40,12 +40,11 @@ pub fn run() -> Result<()> {
         // if daemon is specified we run the service
         run_service(&config)?;
     } else {
-        //  otherwise start the service as a child process and 
+        //  otherwise start the service as a child process and
         //  run a frontend
         start_service()?;
         frontend::run_frontend(&config)?;
     }
-
 
     anyhow::Ok(())
 }
@@ -66,16 +65,12 @@ fn run_service(config: &Config) -> Result<()> {
             None => {
                 // none means some other instance is already running
                 log::info!("service already running, exiting");
-                return anyhow::Ok(())
+                return anyhow::Ok(());
             }
-,
         };
 
         // create event producer and consumer
-        let (producer, consumer) = join!(
-            producer::create(),
-            consumer::create(),
-        );
+        let (producer, consumer) = join!(producer::create(), consumer::create(),);
         let (producer, consumer) = (producer?, consumer?);
 
         // create server

@@ -1,11 +1,11 @@
 use anyhow::Result;
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::env;
 use std::net::IpAddr;
 use std::{error::Error, fs};
-use std::env;
 use toml;
-use clap::Parser;
 
 use crate::client::Position;
 
@@ -74,15 +74,17 @@ impl Config {
     pub fn new() -> Result<Self> {
         let args = CliArgs::parse();
         let config_file = "config.toml";
-        #[cfg(unix)] let config_path = {
-            let xdg_config_home = env::var("XDG_CONFIG_HOME")
-                .unwrap_or(format!("{}/.config", env::var("HOME")?));
+        #[cfg(unix)]
+        let config_path = {
+            let xdg_config_home =
+                env::var("XDG_CONFIG_HOME").unwrap_or(format!("{}/.config", env::var("HOME")?));
             format!("{xdg_config_home}/lan-mouse/{config_file}")
         };
 
-        #[cfg(not(unix))] let config_path = {
-            let app_data = env::var("LOCALAPPDATA")
-                .unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
+        #[cfg(not(unix))]
+        let config_path = {
+            let app_data =
+                env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
             format!("{app_data}\\lan-mouse\\{config_file}")
         };
 
@@ -94,7 +96,7 @@ impl Config {
                 log::error!("{config_path}: {e}");
                 log::warn!("Continuing without config file ...");
                 None
-            },
+            }
             Ok(c) => Some(c),
         };
 
@@ -114,8 +116,8 @@ impl Config {
             Some(s) => match s.as_str() {
                 "cli" => Frontend::Cli,
                 "gtk" => Frontend::Gtk,
-                    _ => Frontend::Cli,
-            }
+                _ => Frontend::Cli,
+            },
         };
 
         let port = match args.port {
@@ -123,7 +125,7 @@ impl Config {
             None => match &config_toml {
                 Some(c) => c.port.unwrap_or(DEFAULT_PORT),
                 None => DEFAULT_PORT,
-            }
+            },
         };
 
         let mut clients: Vec<(Client, Position)> = vec![];
@@ -153,16 +155,19 @@ impl Config {
         })
     }
 
-    pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16,  Position)> {
-        self.clients.iter().map(|(c,p)| {
-            let port = c.port.unwrap_or(DEFAULT_PORT);
-            let ips: HashSet<IpAddr> = if let Some(ips) = c.ips.as_ref() {
-                HashSet::from_iter(ips.iter().cloned())
-            } else {
-                HashSet::new()
-            };
-            let host_name = c.host_name.clone();
-            (ips, host_name, port, *p)
-        }).collect()
+    pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16, Position)> {
+        self.clients
+            .iter()
+            .map(|(c, p)| {
+                let port = c.port.unwrap_or(DEFAULT_PORT);
+                let ips: HashSet<IpAddr> = if let Some(ips) = c.ips.as_ref() {
+                    HashSet::from_iter(ips.iter().cloned())
+                } else {
+                    HashSet::new()
+                };
+                let host_name = c.host_name.clone();
+                (ips, host_name, port, *p)
+            })
+            .collect()
     }
 }

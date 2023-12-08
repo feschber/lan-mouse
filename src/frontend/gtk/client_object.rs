@@ -1,7 +1,7 @@
 mod imp;
 
-use gtk::glib::{self, Object};
 use adw::subclass::prelude::*;
+use gtk::glib::{self, Object};
 
 use crate::client::ClientHandle;
 
@@ -10,7 +10,13 @@ glib::wrapper! {
 }
 
 impl ClientObject {
-    pub fn new(handle: ClientHandle, hostname: Option<String>, port: u32, position: String, active: bool) -> Self {
+    pub fn new(
+        handle: ClientHandle,
+        hostname: Option<String>,
+        port: u32,
+        position: String,
+        active: bool,
+    ) -> Self {
         Object::builder()
             .property("handle", handle)
             .property("hostname", hostname)

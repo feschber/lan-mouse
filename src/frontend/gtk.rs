@@ -1,13 +1,24 @@
-mod window;
 mod client_object;
 mod client_row;
+mod window;
 
-use std::{io::{Read, ErrorKind}, env, process, str};
+use std::{
+    env,
+    io::{ErrorKind, Read},
+    process, str,
+};
 
-use crate::{frontend::gtk::window::Window, config::DEFAULT_PORT};
+use crate::{config::DEFAULT_PORT, frontend::gtk::window::Window};
 
-use gtk::{prelude::*, IconTheme, gdk::Display, gio::{SimpleAction, SimpleActionGroup}, glib::{clone, MainContext, Priority}, CssProvider, subclass::prelude::ObjectSubclassIsExt};
 use adw::Application;
+use gtk::{
+    gdk::Display,
+    gio::{SimpleAction, SimpleActionGroup},
+    glib::{clone, MainContext, Priority},
+    prelude::*,
+    subclass::prelude::ObjectSubclassIsExt,
+    CssProvider, IconTheme,
+};
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
@@ -22,8 +33,7 @@ pub fn run() -> glib::ExitCode {
 }
 
 fn gtk_main() -> glib::ExitCode {
-    gio::resources_register_include!("lan-mouse.gresource")
-        .expect("Failed to register resources.");
+    gio::resources_register_include!("lan-mouse.gresource").expect("Failed to register resources.");
 
     let app = Application::builder()
         .application_id("de.feschber.lan-mouse")
@@ -41,14 +51,15 @@ fn load_css() {
     let provider = CssProvider::new();
     provider.load_from_resource("de/feschber/LanMouse/style.css");
     gtk::style_context_add_provider_for_display(
-    &Display::default().expect("Could not connect to a display."),
+        &Display::default().expect("Could not connect to a display."),
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 }
 
 fn load_icons() {
-    let icon_theme = IconTheme::for_display(&Display::default().expect("Could not connect to a display."));
+    let icon_theme =
+        IconTheme::for_display(&Display::default().expect("Could not connect to a display."));
     icon_theme.add_resource_path("/de/feschber/LanMouse/icons");
 }
 
@@ -69,7 +80,7 @@ fn build_ui(app: &Application) {
         }
     };
     log::debug!("connected to lan-mouse-socket");
-    
+
     let (sender, receiver) = MainContext::channel::<FrontendNotify>(Priority::default());
 
     gio::spawn_blocking(move || {
@@ -92,14 +103,13 @@ fn build_ui(app: &Application) {
             };
 
             // parse json
-            let json = str::from_utf8(&buf)
-                .unwrap();
+            let json = str::from_utf8(&buf).unwrap();
             match serde_json::from_str(json) {
                 Ok(notify) => sender.send(notify).unwrap(),
                 Err(e) => log::error!("{e}"),
             }
         } {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => log::error!("{e}"),
         }
     });
@@ -152,16 +162,12 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    let action_request_client_update = SimpleAction::new(
-        "request-client-update",
-        Some(&u32::static_variant_type()),
-    );
+    let action_request_client_update =
+        SimpleAction::new("request-client-update", Some(&u32::static_variant_type()));
 
     // remove client
-    let action_client_delete = SimpleAction::new(
-        "request-client-delete",
-        Some(&u32::static_variant_type()),
-    );
+    let action_client_delete =
+        SimpleAction::new("request-client-delete", Some(&u32::static_variant_type()));
 
     // update client state
     action_request_client_update.connect_activate(clone!(@weak window => move |_action, param| {

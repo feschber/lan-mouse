@@ -1,20 +1,20 @@
+use core::task::{Context, Poll};
+use futures::Stream;
 use std::io::Result;
 use std::pin::Pin;
-use futures::Stream;
-use core::task::{Context, Poll};
 
 use crate::{
-    client::{ClientHandle, ClientEvent},
+    client::{ClientEvent, ClientHandle},
     event::Event,
     producer::EventProducer,
 };
 
-pub struct WindowsProducer { }
+pub struct WindowsProducer {}
 
 impl EventProducer for WindowsProducer {
-    fn notify(&mut self, _: ClientEvent) { }
+    fn notify(&mut self, _: ClientEvent) {}
 
-    fn release(&mut self) { }
+    fn release(&mut self) {}
 }
 
 impl WindowsProducer {

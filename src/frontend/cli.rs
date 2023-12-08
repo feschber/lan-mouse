@@ -1,12 +1,16 @@
-use anyhow::{anyhow, Result, Context};
-use std::{thread, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
+use anyhow::{anyhow, Context, Result};
 #[cfg(windows)]
 use std::net::SocketAddrV4;
+use std::{
+    io::{ErrorKind, Read, Write},
+    str::SplitWhitespace,
+    thread,
+};
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 use crate::{client::Position, config::DEFAULT_PORT};
 
@@ -31,40 +35,40 @@ pub fn run() -> Result<()> {
     let reader = thread::Builder::new()
         .name("cli-frontend".to_string())
         .spawn(move || {
-        // all further prompts
-        prompt();
-        loop {
-            let mut buf = String::new();
-            match std::io::stdin().read_line(&mut buf) {
-                Ok(0) => break,
-                Ok(len) => {
-                    if let Some(events) = parse_cmd(buf, len) {
-                        for event in events.iter() {
-                            let json = serde_json::to_string(&event).unwrap();
-                            let bytes = json.as_bytes();
-                            let len = bytes.len().to_be_bytes();
-                            if let Err(e) = tx.write(&len) {
-                                log::error!("error sending message: {e}");
-                            };
-                            if let Err(e) = tx.write(bytes) {
-                                log::error!("error sending message: {e}");
-                            };
-                            if *event == FrontendEvent::Shutdown() {
-                                return;
+            // all further prompts
+            prompt();
+            loop {
+                let mut buf = String::new();
+                match std::io::stdin().read_line(&mut buf) {
+                    Ok(0) => break,
+                    Ok(len) => {
+                        if let Some(events) = parse_cmd(buf, len) {
+                            for event in events.iter() {
+                                let json = serde_json::to_string(&event).unwrap();
+                                let bytes = json.as_bytes();
+                                let len = bytes.len().to_be_bytes();
+                                if let Err(e) = tx.write(&len) {
+                                    log::error!("error sending message: {e}");
+                                };
+                                if let Err(e) = tx.write(bytes) {
+                                    log::error!("error sending message: {e}");
+                                };
+                                if *event == FrontendEvent::Shutdown() {
+                                    return;
+                                }
                             }
+                            // prompt is printed after the server response is received
+                        } else {
+                            prompt();
                         }
-                        // prompt is printed after the server response is received
-                    } else {
-                        prompt();
+                    }
+                    Err(e) => {
+                        log::error!("error reading from stdin: {e}");
+                        break;
                     }
                 }
-                Err(e) => {
-                    log::error!("error reading from stdin: {e}");
-                    break
-                }
             }
-        }
-    })?;
+        })?;
 
     let writer = thread::Builder::new()
         .name("cli-frontend-notify".to_string())
@@ -93,35 +97,43 @@ pub fn run() -> Result<()> {
                 };
                 match notify {
                     FrontendNotify::NotifyClientCreate(client, host, port, pos) => {
-                        log::info!("new client ({client}): {}:{port} - {pos}", host.as_deref().unwrap_or(""));
-                    },
+                        log::info!(
+                            "new client ({client}): {}:{port} - {pos}",
+                            host.as_deref().unwrap_or("")
+                        );
+                    }
                     FrontendNotify::NotifyClientUpdate(client, host, port, pos) => {
-                        log::info!("client ({client}) updated: {}:{port} - {pos}", host.as_deref().unwrap_or(""));
-                    },
+                        log::info!(
+                            "client ({client}) updated: {}:{port} - {pos}",
+                            host.as_deref().unwrap_or("")
+                        );
+                    }
                     FrontendNotify::NotifyClientDelete(client) => {
                         log::info!("client ({client}) deleted.");
-                    },
+                    }
                     FrontendNotify::NotifyError(e) => {
                         log::warn!("{e}");
-                    },
+                    }
                     FrontendNotify::Enumerate(clients) => {
                         for (client, active) in clients.into_iter() {
-                            log::info!("client ({}) [{}]: active: {}, associated addresses: [{}]",
+                            log::info!(
+                                "client ({}) [{}]: active: {}, associated addresses: [{}]",
                                 client.handle,
                                 client.hostname.as_deref().unwrap_or(""),
                                 if active { "yes" } else { "no" },
-                                client.addrs.into_iter().map(|a| a.to_string())
-                                .collect::<Vec<String>>()
-                                .join(", ")
+                                client
+                                    .addrs
+                                    .into_iter()
+                                    .map(|a| a.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(", ")
                             );
                         }
-                    },
-                    FrontendNotify::NotifyPortChange(port, msg) => {
-                        match msg {
-                            Some(msg) => log::info!("could not change port: {msg}"),
-                            None => log::info!("port changed: {port}"),
-                        }
                     }
+                    FrontendNotify::NotifyPortChange(port, msg) => match msg {
+                        Some(msg) => log::info!("could not change port: {msg}"),
+                        None => log::info!("port changed: {port}"),
+                    },
                 }
                 prompt();
             }
@@ -132,10 +144,10 @@ pub fn run() -> Result<()> {
             let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
                 (Some(&s), _) => s,
                 (_, Some(s)) => s,
-                _ => "no panic info"
+                _ => "no panic info",
             };
             log::error!("reader thread paniced: {msg}");
-        },
+        }
     }
     match writer.join() {
         Ok(_) => (),
@@ -143,10 +155,10 @@ pub fn run() -> Result<()> {
             let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
                 (Some(&s), _) => s,
                 (_, Some(s)) => s,
-                _ => "no panic info"
+                _ => "no panic info",
             };
             log::error!("writer thread paniced: {msg}");
-        },
+        }
     }
     Ok(())
 }
@@ -158,7 +170,7 @@ fn prompt() {
 
 fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
     if len == 0 {
-        return Some(vec![FrontendEvent::Shutdown()])
+        return Some(vec![FrontendEvent::Shutdown()]);
     }
     let mut l = s.split_whitespace();
     let cmd = l.next()?;
@@ -191,7 +203,7 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
             log::warn!("{e}");
             None
         }
-        _ => None
+        _ => None,
     }
 }
 
@@ -209,22 +221,34 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     } else {
         DEFAULT_PORT
     };
-    Ok(vec![FrontendEvent::AddClient(Some(host), port, pos), FrontendEvent::Enumerate()])
+    Ok(vec![
+        FrontendEvent::AddClient(Some(host), port, pos),
+        FrontendEvent::Enumerate(),
+    ])
 }
 
 fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: disconnect <client_id>")?.parse()?;
-    Ok(vec![FrontendEvent::DelClient(client), FrontendEvent::Enumerate()])
+    Ok(vec![
+        FrontendEvent::DelClient(client),
+        FrontendEvent::Enumerate(),
+    ])
 }
 
 fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: activate <client_id>")?.parse()?;
-    Ok(vec![FrontendEvent::ActivateClient(client, true), FrontendEvent::Enumerate()])
+    Ok(vec![
+        FrontendEvent::ActivateClient(client, true),
+        FrontendEvent::Enumerate(),
+    ])
 }
 
 fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
     let client = l.next().context("usage: deactivate <client_id>")?.parse()?;
-    Ok(vec![FrontendEvent::ActivateClient(client, false), FrontendEvent::Enumerate()])
+    Ok(vec![
+        FrontendEvent::ActivateClient(client, false),
+        FrontendEvent::Enumerate(),
+    ])
 }
 
 fn parse_port(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {

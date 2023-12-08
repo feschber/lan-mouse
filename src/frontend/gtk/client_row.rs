@@ -16,8 +16,7 @@ glib::wrapper! {
 
 impl ClientRow {
     pub fn new(_client_object: &ClientObject) -> Self {
-        Object::builder()
-            .build()
+        Object::builder().build()
     }
 
     pub fn bind(&self, client_object: &ClientObject) {
@@ -86,24 +85,19 @@ impl ClientRow {
             .sync_create()
             .build();
 
-
         let position_binding = client_object
             .bind_property("position", &self.imp().position.get(), "selected")
-            .transform_from(|_, v: u32| {
-                match v {
-                    1 => Some("right"),
-                    2 => Some("top"),
-                    3 => Some("bottom"),
-                    _ => Some("left"),
-                }
+            .transform_from(|_, v: u32| match v {
+                1 => Some("right"),
+                2 => Some("top"),
+                3 => Some("bottom"),
+                _ => Some("left"),
             })
-            .transform_to(|_, v: String| {
-                match v.as_str() {
-                    "right" => Some(1),
-                    "top" => Some(2u32),
-                    "bottom" => Some(3u32),
-                    _ => Some(0u32),
-                }
+            .transform_to(|_, v: String| match v.as_str() {
+                "right" => Some(1),
+                "top" => Some(2u32),
+                "bottom" => Some(3u32),
+                _ => Some(0u32),
             })
             .bidirectional()
             .sync_create()

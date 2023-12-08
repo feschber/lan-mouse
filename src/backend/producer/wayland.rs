@@ -1,9 +1,19 @@
-use crate::{client::{ClientHandle, Position, ClientEvent}, producer::EventProducer};
+use crate::{
+    client::{ClientEvent, ClientHandle, Position},
+    producer::EventProducer,
+};
 
-use std::{os::fd::{OwnedFd, RawFd}, io::{ErrorKind, self}, env, pin::Pin, task::{Context, Poll, ready}, collections::VecDeque};
+use anyhow::{anyhow, Result};
 use futures_core::Stream;
 use memmap::MmapOptions;
-use anyhow::{anyhow, Result};
+use std::{
+    collections::VecDeque,
+    env,
+    io::{self, ErrorKind},
+    os::fd::{OwnedFd, RawFd},
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 use tokio::io::unix::AsyncFd;
 
 use std::{
@@ -13,20 +23,26 @@ use std::{
     rc::Rc,
 };
 
-use wayland_protocols::{wp::{
-    keyboard_shortcuts_inhibit::zv1::client::{
-        zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
-        zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
+use wayland_protocols::{
+    wp::{
+        keyboard_shortcuts_inhibit::zv1::client::{
+            zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
+            zwp_keyboard_shortcuts_inhibitor_v1::ZwpKeyboardShortcutsInhibitorV1,
+        },
+        pointer_constraints::zv1::client::{
+            zwp_locked_pointer_v1::ZwpLockedPointerV1,
+            zwp_pointer_constraints_v1::{Lifetime, ZwpPointerConstraintsV1},
+        },
+        relative_pointer::zv1::client::{
+            zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
+            zwp_relative_pointer_v1::{self, ZwpRelativePointerV1},
+        },
     },
-    pointer_constraints::zv1::client::{
-        zwp_locked_pointer_v1::ZwpLockedPointerV1,
-        zwp_pointer_constraints_v1::{Lifetime, ZwpPointerConstraintsV1},
+    xdg::xdg_output::zv1::client::{
+        zxdg_output_manager_v1::ZxdgOutputManagerV1,
+        zxdg_output_v1::{self, ZxdgOutputV1},
     },
-    relative_pointer::zv1::client::{
-        zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
-        zwp_relative_pointer_v1::{self, ZwpRelativePointerV1},
-    },
-}, xdg::xdg_output::zv1::client::{zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1::{self, ZxdgOutputV1}}};
+};
 
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1},
@@ -34,14 +50,15 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
-    backend::{WaylandError, ReadEventsGuard},
+    backend::{ReadEventsGuard, WaylandError},
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
-        wl_shm_pool, wl_surface, wl_output::{self, WlOutput},
+        wl_buffer, wl_compositor, wl_keyboard,
+        wl_output::{self, WlOutput},
+        wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     },
-    Connection, Dispatch, DispatchError, QueueHandle, WEnum, EventQueue,
+    Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
 };
 
 use tempfile;
@@ -71,8 +88,8 @@ impl OutputInfo {
     fn new() -> Self {
         Self {
             name: "".to_string(),
-            position: (0,0),
-            size: (0,0),
+            position: (0, 0),
+            size: (0, 0),
         }
     }
 }
@@ -111,7 +128,13 @@ struct Window {
 }
 
 impl Window {
-    fn new(state: &State, qh: &QueueHandle<State>, output: &WlOutput, pos: Position, size: (i32, i32)) -> Window {
+    fn new(
+        state: &State,
+        qh: &QueueHandle<State>,
+        output: &WlOutput,
+        pos: Position,
+        size: (i32, i32),
+    ) -> Window {
         let g = &state.g;
 
         let (width, height) = match pos {
@@ -152,7 +175,7 @@ impl Window {
         layer_surface.set_anchor(anchor);
         layer_surface.set_size(width, height);
         layer_surface.set_exclusive_zone(-1);
-        layer_surface.set_margin(0,0,0,0);
+        layer_surface.set_margin(0, 0, 0, 0);
         surface.set_input_region(None);
         surface.commit();
         Window {
@@ -173,15 +196,20 @@ impl Drop for Window {
 }
 
 fn get_edges(outputs: &[(WlOutput, OutputInfo)], pos: Position) -> Vec<(WlOutput, i32)> {
-    outputs.iter().map(|(o, i)| {
-        (o.clone(),
-        match pos {
-            Position::Left => i.position.0,
-            Position::Right => i.position.0 + i.size.0,
-            Position::Top => i.position.1,
-            Position::Bottom => i.position.1 + i.size.1,
+    outputs
+        .iter()
+        .map(|(o, i)| {
+            (
+                o.clone(),
+                match pos {
+                    Position::Left => i.position.0,
+                    Position::Right => i.position.0 + i.size.0,
+                    Position::Top => i.position.1,
+                    Position::Bottom => i.position.1 + i.size.1,
+                },
+            )
         })
-    }).collect()
+        .collect()
 }
 
 fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, OutputInfo)> {
@@ -191,12 +219,21 @@ fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, Outp
 
     // remove those edges that are at the same position
     // as an opposite edge of a different output
-    let outputs: Vec<WlOutput> = edges.iter().filter(|(_,edge)| {
-        opposite_edges.iter().map(|(_,e)| *e).find(|e| e == edge).is_none()
-    }).map(|(o,_)| o.clone()).collect();
-    state.output_info
+    let outputs: Vec<WlOutput> = edges
         .iter()
-        .filter(|(o,_)| outputs.contains(o))
+        .filter(|(_, edge)| {
+            opposite_edges
+                .iter()
+                .map(|(_, e)| *e)
+                .find(|e| e == edge)
+                .is_none()
+        })
+        .map(|(o, _)| o.clone())
+        .collect();
+    state
+        .output_info
+        .iter()
+        .filter(|(o, _)| outputs.contains(o))
         .map(|(o, i)| (o.clone(), i.clone()))
         .collect()
 }
@@ -265,10 +302,15 @@ impl WaylandEventProducer {
             Err(_) => return Err(anyhow!("zwp_relative_pointer_manager_v1 not supported")),
         };
 
-        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = match g.bind(&qh, 1..=1, ()) {
-            Ok(shortcut_inhibit_manager) => shortcut_inhibit_manager,
-            Err(_) => return Err(anyhow!("zwp_keyboard_shortcuts_inhibit_manager_v1 not supported")),
-        };
+        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 =
+            match g.bind(&qh, 1..=1, ()) {
+                Ok(shortcut_inhibit_manager) => shortcut_inhibit_manager,
+                Err(_) => {
+                    return Err(anyhow!(
+                        "zwp_keyboard_shortcuts_inhibit_manager_v1 not supported"
+                    ))
+                }
+            };
 
         let outputs = vec![];
 
@@ -316,7 +358,10 @@ impl WaylandEventProducer {
 
         // read outputs
         for output in state.g.outputs.iter() {
-            state.g.xdg_output_manager.get_xdg_output(output, &state.qh, output.clone());
+            state
+                .g
+                .xdg_output_manager
+                .get_xdg_output(output, &state.qh, output.clone());
         }
 
         // roundtrip to read xdg_output events
@@ -420,7 +465,6 @@ impl State {
     }
 
     fn add_client(&mut self, client: ClientHandle, pos: Position) {
-
         let outputs = get_output_configuration(self, pos);
 
         outputs.iter().for_each(|(o, i)| {
@@ -428,7 +472,6 @@ impl State {
             let window = Rc::new(window);
             self.client_for_window.push((window, client));
         });
-
     }
 }
 
@@ -485,17 +528,16 @@ impl Inner {
             Err(e) => match e {
                 WaylandError::Io(e) => {
                     log::error!("error writing to wayland socket: {e}")
-                },
+                }
                 WaylandError::Protocol(e) => {
                     panic!("wayland protocol violation: {e}")
-                },
+                }
             },
         }
     }
 }
 
 impl EventProducer for WaylandEventProducer {
-
     fn notify(&mut self, client_event: ClientEvent) {
         match client_event {
             ClientEvent::Create(handle, pos) => {
@@ -509,11 +551,12 @@ impl EventProducer for WaylandEventProducer {
                         .state
                         .client_for_window
                         .iter()
-                        .position(|(_,c)| *c == handle) {
+                        .position(|(_, c)| *c == handle)
+                    {
                         inner.state.client_for_window.remove(i);
                         inner.state.focused = None;
                     } else {
-                        break
+                        break;
                     }
                 }
             }
@@ -605,7 +648,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-
         match event {
             wl_pointer::Event::Enter {
                 serial,
@@ -618,7 +660,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     if let Some((window, client)) = app
                         .client_for_window
                         .iter()
-                        .find(|(w, _c)| w.surface == surface) {
+                        .find(|(w, _c)| w.surface == surface)
+                    {
                         app.focused = Some((window.clone(), *client));
                         app.grab(&surface, pointer, serial.clone(), qh);
                     } else {
@@ -786,7 +829,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
             if let Some((window, _client)) = app
                 .client_for_window
                 .iter()
-                .find(|(w, _c)| &w.layer_surface == layer_surface) {
+                .find(|(w, _c)| &w.layer_surface == layer_surface)
+            {
                 // client corresponding to the layer_surface
                 let surface = &window.surface;
                 let buffer = &window.buffer;
@@ -821,17 +865,22 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version: _ } => {
-                match interface.as_str() {
-                    "wl_output" => {
-                        log::debug!("wl_output global");
-                        state.g.outputs.push(registry.bind::<wl_output::WlOutput, _, _>(name, 4, qh, ()))
-                    }
-                    _ => {}
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version: _,
+            } => match interface.as_str() {
+                "wl_output" => {
+                    log::debug!("wl_output global");
+                    state
+                        .g
+                        .outputs
+                        .push(registry.bind::<wl_output::WlOutput, _, _>(name, 4, qh, ()))
                 }
+                _ => {}
             },
-            wl_registry::Event::GlobalRemove { .. } => {},
-            _ => {},
+            wl_registry::Event::GlobalRemove { .. } => {}
+            _ => {}
         }
     }
 }
@@ -846,11 +895,8 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
         _: &QueueHandle<Self>,
     ) {
         log::debug!("xdg-output - {event:?}");
-        let output_info = match state
-            .output_info
-            .iter_mut()
-            .find(|(o, _)| o == wl_output) {
-            Some((_,c)) => c,
+        let output_info = match state.output_info.iter_mut().find(|(o, _)| o == wl_output) {
+            Some((_, c)) => c,
             None => {
                 let output_info = OutputInfo::new();
                 state.output_info.push((wl_output.clone(), output_info));
@@ -861,16 +907,16 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => {
                 output_info.position = (x, y);
-            },
+            }
             zxdg_output_v1::Event::LogicalSize { width, height } => {
                 output_info.size = (width, height);
-            },
-            zxdg_output_v1::Event::Done => {},
+            }
+            zxdg_output_v1::Event::Done => {}
             zxdg_output_v1::Event::Name { name } => {
                 output_info.name = name;
-            },
-            zxdg_output_v1::Event::Description { .. } => {},
-            _ => {},
+            }
+            zxdg_output_v1::Event::Description { .. } => {}
+            _ => {}
         }
     }
 }

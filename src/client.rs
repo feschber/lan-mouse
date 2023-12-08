@@ -1,6 +1,11 @@
-use std::{net::{SocketAddr, IpAddr}, collections::HashSet, fmt::Display, time::Instant};
+use std::{
+    collections::HashSet,
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+    time::Instant,
+};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
@@ -29,12 +34,16 @@ impl Position {
 
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Position::Left => "left",
-            Position::Right => "right",
-            Position::Top => "top",
-            Position::Bottom => "bottom",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Position::Left => "left",
+                Position::Right => "right",
+                Position::Top => "top",
+                Position::Bottom => "bottom",
+            }
+        )
     }
 }
 
@@ -82,9 +91,7 @@ pub struct ClientManager {
 
 impl ClientManager {
     pub fn new() -> Self {
-        Self {
-            clients: vec![],
-        }
+        Self { clients: vec![] }
     }
 
     /// add a new client to this manager
@@ -102,14 +109,17 @@ impl ClientManager {
         let active_addr = None;
 
         // map ip addresses to socket addresses
-        let addrs = HashSet::from_iter(
-            addrs
-                .into_iter()
-                .map(|ip| SocketAddr::new(ip, port))
-        );
+        let addrs = HashSet::from_iter(addrs.into_iter().map(|ip| SocketAddr::new(ip, port)));
 
         // store the client
-        let client = Client { hostname, handle, active_addr, addrs, port, pos };
+        let client = Client {
+            hostname,
+            handle,
+            active_addr,
+            addrs,
+            port,
+            pos,
+        };
 
         // client was never seen, nor pinged
         let client_state = ClientState {
@@ -135,10 +145,12 @@ impl ClientManager {
         // time this is likely faster than using a HashMap
         self.clients
             .iter()
-            .position(|c| if let Some(c) = c {
-                c.active && c.client.addrs.contains(&addr)
-            } else {
-                false
+            .position(|c| {
+                if let Some(c) = c {
+                    c.active && c.client.addrs.contains(&addr)
+                } else {
+                    false
+                }
             })
             .map(|p| p as ClientHandle)
     }
@@ -153,7 +165,8 @@ impl ClientManager {
     fn free_id(&mut self) -> ClientHandle {
         for i in 0..u32::MAX {
             if self.clients.get(i as usize).is_none()
-            || self.clients.get(i as usize).unwrap().is_none() {
+                || self.clients.get(i as usize).unwrap().is_none()
+            {
                 return i;
             }
         }
@@ -173,7 +186,7 @@ impl ClientManager {
     pub fn enumerate(&self) -> Vec<(Client, bool)> {
         self.clients
             .iter()
-            .filter_map(|s|s.as_ref())
+            .filter_map(|s| s.as_ref())
             .map(|s| (s.client.clone(), s.active))
             .collect()
     }

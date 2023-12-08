@@ -1,17 +1,17 @@
-use async_trait::async_trait;
-use wayland_client::WEnum;
-use wayland_client::backend::WaylandError;
-use crate::client::{ClientHandle, ClientEvent};
+use crate::client::{ClientEvent, ClientHandle};
 use crate::consumer::EventConsumer;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::prelude::AsRawFd;
+use wayland_client::backend::WaylandError;
+use wayland_client::WEnum;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use wayland_client::globals::BindError;
-use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
+use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
@@ -104,7 +104,10 @@ impl WlrootsConsumer {
             queue,
         };
         while consumer.state.keymap.is_none() {
-            consumer.queue.blocking_dispatch(&mut consumer.state).unwrap();
+            consumer
+                .queue
+                .blocking_dispatch(&mut consumer.state)
+                .unwrap();
         }
         // let fd = unsafe { &File::from_raw_fd(consumer.state.keymap.unwrap().1.as_raw_fd()) };
         // let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
@@ -153,8 +156,10 @@ impl EventConsumer for WlrootsConsumer {
                          * will overwhelm the output buffer and leave the
                          * wayland connection in a broken state
                          */
-                        log::warn!("can't keep up, discarding event: ({client_handle}) - {event:?}");
-                        return
+                        log::warn!(
+                            "can't keep up, discarding event: ({client_handle}) - {event:?}"
+                        );
+                        return;
                     }
                 }
             }
@@ -166,13 +171,13 @@ impl EventConsumer for WlrootsConsumer {
                 }
                 Err(WaylandError::Io(e)) => {
                     log::error!("{e}")
-                },
+                }
                 Err(WaylandError::Protocol(e)) => {
                     panic!("wayland protocol violation: {e}")
                 }
                 Ok(()) => {
                     self.last_flush_failed = false;
-                },
+                }
             }
         }
     }
@@ -186,9 +191,8 @@ impl EventConsumer for WlrootsConsumer {
         }
     }
 
-    async fn destroy(&mut self) { }
+    async fn destroy(&mut self) {}
 }
-
 
 enum VirtualInput {
     Wlroots { pointer: Vp, keyboard: Vk },
@@ -196,7 +200,7 @@ enum VirtualInput {
 }
 
 impl VirtualInput {
-    fn consume_event(&self, event: Event) -> Result<(),()> {
+    fn consume_event(&self, event: Event) -> Result<(), ()> {
         match event {
             Event::Pointer(e) => {
                 match e {
@@ -263,9 +267,9 @@ impl VirtualInput {
                         // insert a frame event after each mouse event
                         pointer.frame();
                     }
-                    _ => {},
+                    _ => {}
                 }
-            },
+            }
             Event::Keyboard(e) => match e {
                 KeyboardEvent::Key { time, key, state } => match self {
                     VirtualInput::Wlroots {
@@ -293,7 +297,7 @@ impl VirtualInput {
                     VirtualInput::Kde { fake_input: _ } => {}
                 },
             },
-            _ => {},
+            _ => {}
         }
         Ok(())
     }
@@ -330,7 +334,7 @@ impl Dispatch<WlKeyboard, ()> for State {
             wl_keyboard::Event::Keymap { format, fd, size } => {
                 state.keymap = Some((u32::from(format), fd, size));
             }
-            _ => {},
+            _ => {}
         }
     }
 }

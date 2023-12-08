@@ -1,25 +1,31 @@
-use anyhow::{Result, anyhow};
-use std::{str, io::ErrorKind, time::Duration, cmp::min};
+use anyhow::{anyhow, Result};
+use std::{cmp::min, io::ErrorKind, str, time::Duration};
 
 #[cfg(unix)]
-use std::{env, path::{Path, PathBuf}};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
-use tokio::io::{AsyncReadExt, WriteHalf, AsyncWriteExt};
 use tokio::io::ReadHalf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 
-#[cfg(unix)]
-use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 
-#[cfg(windows)]
-use tokio::net::TcpStream;
 #[cfg(windows)]
 use tokio::net::TcpListener;
+#[cfg(windows)]
+use tokio::net::TcpStream;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::{client::{Position, ClientHandle, Client}, config::{Config, Frontend}};
+use crate::{
+    client::{Client, ClientHandle, Position},
+    config::{Config, Frontend},
+};
 
 /// cli frontend
 pub mod cli;
@@ -28,14 +34,17 @@ pub mod cli;
 #[cfg(all(unix, feature = "gtk"))]
 pub mod gtk;
 
-
 pub fn run_frontend(config: &Config) -> Result<()> {
     match config.frontend {
         #[cfg(all(unix, feature = "gtk"))]
-        Frontend::Gtk => { gtk::run(); }
+        Frontend::Gtk => {
+            gtk::run();
+        }
         #[cfg(any(not(feature = "gtk"), not(unix)))]
         Frontend::Gtk => panic!("gtk frontend requested but feature not enabled!"),
-        Frontend::Cli => { cli::run()?; }
+        Frontend::Cli => {
+            cli::run()?;
+        }
     };
     Ok(())
 }
@@ -54,7 +63,7 @@ pub fn wait_for_service() -> Result<std::os::unix::net::UnixStream> {
     loop {
         use std::os::unix::net::UnixStream;
         if let Ok(stream) = UnixStream::connect(&socket_path) {
-            break Ok(stream)
+            break Ok(stream);
         }
         // a signaling mechanism or inotify could be used to
         // improve this
@@ -68,7 +77,7 @@ pub fn wait_for_service() -> Result<std::net::TcpStream> {
     loop {
         use std::net::TcpStream;
         if let Ok(stream) = TcpStream::connect("127.0.0.1:5252") {
-            break Ok(stream)
+            break Ok(stream);
         }
         std::thread::sleep(*exponential_back_off(&mut duration));
     }
@@ -146,7 +155,7 @@ impl FrontendListener {
                     Err(e) => {
                         log::debug!("{socket_path:?}: {e} - removing left behind socket");
                         let _ = std::fs::remove_file(&socket_path);
-                    },
+                    }
                 }
             }
             let listener = match UnixListener::bind(&socket_path) {
@@ -160,10 +169,10 @@ impl FrontendListener {
 
         #[cfg(windows)]
         let listener = match TcpListener::bind("127.0.0.1:5252").await {
-                Ok(ls) => ls,
-                // some other lan-mouse instance has bound the socket in the meantime
-                Err(e) if e.kind() == ErrorKind::AddrInUse => return None,
-                Err(e) => return Some(Err(anyhow!("failed to bind lan-mouse-socket: {e}"))),
+            Ok(ls) => ls,
+            // some other lan-mouse instance has bound the socket in the meantime
+            Err(e) if e.kind() == ErrorKind::AddrInUse => return None,
+            Err(e) => return Some(Err(anyhow!("failed to bind lan-mouse-socket: {e}"))),
         };
 
         let adapter = Self {
@@ -194,7 +203,6 @@ impl FrontendListener {
         Ok(rx)
     }
 
-
     pub(crate) async fn notify_all(&mut self, notify: FrontendNotify) -> Result<()> {
         // encode event
         let json = serde_json::to_string(&notify).unwrap();
@@ -207,7 +215,7 @@ impl FrontendListener {
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
             // write len + payload
-            if let Err(_) =  tx.write(&len).await {
+            if let Err(_) = tx.write(&len).await {
                 keep.push(false);
                 continue;
             }
@@ -249,4 +257,3 @@ pub async fn read_event(stream: &mut ReadHalf<TcpStream>) -> Result<FrontendEven
     stream.read_exact(&mut buf[..len as usize]).await?;
     Ok(serde_json::from_slice(&buf[..len as usize])?)
 }
-
