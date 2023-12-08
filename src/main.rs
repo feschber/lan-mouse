@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::process;
+use std::process::{self, Command, Child};
 
 use env_logger::Env;
 use lan_mouse::{
@@ -22,16 +22,35 @@ pub fn main() {
     }
 }
 
+pub fn start_service() -> Result<Child> {
+    let child = Command::new(std::env::current_exe()?)
+        .args(std::env::args().skip(1))
+        .arg("--daemon")
+        .spawn()?;
+    Ok(child)
+}
+
+
 pub fn run() -> Result<()> {
     // parse config file + cli args
     let config = Config::new()?;
     log::debug!("{config:?}");
 
-    // start frontend
-    if config.frontend_only {
-        return frontend::run_frontend(&config);
+    if config.daemon {
+        // if daemon is specified we run the service
+        run_service(&config)?;
+    } else {
+        //  otherwise start the service as a child process and 
+        //  run a frontend
+        start_service()?;
+        frontend::run_frontend(&config)?;
     }
 
+
+    anyhow::Ok(())
+}
+
+fn run_service(config: &Config) -> Result<()> {
     // create single threaded tokio runtime
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -47,17 +66,14 @@ pub fn run() -> Result<()> {
             None => None,
         };
 
-        // start the frontend in a child process
-        if !config.daemon_only {
-            frontend::start_frontend()?;
-        }
-
         let frontend_adapter = match frontend_adapter {
             Some(f) => f,
             // none means some other instance is already running
-            None => return anyhow::Ok(()),
+            None => {
+                log::debug!("service already running, exiting");
+                return anyhow::Ok(())
+            }
         };
-
 
         // create event producer and consumer
         let (producer, consumer) = join!(
@@ -72,9 +88,8 @@ pub fn run() -> Result<()> {
 
         // run event loop
         event_server.run().await?;
+        log::debug!("service exiting");
         anyhow::Ok(())
     }))?;
-    log::debug!("exiting main");
-
-    anyhow::Ok(())
+    Ok(())
 }

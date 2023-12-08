@@ -36,7 +36,7 @@ pub struct Server {
 
 impl Server {
     pub async fn new(
-        config: Config,
+        config: &Config,
         frontend: FrontendListener,
         consumer: Box<dyn EventConsumer>,
         producer: Box<dyn EventProducer>,

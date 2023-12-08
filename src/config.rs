@@ -51,10 +51,6 @@ struct CliArgs {
     #[arg(short, long)]
     config: Option<String>,
 
-    /// run only the frontend
-    #[arg(short, long)]
-    run_frontend: bool,
-
     /// run only the service as a daemon without the frontend
     #[arg(short, long)]
     daemon: bool,
@@ -71,8 +67,7 @@ pub struct Config {
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(Client, Position)>,
-    pub frontend_only: bool,
-    pub daemon_only: bool,
+    pub daemon: bool,
 }
 
 impl Config {
@@ -148,12 +143,10 @@ impl Config {
             }
         }
 
-        let daemon_only = args.daemon;
-        let frontend_only = args.run_frontend;
+        let daemon = args.daemon;
 
         Ok(Config {
-            daemon_only,
-            frontend_only,
+            daemon,
             frontend,
             clients,
             port,

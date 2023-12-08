@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use std::{str, io::ErrorKind, process::{Child, Command}, time::Duration, cmp::min};
+use std::{str, io::ErrorKind, time::Duration, cmp::min};
 
 #[cfg(unix)]
 use std::{env, path::{Path, PathBuf}};
@@ -28,13 +28,6 @@ pub mod cli;
 #[cfg(all(unix, feature = "gtk"))]
 pub mod gtk;
 
-
-pub fn start_frontend() -> Result<Child> {
-    let child = Command::new(std::env::current_exe()?)
-        .arg("--run-frontend")
-        .spawn()?;
-    Ok(child)
-}
 
 pub fn run_frontend(config: &Config) -> Result<()> {
     match config.frontend {
