@@ -146,7 +146,8 @@ impl EventConsumer for MacOSConsumer {
             }
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key { time: _, key, state } => {
-                    let code = CGKeyCode::from_le(key as u16); // FIXME byteorder
+                    /*
+                    let code = CGKeyCode::from_le(key as u16);
                     let event = match CGEvent::new_keyboard_event(
                         self.event_source.clone(),
                         code,
@@ -159,6 +160,7 @@ impl EventConsumer for MacOSConsumer {
                         }
                     };
                     event.post(CGEventTapLocation::HID);
+                    */
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             }
