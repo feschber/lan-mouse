@@ -47,20 +47,30 @@ fn exponential_back_off(duration: &mut Duration) -> &Duration {
 }
 
 /// wait for the lan-mouse socket to come online
+#[cfg(unix)]
 pub fn wait_for_service() -> Result<std::os::unix::net::UnixStream> {
-    #[cfg(unix)]
-    {
-        let socket_path = FrontendListener::socket_path()?;
-        let mut duration = Duration::from_millis(1);
-        loop {
-            use std::os::unix::net::UnixStream;
-            if let Ok(stream) = UnixStream::connect(&socket_path) {
-                break Ok(stream)
-            }
-            // a signaling mechanism or inotify could be used to
-            // improve this
-            std::thread::sleep(*exponential_back_off(&mut duration));
+    let socket_path = FrontendListener::socket_path()?;
+    let mut duration = Duration::from_millis(1);
+    loop {
+        use std::os::unix::net::UnixStream;
+        if let Ok(stream) = UnixStream::connect(&socket_path) {
+            break Ok(stream)
         }
+        // a signaling mechanism or inotify could be used to
+        // improve this
+        std::thread::sleep(*exponential_back_off(&mut duration));
+    }
+}
+
+#[cfg(windows)]
+pub fn wait_for_service() -> Result<std::net::TcpStream> {
+    let mut duration = Duration::from_millis(1);
+    loop {
+        use std::net::TcpStream;
+        if let Ok(stream) = TcpStream::connect("127.0.0.1:5252") {
+            break Ok(stream)
+        }
+        std::thread::sleep(*exponential_back_off(&mut duration));
     }
 }
 
@@ -107,6 +117,7 @@ pub struct FrontendListener {
 }
 
 impl FrontendListener {
+    #[cfg(unix)]
     pub fn socket_path() -> Result<PathBuf> {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(d) => d,
@@ -149,6 +160,10 @@ impl FrontendListener {
 
         #[cfg(windows)]
         let listener = match TcpListener::bind("127.0.0.1:5252").await {
+                Ok(ls) => ls,
+                // some other lan-mouse instance has bound the socket in the meantime
+                Err(e) if e.kind() == ErrorKind::AddrInUse => return None,
+                Err(e) => return Some(Err(anyhow!("failed to bind lan-mouse-socket: {e}"))),
         };
 
         let adapter = Self {
