@@ -2,7 +2,7 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Result, Read, ErrorKind}, thread::{self, JoinHandle}, env, process, path::Path, os::unix::net::UnixStream, str};
+use std::{io::{Read, ErrorKind}, env, process, str};
 
 use crate::{frontend::gtk::window::Window, config::DEFAULT_PORT};
 
@@ -14,11 +14,11 @@ use self::client_object::ClientObject;
 
 use super::FrontendNotify;
 
-pub fn start() -> Result<JoinHandle<glib::ExitCode>> {
-    log::debug!("starting gtk frontend");
-    thread::Builder::new()
-        .name("gtk-thread".into())
-        .spawn(gtk_main)
+pub fn run() -> glib::ExitCode {
+    log::debug!("running gtk frontend");
+    let ret = gtk_main();
+    log::debug!("frontend exited");
+    ret
 }
 
 fn gtk_main() -> glib::ExitCode {
@@ -33,7 +33,8 @@ fn gtk_main() -> glib::ExitCode {
     app.connect_startup(|_| load_css());
     app.connect_activate(build_ui);
 
-    app.run()
+    let args: Vec<&'static str> = vec![];
+    app.run_with_args(&args)
 }
 
 fn load_css() {
@@ -52,19 +53,13 @@ fn load_icons() {
 }
 
 fn build_ui(app: &Application) {
-    let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
-        Ok(v) => v,
+    log::debug!("connecting to lan-mouse-socket");
+    let mut rx = match super::wait_for_service() {
+        Ok(stream) => stream,
         Err(e) => {
-            log::error!("{e}");
+            log::error!("could not connect to lan-mouse-socket: {e}");
             process::exit(1);
         }
-    };
-    log::debug!("connecting to lan-mouse-socket ... ");
-    let socket_path = Path::new(xdg_runtime_dir.as_str())
-        .join("lan-mouse-socket.sock");
-    let Ok(mut rx) = UnixStream::connect(&socket_path) else {
-        log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
-        process::exit(1);
     };
     let tx = match rx.try_clone() {
         Ok(sock) => sock,

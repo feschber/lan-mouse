@@ -10,6 +10,7 @@
 	</menu>
 	<template class="LanMouseWindow" parent="AdwApplicationWindow">
 		<property name="width-request">600</property>
+		<property name="height-request">700</property>
 		<property name="title" translatable="yes">Lan Mouse</property>
 		<property name="show-menubar">True</property>
 		<property name="content">
@@ -45,6 +46,7 @@
 										<child>
 											<object class="AdwPreferencesGroup">
 												<property name="title" translatable="yes">General</property>
+												<!--
 												<child>
 													<object class="AdwActionRow">
 														<property name="title" translatable="yes">enable</property>
@@ -56,6 +58,7 @@
 														</child>
 													</object>
 												</child>
+												-->
 												<child>
 													<object class="AdwActionRow">
 														<property name="title">port</property>
@@ -98,41 +101,33 @@
 										<child>
 											<object class="AdwPreferencesGroup">
 												<property name="title" translatable="yes">Connections</property>
+												<property name="header-suffix">
+													<object class="GtkButton">
+														<signal name="clicked" handler="handle_add_client_pressed" swapped="true"/>
+														<property name="child">
+															<object class="AdwButtonContent">
+																<property name="icon-name">list-add-symbolic</property>
+																<property name="label" translatable="yes">Add</property>
+															</object>
+														</property>
+													<style>
+														<class name="flat"/>
+													</style>
+													</object>
+												</property>
 												<child>
 												  <object class="GtkListBox" id="client_list">
 														<property name="selection-mode">none</property>
 														<child type="placeholder">
 															<object class="AdwActionRow" id="client_placeholder">
 																<property name="title">No connections!</property>
-																<property name="subtitle">add a new client via the button below</property>
+																<property name="subtitle">add a new client via the + button</property>
 															</object>
 														</child>
 														<style>
 															<class name="boxed-list" />
 														</style>
 												  </object>
-												</child>
-											</object>
-										</child>
-										<child>
-											<object class="AdwPreferencesGroup">
-												<child>
-													<object class="GtkButton" id="add_client_button">
-														<property name="halign">center</property>
-														<property name="valign">center</property>
-														<property name="tooltip-text">connect a new computer</property>
-														<property name="child">
-															<object class="AdwButtonContent">
-																<property name="icon-name">list-add-symbolic</property>
-																<property name="label" translatable="yes">Add</property>
-																<property name="use-underline">True</property>
-															</object>
-														</property>
-														<signal name="clicked" handler="handle_add_client_pressed" swapped="true"/>
-														<style>
-															<class name="pill"/>
-														</style>
-													</object>
 												</child>
 											</object>
 										</child>

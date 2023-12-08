@@ -1,11 +1,11 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use core::fmt;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::{error::Error, fs};
-
 use std::env;
 use toml;
+use clap::Parser;
 
 use crate::client::Position;
 
@@ -28,19 +28,6 @@ pub struct Client {
     pub port: Option<u16>,
 }
 
-#[derive(Debug, Clone)]
-struct MissingParameter {
-    arg: &'static str,
-}
-
-impl fmt::Display for MissingParameter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Missing a parameter for argument: {}", self.arg)
-    }
-}
-
-impl Error for MissingParameter {}
-
 impl ConfigToml {
     pub fn new(path: &str) -> Result<ConfigToml, Box<dyn Error>> {
         let config = fs::read_to_string(path)?;
@@ -49,35 +36,43 @@ impl ConfigToml {
     }
 }
 
-fn find_arg(key: &'static str) -> Result<Option<String>, MissingParameter> {
-    let args: Vec<String> = env::args().collect();
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct CliArgs {
+    /// the listen port for lan-mouse
+    #[arg(short, long)]
+    port: Option<u16>,
 
-    for (i, arg) in args.iter().enumerate() {
-        if arg != key {
-            continue;
-        }
-        match args.get(i+1) {
-            None => return Err(MissingParameter { arg: key }),
-            Some(arg) => return Ok(Some(arg.clone())),
-        };
-    }
-    Ok(None)
+    /// the frontend to use [cli | gtk]
+    #[arg(short, long)]
+    frontend: Option<String>,
+
+    /// non-default config file location
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// run only the service as a daemon without the frontend
+    #[arg(short, long)]
+    daemon: bool,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Frontend {
     Gtk,
     Cli,
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(Client, Position)>,
+    pub daemon: bool,
 }
 
 impl Config {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self> {
+        let args = CliArgs::parse();
         let config_file = "config.toml";
         #[cfg(unix)] let config_path = {
             let xdg_config_home = env::var("XDG_CONFIG_HOME")
@@ -92,7 +87,7 @@ impl Config {
         };
 
         // --config <file> overrules default location
-        let config_path = find_arg("--config")?.unwrap_or(config_path);
+        let config_path = args.config.unwrap_or(config_path);
 
         let config_toml = match ConfigToml::new(config_path.as_str()) {
             Err(e) => {
@@ -103,7 +98,7 @@ impl Config {
             Ok(c) => Some(c),
         };
 
-        let frontend = match find_arg("--frontend")? {
+        let frontend = match args.frontend {
             None => match &config_toml {
                 Some(c) => c.frontend.clone(),
                 None => None,
@@ -123,8 +118,8 @@ impl Config {
             }
         };
 
-        let port = match find_arg("--port")? {
-            Some(port) => port.parse::<u16>()?,
+        let port = match args.port {
+            Some(port) => port,
             None => match &config_toml {
                 Some(c) => c.port.unwrap_or(DEFAULT_PORT),
                 None => DEFAULT_PORT,
@@ -148,7 +143,14 @@ impl Config {
             }
         }
 
-        Ok(Config { frontend, clients, port })
+        let daemon = args.daemon;
+
+        Ok(Config {
+            daemon,
+            frontend,
+            clients,
+            port,
+        })
     }
 
     pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16,  Position)> {

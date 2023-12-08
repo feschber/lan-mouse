@@ -27,6 +27,7 @@ tokio = {version = "1.32.0", features = ["io-util", "macros", "net", "rt", "sync
 async-trait = "0.1.73"
 futures-core = "0.3.28"
 futures = "0.3.28"
+clap = { version="4.4.11", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 wayland-client = { version="0.30.2", optional = true }

@@ -1,4 +1,5 @@
-use std::{error::Error, io, result::Result, task::Poll};
+use anyhow::Result;
+use std::{io, task::Poll};
 
 use futures_core::Stream;
 
@@ -7,7 +8,7 @@ use crate::{producer::EventProducer, event::Event, client::ClientHandle};
 pub struct LibeiProducer {}
 
 impl LibeiProducer {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self> {
         Ok(Self {  })
     }
 }

@@ -15,8 +15,6 @@ pub struct Window {
     #[template_child]
     pub port_edit_cancel: TemplateChild<Button>,
     #[template_child]
-    pub add_client_button: TemplateChild<Button>,
-    #[template_child]
     pub client_list: TemplateChild<ListBox>,
     #[template_child]
     pub client_placeholder: TemplateChild<ActionRow>,

@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 
 use std::{net::SocketAddr, io::ErrorKind};
 
-use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}};
+use crate::{client::{ClientEvent, ClientManager, Position, ClientHandle}, consumer::EventConsumer, producer::EventProducer, frontend::{FrontendEvent, FrontendListener, FrontendNotify, self}, dns::{self, DnsResolver}, config::Config};
 use crate::event::Event;
 
 /// keeps track of state to prevent a feedback loop
@@ -36,7 +36,7 @@ pub struct Server {
 
 impl Server {
     pub async fn new(
-        port: u16,
+        config: &Config,
         frontend: FrontendListener,
         consumer: Box<dyn EventConsumer>,
         producer: Box<dyn EventProducer>,
@@ -46,13 +46,13 @@ impl Server {
         let resolver = dns::DnsResolver::new().await?;
 
         // bind the udp socket
-        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
         let socket = UdpSocket::bind(listen_addr).await?;
         let (frontend_tx, frontend_rx) = tokio::sync::mpsc::channel(1);
 
         // create client manager
         let client_manager = ClientManager::new();
-        Ok(Server {
+        let mut server = Server {
             frontend,
             consumer,
             producer,
@@ -62,7 +62,14 @@ impl Server {
             state: State::Receiving,
             frontend_rx,
             frontend_tx,
-        })
+        };
+
+        // add clients from config
+        for (c,h,port,p) in config.get_clients().into_iter() {
+            server.add_client(h, c, port, p).await;
+        }
+
+        Ok(server)
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -85,7 +92,7 @@ impl Server {
                         Some(Ok((client, event))) => {
                             self.handle_producer_event(client,event).await;
                         },
-                        Some(Err(e)) => log::error!("{e}"),
+                        Some(Err(e)) => log::error!("error reading from event producer: {e}"),
                         _ => break,
                     }
                 }
@@ -145,7 +152,7 @@ impl Server {
         log::debug!("add_client {client}");
         let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
         if let Err(e) = self.frontend.notify_all(notify).await {
-            log::error!("{e}");
+            log::error!("error notifying frontend: {e}");
         };
         client
     }
@@ -170,7 +177,7 @@ impl Server {
             let notify = FrontendNotify::NotifyClientDelete(client);
             log::debug!("{notify:?}");
             if let Err(e) = self.frontend.notify_all(notify).await {
-                log::error!("{e}");
+                log::error!("error notifying frontend: {e}");
             }
             Some(client)
         } else {
@@ -367,13 +374,22 @@ impl Server {
 
     #[cfg(unix)]
     async fn handle_frontend_stream(&mut self, mut stream: ReadHalf<UnixStream>) {
+        use std::io;
+
         let tx = self.frontend_tx.clone();
         tokio::task::spawn_local(async move {
             loop {
                 let event = frontend::read_event(&mut stream).await;
                 match event {
                     Ok(event) => tx.send(event).await.unwrap(),
-                    Err(e) => log::error!("error reading frontend event: {e}"),
+                    Err(e) => {
+                        if let Some(e) = e.downcast_ref::<io::Error>() {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                return;
+                            }
+                        }
+                        log::error!("error reading frontend event: {e}");
+                    }
                 }
             }
         });
@@ -439,7 +455,7 @@ impl Server {
     async fn enumerate(&mut self) {
         let clients = self.client_manager.enumerate();
         if let Err(e) = self.frontend.notify_all(FrontendNotify::Enumerate(clients)).await {
-            log::error!("{e}");
+            log::error!("error notifying frontend: {e}");
         }
     }
 }

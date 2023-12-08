@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result, Context};
-use std::{thread::{self, JoinHandle}, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
+use std::{thread, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
 #[cfg(windows)]
 use std::net::SocketAddrV4;
 
 #[cfg(unix)]
-use std::{os::unix::net::UnixStream, path::Path, env};
+use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
 
@@ -12,9 +12,9 @@ use crate::{client::Position, config::DEFAULT_PORT};
 
 use super::{FrontendEvent, FrontendNotify};
 
-pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
+pub fn run() -> Result<()> {
     #[cfg(unix)]
-    let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
+    let socket_path = super::FrontendListener::socket_path()?;
 
     #[cfg(unix)]
     let Ok(mut tx) = UnixStream::connect(&socket_path) else {
@@ -50,7 +50,7 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                                 log::error!("error sending message: {e}");
                             };
                             if *event == FrontendEvent::Shutdown() {
-                                break;
+                                return;
                             }
                         }
                         // prompt is printed after the server response is received
@@ -126,7 +126,29 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                 prompt();
             }
         })?;
-    Ok((reader, writer))
+    match reader.join() {
+        Ok(_) => (),
+        Err(e) => {
+            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
+                (Some(&s), _) => s,
+                (_, Some(s)) => s,
+                _ => "no panic info"
+            };
+            log::error!("reader thread paniced: {msg}");
+        },
+    }
+    match writer.join() {
+        Ok(_) => (),
+        Err(e) => {
+            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
+                (Some(&s), _) => s,
+                (_, Some(s)) => s,
+                _ => "no panic info"
+            };
+            log::error!("writer thread paniced: {msg}");
+        },
+    }
+    Ok(())
 }
 
 fn prompt() {
