@@ -62,17 +62,13 @@ fn run_service(config: &Config) -> Result<()> {
         // create frontend communication adapter
         let frontend_adapter = match FrontendListener::new().await {
             Some(Err(e)) => return Err(e),
-            Some(Ok(f)) => Some(f),
-            None => None,
-        };
-
-        let frontend_adapter = match frontend_adapter {
-            Some(f) => f,
-            // none means some other instance is already running
+            Some(Ok(f)) => f,
             None => {
+                // none means some other instance is already running
                 log::debug!("service already running, exiting");
                 return anyhow::Ok(())
             }
+,
         };
 
         // create event producer and consumer
