@@ -50,7 +50,7 @@ pub fn run() -> Result<()> {
                                 log::error!("error sending message: {e}");
                             };
                             if *event == FrontendEvent::Shutdown() {
-                                break;
+                                return;
                             }
                         }
                         // prompt is printed after the server response is received
