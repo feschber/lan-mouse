@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result, Context};
-use std::{thread::{self, JoinHandle}, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
+use std::{thread, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
 #[cfg(windows)]
 use std::net::SocketAddrV4;
 
@@ -12,7 +12,7 @@ use crate::{client::Position, config::DEFAULT_PORT};
 
 use super::{FrontendEvent, FrontendNotify};
 
-pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
+pub fn run() -> Result<()> {
     #[cfg(unix)]
     let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
 
@@ -126,7 +126,29 @@ pub fn start() -> Result<(JoinHandle<()>, JoinHandle<()>)> {
                 prompt();
             }
         })?;
-    Ok((reader, writer))
+    match reader.join() {
+        Ok(_) => (),
+        Err(e) => {
+            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
+                (Some(&s), _) => s,
+                (_, Some(s)) => s,
+                _ => "no panic info"
+            };
+            log::error!("reader thread paniced: {msg}");
+        },
+    }
+    match writer.join() {
+        Ok(_) => (),
+        Err(e) => {
+            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
+                (Some(&s), _) => s,
+                (_, Some(s)) => s,
+                _ => "no panic info"
+            };
+            log::error!("writer thread paniced: {msg}");
+        },
+    }
+    Ok(())
 }
 
 fn prompt() {

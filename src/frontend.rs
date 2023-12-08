@@ -1,5 +1,5 @@
-use std::io::Result;
-use std::str;
+use anyhow::{Result, anyhow};
+use std::{str, io::ErrorKind, process::{Child, Command}};
 
 #[cfg(unix)]
 use std::{env, path::{Path, PathBuf}};
@@ -18,7 +18,7 @@ use tokio::net::TcpListener;
 
 use serde::{Serialize, Deserialize};
 
-use crate::client::{Position, ClientHandle, Client};
+use crate::{client::{Position, ClientHandle, Client}, config::{Config, Frontend}};
 
 /// cli frontend
 pub mod cli;
@@ -26,6 +26,27 @@ pub mod cli;
 /// gtk frontend
 #[cfg(all(unix, feature = "gtk"))]
 pub mod gtk;
+
+
+pub fn start_frontend() -> Result<Child> {
+    let child = Command::new(std::env::current_exe()?)
+        .arg("--run-frontend")
+        .spawn()?;
+    Ok(child)
+}
+
+pub fn run_frontend(config: &Config) -> Result<()> {
+    match config.frontend {
+        #[cfg(all(unix, feature = "gtk"))]
+        Frontend::Gtk => { gtk::run(); }
+        #[cfg(any(not(feature = "gtk"), not(unix)))]
+        Frontend::Gtk => panic!("gtk frontend requested but feature not enabled!"),
+        Frontend::Cli => { cli::run()?; }
+    };
+    Ok(())
+}
+
+
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
@@ -70,20 +91,43 @@ pub struct FrontendListener {
 }
 
 impl FrontendListener {
-    pub async fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new() -> Option<Result<Self>> {
         #[cfg(unix)]
-        let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
-        #[cfg(unix)]
-        log::debug!("remove socket: {:?}", socket_path);
-        #[cfg(unix)]
-        if socket_path.exists() {
-            std::fs::remove_file(&socket_path).unwrap();
-        }
-        #[cfg(unix)]
-        let listener = UnixListener::bind(&socket_path)?;
+        let (socket_path, listener) = {
+            let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
+                Ok(d) => d,
+                Err(e) => return Some(Err(anyhow!("could not find XDG_RUNTIME_DIR: {e}"))),
+            };
+            let xdg_runtime_dir = Path::new(xdg_runtime_dir.as_str());
+
+            let socket_path = xdg_runtime_dir.join("lan-mouse-socket.sock");
+
+            log::debug!("remove socket: {:?}", socket_path);
+            if socket_path.exists() {
+                // try to connect to see if some other instance
+                // of lan-mouse is already running
+                match UnixStream::connect(&socket_path).await {
+                    // connected -> lan-mouse is already running
+                    Ok(_) => return None,
+                    // lan-mouse is not running but a socket was left behind
+                    Err(e) => {
+                        log::debug!("{socket_path:?}: {e} - removing left behind socket");
+                        let _ = std::fs::remove_file(&socket_path);
+                    },
+                }
+            }
+            let listener = match UnixListener::bind(&socket_path) {
+                Ok(ls) => ls,
+                // some other lan-mouse instance has bound the socket in the meantime
+                Err(e) if e.kind() == ErrorKind::AddrInUse => return None,
+                Err(e) => return Some(Err(anyhow!("failed to bind lan-mouse-socket: {e}"))),
+            };
+            (socket_path, listener)
+        };
 
         #[cfg(windows)]
-        let listener = TcpListener::bind("127.0.0.1:5252").await?; // abuse tcp
+        let listener = match TcpListener::bind("127.0.0.1:5252").await {
+        };
 
         let adapter = Self {
             listener,
@@ -92,7 +136,7 @@ impl FrontendListener {
             tx_streams: vec![],
         };
 
-        Ok(adapter)
+        Some(Ok(adapter))
     }
 
     #[cfg(unix)]
@@ -121,12 +165,25 @@ impl FrontendListener {
         let len = payload.len().to_be_bytes();
         log::debug!("json: {json}, len: {}", payload.len());
 
+        let mut keep = vec![];
+
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
             // write len + payload
-            tx.write(&len).await?;
-            tx.write(payload).await?;
+            if let Err(_) =  tx.write(&len).await {
+                keep.push(false);
+                continue;
+            }
+            if let Err(_) = tx.write(payload).await {
+                keep.push(false);
+                continue;
+            }
+            keep.push(true);
         }
+
+        // could not find a better solution because async
+        let mut keep = keep.into_iter();
+        self.tx_streams.retain(|_| keep.next().unwrap());
         Ok(())
     }
 }

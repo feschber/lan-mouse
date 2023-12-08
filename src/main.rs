@@ -1,15 +1,14 @@
-use std::{process, error::Error};
+use anyhow::Result;
+use std::process;
 
 use env_logger::Env;
 use lan_mouse::{
     consumer, producer,
-    config::{Config, Frontend::{Cli, Gtk}}, server::Server,
-    frontend::{FrontendListener, cli},
+    config::Config, server::Server,
+    frontend::{FrontendListener, self},
 };
 
-#[cfg(all(unix, feature = "gtk"))]
-use lan_mouse::frontend::gtk;
-use tokio::task::LocalSet;
+use tokio::{task::LocalSet, join};
 
 pub fn main() {
 
@@ -23,10 +22,17 @@ pub fn main() {
     }
 }
 
-pub fn run() -> Result<(), Box<dyn Error>> {
-    // parse config file
+pub fn run() -> Result<()> {
+    // parse config file + cli args
     let config = Config::new()?;
+    log::debug!("{config:?}");
 
+    // start frontend
+    if config.frontend_only {
+        return frontend::run_frontend(&config);
+    }
+
+    // create single threaded tokio runtime
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -34,37 +40,41 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     // run async event loop
     runtime.block_on(LocalSet::new().run_until(async {
-        // start producing and consuming events
-        let producer = producer::create()?;
-        let consumer = consumer::create().await?;
-
         // create frontend communication adapter
-        let frontend_adapter = FrontendListener::new().await?;
-
-        // start frontend
-        match config.frontend {
-            #[cfg(all(unix, feature = "gtk"))]
-            Gtk => { gtk::start()?; }
-            #[cfg(any(not(feature = "gtk"), not(unix)))]
-            Gtk => panic!("gtk frontend requested but feature not enabled!"),
-            Cli => { cli::start()?; }
+        let frontend_adapter = match FrontendListener::new().await {
+            Some(Err(e)) => return Err(e),
+            Some(Ok(f)) => Some(f),
+            None => None,
         };
 
-        // start sending and receiving events
-        let mut event_server = Server::new(config.port, frontend_adapter, consumer, producer).await?;
-        log::debug!("created server");
-
-        // add clients from config
-        for (c,h,port,p) in config.get_clients().into_iter() {
-            event_server.add_client(h, c, port, p).await;
+        // start the frontend in a child process
+        if !config.daemon_only {
+            frontend::start_frontend()?;
         }
 
+        let frontend_adapter = match frontend_adapter {
+            Some(f) => f,
+            // none means some other instance is already running
+            None => return anyhow::Ok(()),
+        };
+
+
+        // create event producer and consumer
+        let (producer, consumer) = join!(
+            producer::create(),
+            consumer::create(),
+        );
+        let (producer, consumer) = (producer?, consumer?);
+
+        // create server
+        let mut event_server = Server::new(config, frontend_adapter, consumer, producer).await?;
         log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
+
         // run event loop
         event_server.run().await?;
-        Result::<_, Box<dyn Error>>::Ok(())
+        anyhow::Ok(())
     }))?;
     log::debug!("exiting main");
 
-    Ok(())
+    anyhow::Ok(())
 }

@@ -1,4 +1,5 @@
-use std::{error::Error, io};
+use anyhow::Result;
+use std::io;
 
 use futures_core::Stream;
 
@@ -15,7 +16,7 @@ enum Backend {
     X11,
 }
 
-pub fn create() -> Result<Box<dyn EventProducer>, Box<dyn Error>> {
+pub async fn create() -> Result<Box<dyn EventProducer>> {
     #[cfg(windows)]
     return Ok(Box::new(producer::windows::WindowsProducer::new()));
 

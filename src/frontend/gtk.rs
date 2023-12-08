@@ -2,7 +2,7 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Result, Read, ErrorKind}, thread::{self, JoinHandle}, env, process, path::Path, os::unix::net::UnixStream, str};
+use std::{io::{Read, ErrorKind}, env, process, path::Path, os::unix::net::UnixStream, str};
 
 use crate::{frontend::gtk::window::Window, config::DEFAULT_PORT};
 
@@ -14,11 +14,11 @@ use self::client_object::ClientObject;
 
 use super::FrontendNotify;
 
-pub fn start() -> Result<JoinHandle<glib::ExitCode>> {
-    log::debug!("starting gtk frontend");
-    thread::Builder::new()
-        .name("gtk-thread".into())
-        .spawn(gtk_main)
+pub fn run() -> glib::ExitCode {
+    log::debug!("running gtk frontend");
+    let ret = gtk_main();
+    log::debug!("frontend exited");
+    ret
 }
 
 fn gtk_main() -> glib::ExitCode {
@@ -33,7 +33,8 @@ fn gtk_main() -> glib::ExitCode {
     app.connect_startup(|_| load_css());
     app.connect_activate(build_ui);
 
-    app.run()
+    let args: Vec<&'static str> = vec![];
+    app.run_with_args(&args)
 }
 
 fn load_css() {
