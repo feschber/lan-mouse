@@ -4,7 +4,7 @@ use std::{thread, io::{Write, Read, ErrorKind}, str::SplitWhitespace};
 use std::net::SocketAddrV4;
 
 #[cfg(unix)]
-use std::{os::unix::net::UnixStream, path::Path, env};
+use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
 
@@ -14,7 +14,7 @@ use super::{FrontendEvent, FrontendNotify};
 
 pub fn run() -> Result<()> {
     #[cfg(unix)]
-    let socket_path = Path::new(env::var("XDG_RUNTIME_DIR")?.as_str()).join("lan-mouse-socket.sock");
+    let socket_path = super::FrontendListener::socket_path()?;
 
     #[cfg(unix)]
     let Ok(mut tx) = UnixStream::connect(&socket_path) else {

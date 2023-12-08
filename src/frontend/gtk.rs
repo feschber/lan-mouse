@@ -2,7 +2,7 @@ mod window;
 mod client_object;
 mod client_row;
 
-use std::{io::{Read, ErrorKind}, env, process, path::Path, os::unix::net::UnixStream, str};
+use std::{io::{Read, ErrorKind}, env, process, str};
 
 use crate::{frontend::gtk::window::Window, config::DEFAULT_PORT};
 
@@ -53,19 +53,13 @@ fn load_icons() {
 }
 
 fn build_ui(app: &Application) {
-    let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
-        Ok(v) => v,
+    log::debug!("connecting to lan-mouse-socket");
+    let mut rx = match super::wait_for_service() {
+        Ok(stream) => stream,
         Err(e) => {
-            log::error!("{e}");
+            log::error!("could not connect to lan-mouse-socket: {e}");
             process::exit(1);
         }
-    };
-    log::debug!("connecting to lan-mouse-socket ... ");
-    let socket_path = Path::new(xdg_runtime_dir.as_str())
-        .join("lan-mouse-socket.sock");
-    let Ok(mut rx) = UnixStream::connect(&socket_path) else {
-        log::error!("Could not connect to lan-mouse-socket @ {socket_path:?}");
-        process::exit(1);
     };
     let tx = match rx.try_clone() {
         Ok(sock) => sock,

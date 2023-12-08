@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use std::{str, io::ErrorKind, process::{Child, Command}};
+use std::{str, io::ErrorKind, process::{Child, Command}, time::Duration, cmp::min};
 
 #[cfg(unix)]
 use std::{env, path::{Path, PathBuf}};
@@ -11,6 +11,7 @@ use tokio::io::ReadHalf;
 use tokio::net::UnixStream;
 #[cfg(unix)]
 use tokio::net::UnixListener;
+
 #[cfg(windows)]
 use tokio::net::TcpStream;
 #[cfg(windows)]
@@ -46,7 +47,29 @@ pub fn run_frontend(config: &Config) -> Result<()> {
     Ok(())
 }
 
+fn exponential_back_off(duration: &mut Duration) -> &Duration {
+    let new = duration.saturating_mul(2);
+    *duration = min(new, Duration::from_secs(1));
+    duration
+}
 
+/// wait for the lan-mouse socket to come online
+pub fn wait_for_service() -> Result<std::os::unix::net::UnixStream> {
+    #[cfg(unix)]
+    {
+        let socket_path = FrontendListener::socket_path()?;
+        let mut duration = Duration::from_millis(1);
+        loop {
+            use std::os::unix::net::UnixStream;
+            if let Ok(stream) = UnixStream::connect(&socket_path) {
+                break Ok(stream)
+            }
+            // a signaling mechanism or inotify could be used to
+            // improve this
+            std::thread::sleep(*exponential_back_off(&mut duration));
+        }
+    }
+}
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
@@ -91,16 +114,22 @@ pub struct FrontendListener {
 }
 
 impl FrontendListener {
+    pub fn socket_path() -> Result<PathBuf> {
+        let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
+            Ok(d) => d,
+            Err(e) => return Err(anyhow!("could not find XDG_RUNTIME_DIR: {e}")),
+        };
+        let xdg_runtime_dir = Path::new(xdg_runtime_dir.as_str());
+        Ok(xdg_runtime_dir.join("lan-mouse-socket.sock"))
+    }
+
     pub async fn new() -> Option<Result<Self>> {
         #[cfg(unix)]
         let (socket_path, listener) = {
-            let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
-                Ok(d) => d,
-                Err(e) => return Some(Err(anyhow!("could not find XDG_RUNTIME_DIR: {e}"))),
+            let socket_path = match Self::socket_path() {
+                Ok(path) => path,
+                Err(e) => return Some(Err(e)),
             };
-            let xdg_runtime_dir = Path::new(xdg_runtime_dir.as_str());
-
-            let socket_path = xdg_runtime_dir.join("lan-mouse-socket.sock");
 
             log::debug!("remove socket: {:?}", socket_path);
             if socket_path.exists() {
