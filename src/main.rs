@@ -65,7 +65,7 @@ fn run_service(config: &Config) -> Result<()> {
             Some(Ok(f)) => f,
             None => {
                 // none means some other instance is already running
-                log::debug!("service already running, exiting");
+                log::info!("service already running, exiting");
                 return anyhow::Ok(())
             }
 ,
