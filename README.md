@@ -28,9 +28,11 @@ input capture (to send events *to* other clients) on different operating systems
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
-| X11                       | (WIP)                    | TODO                                 |
-| Windows                   | (:heavy_check_mark:)     | TODO                                 |
-| MacOS                     | TODO                     | TODO                                 |
+| X11                       | (WIP)                    | WIP                                  |
+| Windows                   | ( :heavy_check_mark: )   | WIP                                  |
+| MacOS                     | ( :heavy_check_mark: )   | WIP                                  |
+
+Keycode translation is not yet implemented so on MacOS only mouse emulation works as of right now.
 
 ## Build and Run
 Build in release mode:
