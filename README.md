@@ -1,7 +1,14 @@
 # Lan Mouse
 - _Now with a gtk frontend_
 
-<img src="https://github.com/ferdinandschober/lan-mouse/assets/40996949/ccb33815-4357-4c8d-a5d2-8897ab626a08" width=75%>
+Lan Mouse is a mouse and keyboard sharing software similar to universal-control on Apple devices.
+It allows for using multiple pcs with a single set of mouse and keyboard.
+
+The primary target is Wayland on Linux but Windows and MacOS have partial support as well (see below for more details).
+
+![Screenshot from 2023-12-09 01-48-12](https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df#gh-dark-mode-only)
+![Screenshot from 2023-12-09 01-48-19](https://github.com/feschber/lan-mouse/assets/40996949/d6318340-f811-4e16-9d6e-d1b79883c709#gh-light-mode-only)
+
 
 Goal of this project is to be an open-source replacement for proprietary tools like [Synergy](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
 
@@ -65,11 +72,12 @@ enter the corresponding hostname and activate it.
 If the mouse can not be moved onto a device, make sure you have port `4242` (or the one selected)
 opened up in your firewall.
 
+### Command Line Interface
 The cli interface can be enabled using `--frontend cli` as commandline arguments.
 Type `help` to list the available commands.
 
 E.g.:
-```
+```sh
 $ cargo run --release -- --frontend cli
 (...)
 > connect <host> left|right|top|bottom
@@ -77,6 +85,14 @@ $ cargo run --release -- --frontend cli
 > list
 (...)
 > activate 0
+```
+
+### Daemon
+Lan Mouse can be launched in daemon mode to keep it running in the background.
+To do so, add `--daemon` to the commandline args:
+
+```sh
+$ cargo run --release -- --daemon
 ```
 
 ## Configuration
