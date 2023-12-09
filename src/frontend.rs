@@ -126,7 +126,7 @@ pub struct FrontendListener {
 }
 
 impl FrontendListener {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub fn socket_path() -> Result<PathBuf> {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(d) => d,
@@ -134,6 +134,20 @@ impl FrontendListener {
         };
         let xdg_runtime_dir = Path::new(xdg_runtime_dir.as_str());
         Ok(xdg_runtime_dir.join("lan-mouse-socket.sock"))
+    }
+
+    #[cfg(all(unix, target_os = "macos"))]
+    pub fn socket_path() -> Result<PathBuf> {
+        let home = match env::var("HOME") {
+            Ok(d) => d,
+            Err(e) => return Err(anyhow!("could not find HOME: {e}")),
+        };
+        let home = Path::new(home.as_str());
+        let path = home
+            .join("Library")
+            .join("Caches")
+            .join("lan-mouse-socket.sock");
+        Ok(path)
     }
 
     pub async fn new() -> Option<Result<Self>> {
