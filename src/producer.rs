@@ -9,7 +9,7 @@ use crate::{
     event::Event,
 };
 
-#[cfg(all(unix, not(target_os="macos")))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::env;
 
 #[cfg(all(unix, not(target_os = "macos")))]

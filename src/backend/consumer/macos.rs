@@ -1,12 +1,14 @@
-use std::ops::{Index, IndexMut};
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use crate::client::{ClientEvent, ClientHandle};
 use crate::consumer::EventConsumer;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
-use core_graphics::display::{CGPoint};
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use core_graphics::display::CGPoint;
+use core_graphics::event::{
+    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit,
+};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use std::ops::{Index, IndexMut};
 
 pub struct MacOSConsumer {
     pub event_source: CGEventSource,
@@ -26,7 +28,7 @@ impl Index<CGMouseButton> for ButtonState {
         match index {
             CGMouseButton::Left => &self.left,
             CGMouseButton::Right => &self.right,
-            CGMouseButton::Center => &self.center
+            CGMouseButton::Center => &self.center,
         }
     }
 }
@@ -36,7 +38,7 @@ impl IndexMut<CGMouseButton> for ButtonState {
         match index {
             CGMouseButton::Left => &mut self.left,
             CGMouseButton::Right => &mut self.right,
-            CGMouseButton::Center => &mut self.center
+            CGMouseButton::Center => &mut self.center,
         }
     }
 }
@@ -49,8 +51,15 @@ impl MacOSConsumer {
             Ok(e) => e,
             Err(_) => return Err(anyhow!("event source creation failed!")),
         };
-        let button_state = ButtonState { left: false, right: false, center: false };
-        Ok(Self { event_source, button_state })
+        let button_state = ButtonState {
+            left: false,
+            right: false,
+            center: false,
+        };
+        Ok(Self {
+            event_source,
+            button_state,
+        })
     }
 
     fn get_mouse_location(&self) -> Option<CGPoint> {
@@ -64,12 +73,16 @@ impl EventConsumer for MacOSConsumer {
     async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
-                PointerEvent::Motion { time: _, relative_x, relative_y } => {
+                PointerEvent::Motion {
+                    time: _,
+                    relative_x,
+                    relative_y,
+                } => {
                     let mut mouse_location = match self.get_mouse_location() {
                         Some(l) => l,
                         None => {
                             log::warn!("could not get mouse location!");
-                            return
+                            return;
                         }
                     };
                     mouse_location.x += relative_x;
@@ -97,53 +110,85 @@ impl EventConsumer for MacOSConsumer {
                     };
                     event.post(CGEventTapLocation::HID);
                 }
-                PointerEvent::Button { time: _, button, state } => {
+                PointerEvent::Button {
+                    time: _,
+                    button,
+                    state,
+                } => {
                     let (event_type, mouse_button) = match (button, state) {
-                        (b, 1) if b == crate::event::BTN_LEFT => (CGEventType::LeftMouseDown, CGMouseButton::Left),
-                        (b, 0) if b == crate::event::BTN_LEFT => (CGEventType::LeftMouseUp, CGMouseButton::Left),
-                        (b, 1) if b == crate::event::BTN_RIGHT => (CGEventType::RightMouseDown, CGMouseButton::Right),
-                        (b, 0) if b == crate::event::BTN_RIGHT => (CGEventType::RightMouseUp, CGMouseButton::Right),
-                        (b, 1) if b == crate::event::BTN_MIDDLE => (CGEventType::OtherMouseDown, CGMouseButton::Center),
-                        (b, 0) if b == crate::event::BTN_MIDDLE => (CGEventType::OtherMouseUp, CGMouseButton::Center),
+                        (b, 1) if b == crate::event::BTN_LEFT => {
+                            (CGEventType::LeftMouseDown, CGMouseButton::Left)
+                        }
+                        (b, 0) if b == crate::event::BTN_LEFT => {
+                            (CGEventType::LeftMouseUp, CGMouseButton::Left)
+                        }
+                        (b, 1) if b == crate::event::BTN_RIGHT => {
+                            (CGEventType::RightMouseDown, CGMouseButton::Right)
+                        }
+                        (b, 0) if b == crate::event::BTN_RIGHT => {
+                            (CGEventType::RightMouseUp, CGMouseButton::Right)
+                        }
+                        (b, 1) if b == crate::event::BTN_MIDDLE => {
+                            (CGEventType::OtherMouseDown, CGMouseButton::Center)
+                        }
+                        (b, 0) if b == crate::event::BTN_MIDDLE => {
+                            (CGEventType::OtherMouseUp, CGMouseButton::Center)
+                        }
                         _ => {
                             log::warn!("invalid button event: {button},{state}");
-                            return
+                            return;
                         }
                     };
                     // store button state
                     self.button_state[mouse_button] = if state == 1 { true } else { false };
 
                     let location = self.get_mouse_location().unwrap();
-                    let event = match CGEvent::new_mouse_event(self.event_source.clone(), event_type, location, mouse_button) {
+                    let event = match CGEvent::new_mouse_event(
+                        self.event_source.clone(),
+                        event_type,
+                        location,
+                        mouse_button,
+                    ) {
                         Ok(e) => e,
                         Err(()) => {
                             log::warn!("mouse event creation failed!");
-                            return
+                            return;
                         }
                     };
                     event.post(CGEventTapLocation::HID);
                 }
-                PointerEvent::Axis { time: _, axis, value } => {
+                PointerEvent::Axis {
+                    time: _,
+                    axis,
+                    value,
+                } => {
                     let value = value as i32 / 10; // FIXME: high precision scroll events
                     let (count, wheel1, wheel2, wheel3) = match axis {
                         0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                         1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                         _ => {
                             log::warn!("invalid scroll event: {axis}, {value}");
-                            return
+                            return;
                         }
                     };
-                    let event = match CGEvent::new_scroll_event(self.event_source.clone(), ScrollEventUnit::LINE, count, wheel1, wheel2, wheel3) {
+                    let event = match CGEvent::new_scroll_event(
+                        self.event_source.clone(),
+                        ScrollEventUnit::LINE,
+                        count,
+                        wheel1,
+                        wheel2,
+                        wheel3,
+                    ) {
                         Ok(e) => e,
                         Err(()) => {
                             log::warn!("scroll event creation failed!");
-                            return
+                            return;
                         }
                     };
                     event.post(CGEventTapLocation::HID);
                 }
                 PointerEvent::Frame { .. } => {}
-            }
+            },
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key { .. } => {
                     /*
@@ -163,14 +208,14 @@ impl EventConsumer for MacOSConsumer {
                     */
                 }
                 KeyboardEvent::Modifiers { .. } => {}
-            }
+            },
             Event::Release() => {}
             Event::Ping() => {}
             Event::Pong() => {}
         }
     }
 
-    async fn notify(&mut self, _client_event: ClientEvent) { }
+    async fn notify(&mut self, _client_event: ClientEvent) {}
 
-    async fn destroy(&mut self) { }
+    async fn destroy(&mut self) {}
 }

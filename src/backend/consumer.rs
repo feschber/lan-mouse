@@ -1,7 +1,7 @@
 #[cfg(windows)]
 pub mod windows;
 
-#[cfg(all(unix, feature="x11", not(target_os = "macos")))]
+#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 pub mod x11;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]

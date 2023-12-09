@@ -1,9 +1,9 @@
-use std::{io, pin::Pin};
-use std::task::{Context, Poll};
-use futures_core::Stream;
 use crate::client::{ClientEvent, ClientHandle};
 use crate::event::Event;
 use crate::producer::EventProducer;
+use futures_core::Stream;
+use std::task::{Context, Poll};
+use std::{io, pin::Pin};
 
 pub struct MacOSProducer;
 
@@ -22,7 +22,7 @@ impl Stream for MacOSProducer {
 }
 
 impl EventProducer for MacOSProducer {
-    fn notify(&mut self, _event: ClientEvent) { }
+    fn notify(&mut self, _event: ClientEvent) {}
 
-    fn release(&mut self) { }
+    fn release(&mut self) {}
 }
