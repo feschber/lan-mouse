@@ -141,10 +141,6 @@ impl Server {
                     log::info!("terminating gracefully ...");
                     break;
                 }
-                // safety: cancellation safe
-                // _ = tokio::time::sleep(Duration::from_millis(10)) => {
-                    // self.consumer.consume(Event::Pointer(crate::event::PointerEvent::Motion { time: 0, relative_x: 0., relative_y: 1. }), 0).await;
-                // }
             }
         }
 
