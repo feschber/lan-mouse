@@ -5,7 +5,7 @@ use crate::client::{ClientEvent, ClientHandle};
 use crate::consumer::EventConsumer;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 use core_graphics::display::{CGPoint};
-use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, ScrollEventUnit};
+use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
 pub struct MacOSConsumer {
@@ -145,7 +145,7 @@ impl EventConsumer for MacOSConsumer {
                 PointerEvent::Frame { .. } => {}
             }
             Event::Keyboard(keyboard_event) => match keyboard_event {
-                KeyboardEvent::Key { time: _, key, state } => {
+                KeyboardEvent::Key { .. } => {
                     /*
                     let code = CGKeyCode::from_le(key as u16);
                     let event = match CGEvent::new_keyboard_event(
