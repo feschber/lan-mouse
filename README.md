@@ -6,8 +6,11 @@ It allows for using multiple pcs with a single set of mouse and keyboard.
 
 The primary target is Wayland on Linux but Windows and MacOS have partial support as well (see below for more details).
 
-![Screenshot from 2023-12-09 01-48-12](https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df#gh-dark-mode-only)
-![Screenshot from 2023-12-09 01-48-19](https://github.com/feschber/lan-mouse/assets/40996949/d6318340-f811-4e16-9d6e-d1b79883c709#gh-light-mode-only)
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/feschber/lan-mouse/assets/40996949/d6318340-f811-4e16-9d6e-d1b79883c709">
+    <img alt="Screenshot of Lan-Mouse" srcset="https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df">
+</picture>
 
 
 Goal of this project is to be an open-source replacement for proprietary tools like [Synergy](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
