@@ -267,7 +267,7 @@ impl VirtualInput {
                         // insert a frame event after each mouse event
                         pointer.frame();
                     }
-                    _ => {}
+                    VirtualInput::Kde { .. } => {}
                 }
             }
             Event::Keyboard(e) => match e {
@@ -330,11 +330,8 @@ impl Dispatch<WlKeyboard, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        match event {
-            wl_keyboard::Event::Keymap { format, fd, size } => {
-                state.keymap = Some((u32::from(format), fd, size));
-            }
-            _ => {}
+        if let wl_keyboard::Event::Keymap { format, fd, size } = event {
+            state.keymap = Some((u32::from(format), fd, size));
         }
     }
 }

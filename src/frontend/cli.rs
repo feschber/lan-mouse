@@ -21,7 +21,7 @@ pub fn run() -> Result<()> {
     let socket_path = super::FrontendListener::socket_path()?;
 
     #[cfg(unix)]
-    let Ok(mut tx) = UnixStream::connect(&socket_path) else {
+    let Ok(mut tx) = UnixStream::connect(socket_path) else {
         return Err(anyhow!("Could not connect to lan-mouse-socket"));
     };
 

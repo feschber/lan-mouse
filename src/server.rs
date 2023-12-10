@@ -132,9 +132,7 @@ impl Server {
                 // safety: cancellation safe
                 e = self.consumer.dispatch() => {
                     log::trace!("-> consumer.dispatch()");
-                    if let Err(e) = e {
-                        return Err(e);
-                    }
+                    e?;
                 }
                 // safety: cancellation safe
                 _ = signal::ctrl_c() => {

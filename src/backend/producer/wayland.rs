@@ -159,7 +159,7 @@ impl Window {
 
         let layer_surface = g.layer_shell.get_layer_surface(
             &surface,
-            Some(&output),
+            Some(output),
             Layer::Overlay,
             "LAN Mouse Sharing".into(),
             qh,
@@ -221,13 +221,7 @@ fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, Outp
     // as an opposite edge of a different output
     let outputs: Vec<WlOutput> = edges
         .iter()
-        .filter(|(_, edge)| {
-            opposite_edges
-                .iter()
-                .map(|(_, e)| *e)
-                .find(|e| e == edge)
-                .is_none()
-        })
+        .filter(|(_, edge)| !opposite_edges.iter().map(|(_, e)| *e).any(|e| &e == edge))
         .map(|(o, _)| o.clone())
         .collect();
     state
@@ -244,7 +238,7 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
         for _ in 0..width {
             if env::var("LM_DEBUG_LAYER_SHELL").ok().is_some() {
                 // AARRGGBB
-                buf.write_all(&0xFF11d116u32.to_ne_bytes()).unwrap();
+                buf.write_all(&0xff11d116u32.to_ne_bytes()).unwrap();
             } else {
                 // AARRGGBB
                 buf.write_all(&0x00000000u32.to_ne_bytes()).unwrap();
@@ -468,7 +462,7 @@ impl State {
         let outputs = get_output_configuration(self, pos);
 
         outputs.iter().for_each(|(o, i)| {
-            let window = Window::new(&self, &self.qh, &o, pos, i.size);
+            let window = Window::new(self, &self.qh, o, pos, i.size);
             let window = Rc::new(window);
             self.client_for_window.push((window, client));
         });
@@ -545,19 +539,15 @@ impl EventProducer for WaylandEventProducer {
             }
             ClientEvent::Destroy(handle) => {
                 let inner = self.0.get_mut();
-                loop {
-                    // remove all windows corresponding to this client
-                    if let Some(i) = inner
-                        .state
-                        .client_for_window
-                        .iter()
-                        .position(|(_, c)| *c == handle)
-                    {
-                        inner.state.client_for_window.remove(i);
-                        inner.state.focused = None;
-                    } else {
-                        break;
-                    }
+                // remove all windows corresponding to this client
+                while let Some(i) = inner
+                    .state
+                    .client_for_window
+                    .iter()
+                    .position(|(_, c)| *c == handle)
+                {
+                    inner.state.client_for_window.remove(i);
+                    inner.state.focused = None;
                 }
             }
         }
@@ -663,7 +653,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                         .find(|(w, _c)| w.surface == surface)
                     {
                         app.focused = Some((window.clone(), *client));
-                        app.grab(&surface, pointer, serial.clone(), qh);
+                        app.grab(&surface, pointer, serial, qh);
                     } else {
                         return;
                     }
@@ -834,7 +824,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
                 // client corresponding to the layer_surface
                 let surface = &window.surface;
                 let buffer = &window.buffer;
-                surface.attach(Some(&buffer), 0, 0);
+                surface.attach(Some(buffer), 0, 0);
                 layer_surface.ack_configure(serial);
                 surface.commit();
             }
@@ -869,16 +859,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 name,
                 interface,
                 version: _,
-            } => match interface.as_str() {
-                "wl_output" => {
+            } => {
+                if interface.as_str() == "wl_output" {
                     log::debug!("wl_output global");
                     state
                         .g
                         .outputs
                         .push(registry.bind::<wl_output::WlOutput, _, _>(name, 4, qh, ()))
                 }
-                _ => {}
-            },
+            }
             wl_registry::Event::GlobalRemove { .. } => {}
             _ => {}
         }

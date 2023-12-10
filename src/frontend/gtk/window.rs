@@ -85,16 +85,13 @@ impl Window {
     }
 
     pub fn client_idx(&self, handle: ClientHandle) -> Option<usize> {
-        self.clients()
-            .iter::<ClientObject>()
-            .position(|c| {
-                if let Ok(c) = c {
-                    c.handle() == handle
-                } else {
-                    false
-                }
-            })
-            .map(|p| p as usize)
+        self.clients().iter::<ClientObject>().position(|c| {
+            if let Ok(c) = c {
+                c.handle() == handle
+            } else {
+                false
+            }
+        })
     }
 
     pub fn delete_client(&self, handle: ClientHandle) {
@@ -117,7 +114,7 @@ impl Window {
 
     pub fn request_port_change(&self) {
         let port = self.imp().port_entry.get().text().to_string();
-        if let Ok(port) = u16::from_str_radix(port.as_str(), 10) {
+        if let Ok(port) = port.as_str().parse::<u16>() {
             self.request(FrontendEvent::ChangePort(port));
         } else {
             self.request(FrontendEvent::ChangePort(DEFAULT_PORT));

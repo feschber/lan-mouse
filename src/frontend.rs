@@ -229,11 +229,11 @@ impl FrontendListener {
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
             // write len + payload
-            if let Err(_) = tx.write(&len).await {
+            if tx.write(&len).await.is_err() {
                 keep.push(false);
                 continue;
             }
-            if let Err(_) = tx.write(payload).await {
+            if tx.write(payload).await.is_err() {
                 keep.push(false);
                 continue;
             }

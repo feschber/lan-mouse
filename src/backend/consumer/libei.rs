@@ -80,7 +80,7 @@ impl LibeiConsumer {
         let context = ei::Context::new(stream)?;
         context.flush()?;
         let events = EiEventStream::new(context.clone())?;
-        return Ok(Self {
+        Ok(Self {
             handshake: false,
             context,
             events,
@@ -96,7 +96,7 @@ impl LibeiConsumer {
             capability_mask: 0,
             sequence: 0,
             serial: 0,
-        });
+        })
     }
 }
 

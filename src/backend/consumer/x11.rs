@@ -30,6 +30,12 @@ impl X11Consumer {
     }
 }
 
+impl Default for X11Consumer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl EventConsumer for X11Consumer {
     async fn consume(&mut self, event: Event, _: ClientHandle) {

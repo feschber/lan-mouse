@@ -175,7 +175,7 @@ fn build_ui(app: &Application) {
         let index = param.unwrap()
             .get::<u32>()
             .unwrap();
-        let Some(client) = window.clients().item(index as u32) else {
+        let Some(client) = window.clients().item(index) else {
             return;
         };
         let client = client.downcast_ref::<ClientObject>().unwrap();

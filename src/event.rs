@@ -111,11 +111,11 @@ impl Display for Event {
 impl Event {
     fn event_type(&self) -> EventType {
         match self {
-            Self::Pointer(_) => EventType::POINTER,
-            Self::Keyboard(_) => EventType::KEYBOARD,
-            Self::Release() => EventType::RELEASE,
-            Self::Ping() => EventType::PING,
-            Self::Pong() => EventType::PONG,
+            Self::Pointer(_) => EventType::Pointer,
+            Self::Keyboard(_) => EventType::Keyboard,
+            Self::Release() => EventType::Release,
+            Self::Ping() => EventType::Ping,
+            Self::Pong() => EventType::Pong,
         }
     }
 }
@@ -123,10 +123,10 @@ impl Event {
 impl PointerEvent {
     fn event_type(&self) -> PointerEventType {
         match self {
-            Self::Motion { .. } => PointerEventType::MOTION,
-            Self::Button { .. } => PointerEventType::BUTTON,
-            Self::Axis { .. } => PointerEventType::AXIS,
-            Self::Frame { .. } => PointerEventType::FRAME,
+            Self::Motion { .. } => PointerEventType::Motion,
+            Self::Button { .. } => PointerEventType::Button,
+            Self::Axis { .. } => PointerEventType::Axis,
+            Self::Frame { .. } => PointerEventType::Frame,
         }
     }
 }
@@ -134,28 +134,28 @@ impl PointerEvent {
 impl KeyboardEvent {
     fn event_type(&self) -> KeyboardEventType {
         match self {
-            KeyboardEvent::Key { .. } => KeyboardEventType::KEY,
-            KeyboardEvent::Modifiers { .. } => KeyboardEventType::MODIFIERS,
+            KeyboardEvent::Key { .. } => KeyboardEventType::Key,
+            KeyboardEvent::Modifiers { .. } => KeyboardEventType::Modifiers,
         }
     }
 }
 
 enum PointerEventType {
-    MOTION,
-    BUTTON,
-    AXIS,
-    FRAME,
+    Motion,
+    Button,
+    Axis,
+    Frame,
 }
 enum KeyboardEventType {
-    KEY,
-    MODIFIERS,
+    Key,
+    Modifiers,
 }
 enum EventType {
-    POINTER,
-    KEYBOARD,
-    RELEASE,
-    PING,
-    PONG,
+    Pointer,
+    Keyboard,
+    Release,
+    Ping,
+    Pong,
 }
 
 impl TryFrom<u8> for PointerEventType {
@@ -163,10 +163,10 @@ impl TryFrom<u8> for PointerEventType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            x if x == Self::MOTION as u8 => Ok(Self::MOTION),
-            x if x == Self::BUTTON as u8 => Ok(Self::BUTTON),
-            x if x == Self::AXIS as u8 => Ok(Self::AXIS),
-            x if x == Self::FRAME as u8 => Ok(Self::FRAME),
+            x if x == Self::Motion as u8 => Ok(Self::Motion),
+            x if x == Self::Button as u8 => Ok(Self::Button),
+            x if x == Self::Axis as u8 => Ok(Self::Axis),
+            x if x == Self::Frame as u8 => Ok(Self::Frame),
             _ => Err(Box::new(ProtocolError {
                 msg: format!("invalid pointer event type {}", value),
             })),
@@ -179,8 +179,8 @@ impl TryFrom<u8> for KeyboardEventType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            x if x == Self::KEY as u8 => Ok(Self::KEY),
-            x if x == Self::MODIFIERS as u8 => Ok(Self::MODIFIERS),
+            x if x == Self::Key as u8 => Ok(Self::Key),
+            x if x == Self::Modifiers as u8 => Ok(Self::Modifiers),
             _ => Err(Box::new(ProtocolError {
                 msg: format!("invalid keyboard event type {}", value),
             })),
@@ -188,17 +188,17 @@ impl TryFrom<u8> for KeyboardEventType {
     }
 }
 
-impl Into<Vec<u8>> for &Event {
-    fn into(self) -> Vec<u8> {
-        let event_id = vec![self.event_type() as u8];
-        let event_data = match self {
+impl From<&Event> for Vec<u8> {
+    fn from(event: &Event) -> Self {
+        let event_id = vec![event.event_type() as u8];
+        let event_data = match event {
             Event::Pointer(p) => p.into(),
             Event::Keyboard(k) => k.into(),
             Event::Release() => vec![],
             Event::Ping() => vec![],
             Event::Pong() => vec![],
         };
-        vec![event_id, event_data].concat()
+        [event_id, event_data].concat()
     }
 }
 
@@ -220,11 +220,11 @@ impl TryFrom<Vec<u8>> for Event {
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         let event_id = u8::from_be_bytes(value[..1].try_into()?);
         match event_id {
-            i if i == (EventType::POINTER as u8) => Ok(Event::Pointer(value.try_into()?)),
-            i if i == (EventType::KEYBOARD as u8) => Ok(Event::Keyboard(value.try_into()?)),
-            i if i == (EventType::RELEASE as u8) => Ok(Event::Release()),
-            i if i == (EventType::PING as u8) => Ok(Event::Ping()),
-            i if i == (EventType::PONG as u8) => Ok(Event::Pong()),
+            i if i == (EventType::Pointer as u8) => Ok(Event::Pointer(value.try_into()?)),
+            i if i == (EventType::Keyboard as u8) => Ok(Event::Keyboard(value.try_into()?)),
+            i if i == (EventType::Release as u8) => Ok(Event::Release()),
+            i if i == (EventType::Ping as u8) => Ok(Event::Ping()),
+            i if i == (EventType::Pong as u8) => Ok(Event::Pong()),
             _ => Err(Box::new(ProtocolError {
                 msg: format!("invalid event_id {}", event_id),
             })),
@@ -232,10 +232,10 @@ impl TryFrom<Vec<u8>> for Event {
     }
 }
 
-impl Into<Vec<u8>> for &PointerEvent {
-    fn into(self) -> Vec<u8> {
-        let id = vec![self.event_type() as u8];
-        let data = match self {
+impl From<&PointerEvent> for Vec<u8> {
+    fn from(event: &PointerEvent) -> Self {
+        let id = vec![event.event_type() as u8];
+        let data = match event {
             PointerEvent::Motion {
                 time,
                 relative_x,
@@ -244,7 +244,7 @@ impl Into<Vec<u8>> for &PointerEvent {
                 let time = time.to_be_bytes();
                 let relative_x = relative_x.to_be_bytes();
                 let relative_y = relative_y.to_be_bytes();
-                vec![&time[..], &relative_x[..], &relative_y[..]].concat()
+                [&time[..], &relative_x[..], &relative_y[..]].concat()
             }
             PointerEvent::Button {
                 time,
@@ -254,19 +254,19 @@ impl Into<Vec<u8>> for &PointerEvent {
                 let time = time.to_be_bytes();
                 let button = button.to_be_bytes();
                 let state = state.to_be_bytes();
-                vec![&time[..], &button[..], &state[..]].concat()
+                [&time[..], &button[..], &state[..]].concat()
             }
             PointerEvent::Axis { time, axis, value } => {
                 let time = time.to_be_bytes();
                 let axis = axis.to_be_bytes();
                 let value = value.to_be_bytes();
-                vec![&time[..], &axis[..], &value[..]].concat()
+                [&time[..], &axis[..], &value[..]].concat()
             }
             PointerEvent::Frame {} => {
                 vec![]
             }
         };
-        vec![id, data].concat()
+        [id, data].concat()
     }
 }
 
@@ -281,7 +281,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                     Err(e) => return Err(e),
                 };
                 match event_type {
-                    PointerEventType::MOTION => {
+                    PointerEventType::Motion => {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
@@ -312,7 +312,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             relative_y,
                         })
                     }
-                    PointerEventType::BUTTON => {
+                    PointerEventType::Button => {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
@@ -343,7 +343,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             state,
                         })
                     }
-                    PointerEventType::AXIS => {
+                    PointerEventType::Axis => {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
@@ -370,7 +370,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         };
                         Ok(Self::Axis { time, axis, value })
                     }
-                    PointerEventType::FRAME => Ok(Self::Frame {}),
+                    PointerEventType::Frame => Ok(Self::Frame {}),
                 }
             }
             None => Err(Box::new(ProtocolError {
@@ -380,15 +380,15 @@ impl TryFrom<Vec<u8>> for PointerEvent {
     }
 }
 
-impl Into<Vec<u8>> for &KeyboardEvent {
-    fn into(self) -> Vec<u8> {
-        let id = vec![self.event_type() as u8];
-        let data = match self {
+impl From<&KeyboardEvent> for Vec<u8> {
+    fn from(event: &KeyboardEvent) -> Self {
+        let id = vec![event.event_type() as u8];
+        let data = match event {
             KeyboardEvent::Key { time, key, state } => {
                 let time = time.to_be_bytes();
                 let key = key.to_be_bytes();
                 let state = state.to_be_bytes();
-                vec![&time[..], &key[..], &state[..]].concat()
+                [&time[..], &key[..], &state[..]].concat()
             }
             KeyboardEvent::Modifiers {
                 mods_depressed,
@@ -400,7 +400,7 @@ impl Into<Vec<u8>> for &KeyboardEvent {
                 let mods_latched = mods_latched.to_be_bytes();
                 let mods_locked = mods_locked.to_be_bytes();
                 let group = group.to_be_bytes();
-                vec![
+                [
                     &mods_depressed[..],
                     &mods_latched[..],
                     &mods_locked[..],
@@ -409,7 +409,7 @@ impl Into<Vec<u8>> for &KeyboardEvent {
                 .concat()
             }
         };
-        vec![id, data].concat()
+        [id, data].concat()
     }
 }
 
@@ -424,7 +424,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                     Err(e) => return Err(e),
                 };
                 match event_type {
-                    KeyboardEventType::KEY => {
+                    KeyboardEventType::Key => {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
@@ -451,7 +451,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         };
                         Ok(KeyboardEvent::Key { time, key, state })
                     }
-                    KeyboardEventType::MODIFIERS => {
+                    KeyboardEventType::Modifiers => {
                         let mods_depressed = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {

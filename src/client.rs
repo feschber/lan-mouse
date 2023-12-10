@@ -89,6 +89,12 @@ pub struct ClientManager {
     clients: Vec<Option<ClientState>>, // HashMap likely not beneficial
 }
 
+impl Default for ClientManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClientManager {
     pub fn new() -> Self {
         Self { clients: vec![] }
@@ -174,12 +180,12 @@ impl ClientManager {
     }
 
     // returns an immutable reference to the client state corresponding to `client`
-    pub fn get<'a>(&'a self, client: ClientHandle) -> Option<&'a ClientState> {
+    pub fn get(&self, client: ClientHandle) -> Option<&ClientState> {
         self.clients.get(client as usize)?.as_ref()
     }
 
     /// returns a mutable reference to the client state corresponding to `client`
-    pub fn get_mut<'a>(&'a mut self, client: ClientHandle) -> Option<&'a mut ClientState> {
+    pub fn get_mut(&mut self, client: ClientHandle) -> Option<&mut ClientState> {
         self.clients.get_mut(client as usize)?.as_mut()
     }
 

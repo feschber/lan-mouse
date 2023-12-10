@@ -63,7 +63,7 @@ impl ClientRow {
         let port_binding = client_object
             .bind_property("port", &self.imp().port.get(), "text")
             .transform_from(|_, v: String| {
-                if v == "" {
+                if v.is_empty() {
                     Some(DEFAULT_PORT as u32)
                 } else {
                     Some(v.parse::<u16>().unwrap_or(DEFAULT_PORT) as u32)

@@ -16,6 +16,12 @@ impl X11Producer {
     }
 }
 
+impl Default for X11Producer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventProducer for X11Producer {
     fn notify(&mut self, _: ClientEvent) {}
 
