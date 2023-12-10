@@ -4,9 +4,9 @@ use std::{
 };
 
 // FIXME
-pub(crate) const BTN_LEFT: u32 = 0x110;
-pub(crate) const BTN_RIGHT: u32 = 0x111;
-pub(crate) const BTN_MIDDLE: u32 = 0x112;
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
+pub const BTN_MIDDLE: u32 = 0x112;
 
 #[derive(Debug, Clone, Copy)]
 pub enum PointerEvent {
