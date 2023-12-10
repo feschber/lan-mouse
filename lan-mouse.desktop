@@ -1,6 +1,7 @@
 [Desktop Entry]
 Categories=Utility;
-Comment[en_US]=Software KVM Switch / mouse & keyboard sharing software for Local Area Networks
+Comment[en_US]=mouse & keyboard sharing via LAN
+Comment[de_DE]=Maus- und Tastaturfreigabe über LAN
 Exec=lan-mouse
 Icon=mouse-icon.svg
 Name[en_US]=Lan Mouse
