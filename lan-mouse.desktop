@@ -5,7 +5,6 @@ Exec=lan-mouse
 Icon=mouse-icon.svg
 Name[en_US]=Lan Mouse
 Name=Lan Mouse Test
-Path=$HOME/.config/lan-mouse/
 StartupNotify=true
 Terminal=false
 Type=Application
