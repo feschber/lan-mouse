@@ -110,3 +110,19 @@ jobs:
       with:
         name: lan-mouse-macos
         path: target/debug/lan-mouse
+
+  build-macos-arm64:
+    runs-on: macos-latest-arm64
+    steps:
+    - uses: actions/checkout@v3
+    - name: install dependencies
+      run: brew install gtk4 libadwaita
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: lan-mouse-macos-arm64
+        path: target/debug/lan-mouse
