@@ -189,11 +189,11 @@ impl ClientManager {
         self.clients.get_mut(client as usize)?.as_mut()
     }
 
-    pub fn enumerate(&self) -> Vec<(Client, bool)> {
-        self.clients
-            .iter()
-            .filter_map(|s| s.as_ref())
-            .map(|s| (s.client.clone(), s.active))
-            .collect()
+    pub fn get_client_states(&self) -> impl Iterator<Item = &ClientState> {
+        self.clients.iter().filter_map(|x| x.as_ref())
+    }
+
+    pub fn get_client_states_mut(&mut self) -> impl Iterator<Item = &mut ClientState> {
+        self.clients.iter_mut().filter_map(|x| x.as_mut())
     }
 }

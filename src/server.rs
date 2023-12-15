@@ -502,7 +502,10 @@ impl Server {
     }
 
     async fn enumerate(&mut self) {
-        let clients = self.client_manager.enumerate();
+        let clients = self.client_manager
+            .get_client_states()
+            .map(|s| (s.client.clone(), s.active))
+            .collect();
         if let Err(e) = self
             .frontend
             .notify_all(FrontendNotify::Enumerate(clients))
