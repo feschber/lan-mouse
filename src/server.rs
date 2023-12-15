@@ -50,6 +50,7 @@ pub struct Server {
     socket: UdpSocket,
     frontend_rx: Receiver<FrontendEvent>,
     frontend_tx: Sender<FrontendEvent>,
+    last_ignored: Option<SocketAddr>,
 }
 
 impl Server {
@@ -79,6 +80,7 @@ impl Server {
             state: State::Receiving,
             frontend_rx,
             frontend_tx,
+            last_ignored: None,
         };
 
         // add clients from config
@@ -286,10 +288,18 @@ impl Server {
         let handle = match self.client_manager.get_client(addr) {
             Some(a) => a,
             None => {
-                log::warn!("ignoring event from client {addr:?}");
+                if self.last_ignored.is_none()
+                    || self.last_ignored.is_some() && self.last_ignored.unwrap() != addr
+                {
+                    log::warn!("ignoring events from client {addr}");
+                    self.last_ignored = Some(addr);
+                }
                 return;
             }
         };
+
+        // next event can be logged as ignored again
+        self.last_ignored = None;
 
         log::trace!("{:20} <-<-<-<------ {addr} ({handle})", event.to_string());
         let state = match self.client_manager.get_mut(handle) {
