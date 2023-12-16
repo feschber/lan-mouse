@@ -116,9 +116,10 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: install dependencies
-      run: brew install gtk4 libadwaita
-      run: rustup target add aarch64-apple-darwin
-      run: rustup update
+      run: |
+        brew install gtk4 libadwaita
+        rustup target add aarch64-apple-darwin
+        rustup update
     - name: Build
       run: SDKROOT=$(xcrun -sdk macosx --show-sdk-path) MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version) cargo build --target=aarch64-apple-darwin
     - name: Upload build artifact
