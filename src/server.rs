@@ -317,9 +317,18 @@ impl Server {
             (event, addr) => {
                 // device is sending events => release pointer if captured
                 if self.state == State::Sending {
-                    log::debug!("releasing pointer ...");
-                    self.producer.release();
-                    self.state = State::Receiving;
+                    // Even in sending state, we can still receive events
+                    // from the client we entered until (our) release event
+                    // arrives there.
+                    //
+                    // Therefore we must wait until we receive
+                    // another release event to actually release the pointer.
+                    if let Event::Release() = event {
+                        log::debug!("releasing pointer ...");
+                        self.producer.release();
+                        self.state = State::Receiving;
+                    }
+                    return;
                 }
 
                 // consume event
@@ -344,6 +353,9 @@ impl Server {
     async fn handle_producer_event(&mut self, c: ClientHandle, e: Event) {
         log::trace!("producer: ({c}) {e:?}");
 
+        // we are sending events
+        self.state = State::Sending;
+
         // get client state for handle
         let state = match self.client_manager.get_mut(c) {
             Some(state) => state,
@@ -352,9 +364,6 @@ impl Server {
                 return;
             }
         };
-
-        // we are sending events
-        self.state = State::Sending;
 
         // otherwise we should have an address to
         // transmit events to the corrensponding client
@@ -365,25 +374,35 @@ impl Server {
         }
 
         // if client last responded > 2 seconds ago
-        // and we have not sent a ping since 500 milliseconds,
-        // send a ping
+        // and we have not sent a ping since 500 milliseconds, send a ping
+
+        // check if client was seen in the past 2 seconds
         if state.last_seen.is_some() && state.last_seen.unwrap().elapsed() < Duration::from_secs(2)
         {
             return;
         }
 
-        // client last seen > 500ms ago
+        // check if last ping is < 500ms ago
         if state.last_ping.is_some()
             && state.last_ping.unwrap().elapsed() < Duration::from_millis(500)
         {
             return;
         }
 
-        // release mouse if client didnt respond to the first ping
+        // last seen >= 2s, last ping >= 500ms
+        // -> client did not respond or a ping has not been sent for a while
+        // (pings are only sent when trying to access a device!)
+
+        // check if last ping was < 1s ago -> 500ms < last_ping < 1s
+        // -> client did not respond in at least 500ms
         if state.last_ping.is_some() && state.last_ping.unwrap().elapsed() < Duration::from_secs(1)
         {
-            log::info!("client not responding - releasing pointer");
-            self.producer.release();
+            // client unresponsive -> set state to receiving
+            if self.state != State::Receiving {
+                log::info!("client not responding - releasing pointer");
+                self.producer.release();
+                self.state = State::Receiving;
+            }
         }
 
         // last ping > 500ms ago -> ping all interfaces
@@ -391,6 +410,16 @@ impl Server {
         for addr in state.client.addrs.iter() {
             log::debug!("pinging {addr}");
             if let Err(e) = send_event(&self.socket, Event::Ping(), *addr).await {
+                if e.kind() != ErrorKind::WouldBlock {
+                    log::error!("udp send: {}", e);
+                }
+            }
+            // we can not assume the client is in receiving mode because a
+            // client can always change mode from receiving to sending
+            // by restarting.
+            // To prevent both clients from being in sending mode,
+            // we send a release event.
+            if let Err(e) = send_event(&self.socket, Event::Release(), *addr).await {
                 if e.kind() != ErrorKind::WouldBlock {
                     log::error!("udp send: {}", e);
                 }
