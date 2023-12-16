@@ -1,10 +1,11 @@
 # Lan Mouse
-- _Now with a gtk frontend_
-
 Lan Mouse is a mouse and keyboard sharing software similar to universal-control on Apple devices.
 It allows for using multiple pcs with a single set of mouse and keyboard.
+This is also known as a Software KVM switch.
 
-The primary target is Wayland on Linux but Windows and MacOS have partial support as well (see below for more details).
+The primary target is Wayland on Linux but Windows and MacOS and Linux on Xorg have partial support as well (see below for more details).
+
+- _Now with a gtk frontend_
 
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df">
@@ -31,7 +32,7 @@ input capture (to send events *to* other clients) on different operating systems
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
-| X11                       | (WIP)                    | WIP                                  |
+| X11                       | ( :heavy_check_mark: )   | WIP                                  |
 | Windows                   | ( :heavy_check_mark: )   | WIP                                  |
 | MacOS                     | ( :heavy_check_mark: )   | WIP                                  |
 
