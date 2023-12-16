@@ -21,7 +21,6 @@ serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.10.0"
-libc = "0.2.148"
 serde_json = "1.0.107"
 tokio = {version = "1.32.0", features = ["io-util", "macros", "net", "rt", "sync", "signal"] }
 async-trait = "0.1.73"
@@ -38,6 +37,7 @@ wayland-protocols-plasma = { version="0.1.0", features=["client"], optional = tr
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
 ashpd = { version = "0.6.2", default-features = false, features = ["tokio"], optional = true }
 reis = { git = "https://github.com/ids1024/reis", features = [ "tokio" ], optional = true }
+libc = { version="0.2.148", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 gtk = { package = "gtk4", version = "0.7.2", features = ["v4_6"], optional = true }
@@ -57,5 +57,5 @@ default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
 wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc", "dep:wayland-protocols-plasma"]
 x11 = ["dep:x11"]
 xdg_desktop_portal = ["dep:ashpd"]
-libei = ["dep:reis", "dep:ashpd"]
+libei = ["dep:reis", "dep:ashpd", "dep:libc" ]
 gtk = ["dep:gtk", "dep:adw"]
