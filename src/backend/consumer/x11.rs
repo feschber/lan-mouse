@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use std::ptr;
-use x11::{xlib, xtest};
+use x11::{xlib::{self, XKeysymToKeycode, XCloseDisplay}, xtest};
 
-use crate::{client::ClientHandle, consumer::EventConsumer, event::{Event, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_FORWARD, BTN_BACK}};
+use crate::{client::ClientHandle, consumer::EventConsumer, event::{Event, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_FORWARD, BTN_BACK, KeyboardEvent}};
 
 pub struct X11Consumer {
     display: *mut xlib::Display,
@@ -57,11 +57,25 @@ impl X11Consumer {
             xtest::XTestFakeButtonEvent(self.display, direction, 0, 0);
         }
     }
+
+    fn emulate_key(&self, key: u32, state: u8) {
+        unsafe {
+            xtest::XTestFakeKeyEvent(self.display, key, state as i32, 0);
+        }
+    }
 }
 
 impl Default for X11Consumer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for X11Consumer {
+    fn drop(&mut self) {
+        unsafe {
+            XCloseDisplay(self.display);
+        }
     }
 }
 
@@ -85,7 +99,9 @@ impl EventConsumer for X11Consumer {
                 }
                 PointerEvent::Frame {} => {}
             },
-            Event::Keyboard(_) => {}
+            Event::Keyboard(KeyboardEvent::Key { time: _, key, state }) => {
+                // self.emulate_key(key, state);
+            }
             _ => {}
         }
         unsafe {
