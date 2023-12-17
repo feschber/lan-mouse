@@ -9,7 +9,6 @@ use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
 
 use anyhow::{anyhow, Result};
-use wayland_client::globals::BindError;
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
@@ -23,8 +22,6 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 as Vk,
 };
 
-use wayland_protocols_plasma::fake_input::client::org_kde_kwin_fake_input::OrgKdeKwinFakeInput;
-
 use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
@@ -34,17 +31,13 @@ use wayland_client::{
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
-enum VirtualInputManager {
-    Wlroots { vpm: VpManager, vkm: VkManager },
-    Kde { fake_input: OrgKdeKwinFakeInput },
-}
-
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,
     input_for_client: HashMap<ClientHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
-    virtual_input_manager: VirtualInputManager,
     qh: QueueHandle<Self>,
+    vpm: VpManager,
+    vkm: VkManager,
 }
 
 // App State, implements Dispatch event handlers
@@ -65,30 +58,8 @@ impl WlrootsConsumer {
             Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
         };
 
-        let vpm: Result<VpManager, BindError> = globals.bind(&qh, 1..=1, ());
-        let vkm: Result<VkManager, BindError> = globals.bind(&qh, 1..=1, ());
-        let fake_input: Result<OrgKdeKwinFakeInput, BindError> = globals.bind(&qh, 4..=4, ());
-
-        let virtual_input_manager = match (vpm, vkm, fake_input) {
-            (Ok(vpm), Ok(vkm), _) => VirtualInputManager::Wlroots { vpm, vkm },
-            (_, _, Ok(fake_input)) => {
-                fake_input.authenticate(
-                    "lan-mouse".into(),
-                    "Allow remote clients to control this device".into(),
-                );
-                VirtualInputManager::Kde { fake_input }
-            }
-            (Err(e1), Err(e2), Err(e3)) => {
-                log::warn!("zwlr_virtual_pointer_v1: {e1}");
-                log::warn!("zwp_virtual_keyboard_v1: {e2}");
-                log::warn!("org_kde_kwin_fake_input: {e3}");
-                log::error!("neither wlroots nor kde input emulation protocol supported!");
-                return Err(anyhow!("could not create event consumer"));
-            }
-            _ => {
-                panic!()
-            }
-        };
+        let vpm: VpManager = globals.bind(&qh, 1..=1, ())?;
+        let vkm: VkManager = globals.bind(&qh, 1..=1, ())?;
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
 
@@ -98,7 +69,8 @@ impl WlrootsConsumer {
                 keymap: None,
                 input_for_client,
                 seat,
-                virtual_input_manager,
+                vpm,
+                vkm,
                 qh,
             },
             queue,
@@ -118,29 +90,19 @@ impl WlrootsConsumer {
 
 impl State {
     fn add_client(&mut self, client: ClientHandle) {
-        // create virtual input devices
-        match &self.virtual_input_manager {
-            VirtualInputManager::Wlroots { vpm, vkm } => {
-                let pointer: Vp = vpm.create_virtual_pointer(None, &self.qh, ());
-                let keyboard: Vk = vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
+        let pointer: Vp = self.vpm.create_virtual_pointer(None, &self.qh, ());
+        let keyboard: Vk = self.vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
-                // TODO: use server side keymap
-                if let Some((format, fd, size)) = self.keymap.as_ref() {
-                    keyboard.keymap(*format, fd.as_raw_fd(), *size);
-                } else {
-                    panic!("no keymap");
-                }
-
-                let vinput = VirtualInput::Wlroots { pointer, keyboard };
-
-                self.input_for_client.insert(client, vinput);
-            }
-            VirtualInputManager::Kde { fake_input } => {
-                let fake_input = fake_input.clone();
-                let vinput = VirtualInput::Kde { fake_input };
-                self.input_for_client.insert(client, vinput);
-            }
+        // TODO: use server side keymap
+        if let Some((format, fd, size)) = self.keymap.as_ref() {
+            keyboard.keymap(*format, fd.as_raw_fd(), *size);
+        } else {
+            panic!("no keymap");
         }
+
+        let vinput = VirtualInput{ pointer, keyboard };
+
+        self.input_for_client.insert(client, vinput);
     }
 }
 
@@ -194,9 +156,9 @@ impl EventConsumer for WlrootsConsumer {
     async fn destroy(&mut self) {}
 }
 
-enum VirtualInput {
-    Wlroots { pointer: Vp, keyboard: Vk },
-    Kde { fake_input: OrgKdeKwinFakeInput },
+struct VirtualInput {
+    pointer: Vp,
+    keyboard: Vk,
 }
 
 impl VirtualInput {
@@ -208,93 +170,35 @@ impl VirtualInput {
                         time,
                         relative_x,
                         relative_y,
-                    } => match self {
-                        VirtualInput::Wlroots {
-                            pointer,
-                            keyboard: _,
-                        } => {
-                            pointer.motion(time, relative_x, relative_y);
-                        }
-                        VirtualInput::Kde { fake_input } => {
-                            fake_input.pointer_motion(relative_y, relative_y);
-                        }
-                    },
+                    } => self.pointer.motion(time, relative_x, relative_y),
                     PointerEvent::Button {
                         time,
                         button,
                         state,
                     } => {
                         let state: ButtonState = state.try_into()?;
-                        match self {
-                            VirtualInput::Wlroots {
-                                pointer,
-                                keyboard: _,
-                            } => {
-                                pointer.button(time, button, state);
-                            }
-                            VirtualInput::Kde { fake_input } => {
-                                fake_input.button(button, state as u32);
-                            }
-                        }
+                        self.pointer.button(time, button, state);
                     }
                     PointerEvent::Axis { time, axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
-                        match self {
-                            VirtualInput::Wlroots {
-                                pointer,
-                                keyboard: _,
-                            } => {
-                                pointer.axis(time, axis, value);
-                                pointer.frame();
-                            }
-                            VirtualInput::Kde { fake_input } => {
-                                fake_input.axis(axis as u32, value);
-                            }
-                        }
+                        self.pointer.axis(time, axis, value);
+                        self.pointer.frame();
                     }
-                    PointerEvent::Frame {} => match self {
-                        VirtualInput::Wlroots {
-                            pointer,
-                            keyboard: _,
-                        } => {
-                            pointer.frame();
-                        }
-                        VirtualInput::Kde { fake_input: _ } => {}
-                    },
+                    PointerEvent::Frame {} => self.pointer.frame(),
                 }
-                match self {
-                    VirtualInput::Wlroots { pointer, .. } => {
-                        // insert a frame event after each mouse event
-                        pointer.frame();
-                    }
-                    VirtualInput::Kde { .. } => {}
-                }
+                self.pointer.frame();
             }
             Event::Keyboard(e) => match e {
-                KeyboardEvent::Key { time, key, state } => match self {
-                    VirtualInput::Wlroots {
-                        pointer: _,
-                        keyboard,
-                    } => {
-                        keyboard.key(time, key, state as u32);
-                    }
-                    VirtualInput::Kde { fake_input } => {
-                        fake_input.keyboard_key(key, state as u32);
-                    }
+                KeyboardEvent::Key { time, key, state } => {
+                    self.keyboard.key(time, key, state as u32);
                 },
                 KeyboardEvent::Modifiers {
                     mods_depressed,
                     mods_latched,
                     mods_locked,
                     group,
-                } => match self {
-                    VirtualInput::Wlroots {
-                        pointer: _,
-                        keyboard,
-                    } => {
-                        keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                    }
-                    VirtualInput::Kde { fake_input: _ } => {}
+                } => {
+                    self.keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
                 },
             },
             _ => {}
@@ -307,7 +211,6 @@ delegate_noop!(State: Vp);
 delegate_noop!(State: Vk);
 delegate_noop!(State: VpManager);
 delegate_noop!(State: VkManager);
-delegate_noop!(State: OrgKdeKwinFakeInput);
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
