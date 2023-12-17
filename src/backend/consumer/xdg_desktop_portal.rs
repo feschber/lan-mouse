@@ -8,7 +8,7 @@ use ashpd::{
 };
 use async_trait::async_trait;
 
-use crate::consumer::EventConsumer;
+use crate::{consumer::EventConsumer, event::{Event::{Keyboard, Pointer}, PointerEvent, KeyboardEvent}, client::ClientEvent};
 
 pub struct DesktopPortalConsumer<'a> {
     proxy: RemoteDesktop<'a>,
@@ -17,8 +17,11 @@ pub struct DesktopPortalConsumer<'a> {
 
 impl<'a> DesktopPortalConsumer<'a> {
     pub async fn new() -> Result<DesktopPortalConsumer<'a>> {
+        log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
+        log::debug!("creating session ...");
         let session = proxy.create_session().await?;
+        log::debug!("selecting devices ...");
         proxy
             .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
             .await?;
@@ -27,6 +30,7 @@ impl<'a> DesktopPortalConsumer<'a> {
             .start(&session, &WindowIdentifier::default())
             .await?
             .response()?;
+        log::debug!("started session");
 
         Ok(Self { proxy, session })
     }
@@ -36,9 +40,9 @@ impl<'a> DesktopPortalConsumer<'a> {
 impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
     async fn consume(&mut self, event: crate::event::Event, _client: crate::client::ClientHandle) {
         match event {
-            crate::event::Event::Pointer(p) => {
+            Pointer(p) => {
                 match p {
-                    crate::event::PointerEvent::Motion {
+                    PointerEvent::Motion {
                         time: _,
                         relative_x,
                         relative_y,
@@ -51,7 +55,7 @@ impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
                             log::warn!("{e}");
                         }
                     }
-                    crate::event::PointerEvent::Button {
+                    PointerEvent::Button {
                         time: _,
                         button,
                         state,
@@ -68,7 +72,7 @@ impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
                             log::warn!("{e}");
                         }
                     }
-                    crate::event::PointerEvent::Axis {
+                    PointerEvent::Axis {
                         time: _,
                         axis,
                         value,
@@ -86,12 +90,12 @@ impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
                             log::warn!("{e}");
                         }
                     }
-                    crate::event::PointerEvent::Frame {} => {}
+                    PointerEvent::Frame {} => {}
                 }
             }
-            crate::event::Event::Keyboard(k) => {
+            Keyboard(k) => {
                 match k {
-                    crate::event::KeyboardEvent::Key {
+                    KeyboardEvent::Key {
                         time: _,
                         key,
                         state,
@@ -108,7 +112,7 @@ impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
                             log::warn!("{e}");
                         }
                     }
-                    crate::event::KeyboardEvent::Modifiers { .. } => {
+                    KeyboardEvent::Modifiers { .. } => {
                         // ignore
                     }
                 }
@@ -117,7 +121,7 @@ impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
         }
     }
 
-    async fn notify(&mut self, _client: crate::client::ClientEvent) {}
+    async fn notify(&mut self, _client: ClientEvent) {}
 
     async fn destroy(&mut self) {
         log::debug!("closing remote desktop session");
