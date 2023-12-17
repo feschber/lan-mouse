@@ -1,24 +1,12 @@
 use async_trait::async_trait;
 use std::future;
 
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::env;
-
 use crate::{
     backend::consumer,
     client::{ClientEvent, ClientHandle},
     event::Event,
 };
 use anyhow::Result;
-
-#[cfg(all(unix, not(target_os = "macos")))]
-#[derive(Debug)]
-enum Backend {
-    Wlroots,
-    X11,
-    RemoteDesktopPortal,
-    Libei,
-}
 
 #[async_trait]
 pub trait EventConsumer: Send {
@@ -33,90 +21,55 @@ pub trait EventConsumer: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create() -> Result<Box<dyn EventConsumer>> {
+pub async fn create() -> Box<dyn EventConsumer> {
     #[cfg(windows)]
-    return Ok(Box::new(consumer::windows::WindowsConsumer::new()));
+    return Box::new(consumer::windows::WindowsConsumer::new());
 
     #[cfg(target_os = "macos")]
-    return Ok(Box::new(consumer::macos::MacOSConsumer::new()?));
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let backend = match env::var("XDG_SESSION_TYPE") {
-        Ok(session_type) => match session_type.as_str() {
-            "x11" => {
-                log::info!("XDG_SESSION_TYPE = x11 -> using x11 event consumer");
-                Backend::X11
-            }
-            "wayland" => {
-                log::info!("XDG_SESSION_TYPE = wayland -> using wayland event consumer");
-                match env::var("XDG_CURRENT_DESKTOP") {
-                    Ok(current_desktop) => match current_desktop.as_str() {
-                        "GNOME" => {
-                            log::info!("XDG_CURRENT_DESKTOP = GNOME -> using libei backend");
-                            Backend::Libei
-                        }
-                        "KDE" => {
-                            log::info!(
-                                "XDG_CURRENT_DESKTOP = KDE -> using xdg_desktop_portal backend"
-                            );
-                            Backend::RemoteDesktopPortal
-                        }
-                        "sway" => {
-                            log::info!("XDG_CURRENT_DESKTOP = sway -> using wlroots backend");
-                            Backend::Wlroots
-                        }
-                        "Hyprland" => {
-                            log::info!("XDG_CURRENT_DESKTOP = Hyprland -> using wlroots backend");
-                            Backend::Wlroots
-                        }
-                        _ => {
-                            log::warn!(
-                                "unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend"
-                            );
-                            Backend::Wlroots
-                        }
-                    },
-                    // default to wlroots backend for now
-                    _ => {
-                        log::warn!("unknown XDG_CURRENT_DESKTOP -> defaulting to wlroots backend");
-                        Backend::Wlroots
-                    }
-                }
-            }
-            _ => panic!("unknown XDG_SESSION_TYPE"),
-        },
-        Err(_) => {
-            panic!("could not detect session type: XDG_SESSION_TYPE environment variable not set!")
+    match consumer::macos::MacOSConsumer::new() {
+        Ok(c) => {
+            log::info!("using macos event consumer");
+            return Box::new(c);
         }
-    };
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    match backend {
-        Backend::Libei => {
-            #[cfg(not(feature = "libei"))]
-            panic!("feature libei not enabled");
-            #[cfg(feature = "libei")]
-            Ok(Box::new(consumer::libei::LibeiConsumer::new().await?))
-        }
-        Backend::RemoteDesktopPortal => {
-            #[cfg(not(feature = "xdg_desktop_portal"))]
-            panic!("feature xdg_desktop_portal not enabled");
-            #[cfg(feature = "xdg_desktop_portal")]
-            Ok(Box::new(
-                consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await?,
-            ))
-        }
-        Backend::Wlroots => {
-            #[cfg(not(feature = "wayland"))]
-            panic!("feature wayland not enabled");
-            #[cfg(feature = "wayland")]
-            Ok(Box::new(consumer::wlroots::WlrootsConsumer::new()?))
-        }
-        Backend::X11 => {
-            #[cfg(not(feature = "x11"))]
-            panic!("feature x11 not enabled");
-            #[cfg(feature = "x11")]
-            Ok(Box::new(consumer::x11::X11Consumer::new()))
-        }
+        Err(e) => log::error!("macos consumer not available: {e}"),
     }
+
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    match consumer::wlroots::WlrootsConsumer::new() {
+        Ok(c) => {
+            log::info!("using wlroots event consumer");
+            return Box::new(c);
+        }
+        Err(e) => log::info!("wayland backend not available: {e}"),
+    }
+
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    match consumer::libei::LibeiConsumer::new().await {
+        Ok(c) => {
+            log::info!("using libei event consumer");
+            return Box::new(c);
+        }
+        Err(e) => log::info!("libei not available: {e}"),
+    }
+
+    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    match consumer::xdg_desktop_portal::DesktopPortalConsumer::new().await {
+        Ok(c) => {
+            log::info!("using xdg-remote-desktop-portal event consumer");
+            return Box::new(c);
+        }
+        Err(e) => log::info!("remote desktop portal not available: {e}"),
+    }
+
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    match consumer::x11::X11Consumer::new() {
+        Ok(c) => {
+            log::info!("using x11 event consumer");
+            return Box::new(c);
+        }
+        Err(e) => log::info!("x11 consumer not available: {e}"),
+    }
+
+    log::error!("falling back to dummy event consumer");
+    Box::new(consumer::dummy::DummyConsumer::new())
 }

@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use std::io;
 use std::task::Poll;
 
@@ -11,14 +12,8 @@ use crate::client::{ClientEvent, ClientHandle};
 pub struct X11Producer {}
 
 impl X11Producer {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Default for X11Producer {
-    fn default() -> Self {
-        Self::new()
+    pub fn new() -> Result<Self> {
+        return Err(anyhow!("not implemented"));
     }
 }
 

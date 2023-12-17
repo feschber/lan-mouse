@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::ptr;
 use x11::{xlib::{self, XCloseDisplay}, xtest};
@@ -11,15 +12,16 @@ pub struct X11Consumer {
 unsafe impl Send for X11Consumer {}
 
 impl X11Consumer {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
-                d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => None,
-                display => Some(display),
+                d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
+                    Err(anyhow!("could not open display"))
+                }
+                display => Ok(display),
             }
-        };
-        let display = display.expect("could not open display");
-        Self { display }
+        }?;
+        Ok(Self { display })
     }
 
     fn relative_motion(&self, dx: i32, dy: i32) {
@@ -65,12 +67,6 @@ impl X11Consumer {
         unsafe {
             xtest::XTestFakeKeyEvent(self.display, key, state as i32, 0);
         }
-    }
-}
-
-impl Default for X11Consumer {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

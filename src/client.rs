@@ -69,6 +69,7 @@ pub struct Client {
     pub pos: Position,
 }
 
+#[derive(Debug)]
 pub enum ClientEvent {
     Create(ClientHandle, Position),
     Destroy(ClientHandle),
