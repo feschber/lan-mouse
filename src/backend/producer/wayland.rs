@@ -753,10 +753,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                         }),
                     ));
                 }
-                if mods_depressed == 77 {
-                    // ctrl shift super alt
-                    app.ungrab();
-                }
             }
             wl_keyboard::Event::Keymap {
                 format: _,
