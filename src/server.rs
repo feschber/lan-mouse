@@ -22,7 +22,7 @@ use tokio::net::TcpStream;
 
 use std::{io::ErrorKind, net::SocketAddr};
 
-use crate::event::Event;
+use crate::event::{Event, KeyboardEvent};
 use crate::{
     client::{ClientEvent, ClientHandle, ClientManager, Position},
     config::Config,
@@ -368,8 +368,20 @@ impl Server {
         }
     }
 
-    async fn handle_producer_event(&mut self, c: ClientHandle, e: Event) {
+    const RELEASE_MODIFIERDS: u32 = 77; // ctrl+shift+super+alt
+
+    async fn handle_producer_event(&mut self, c: ClientHandle, mut e: Event) {
         log::trace!("producer: ({c}) {e:?}");
+
+        if let Event::Keyboard(crate::event::KeyboardEvent::Modifiers { mods_depressed, mods_latched: _, mods_locked: _, group: _ }) = e {
+            if mods_depressed == Self::RELEASE_MODIFIERDS {
+                self.producer.release();
+                self.state = State::Receiving;
+                // send an event to release all the modifiers
+                e = Event::Keyboard(KeyboardEvent::Modifiers {
+                    mods_depressed: 0, mods_latched: 0, mods_locked: 0, group: 0 });
+            }
+        }
 
         // get client state for handle
         let state = match self.client_manager.get_mut(c) {
