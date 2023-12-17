@@ -56,8 +56,8 @@ pub(crate) struct WlrootsConsumer {
 
 impl WlrootsConsumer {
     pub fn new() -> Result<Self> {
-        let conn = Connection::connect_to_env().unwrap();
-        let (globals, queue) = registry_queue_init::<State>(&conn).unwrap();
+        let conn = Connection::connect_to_env()?;
+        let (globals, queue) = registry_queue_init::<State>(&conn)?;
         let qh = queue.handle();
 
         let seat: wl_seat::WlSeat = match globals.bind(&qh, 7..=8, ()) {
