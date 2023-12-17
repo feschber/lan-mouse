@@ -33,7 +33,6 @@ wayland-client = { version="0.30.2", optional = true }
 wayland-protocols = { version="0.30.0", features=["client", "staging", "unstable"], optional = true }
 wayland-protocols-wlr = { version="0.1.0", features=["client"], optional = true }
 wayland-protocols-misc = { version="0.1.0", features=["client"], optional = true }
-wayland-protocols-plasma = { version="0.1.0", features=["client"], optional = true }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
 ashpd = { version = "0.6.2", default-features = false, features = ["tokio"], optional = true }
 reis = { git = "https://github.com/ids1024/reis", features = [ "tokio" ], optional = true }
@@ -54,7 +53,7 @@ glib-build-tools = "0.18.0"
 
 [features]
 default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
-wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc", "dep:wayland-protocols-plasma"]
+wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc" ]
 x11 = ["dep:x11"]
 xdg_desktop_portal = ["dep:ashpd"]
 libei = ["dep:reis", "dep:ashpd", "dep:libc" ]
