@@ -47,10 +47,23 @@ pub enum KeyboardEvent {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Event {
+    /// pointer event (motion / button / axis)
     Pointer(PointerEvent),
+    /// keyboard events (key / modifiers)
     Keyboard(KeyboardEvent),
-    Release(),
+    /// enter event: request to enter a client.
+    /// The client must release the pointer if it is grabbed
+    /// and reply with a leave event, as soon as its ready to
+    /// receive events
+    Enter(),
+    /// leave event: this client is now ready to receive events and will
+    /// not send any events after until it sends an enter event
+    Leave(),
+    /// ping a client, to see if it is still alive. A client that does
+    /// not respond with a pong event will be assumed to be offline.
     Ping(),
+    /// response to a ping event: this event signals that a client
+    /// is still alive but must otherwise be ignored
     Pong(),
 }
 
@@ -103,7 +116,8 @@ impl Display for Event {
         match self {
             Event::Pointer(p) => write!(f, "{}", p),
             Event::Keyboard(k) => write!(f, "{}", k),
-            Event::Release() => write!(f, "release"),
+            Event::Enter() => write!(f, "enter"),
+            Event::Leave() => write!(f, "leave"),
             Event::Ping() => write!(f, "ping"),
             Event::Pong() => write!(f, "pong"),
         }
@@ -115,7 +129,8 @@ impl Event {
         match self {
             Self::Pointer(_) => EventType::Pointer,
             Self::Keyboard(_) => EventType::Keyboard,
-            Self::Release() => EventType::Release,
+            Self::Enter() => EventType::Enter,
+            Self::Leave() => EventType::Leave,
             Self::Ping() => EventType::Ping,
             Self::Pong() => EventType::Pong,
         }
@@ -155,7 +170,8 @@ enum KeyboardEventType {
 enum EventType {
     Pointer,
     Keyboard,
-    Release,
+    Enter,
+    Leave,
     Ping,
     Pong,
 }
@@ -196,7 +212,8 @@ impl From<&Event> for Vec<u8> {
         let event_data = match event {
             Event::Pointer(p) => p.into(),
             Event::Keyboard(k) => k.into(),
-            Event::Release() => vec![],
+            Event::Enter() => vec![],
+            Event::Leave() => vec![],
             Event::Ping() => vec![],
             Event::Pong() => vec![],
         };
@@ -224,7 +241,8 @@ impl TryFrom<Vec<u8>> for Event {
         match event_id {
             i if i == (EventType::Pointer as u8) => Ok(Event::Pointer(value.try_into()?)),
             i if i == (EventType::Keyboard as u8) => Ok(Event::Keyboard(value.try_into()?)),
-            i if i == (EventType::Release as u8) => Ok(Event::Release()),
+            i if i == (EventType::Enter as u8) => Ok(Event::Enter()),
+            i if i == (EventType::Leave as u8) => Ok(Event::Leave()),
             i if i == (EventType::Ping as u8) => Ok(Event::Ping()),
             i if i == (EventType::Pong as u8) => Ok(Event::Pong()),
             _ => Err(Box::new(ProtocolError {

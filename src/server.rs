@@ -36,6 +36,7 @@ use crate::{
 enum State {
     Sending,
     Receiving,
+    AwaitingLeave,
 }
 
 pub struct Server {
@@ -308,62 +309,90 @@ impl Server {
         state.client.active_addr = Some(addr);
 
         match (event, addr) {
-            (Event::Pong(), _) => {} // ignore pong events
+            (Event::Pong(), _) => { /* ignore pong events */ }
             (Event::Ping(), addr) => {
                 if let Err(e) = send_event(&self.socket, Event::Pong(), addr).await {
                     log::error!("udp send: {}", e);
                 }
             }
             (event, addr) => {
-                // device is sending events => release pointer if captured
-                if self.state == State::Sending {
-                    // Even in sending state, we can still receive events
-                    // from the client we entered until (our) release event
-                    // arrives there.
-                    //
-                    // Therefore we must wait until we receive
-                    // another release event to actually release the pointer.
-                    if let Event::Release() = event {
-                        log::debug!("releasing pointer ...");
-                        self.producer.release();
-                        self.state = State::Receiving;
-                    }
-                    return;
-                }
-
-                // consume event
-                self.consumer.consume(event, handle).await;
-                log::trace!("{event:?} => consumer");
-
-                // let the server know we are still alive once every second
-                let last_replied = state.last_replied;
-                if last_replied.is_none()
-                    || last_replied.is_some()
-                        && last_replied.unwrap().elapsed() > Duration::from_secs(1)
-                {
-                    state.last_replied = Some(Instant::now());
-                    if let Err(e) = send_event(&self.socket, Event::Pong(), addr).await {
+                // tell clients that we are ready to receive events
+                if let Event::Enter() = event {
+                    if let Err(e) = send_event(&self.socket, Event::Leave(), addr).await {
                         log::error!("udp send: {}", e);
                     }
                 }
+                match self.state {
+                    State::Sending => {
+                        if let Event::Leave() = event {
+                            // ignore additional leave events that may
+                            // have been sent for redundancy
+                        } else {
+                            // upon receiving any event, we go back to receiving mode
+                            self.producer.release();
+                            self.state = State::Receiving;
+                        }
+                    },
+                    State::Receiving => {
+                        // consume event
+                        self.consumer.consume(event, handle).await;
+                        log::trace!("{event:?} => consumer");
+                    },
+                    State::AwaitingLeave => {
+                        // we just entered the deadzone of a client, so
+                        // we need to ignore events that may still
+                        // be on the way until a leave event occurs
+                        // telling us the client registered the enter
+                        if let Event::Leave() = event {
+                            self.state = State::Sending;
+                        }
+
+                        // entering a client that is waiting for a leave
+                        // event should still be possible
+                        if let Event::Enter() = event {
+                            self.state = State::Receiving;
+                        }
+                    },
+                }
             },
+        }
+        // let the server know we are still alive once every second
+        if state.last_replied.is_none()
+            || state.last_replied.is_some()
+                && state.last_replied.unwrap().elapsed() > Duration::from_secs(1)
+        {
+            state.last_replied = Some(Instant::now());
+            if let Err(e) = send_event(&self.socket, Event::Pong(), addr).await {
+                log::error!("udp send: {}", e);
+            }
         }
     }
 
     async fn handle_producer_event(&mut self, c: ClientHandle, e: Event) {
         log::trace!("producer: ({c}) {e:?}");
 
-        // we are sending events
-        self.state = State::Sending;
-
         // get client state for handle
         let state = match self.client_manager.get_mut(c) {
             Some(state) => state,
             None => {
+                // should not happen
                 log::warn!("unknown client!");
+                self.producer.release();
+                self.state = State::Receiving;
                 return;
             }
         };
+
+        // if we just entered the client we want to send additional enter events until
+        // we get a leave event
+        if let State::Receiving | State::AwaitingLeave = self.state {
+            self.state = State::AwaitingLeave;
+            if let Some(addr) = state.client.active_addr {
+                if let Err(e) = send_event(&self.socket, Event::Enter(), addr).await {
+                    log::error!("udp send: {}", e);
+                }
+            }
+        }
 
         // otherwise we should have an address to
         // transmit events to the corrensponding client
@@ -410,16 +439,6 @@ impl Server {
         for addr in state.client.addrs.iter() {
             log::debug!("pinging {addr}");
             if let Err(e) = send_event(&self.socket, Event::Ping(), *addr).await {
-                if e.kind() != ErrorKind::WouldBlock {
-                    log::error!("udp send: {}", e);
-                }
-            }
-            // we can not assume the client is in receiving mode because a
-            // client can always change mode from receiving to sending
-            // by restarting.
-            // To prevent both clients from being in sending mode,
-            // we send a release event.
-            if let Err(e) = send_event(&self.socket, Event::Release(), *addr).await {
                 if e.kind() != ErrorKind::WouldBlock {
                     log::error!("udp send: {}", e);
                 }

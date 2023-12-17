@@ -209,9 +209,7 @@ impl EventConsumer for MacOSConsumer {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            Event::Release() => {}
-            Event::Ping() => {}
-            Event::Pong() => {}
+            _ => ()
         }
     }
 
