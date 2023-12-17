@@ -70,8 +70,7 @@ fn run_service(config: &Config) -> Result<()> {
         };
 
         // create event producer and consumer
-        let (producer, consumer) = join!(producer::create(), consumer::create(),);
-        let (producer, consumer) = (producer?, consumer?);
+        let (producer, consumer) = join!(producer::create(), consumer::create());
 
         // create server
         let mut event_server = Server::new(config, frontend_adapter, consumer, producer).await?;

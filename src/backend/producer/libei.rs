@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::{io, task::Poll};
 
 use futures_core::Stream;
@@ -9,7 +9,7 @@ pub struct LibeiProducer {}
 
 impl LibeiProducer {
     pub fn new() -> Result<Self> {
-        Ok(Self {})
+        Err(anyhow!("not implemented"))
     }
 }
 

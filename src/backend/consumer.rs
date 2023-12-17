@@ -15,3 +15,6 @@ pub mod libei;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+
+/// fallback consumer
+pub mod dummy;
