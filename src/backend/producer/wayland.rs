@@ -662,7 +662,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                     .iter()
                     .find(|(w, _c)| w.surface == surface)
                     .unwrap();
-                app.pending_events.push_back((*client, Event::Release()));
+                app.pending_events.push_back((*client, Event::Enter()));
             }
             wl_pointer::Event::Leave { .. } => {
                 app.ungrab();
