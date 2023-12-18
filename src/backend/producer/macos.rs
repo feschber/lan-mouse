@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
 use crate::client::{ClientEvent, ClientHandle};
 use crate::event::Event;
 use crate::producer::EventProducer;
+use anyhow::{anyhow, Result};
 use futures_core::Stream;
 use std::task::{Context, Poll};
 use std::{io, pin::Pin};
