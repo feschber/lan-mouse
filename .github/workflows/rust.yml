@@ -25,6 +25,10 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Check Formatting
+      run: cargo fmt --check
+    - name: Clippy
+      run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
@@ -41,6 +45,10 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Check Formatting
+      run: cargo fmt --check
+    - name: Clippy
+      run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
@@ -57,6 +65,10 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Check Formatting
+      run: cargo fmt --check
+    - name: Clippy
+      run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:

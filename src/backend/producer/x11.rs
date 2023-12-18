@@ -13,7 +13,7 @@ pub struct X11Producer {}
 
 impl X11Producer {
     pub fn new() -> Result<Self> {
-        return Err(anyhow!("not implemented"));
+        Err(anyhow!("not implemented"))
     }
 }
 

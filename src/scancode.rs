@@ -419,7 +419,7 @@ pub enum Linux {
     KeyBrightnessAuto = 244, /* Set Auto Brightness: manual, brightness control is off, rely on ambient */
     // KEY_BRIGHTNESS_ZERO=KeyBrightnessAuto,
     KeyDisplayOff = 245, /* display device to off state */
-    KeyWwan = 246,        /* Wireless WAN (LTE, UMTS, GSM, etc.) */
+    KeyWwan = 246,       /* Wireless WAN (LTE, UMTS, GSM, etc.) */
     // KEY_WIMAX =	KeyWwan,
     KeyRfkill = 247,  /* Key that controls all radios */
     KeyMicmute = 248, /* Mute / unmute the microphone */
@@ -528,13 +528,13 @@ impl TryFrom<Linux> for Windows {
             Linux::KeyKp0 => Ok(Self::Keypad0Insert),
             Linux::KeyKpDot => Ok(Self::KeypadDot),
             Linux::KeyZenkakuhankaku => Ok(Self::KeyLANG1), // TODO unsure
-            Linux::Key102nd => Ok(Self::KeyNonUSSlashBar), // TODO unsure
+            Linux::Key102nd => Ok(Self::KeyNonUSSlashBar),  // TODO unsure
             Linux::KeyF11 => Ok(Self::KeyF11),
             Linux::KeyF12 => Ok(Self::KeyF12),
             Linux::KeyRo => Ok(Self::ErrorRollOver), // TODO unsure
             Linux::KeyKatakana => Ok(Self::KeyLANG1), // TODO unsure
             Linux::KeyHiragana => Ok(Self::KeyLANG2), // TODO unsure
-            Linux::KeyHenkan => Ok(Self::KeyLANG3), // TODO unsure
+            Linux::KeyHenkan => Ok(Self::KeyLANG3),  // TODO unsure
             Linux::KeyKatakanahiragana => Ok(Self::KeyLANG4), // TODO unsure
             Linux::KeyMuhenkan => Ok(Self::KeyLANG4), // TODO unsure
             Linux::KeyKpJpComma => Ok(Self::KeypadComma),
@@ -565,8 +565,8 @@ impl TryFrom<Linux> for Windows {
             Linux::KeyScale => Err(()), // TODO
             Linux::KeyKpcomma => Ok(Self::KeypadComma),
             Linux::KeyHangeul => Ok(Self::KeyInternational1), // TODO unsure
-            Linux::KeyHanja => Ok(Self::KeyInternational2), // TODO unsure
-            Linux::KeyYen => Ok(Self::KeyInternational3), // TODO unsure
+            Linux::KeyHanja => Ok(Self::KeyInternational2),   // TODO unsure
+            Linux::KeyYen => Ok(Self::KeyInternational3),     // TODO unsure
             Linux::KeyLeftmeta => Ok(Self::KeyLeftGUI),
             Linux::KeyRightmeta => Ok(Self::KeyRightGUI),
             Linux::KeyCompose => Ok(Self::KeyApplication),

@@ -5,6 +5,7 @@ use crate::{
 };
 use async_trait::async_trait;
 
+#[derive(Default)]
 pub struct DummyConsumer;
 
 impl DummyConsumer {

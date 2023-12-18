@@ -46,7 +46,8 @@ impl X11Consumer {
                 BTN_MIDDLE => 2,
                 BTN_BACK => 8,
                 BTN_FORWARD => 9,
-                BTN_LEFT | _ => 1,
+                BTN_LEFT => 1,
+                _ => 1,
             };
             xtest::XTestFakeButtonEvent(self.display, x11_button, state as i32, 0);
         };

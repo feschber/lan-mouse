@@ -1,7 +1,11 @@
+use crate::{
+    consumer::EventConsumer,
+    event::{KeyboardEvent, PointerEvent},
+    scancode,
+};
 use anyhow::Result;
-use crate::{consumer::EventConsumer, event::{KeyboardEvent, PointerEvent}, scancode};
 use async_trait::async_trait;
-use winapi::um::winuser::{KEYEVENTF_EXTENDEDKEY, SendInput};
+use winapi::um::winuser::{SendInput, KEYEVENTF_EXTENDEDKEY};
 use winapi::{
     self,
     um::winuser::{
@@ -179,7 +183,7 @@ fn linux_keycode_to_windows_scancode(linux_keycode: u32) -> Option<u16> {
         Err(_) => {
             log::warn!("unknown keycode: {linux_keycode}");
             return None;
-        },
+        }
     };
     log::trace!("linux code: {linux_scancode:?}");
     let windows_scancode = match scancode::Windows::try_from(linux_scancode) {
