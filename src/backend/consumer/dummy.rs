@@ -1,5 +1,9 @@
+use crate::{
+    client::{ClientEvent, ClientHandle},
+    consumer::EventConsumer,
+    event::Event,
+};
 use async_trait::async_trait;
-use crate::{consumer::EventConsumer, event::Event, client::{ClientHandle, ClientEvent}};
 
 pub struct DummyConsumer;
 

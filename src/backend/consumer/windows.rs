@@ -1,8 +1,7 @@
-use crate::{
-    consumer::EventConsumer,
-    event::{KeyboardEvent, PointerEvent},
-};
+use anyhow::Result;
+use crate::{consumer::EventConsumer, event::{KeyboardEvent, PointerEvent}, scancode};
 use async_trait::async_trait;
+use winapi::um::winuser::{KEYEVENTF_EXTENDEDKEY, SendInput};
 use winapi::{
     self,
     um::winuser::{
@@ -21,8 +20,8 @@ use crate::{
 pub struct WindowsConsumer {}
 
 impl WindowsConsumer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new() -> Result<Self> {
+        Ok(Self {})
     }
 }
 
@@ -76,7 +75,7 @@ fn send_mouse_input(mi: MOUSEINPUT) {
             u: std::mem::transmute(mi),
         };
 
-        winapi::um::winuser::SendInput(
+        SendInput(
             1 as u32,
             &mut input as LPINPUT,
             std::mem::size_of::<INPUT>() as i32,
@@ -141,10 +140,17 @@ fn scroll(axis: u8, value: f64) {
 }
 
 fn key_event(key: u32, state: u8) {
+    let scancode = match linux_keycode_to_windows_scancode(key) {
+        Some(code) => code,
+        None => return,
+    };
+    let extended = scancode > 0xff;
+    let scancode = scancode & 0xff;
     let ki = KEYBDINPUT {
         wVk: 0,
-        wScan: key as u16,
+        wScan: scancode,
         dwFlags: KEYEVENTF_SCANCODE
+            | if extended { KEYEVENTF_EXTENDEDKEY } else { 0 }
             | match state {
                 0 => KEYEVENTF_KEYUP,
                 1 => 0u32,
@@ -163,6 +169,26 @@ fn send_keyboard_input(ki: KEYBDINPUT) {
             u: std::mem::zeroed(),
         };
         *input.u.ki_mut() = ki;
-        winapi::um::winuser::SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);
+        SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);
     }
+}
+
+fn linux_keycode_to_windows_scancode(linux_keycode: u32) -> Option<u16> {
+    let linux_scancode = match scancode::Linux::try_from(linux_keycode) {
+        Ok(s) => s,
+        Err(_) => {
+            log::warn!("unknown keycode: {linux_keycode}");
+            return None;
+        },
+    };
+    log::trace!("linux code: {linux_scancode:?}");
+    let windows_scancode = match scancode::Windows::try_from(linux_scancode) {
+        Ok(s) => s,
+        Err(_) => {
+            log::warn!("failed to translate linux code into windows scancode: {linux_scancode:?}");
+            return None;
+        }
+    };
+    log::trace!("windows code: {windows_scancode:?}");
+    Some(windows_scancode as u16)
 }
