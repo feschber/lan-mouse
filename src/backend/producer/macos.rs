@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use crate::client::{ClientEvent, ClientHandle};
 use crate::event::Event;
 use crate::producer::EventProducer;
@@ -8,8 +9,8 @@ use std::{io, pin::Pin};
 pub struct MacOSProducer;
 
 impl MacOSProducer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new() -> Result<Self> {
+        Err(anyhow!("not yet implemented"))
     }
 }
 

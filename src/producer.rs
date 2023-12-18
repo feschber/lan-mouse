@@ -10,7 +10,10 @@ use crate::{
 
 pub async fn create() -> Box<dyn EventProducer> {
     #[cfg(target_os = "macos")]
-    return Box::new(producer::macos::MacOSProducer::new());
+    match producer::macos::MacOSProducer::new() {
+        Ok(p) => return Box::new(p),
+        Err(e) => log::info!("macos event producer not available: {e}"),
+    }
 
     #[cfg(windows)]
     match producer::windows::WindowsProducer::new() {

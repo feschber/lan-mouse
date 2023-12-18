@@ -140,7 +140,7 @@ impl EventConsumer for MacOSConsumer {
                         }
                     };
                     // store button state
-                    self.button_state[mouse_button] = if state == 1 { true } else { false };
+                    self.button_state[mouse_button] = state == 1;
 
                     let location = self.get_mouse_location().unwrap();
                     let event = match CGEvent::new_mouse_event(

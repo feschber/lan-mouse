@@ -80,7 +80,7 @@ fn send_mouse_input(mi: MOUSEINPUT) {
         };
 
         SendInput(
-            1 as u32,
+            1_u32,
             &mut input as LPINPUT,
             std::mem::size_of::<INPUT>() as i32,
         );
@@ -173,7 +173,7 @@ fn send_keyboard_input(ki: KEYBDINPUT) {
             u: std::mem::zeroed(),
         };
         *input.u.ki_mut() = ki;
-        SendInput(1 as u32, &mut input, std::mem::size_of::<INPUT>() as i32);
+        SendInput(1_u32, &mut input, std::mem::size_of::<INPUT>() as i32);
     }
 }
 
