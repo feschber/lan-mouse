@@ -33,7 +33,7 @@ input capture (to send events *to* other clients) on different operating systems
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
 | X11                       | :heavy_check_mark:       | WIP                                  |
-| Windows                   | ( :heavy_check_mark: )   | WIP                                  |
+| Windows                   | :heavy_check_mark:       | WIP                                  |
 | MacOS                     | ( :heavy_check_mark: )   | WIP                                  |
 
 Keycode translation is not yet implemented so on MacOS only mouse emulation works as of right now.
@@ -51,22 +51,23 @@ cargo run --release
 
 ### Conditional Compilation
 
-Currently only x11, wayland and windows are supported backends,
+Currently only x11, wayland, windows and MacOS are supported backends.
 Depending on the toolchain used, support for other platforms is omitted
 automatically (it does not make sense to build a Windows `.exe` with
 support for x11 and wayland backends).
 
-However one might still want to omit support for e.g. wayland or x11 on
+However one might still want to omit support for e.g. wayland, x11 or libei on
 a Linux system.
 
 This is possible through
-[cargo features](https://doc.rust-lang.org/cargo/reference/features.html)
+[cargo features](https://doc.rust-lang.org/cargo/reference/features.html).
 
 E.g. if only wayland support is needed, the following command produces
 an executable with just support for wayland:
 ```sh
 cargo build --no-default-features --features wayland
 ```
+For a detailed list of available features, checkout the [Cargo.toml](./Cargo.toml)
 
 ## Usage
 ### Gtk Frontend
