@@ -8,7 +8,14 @@ use ashpd::{
 };
 use async_trait::async_trait;
 
-use crate::{consumer::EventConsumer, event::{Event::{Keyboard, Pointer}, PointerEvent, KeyboardEvent}, client::ClientEvent};
+use crate::{
+    client::ClientEvent,
+    consumer::EventConsumer,
+    event::{
+        Event::{Keyboard, Pointer},
+        KeyboardEvent, PointerEvent,
+    },
+};
 
 pub struct DesktopPortalConsumer<'a> {
     proxy: RemoteDesktop<'a>,

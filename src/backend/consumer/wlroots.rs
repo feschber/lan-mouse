@@ -100,7 +100,7 @@ impl State {
             panic!("no keymap");
         }
 
-        let vinput = VirtualInput{ pointer, keyboard };
+        let vinput = VirtualInput { pointer, keyboard };
 
         self.input_for_client.insert(client, vinput);
     }
@@ -191,15 +191,16 @@ impl VirtualInput {
             Event::Keyboard(e) => match e {
                 KeyboardEvent::Key { time, key, state } => {
                     self.keyboard.key(time, key, state as u32);
-                },
+                }
                 KeyboardEvent::Modifiers {
                     mods_depressed,
                     mods_latched,
                     mods_locked,
                     group,
                 } => {
-                    self.keyboard.modifiers(mods_depressed, mods_latched, mods_locked, group);
-                },
+                    self.keyboard
+                        .modifiers(mods_depressed, mods_latched, mods_locked, group);
+                }
             },
             _ => {}
         }

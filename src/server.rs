@@ -332,12 +332,12 @@ impl Server {
                             self.producer.release();
                             self.state = State::Receiving;
                         }
-                    },
+                    }
                     State::Receiving => {
                         // consume event
                         self.consumer.consume(event, handle).await;
                         log::trace!("{event:?} => consumer");
-                    },
+                    }
                     State::AwaitingLeave => {
                         // we just entered the deadzone of a client, so
                         // we need to ignore events that may still
@@ -352,9 +352,9 @@ impl Server {
                         if let Event::Enter() = event {
                             self.state = State::Receiving;
                         }
-                    },
+                    }
                 }
-            },
+            }
         }
         // let the server know we are still alive once every second
         if state.last_replied.is_none()
@@ -373,13 +373,23 @@ impl Server {
     async fn handle_producer_event(&mut self, c: ClientHandle, mut e: Event) {
         log::trace!("producer: ({c}) {e:?}");
 
-        if let Event::Keyboard(crate::event::KeyboardEvent::Modifiers { mods_depressed, mods_latched: _, mods_locked: _, group: _ }) = e {
+        if let Event::Keyboard(crate::event::KeyboardEvent::Modifiers {
+            mods_depressed,
+            mods_latched: _,
+            mods_locked: _,
+            group: _,
+        }) = e
+        {
             if mods_depressed == Self::RELEASE_MODIFIERDS {
                 self.producer.release();
                 self.state = State::Receiving;
                 // send an event to release all the modifiers
                 e = Event::Keyboard(KeyboardEvent::Modifiers {
-                    mods_depressed: 0, mods_latched: 0, mods_locked: 0, group: 0 });
+                    mods_depressed: 0,
+                    mods_latched: 0,
+                    mods_locked: 0,
+                    group: 0,
+                });
             }
         }
 
@@ -562,7 +572,8 @@ impl Server {
     }
 
     async fn enumerate(&mut self) {
-        let clients = self.client_manager
+        let clients = self
+            .client_manager
             .get_client_states()
             .map(|s| (s.client.clone(), s.active))
             .collect();

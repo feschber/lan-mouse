@@ -10,3 +10,4 @@ pub mod producer;
 pub mod backend;
 pub mod frontend;
 pub mod ioutils;
+pub mod scancode;

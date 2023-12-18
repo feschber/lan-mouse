@@ -13,7 +13,10 @@ pub async fn create() -> Box<dyn EventProducer> {
     return Box::new(producer::macos::MacOSProducer::new());
 
     #[cfg(windows)]
-    return Box::new(producer::windows::WindowsProducer::new());
+    match producer::windows::WindowsProducer::new() {
+        Ok(p) => return Box::new(p),
+        Err(e) => log::info!("windows event producer not available: {e}"),
+    }
 
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     match producer::libei::LibeiProducer::new() {

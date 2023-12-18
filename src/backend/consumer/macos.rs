@@ -209,7 +209,7 @@ impl EventConsumer for MacOSConsumer {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            _ => ()
+            _ => (),
         }
     }
 

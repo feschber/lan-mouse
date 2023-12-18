@@ -1,2 +1,4 @@
 /target
 .gdbinit
+.idea/
+.vs/

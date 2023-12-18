@@ -1,9 +1,18 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::ptr;
-use x11::{xlib::{self, XCloseDisplay}, xtest};
+use x11::{
+    xlib::{self, XCloseDisplay},
+    xtest,
+};
 
-use crate::{client::ClientHandle, consumer::EventConsumer, event::{Event, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_FORWARD, BTN_BACK, KeyboardEvent}};
+use crate::{
+    client::ClientHandle,
+    consumer::EventConsumer,
+    event::{
+        Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+    },
+};
 
 pub struct X11Consumer {
     display: *mut xlib::Display,
@@ -50,8 +59,20 @@ impl X11Consumer {
 
     fn emulate_scroll(&self, axis: u8, value: f64) {
         let direction = match axis {
-            1 => if value < 0.0 { Self::SCROLL_LEFT } else { Self::SCROLL_RIGHT },
-            _ => if value < 0.0 { Self::SCROLL_UP } else { Self::SCROLL_DOWN },
+            1 => {
+                if value < 0.0 {
+                    Self::SCROLL_LEFT
+                } else {
+                    Self::SCROLL_RIGHT
+                }
+            }
+            _ => {
+                if value < 0.0 {
+                    Self::SCROLL_UP
+                } else {
+                    Self::SCROLL_DOWN
+                }
+            }
         };
 
         unsafe {
@@ -89,15 +110,27 @@ impl EventConsumer for X11Consumer {
                 } => {
                     self.relative_motion(relative_x as i32, relative_y as i32);
                 }
-                PointerEvent::Button { time: _, button, state } => {
+                PointerEvent::Button {
+                    time: _,
+                    button,
+                    state,
+                } => {
                     self.emulate_mouse_button(button, state);
                 }
-                PointerEvent::Axis { time: _, axis, value } => {
+                PointerEvent::Axis {
+                    time: _,
+                    axis,
+                    value,
+                } => {
                     self.emulate_scroll(axis, value);
                 }
                 PointerEvent::Frame {} => {}
             },
-            Event::Keyboard(KeyboardEvent::Key { time: _, key, state }) => {
+            Event::Keyboard(KeyboardEvent::Key {
+                time: _,
+                key,
+                state,
+            }) => {
                 self.emulate_key(key, state);
             }
             _ => {}

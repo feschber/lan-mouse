@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use core::task::{Context, Poll};
 use futures::Stream;
-use std::io::Result;
-use std::pin::Pin;
+use std::{io, pin::Pin};
 
 use crate::{
     client::{ClientEvent, ClientHandle},
@@ -18,13 +18,13 @@ impl EventProducer for WindowsProducer {
 }
 
 impl WindowsProducer {
-    pub(crate) fn new() -> Self {
-        Self {}
+    pub(crate) fn new() -> Result<Self> {
+        Err(anyhow!("not implemented"))
     }
 }
 
 impl Stream for WindowsProducer {
-    type Item = Result<(ClientHandle, Event)>;
+    type Item = io::Result<(ClientHandle, Event)>;
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending
     }

@@ -23,7 +23,10 @@ pub trait EventConsumer: Send {
 
 pub async fn create() -> Box<dyn EventConsumer> {
     #[cfg(windows)]
-    return Box::new(consumer::windows::WindowsConsumer::new());
+    match consumer::windows::WindowsConsumer::new() {
+        Ok(c) => return Box::new(c),
+        Err(e) => log::warn!("windows event consumer unavailable: {e}"),
+    }
 
     #[cfg(target_os = "macos")]
     match consumer::macos::MacOSConsumer::new() {
