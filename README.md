@@ -32,7 +32,7 @@ input capture (to send events *to* other clients) on different operating systems
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
-| X11                       | ( :heavy_check_mark: )   | WIP                                  |
+| X11                       | :heavy_check_mark:       | WIP                                  |
 | Windows                   | ( :heavy_check_mark: )   | WIP                                  |
 | MacOS                     | ( :heavy_check_mark: )   | WIP                                  |
 
