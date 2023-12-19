@@ -3,9 +3,11 @@ use crate::consumer::EventConsumer;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use core_graphics::display::CGPoint;
+use core_graphics::display::{
+    CGDisplayBounds, CGMainDisplayID, CGPoint,
+};
 use core_graphics::event::{
-    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, ScrollEventUnit,
+    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use std::ops::{Index, IndexMut};
@@ -78,6 +80,16 @@ impl EventConsumer for MacOSConsumer {
                     relative_x,
                     relative_y,
                 } => {
+                    // FIXME secondary displays?
+                    let (min_x, min_y, max_x, max_y) = unsafe {
+                        let display = CGMainDisplayID();
+                        let bounds = CGDisplayBounds(display);
+                        let min_x = bounds.origin.x;
+                        let max_x = bounds.origin.x + bounds.size.width;
+                        let min_y = bounds.origin.y;
+                        let max_y = bounds.origin.y + bounds.size.height;
+                        (min_x as f64, min_y as f64, max_x as f64, max_y as f64)
+                    };
                     let mut mouse_location = match self.get_mouse_location() {
                         Some(l) => l,
                         None => {
@@ -85,8 +97,9 @@ impl EventConsumer for MacOSConsumer {
                             return;
                         }
                     };
-                    mouse_location.x += relative_x;
-                    mouse_location.y += relative_y;
+
+                    mouse_location.x = (mouse_location.x + relative_x).clamp(min_x, max_x - 1.);
+                    mouse_location.y = (mouse_location.y + relative_y).clamp(min_y, max_y - 1.);
 
                     let mut event_type = CGEventType::MouseMoved;
                     if self.button_state.left {
@@ -108,6 +121,14 @@ impl EventConsumer for MacOSConsumer {
                             return;
                         }
                     };
+                    event.set_integer_value_field(
+                        EventField::MOUSE_EVENT_DELTA_X,
+                        relative_x as i64,
+                    );
+                    event.set_integer_value_field(
+                        EventField::MOUSE_EVENT_DELTA_Y,
+                        relative_y as i64,
+                    );
                     event.post(CGEventTapLocation::HID);
                 }
                 PointerEvent::Button {
