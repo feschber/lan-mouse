@@ -3,9 +3,7 @@ use crate::consumer::EventConsumer;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use core_graphics::display::{
-    CGDisplayBounds, CGMainDisplayID, CGPoint,
-};
+use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
     CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
 };
