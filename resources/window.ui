@@ -14,7 +14,8 @@
 		<property name="title" translatable="yes">Lan Mouse</property>
 		<property name="show-menubar">True</property>
 		<property name="content">
-			<object class="AdwToolbarView">
+			<object class="GtkBox">
+				<property name="orientation">vertical</property>
 				<child type="top">
 					<object class="AdwHeaderBar">
 						<child type ="end">
@@ -28,7 +29,7 @@
 						</style>
 					</object>
 				</child>
-				<property name="content">
+				<child>
 					<object class="AdwToastOverlay" id="toast_overlay">
 						<child>
 							<object class="AdwStatusPage">
@@ -138,7 +139,7 @@
 							</object>
 						</child>
 					</object>
-				</property>
+				</child>
 			</object>
 		</property>
 	</template>
