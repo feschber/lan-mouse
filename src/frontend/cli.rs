@@ -1,32 +1,17 @@
 use anyhow::{anyhow, Context, Result};
-#[cfg(windows)]
-use std::net::SocketAddrV4;
+
 use std::{
     io::{ErrorKind, Read, Write},
     str::SplitWhitespace,
     thread,
 };
 
-#[cfg(windows)]
-use std::net::TcpStream;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-
 use crate::{client::Position, config::DEFAULT_PORT};
 
 use super::{FrontendEvent, FrontendNotify};
 
 pub fn run() -> Result<()> {
-    #[cfg(unix)]
-    let socket_path = super::FrontendListener::socket_path()?;
-
-    #[cfg(unix)]
-    let Ok(mut tx) = UnixStream::connect(socket_path) else {
-        return Err(anyhow!("Could not connect to lan-mouse-socket"));
-    };
-
-    #[cfg(windows)]
-    let Ok(mut tx) = TcpStream::connect("127.0.0.1:5252".parse::<SocketAddrV4>().unwrap()) else {
+    let Ok(mut tx) = super::wait_for_service() else {
         return Err(anyhow!("Could not connect to lan-mouse-socket"));
     };
 
