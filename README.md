@@ -140,22 +140,19 @@ port = 4242
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
 ## Roadmap
-- [x] Capture the actual mouse events on the server side via a wayland client and send them to the client
-- [x] Mouse grabbing
-- [x] Window with absolute position -> wlr\_layer\_shell
-- [x] DNS resolving
-- [x] Keyboard support
-- [x] Scrollwheel support
-- [x] Button support
-- [ ] Latency measurement + logging
-- [ ] Bandwidth usage approximation + logging
-- [x] Multiple IP addresses -> check which one is reachable
-- [x] Merge server and client -> Both client and server can send and receive events depending on what mouse is used where
-- [x] Liveness tracking (automatically ungrab mouse when client unreachable)
-- [ ] Clipboard support
-- [x] Graphical frontend (gtk?)
-- [ ] *Encryption*
+- [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.
+- [x] IP Address switching
+- [x] Liveness tracking Automatically ungrab mouse when client unreachable
+- [ ] Liveness tracking: Automatically release keys, when server offline
+- [ ] X11 Input Capture
+- [ ] Windows Input Capture
+- [ ] MacOS Input Capture
+- [ ] MaxOS KeyCode Translation
+- [ ] Latency measurement and visualization
+- [ ] Bandwidth usage measurement and visualization
+- [ ] Clipboard support
+- [ ] *Encryption*
 
 ## Protocol
 Currently *all* mouse and keyboard events are sent via **UDP** for performance reasons.
@@ -227,10 +224,9 @@ it is however not exposed to third party applications.
 The recommended way to emulate input on KDE is the
 [freedesktop remote-desktop-portal](https://flatpak.github.io/xdg-desktop-portal/#gdbus-org.freedesktop.portal.RemoteDesktop).
 
-#### Gnome (TODO)
-Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation,
-which has the goal to become the general approach for emulating Input on wayland.
-
+#### Gnome
+Gnome uses [libei](https://gitlab.freedesktop.org/libinput/libei) for input emulation and capture,
+which has the goal to become the general approach for emulating and capturing Input on Wayland.
 
 ### Input capture
 
