@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use x11::xinput::XGrabDevice;
+use x11::xinput2::XIAllDevices;
 use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, RawFd};
 use std::task::{ready, Poll};
@@ -13,11 +15,13 @@ use crate::client::{ClientEvent, ClientHandle};
 use tokio::io::unix::AsyncFd;
 
 use x11::xlib::{
-    self, CWBackPixel, CWEventMask, CWOverrideRedirect, CopyFromParent, EnterWindowMask,
-    ExposureMask, KeyPress, KeyPressMask, KeyRelease, KeyReleaseMask, LeaveWindowMask,
-    PointerMotionMask, VisibilityChangeMask, XClassHint, XCloseDisplay, XCreateWindow,
-    XDefaultScreen, XFlush, XMapRaised, XNextEvent, XOpenDisplay, XPending, XRootWindow,
-    XSetClassHint, XSetWindowAttributes, XWhitePixel, EnterNotify, XGetInputFocus, XGrabKeyboard, XDefaultRootWindow, GrabModeAsync, CurrentTime, XGrabPointer, ButtonPressMask, ButtonReleaseMask, MotionNotify,
+    self, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixel, CWEventMask,
+    CWOverrideRedirect, CopyFromParent, CurrentTime, EnterNotify, EnterWindowMask, ExposureMask,
+    GrabModeAsync, KeyPress, KeyPressMask, KeyRelease, KeyReleaseMask, LeaveWindowMask,
+    MotionNotify, PointerMotionMask, VisibilityChangeMask, XClassHint, XCloseDisplay,
+    XCreateWindow, XDefaultScreen, XFlush, XGetInputFocus, XGrabKeyboard,
+    XGrabPointer, XMapRaised, XNextEvent, XOpenDisplay, XPending, XRootWindow, XSetClassHint,
+    XSetWindowAttributes, XWhitePixel, XDefaultRootWindow,
 };
 
 pub struct X11Producer(AsyncFd<Inner>);
@@ -58,6 +62,8 @@ impl X11Producer {
             | KeyPressMask
             | KeyReleaseMask
             | PointerMotionMask
+            | ButtonPressMask
+            | ButtonReleaseMask
             | EnterWindowMask
             | LeaveWindowMask;
         let window = unsafe {
@@ -123,17 +129,53 @@ impl Inner {
             }
             t if t == EnterNotify => {
                 let mut prev_win = 0;
-                unsafe { XGetInputFocus(self.display, &mut self.window as *mut _, &mut prev_win as * mut _) };
-                unsafe { XGrabKeyboard(self.display, XDefaultRootWindow(self.display), true as i32, GrabModeAsync, GrabModeAsync, CurrentTime) };
-                unsafe { XGrabPointer(self.display, XDefaultRootWindow(self.display), true as i32, (PointerMotionMask | ButtonPressMask | ButtonReleaseMask) as u32, GrabModeAsync, GrabModeAsync, self.window, 0, CurrentTime) };
+                unsafe {
+                    XGetInputFocus(
+                        self.display,
+                        &mut self.window as *mut _,
+                        &mut prev_win as *mut _,
+                    );
+                    XGrabKeyboard(
+                        self.display,
+                        XDefaultRootWindow(self.display),
+                        true as i32,
+                        GrabModeAsync,
+                        GrabModeAsync,
+                        CurrentTime,
+                    );
+                    XGrabPointer(
+                        self.display,
+                        self.window, /* window to grab */
+                        true as i32, /* owner_events */
+                        (PointerMotionMask | ButtonPressMask | ButtonReleaseMask) as u32, /* event mask */
+                        GrabModeAsync, /* pointer_mode */
+                        GrabModeAsync, /* keyboard_mode */
+                        self.window, /* confine_to */
+                        0, /* cursor */
+                        CurrentTime,
+                    );
+                };
 
                 Some((0, Event::Enter()))
             }
             t if t == MotionNotify => {
                 let pointer_event = unsafe { xevent.motion };
                 let (abs_x, abs_y) = (pointer_event.x, pointer_event.y);
-                let event = Event::Pointer(PointerEvent::Motion { time: 0, relative_x: abs_x as f64, relative_y: abs_y as f64 });
+                let event = Event::Pointer(PointerEvent::Motion {
+                    time: 0,
+                    relative_x: abs_x as f64,
+                    relative_y: abs_y as f64,
+                });
                 Some((0, event))
+            }
+            t if t == ButtonPress || t == ButtonRelease => {
+                let button_event = unsafe { xevent.button };
+                log::info!("{:?}", xevent);
+                Some((0, Event::Pointer(PointerEvent::Button {
+                    time: 0,
+                    button: button_event.button,
+                    state: button_event.state,
+                })))
             }
             _ => None,
         }
