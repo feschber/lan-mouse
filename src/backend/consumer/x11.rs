@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::ptr;
 use x11::{
-    xlib::{self, XCloseDisplay},
+    xlib::{self, XCloseDisplay, XOpenDisplay},
     xtest,
 };
 
@@ -23,7 +23,7 @@ unsafe impl Send for X11Consumer {}
 impl X11Consumer {
     pub fn new() -> Result<Self> {
         let display = unsafe {
-            match xlib::XOpenDisplay(ptr::null()) {
+            match XOpenDisplay(ptr::null()) {
                 d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
                     Err(anyhow!("could not open display"))
                 }
