@@ -10,7 +10,7 @@ use std::{
     collections::VecDeque,
     env,
     io::{self, ErrorKind},
-    os::fd::{OwnedFd, RawFd},
+    os::fd::{AsFd, OwnedFd, RawFd},
     pin::Pin,
     task::{ready, Context, Poll},
 };
@@ -145,7 +145,7 @@ impl Window {
         draw(&mut file, (width, height));
         let pool = g
             .shm
-            .create_pool(file.as_raw_fd(), (width * height * 4) as i32, qh, ());
+            .create_pool(file.as_fd(), (width * height * 4) as i32, qh, ());
         let buffer = pool.create_buffer(
             0,
             width as i32,
@@ -324,7 +324,7 @@ impl WaylandEventProducer {
         queue.flush()?;
 
         // prepare reading wayland events
-        let read_guard = queue.prepare_read()?;
+        let read_guard = queue.prepare_read().unwrap(); // there can not yet be events to dispatch
         let wayland_fd = read_guard.connection_fd().try_clone_to_owned().unwrap();
         std::mem::drop(read_guard);
 
@@ -366,7 +366,15 @@ impl WaylandEventProducer {
             log::debug!("{:#?}", i.1);
         }
 
-        let read_guard = queue.prepare_read()?;
+        let read_guard = loop {
+            match queue.prepare_read() {
+                Some(r) => break r,
+                None => {
+                    queue.dispatch_pending(&mut state)?;
+                    continue;
+                }
+            }
+        };
         state.read_guard = Some(read_guard);
 
         let inner = AsyncFd::new(Inner { queue, state })?;
@@ -484,16 +492,20 @@ impl Inner {
         }
     }
 
-    fn prepare_read(&mut self) {
-        match self.queue.prepare_read() {
-            Ok(r) => self.state.read_guard = Some(r),
-            Err(WaylandError::Io(e)) => {
-                log::error!("error preparing read from wayland socket: {e}")
+    fn prepare_read(&mut self) -> io::Result<()> {
+        loop {
+            match self.queue.prepare_read() {
+                None => match self.queue.dispatch_pending(&mut self.state) {
+                    Ok(_) => continue,
+                    Err(DispatchError::Backend(WaylandError::Io(e))) => return Err(e),
+                    Err(e) => panic!("failed to dispatch wayland events: {e}"),
+                },
+                Some(r) => {
+                    self.state.read_guard = Some(r);
+                    break Ok(());
+                }
             }
-            Err(WaylandError::Protocol(e)) => {
-                panic!("wayland Protocol violation: {e}")
-            }
-        };
+        }
     }
 
     fn dispatch_events(&mut self) {
@@ -579,7 +591,10 @@ impl Stream for WaylandEventProducer {
                 // read events
                 while inner.read() {
                     // prepare next read
-                    inner.prepare_read();
+                    match inner.prepare_read() {
+                        Ok(_) => {}
+                        Err(e) => return Poll::Ready(Some(Err(e))),
+                    }
                 }
 
                 // dispatch the events
@@ -589,7 +604,10 @@ impl Stream for WaylandEventProducer {
                 inner.flush_events();
 
                 // prepare for the next read
-                inner.prepare_read();
+                match inner.prepare_read() {
+                    Ok(_) => {}
+                    Err(e) => return Poll::Ready(Some(Err(e))),
+                }
             }
 
             // clear read readiness for tokio read guard
