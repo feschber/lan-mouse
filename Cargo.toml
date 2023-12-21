@@ -41,6 +41,7 @@ libc = { version="0.2.148", optional = true }
 [target.'cfg(unix)'.dependencies]
 gtk = { package = "gtk4", version = "0.7.2", features = ["v4_6"], optional = true }
 adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional = true }
+async-channel = { version = "2.1.1", optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]
 core-graphics = { version = "0.23", features = ["highsierra"] }
@@ -57,4 +58,4 @@ wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols
 x11 = ["dep:x11"]
 xdg_desktop_portal = ["dep:ashpd"]
 libei = ["dep:reis", "dep:ashpd", "dep:libc" ]
-gtk = ["dep:gtk", "dep:adw"]
+gtk = ["dep:gtk", "dep:adw", "dep:async-channel"]

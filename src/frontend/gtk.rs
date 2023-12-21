@@ -14,7 +14,7 @@ use adw::Application;
 use gtk::{
     gdk::Display,
     gio::{SimpleAction, SimpleActionGroup},
-    glib::{clone, MainContext, Priority},
+    glib::clone,
     prelude::*,
     subclass::prelude::ObjectSubclassIsExt,
     CssProvider, IconTheme,
@@ -81,7 +81,7 @@ fn build_ui(app: &Application) {
     };
     log::debug!("connected to lan-mouse-socket");
 
-    let (sender, receiver) = MainContext::channel::<FrontendNotify>(Priority::default());
+    let (sender, receiver) = async_channel::bounded(10);
 
     gio::spawn_blocking(move || {
         match loop {
@@ -105,7 +105,7 @@ fn build_ui(app: &Application) {
             // parse json
             let json = str::from_utf8(&buf).unwrap();
             match serde_json::from_str(json) {
-                Ok(notify) => sender.send(notify).unwrap(),
+                Ok(notify) => sender.send_blocking(notify).unwrap(),
                 Err(e) => log::error!("{e}"),
             }
         } {
@@ -116,8 +116,9 @@ fn build_ui(app: &Application) {
 
     let window = Window::new(app);
     window.imp().stream.borrow_mut().replace(tx);
-    receiver.attach(None, clone!(@weak window => @default-return glib::ControlFlow::Break,
-        move |notify| {
+    glib::spawn_future_local(clone!(@weak window => async move {
+        loop {
+            let notify = receiver.recv().await.unwrap();
             match notify {
                 FrontendNotify::NotifyClientCreate(client, hostname, port, position) => {
                     window.new_client(client, hostname, port, position, false);
@@ -158,9 +159,8 @@ fn build_ui(app: &Application) {
                     window.imp().set_port(port);
                 }
             }
-            glib::ControlFlow::Continue
         }
-    ));
+    }));
 
     let action_request_client_update =
         SimpleAction::new("request-client-update", Some(&u32::static_variant_type()));
