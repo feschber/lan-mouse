@@ -32,7 +32,7 @@ use crate::{
     producer::EventProducer,
 };
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 enum State {
     Sending,
     Receiving,
@@ -351,6 +351,7 @@ impl Server {
                         // event should still be possible
                         if let Event::Enter() = event {
                             self.state = State::Receiving;
+                            self.producer.release();
                         }
                     }
                 }
