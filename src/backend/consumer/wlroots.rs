@@ -3,8 +3,7 @@ use crate::consumer::EventConsumer;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
-use std::os::fd::OwnedFd;
-use std::os::unix::prelude::AsRawFd;
+use std::os::fd::{AsFd, OwnedFd};
 use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
 
@@ -95,7 +94,7 @@ impl State {
 
         // TODO: use server side keymap
         if let Some((format, fd, size)) = self.keymap.as_ref() {
-            keyboard.keymap(*format, fd.as_raw_fd(), *size);
+            keyboard.keymap(*format, fd.as_fd(), *size);
         } else {
             panic!("no keymap");
         }

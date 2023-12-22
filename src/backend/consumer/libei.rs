@@ -193,7 +193,7 @@ impl EventConsumer for LibeiConsumer {
         };
         let event = match event {
             PendingRequestResult::Request(result) => result,
-            PendingRequestResult::ProtocolError(e) => {
+            PendingRequestResult::ParseError(e) => {
                 return Err(anyhow!("libei protocol violation: {e}"))
             }
             PendingRequestResult::InvalidObject(e) => return Err(anyhow!("invalid object {e}")),
