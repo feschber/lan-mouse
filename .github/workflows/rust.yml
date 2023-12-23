@@ -46,7 +46,8 @@ jobs:
         python-version: '3.11'
     - name: Update path
       run: |
-        echo "C:\pkg-config-lite-0.28-1\bin" >> $GITHUB_PATH
+        echo "C:\pkg-config-lite-0.28-1\bin" >> $env:GITHUB_PATH
+      shell: bash
     - name: Install pkgconfig-lite
       run: |
         Invoke-WebRequest -Uri https://deac-fra.dl.sourceforge.net/project/pkgconfiglite/0.28-1/pkg-config-lite-0.28-1_bin-win32.zip -OutFile /pkg_config_lite.zip -MaximumRetryCount 5
@@ -54,6 +55,7 @@ jobs:
         ls C:\
         ls C:\pkg-config-lite-0.28-1
         ls C:\pkg-config-lite-0.28-1\bin
+        cd
         pkg-config --version
     - name: Install dependencies
       run: |
