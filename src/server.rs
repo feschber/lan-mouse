@@ -94,7 +94,16 @@ impl Server {
 
         // add clients from config
         for (c, h, port, p) in config.get_clients().into_iter() {
-            Self::add_client(&resolve_tx, &client_manager_rc, &mut frontend, h, c, port, p).await;
+            Self::add_client(
+                &resolve_tx,
+                &client_manager_rc,
+                &mut frontend,
+                h,
+                c,
+                port,
+                p,
+            )
+            .await;
         }
 
         // event producer
@@ -224,7 +233,13 @@ impl Server {
                 };
                 if let Some(state) = client_manager.borrow_mut().get_mut(client) {
                     let port = state.client.port;
-                    let mut addrs = HashSet::from_iter(state.client.fix_ips.iter().map(|a| SocketAddr::new(*a, port)));
+                    let mut addrs = HashSet::from_iter(
+                        state
+                            .client
+                            .fix_ips
+                            .iter()
+                            .map(|a| SocketAddr::new(*a, port)),
+                    );
                     for ip in ips {
                         let sock_addr = SocketAddr::new(ip, port);
                         addrs.insert(sock_addr);
@@ -712,7 +727,9 @@ impl Server {
                     }
                     return false;
                 }
-                let _ = consumer_notify_tx.send(ConsumerEvent::PortChange(port)).await;
+                let _ = consumer_notify_tx
+                    .send(ConsumerEvent::PortChange(port))
+                    .await;
             }
             FrontendEvent::DelClient(client) => {
                 Self::remove_client(
