@@ -46,8 +46,9 @@ jobs:
         python-version: '3.11'
     - name: Install dependencies
       run: |
-        choco install msys2
-        choco install visualstudio2022-workload-vctools
+        # choco install msys2
+        # choco install visualstudio2022-workload-vctools
+        choco install pkgconfiglite
         pipx install gvsbuild
         # see https://github.com/wingtk/gvsbuild/pull/1004
         Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
