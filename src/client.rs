@@ -107,7 +107,7 @@ impl ClientManager {
     pub fn add_client(
         &mut self,
         hostname: Option<String>,
-        addrs: HashSet<IpAddr>,
+        fix_ips: HashSet<IpAddr>,
         port: u16,
         pos: Position,
     ) -> ClientHandle {
@@ -118,7 +118,7 @@ impl ClientManager {
         let active_addr = None;
 
         // map ip addresses to socket addresses
-        let addrs = HashSet::from_iter(addrs.into_iter().map(|ip| SocketAddr::new(ip, port)));
+        let addrs = HashSet::from_iter(fix_ips.into_iter().map(|ip| SocketAddr::new(ip, port)));
 
         // store the client
         let client = Client {

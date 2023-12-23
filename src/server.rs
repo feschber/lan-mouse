@@ -24,7 +24,7 @@ use crate::{
     client::{ClientEvent, ClientHandle, ClientManager, Position},
     config::Config,
     consumer::EventConsumer,
-    dns::{self, DnsResolver},
+    dns,
     frontend::{self, FrontendEvent, FrontendListener, FrontendNotify},
     producer::EventProducer,
 };
@@ -79,16 +79,19 @@ impl Server {
 
         let state_rc = Rc::new(Cell::new(State::Receiving));
 
-        // add clients from config
-        for (c, h, port, p) in config.get_clients().into_iter() {
-            Self::add_client(&resolver, &client_manager_rc, &mut frontend, h, c, port, p).await;
-        }
-
         // channel to notify producer
-        let (producer_notify_tx, mut producer_notify_rx) = tokio::sync::mpsc::channel(1);
+        let (producer_notify_tx, mut producer_notify_rx) = tokio::sync::mpsc::channel(32);
 
         // channel to notify consumer
-        let (consumer_notify_tx, mut consumer_notify_rx) = tokio::sync::mpsc::channel(1);
+        let (consumer_notify_tx, mut consumer_notify_rx) = tokio::sync::mpsc::channel(32);
+
+        // channel to request dns resolver
+        let (resolve_tx, mut resolve_rx) = tokio::sync::mpsc::channel(32);
+
+        // add clients from config
+        for (c, h, port, p) in config.get_clients().into_iter() {
+            Self::add_client(&resolve_tx, &client_manager_rc, &mut frontend, h, c, port, p).await;
+        }
 
         // event producer
         let client_manager = client_manager_rc.clone();
@@ -134,7 +137,7 @@ impl Server {
                             Ok(e) => e,
                             Err(e) => return Err::<(), anyhow::Error>(anyhow!("{}", e)),
                         };
-                        Self::handle_udp_rx(client_manager.clone(), &producer_notify, &mut consumer, &sock1, &state, &mut last_ignored, udp_event).await;
+                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &sock1, &state, &mut last_ignored, udp_event).await;
                     }
                     consumer_event = consumer_notify_rx.recv() => {
                         match consumer_event {
@@ -152,6 +155,7 @@ impl Server {
             Ok(())
         });
 
+        // frontend listener
         let socket = socket_rc.clone();
         let client_manager = client_manager_rc.clone();
         let frontend_task = tokio::task::spawn_local(async move {
@@ -172,8 +176,34 @@ impl Server {
                             Some(e) => e,
                             None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
                         };
-                        Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolver, &mut frontend, &socket, frontend_event).await;
+                        Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolve_tx, &mut frontend, &socket, frontend_event).await;
                     }
+                }
+            }
+        });
+
+        let client_manager = client_manager_rc.clone();
+        let resolver_task = tokio::task::spawn_local(async move {
+            loop {
+                let (host, client): (String, ClientHandle) = match resolve_rx.recv().await {
+                    Some(r) => r,
+                    None => break,
+                };
+                let ips = match resolver.resolve(&host).await {
+                    Ok(ips) => ips,
+                    Err(e) => {
+                        log::warn!("could not resolve host '{host}': {e}");
+                        continue;
+                    }
+                };
+                if let Some(state) = client_manager.borrow_mut().get_mut(client) {
+                    let port = state.client.port;
+                    let mut addrs = HashSet::from_iter(state.client.fix_ips.iter().map(|a| SocketAddr::new(*a, port)));
+                    for ip in ips {
+                        let sock_addr = SocketAddr::new(ip, port);
+                        addrs.insert(sock_addr);
+                    }
+                    state.client.addrs = addrs;
                 }
             }
         });
@@ -183,42 +213,34 @@ impl Server {
         producer_task.await??;
         receiver_task.await??;
         frontend_task.await??;
+        resolver_task.await?;
 
         Ok(())
     }
 
     pub async fn add_client(
-        resolver: &DnsResolver,
+        resolver_tx: &Sender<(String, ClientHandle)>,
         client_manager: &Rc<RefCell<ClientManager>>,
         frontend: &mut FrontendListener,
         hostname: Option<String>,
-        mut addr: HashSet<IpAddr>,
+        addr: HashSet<IpAddr>,
         port: u16,
         pos: Position,
     ) -> ClientHandle {
-        let ips = if let Some(hostname) = hostname.as_ref() {
-            match resolver.resolve(hostname.as_str()).await {
-                Ok(ips) => HashSet::from_iter(ips.iter().cloned()),
-                Err(e) => {
-                    log::warn!("could not resolve host: {e}");
-                    HashSet::new()
-                }
-            }
-        } else {
-            HashSet::new()
-        };
-        addr.extend(ips.iter());
         log::info!(
             "adding client [{}]{} @ {:?}",
             pos,
             hostname.as_deref().unwrap_or(""),
-            &ips
+            &addr
         );
         let client = client_manager
             .borrow_mut()
             .add_client(hostname.clone(), addr, port, pos);
 
         log::debug!("add_client {client}");
+        if let Some(hostname) = hostname.clone() {
+            let _ = resolver_tx.send((hostname, client)).await;
+        };
         let notify = FrontendNotify::NotifyClientCreate(client, hostname, port, pos);
         if let Err(e) = frontend.notify_all(notify).await {
             log::error!("error notifying frontend: {e}");
@@ -289,7 +311,7 @@ impl Server {
     pub async fn update_client(
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
-        resolver: &DnsResolver,
+        resolve_tx: &Sender<(String, ClientHandle)>,
         client_manager: &Rc<RefCell<ClientManager>>,
         client: ClientHandle,
         hostname: Option<String>,
@@ -343,23 +365,15 @@ impl Server {
             state.client.addrs = HashSet::new();
             state.client.active_addr = None;
             state.client.hostname = hostname;
-            if let Some(hostname) = state.client.hostname.as_ref() {
-                match resolver.resolve(hostname.as_str()).await {
-                    Ok(ips) => {
-                        let addrs = ips.iter().map(|i| SocketAddr::new(*i, port));
-                        state.client.addrs = HashSet::from_iter(addrs);
-                    }
-                    Err(e) => {
-                        log::warn!("could not resolve host: {e}");
-                    }
-                }
+            if let Some(hostname) = state.client.hostname.clone() {
+                let _ = resolve_tx.send((hostname, state.client.handle)).await;
             }
         }
         log::debug!("client updated: {:?}", state);
     }
 
     async fn handle_udp_rx(
-        client_manager: Rc<RefCell<ClientManager>>,
+        client_manager: &Rc<RefCell<ClientManager>>,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer: &mut Box<dyn EventConsumer>,
         socket: &UdpSocket,
@@ -605,6 +619,7 @@ impl Server {
                             }
                         }
                         log::error!("error reading frontend event: {e}");
+                        return;
                     }
                 }
             }
@@ -631,7 +646,7 @@ impl Server {
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
         client_manager: &Rc<RefCell<ClientManager>>,
-        resolver: &DnsResolver,
+        resolve_tx: &Sender<(String, ClientHandle)>,
         frontend: &mut FrontendListener,
         socket: &Rc<RefCell<UdpSocket>>,
         event: FrontendEvent,
@@ -640,7 +655,7 @@ impl Server {
         match event {
             FrontendEvent::AddClient(hostname, port, pos) => {
                 Self::add_client(
-                    &resolver,
+                    &resolve_tx,
                     &client_manager,
                     frontend,
                     hostname,
@@ -716,7 +731,7 @@ impl Server {
                 Self::update_client(
                     &producer_notify_tx,
                     &consumer_notify_tx,
-                    resolver,
+                    resolve_tx,
                     &client_manager,
                     client,
                     hostname,
