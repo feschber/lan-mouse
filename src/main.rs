@@ -36,8 +36,10 @@ pub fn run() -> Result<()> {
     } else {
         //  otherwise start the service as a child process and
         //  run a frontend
-        start_service()?;
+        let mut service = start_service()?;
         frontend::run_frontend(&config)?;
+        log::info!("killing service");
+        service.kill()?;
     }
 
     anyhow::Ok(())
