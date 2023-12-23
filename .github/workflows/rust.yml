@@ -44,11 +44,19 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+    - name: Install pkgconfig-lite
+      run: |
+        Invoke-WebRequest -Uri https://deac-fra.dl.sourceforge.net/project/pkgconfiglite/0.28-1/pkg-config-lite-0.28-1_bin-win32.zip -OutFile /pkg_config_lite.zip -MaximumRetryCount 5
+        Expand-Archive /pkg_config_lite.zip -DestinationPath C:\
+        ls C:\
+        ls C:\pkg-config-lite-0.28-1
+        ls C:\pkg-config-lite-0.28-1\bin
+        pkg-config --version
     - name: Install dependencies
       run: |
         # choco install msys2
         # choco install visualstudio2022-workload-vctools
-        choco install pkgconfiglite
+        # choco install pkgconfiglite
         pipx install gvsbuild
         # see https://github.com/wingtk/gvsbuild/pull/1004
         Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
