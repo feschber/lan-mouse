@@ -48,6 +48,7 @@ pub enum ProducerEvent {
 
 pub enum ConsumerEvent {
     ClientEvent(ClientEvent),
+    PortChange(u16),
 }
 
 pub struct Server {}
@@ -88,6 +89,9 @@ impl Server {
         // channel to request dns resolver
         let (resolve_tx, mut resolve_rx) = tokio::sync::mpsc::channel(32);
 
+        // channel to send events to frontends
+        let (frontend_notify_tx, mut frontend_notify_rx) = tokio::sync::mpsc::channel(32);
+
         // add clients from config
         for (c, h, port, p) in config.get_clients().into_iter() {
             Self::add_client(&resolve_tx, &client_manager_rc, &mut frontend, h, c, port, p).await;
@@ -105,7 +109,7 @@ impl Server {
                             Some(e) => e?,
                             None => return Err::<(), anyhow::Error>(anyhow!("event producer closed")),
                         };
-                        Self::handle_producer_event(&mut producer, &client_manager, &state, &socket.borrow(), client, event);
+                        Self::handle_producer_event(&mut producer, &client_manager, &state, &socket, client, event);
                     }
                     e = producer_notify_rx.recv() => {
                         match e {
@@ -129,20 +133,35 @@ impl Server {
             let mut last_ignored = None;
 
             loop {
-                let sock = socket.borrow();
-                let sock1 = socket.borrow();
                 tokio::select! {
-                    udp_event = receive_event(&sock) => {
+                    udp_event = receive_event(&socket) => {
                         let udp_event = match udp_event {
                             Ok(e) => e,
                             Err(e) => return Err::<(), anyhow::Error>(anyhow!("{}", e)),
                         };
-                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &sock1, &state, &mut last_ignored, udp_event).await;
+                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &socket, &state, &mut last_ignored, udp_event).await;
                     }
                     consumer_event = consumer_notify_rx.recv() => {
                         match consumer_event {
                             Some(e) => match e {
                                 ConsumerEvent::ClientEvent(e) => consumer.notify(e).await,
+                                ConsumerEvent::PortChange(port) => {
+                                    let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+                                    match UdpSocket::bind(listen_addr).await {
+                                        Ok(new_socket) => {
+                                            socket.replace(new_socket);
+                                            let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(port, None)).await;
+                                        }
+                                        Err(e) => {
+                                            log::warn!("could not change port: {e}");
+                                            let port = socket.borrow().local_addr().unwrap().port();
+                                            let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(
+                                                    port,
+                                                    Some(format!("could not change port: {e}")),
+                                                )).await;
+                                        }
+                                    }
+                                }
                             },
                             None => break,
                         }
@@ -177,6 +196,13 @@ impl Server {
                             None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
                         };
                         Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolve_tx, &mut frontend, &socket, frontend_event).await;
+                    }
+                    notify = frontend_notify_rx.recv() => {
+                        let notify = match notify {
+                            Some(n) => n,
+                            None => return Err::<(), anyhow::Error>(anyhow!("frontend notify closed")),
+                        };
+                        let _ = frontend.notify_all(notify).await;
                     }
                 }
             }
@@ -376,7 +402,7 @@ impl Server {
         client_manager: &Rc<RefCell<ClientManager>>,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer: &mut Box<dyn EventConsumer>,
-        socket: &UdpSocket,
+        socket: &Rc<RefCell<UdpSocket>>,
         state: &Rc<Cell<State>>,
         last_ignored: &mut Option<SocketAddr>,
         event: (Event, SocketAddr),
@@ -419,14 +445,14 @@ impl Server {
         match (event, addr) {
             (Event::Pong(), _) => { /* ignore pong events */ }
             (Event::Ping(), addr) => {
-                if let Err(e) = send_event(socket, Event::Pong(), addr) {
+                if let Err(e) = send_event(&socket.borrow(), Event::Pong(), addr) {
                     log::error!("udp send: {}", e);
                 }
             }
             (event, addr) => {
                 // tell clients that we are ready to receive events
                 if let Event::Enter() = event {
-                    if let Err(e) = send_event(socket, Event::Leave(), addr) {
+                    if let Err(e) = send_event(&socket.borrow(), Event::Leave(), addr) {
                         log::error!("udp send: {}", e);
                     }
                 }
@@ -481,7 +507,7 @@ impl Server {
                 && client_state.last_replied.unwrap().elapsed() > Duration::from_secs(1)
         {
             client_state.last_replied = Some(Instant::now());
-            if let Err(e) = send_event(socket, Event::Pong(), addr) {
+            if let Err(e) = send_event(&socket.borrow(), Event::Pong(), addr) {
                 log::error!("udp send: {}", e);
             }
         }
@@ -493,7 +519,7 @@ impl Server {
         producer: &mut Box<dyn EventProducer>,
         client_manager: &Rc<RefCell<ClientManager>>,
         state: &Rc<Cell<State>>,
-        socket: &UdpSocket,
+        socket: &Rc<RefCell<UdpSocket>>,
         c: ClientHandle,
         mut e: Event,
     ) {
@@ -537,7 +563,7 @@ impl Server {
         if let State::Receiving | State::AwaitingLeave = state.get() {
             state.replace(State::AwaitingLeave);
             if let Some(addr) = client_state.client.active_addr {
-                if let Err(e) = send_event(socket, Event::Enter(), addr) {
+                if let Err(e) = send_event(&socket.borrow(), Event::Enter(), addr) {
                     log::error!("udp send: {}", e);
                 }
             }
@@ -546,7 +572,7 @@ impl Server {
         // otherwise we should have an address to
         // transmit events to the corrensponding client
         if let Some(addr) = client_state.client.active_addr {
-            if let Err(e) = send_event(socket, e, addr) {
+            if let Err(e) = send_event(&socket.borrow(), e, addr) {
                 log::error!("udp send: {}", e);
             }
         }
@@ -589,7 +615,7 @@ impl Server {
         client_state.last_ping = Some(Instant::now());
         for addr in client_state.client.addrs.iter() {
             log::debug!("pinging {addr}");
-            if let Err(e) = send_event(socket, Event::Ping(), *addr) {
+            if let Err(e) = send_event(&socket.borrow(), Event::Ping(), *addr) {
                 if e.kind() != ErrorKind::WouldBlock {
                     log::error!("udp send: {}", e);
                 }
@@ -686,31 +712,7 @@ impl Server {
                     }
                     return false;
                 }
-                let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
-                match UdpSocket::bind(listen_addr).await {
-                    Ok(new_socket) => {
-                        socket.replace(new_socket); // FIXME
-                        if let Err(e) = frontend
-                            .notify_all(FrontendNotify::NotifyPortChange(port, None))
-                            .await
-                        {
-                            log::warn!("error notifying frontend: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("could not change port: {e}");
-                        let port = socket.borrow().local_addr().unwrap().port();
-                        if let Err(e) = frontend
-                            .notify_all(FrontendNotify::NotifyPortChange(
-                                port,
-                                Some(format!("could not change port: {e}")),
-                            ))
-                            .await
-                        {
-                            log::error!("error notifying frontend: {e}");
-                        }
-                    }
-                }
+                let _ = consumer_notify_tx.send(ConsumerEvent::PortChange(port)).await;
             }
             FrontendEvent::DelClient(client) => {
                 Self::remove_client(
@@ -763,8 +765,9 @@ impl Server {
 }
 
 async fn receive_event(
-    socket: &UdpSocket,
+    socket: &Rc<RefCell<UdpSocket>>,
 ) -> std::result::Result<(Event, SocketAddr), Box<dyn Error>> {
+    let socket = socket.borrow();
     let mut buf = vec![0u8; 22];
     match socket.recv_from(&mut buf).await {
         Ok((_amt, src)) => Ok((Event::try_from(buf)?, src)),
