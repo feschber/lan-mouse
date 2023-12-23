@@ -69,7 +69,7 @@ jobs:
         # see https://github.com/wingtk/gvsbuild/pull/1004
         Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
         Move-Item "C:\Program Files\Git\bin" "C:\Program Files\Git\notbin"
-        # gvsbuild build gtk4 libadwaita librsvg
+        gvsbuild build gtk4 libadwaita librsvg
         Move-Item "C:\Program Files\Git\usr\notbin" "C:\Program Files\Git\usr\bin"
         Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
     - name: Build
