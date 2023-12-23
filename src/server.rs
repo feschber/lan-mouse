@@ -720,7 +720,9 @@ impl Server {
             loop {
                 let event = frontend::read_event(&mut stream).await;
                 match event {
-                    Ok(event) => tx.send(event).await.unwrap(),
+                    Ok(event) => {
+                        let _ = tx.send(event).await;
+                    }
                     Err(e) => {
                         if let Some(e) = e.downcast_ref::<io::Error>() {
                             if e.kind() == ErrorKind::UnexpectedEof {
@@ -750,7 +752,9 @@ impl Server {
             loop {
                 let event = frontend::read_event(&mut stream).await;
                 match event {
-                    Ok(event) => tx.send(event).await.unwrap(),
+                    Ok(event) => {
+                        let _ = tx.send(event).await;
+                    }
                     Err(e) => {
                         if let Some(e) = e.downcast_ref::<io::Error>() {
                             if e.kind() == ErrorKind::UnexpectedEof {
