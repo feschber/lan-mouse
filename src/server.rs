@@ -402,7 +402,11 @@ impl Server {
             }
 
             log::debug!("client updated: {:?}", state);
-            (state.client.hostname.clone(), state.client.handle, state.active)
+            (
+                state.client.hostname.clone(),
+                state.client.handle,
+                state.active,
+            )
         };
 
         // resolve dns
@@ -413,16 +417,26 @@ impl Server {
         // update state in event consumer & producer
         if active {
             let _ = producer_notify_tx
-                .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client_update.client)))
+                .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(
+                    client_update.client,
+                )))
                 .await;
             let _ = consumer_notify_tx
-                .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client_update.client)))
+                .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(
+                    client_update.client,
+                )))
                 .await;
             let _ = producer_notify_tx
-                .send(ProducerEvent::ClientEvent(ClientEvent::Create(client_update.client, client_update.pos)))
+                .send(ProducerEvent::ClientEvent(ClientEvent::Create(
+                    client_update.client,
+                    client_update.pos,
+                )))
                 .await;
             let _ = consumer_notify_tx
-                .send(ConsumerEvent::ClientEvent(ClientEvent::Create(client_update.client, client_update.pos)))
+                .send(ConsumerEvent::ClientEvent(ClientEvent::Create(
+                    client_update.client,
+                    client_update.pos,
+                )))
                 .await;
         }
     }
