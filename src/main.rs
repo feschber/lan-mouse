@@ -2,15 +2,9 @@ use anyhow::Result;
 use std::process::{self, Child, Command};
 
 use env_logger::Env;
-use lan_mouse::{
-    config::Config,
-    consumer,
-    frontend::{self, FrontendListener},
-    producer,
-    server::Server,
-};
+use lan_mouse::{config::Config, frontend, server::Server};
 
-use tokio::{join, task::LocalSet};
+use tokio::task::LocalSet;
 
 pub fn main() {
     // init logging
@@ -58,26 +52,10 @@ fn run_service(config: &Config) -> Result<()> {
 
     // run async event loop
     runtime.block_on(LocalSet::new().run_until(async {
-        // create frontend communication adapter
-        let frontend_adapter = match FrontendListener::new().await {
-            Some(Err(e)) => return Err(e),
-            Some(Ok(f)) => f,
-            None => {
-                // none means some other instance is already running
-                log::info!("service already running, exiting");
-                return anyhow::Ok(());
-            }
-        };
-
-        // create event producer and consumer
-        let (producer, consumer) = join!(producer::create(), consumer::create());
-
-        // create server
-        let mut event_server = Server::new(config, frontend_adapter, consumer, producer).await?;
+        // run main loop
         log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
+        Server::run(config).await?;
 
-        // run event loop
-        event_server.run().await?;
         log::debug!("service exiting");
         anyhow::Ok(())
     }))?;

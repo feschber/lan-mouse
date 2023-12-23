@@ -3,7 +3,7 @@ use std::{error::Error, net::IpAddr};
 
 use trust_dns_resolver::TokioAsyncResolver;
 
-pub(crate) struct DnsResolver {
+pub struct DnsResolver {
     resolver: TokioAsyncResolver,
 }
 impl DnsResolver {

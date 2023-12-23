@@ -51,6 +51,8 @@ impl Display for Position {
 pub struct Client {
     /// hostname of this client
     pub hostname: Option<String>,
+    /// fix ips, determined by the user
+    pub fix_ips: Vec<IpAddr>,
     /// unique handle to refer to the client.
     /// This way any event consumer / producer backend does not
     /// need to know anything about a client other than its handle.
@@ -121,6 +123,7 @@ impl ClientManager {
         // store the client
         let client = Client {
             hostname,
+            fix_ips: vec![],
             handle,
             active_addr,
             addrs,
