@@ -10,7 +10,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
-use tokio::{io::ReadHalf, net::UdpSocket, signal, sync::mpsc::Sender};
+use tokio::{io::ReadHalf, net::UdpSocket, signal, sync::mpsc::Sender, task};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -291,13 +291,19 @@ impl Server {
             }
         });
 
-        _ = signal::ctrl_c().await;
+        let reaper = task::spawn_local(async move {
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    producer_task.abort();
+                    receiver_task.abort();
+                    frontend_task.abort();
+                    resolver_task.abort();
+                    udp_task.abort();
+                },
+            }
+        });
 
-        producer_task.await??;
-        receiver_task.await??;
-        frontend_task.await??;
-        resolver_task.await?;
-        udp_task.await?;
+        reaper.await?;
 
         Ok(())
     }
@@ -692,8 +698,6 @@ impl Server {
                 let _ = sender_tx.send((Event::Enter(), addr)).await;
             }
             let _ = sender_tx.send((e, addr)).await;
-        } else {
-            log::warn!("no address to send to for client {c}");
         }
         if let Some(addrs) = ping_addrs {
             for addr in addrs {
