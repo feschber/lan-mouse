@@ -1,9 +1,9 @@
 use std::cell::{Cell, RefCell};
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 #[cfg(windows)]
 use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
 use adw::{
