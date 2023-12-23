@@ -51,6 +51,14 @@ pub enum ConsumerEvent {
     PortChange(u16),
 }
 
+#[derive(Clone)]
+struct ClientUpdate {
+    client: ClientHandle,
+    hostname: Option<String>,
+    port: u16,
+    pos: Position,
+}
+
 pub struct Server {}
 
 impl Server {
@@ -333,84 +341,90 @@ impl Server {
         let _ = consumer_notify_tx
             .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
-        if let Some(client) = client_manager
+
+        let Some(client) = client_manager
             .borrow_mut()
             .remove_client(client)
             .map(|s| s.client.handle)
-        {
-            let notify = FrontendNotify::NotifyClientDelete(client);
-            log::debug!("{notify:?}");
-            if let Err(e) = frontend.notify_all(notify).await {
-                log::error!("error notifying frontend: {e}");
-            }
-            Some(client)
-        } else {
-            None
+        else {
+            return None;
+        };
+
+        let notify = FrontendNotify::NotifyClientDelete(client);
+        log::debug!("{notify:?}");
+        if let Err(e) = frontend.notify_all(notify).await {
+            log::error!("error notifying frontend: {e}");
         }
+        Some(client)
     }
 
-    pub async fn update_client(
+    async fn update_client(
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
         resolve_tx: &Sender<(String, ClientHandle)>,
         client_manager: &Rc<RefCell<ClientManager>>,
-        client: ClientHandle,
-        hostname: Option<String>,
-        port: u16,
-        pos: Position,
+        client_update: ClientUpdate,
     ) {
-        // retrieve state
-        let mut client_manager = client_manager.borrow_mut();
-        let Some(state) = client_manager.get_mut(client) else {
-            return;
+        let (hostname, handle, active) = {
+            // retrieve state
+            let mut client_manager = client_manager.borrow_mut();
+            let Some(state) = client_manager.get_mut(client_update.client) else {
+                return;
+            };
+
+            // update pos
+            state.client.pos = client_update.pos;
+
+            // update port
+            if state.client.port != client_update.port {
+                state.client.port = client_update.port;
+                state.client.addrs = state
+                    .client
+                    .addrs
+                    .iter()
+                    .cloned()
+                    .map(|mut a| {
+                        a.set_port(client_update.port);
+                        a
+                    })
+                    .collect();
+                state
+                    .client
+                    .active_addr
+                    .map(|a| SocketAddr::new(a.ip(), client_update.port));
+            }
+
+            // update hostname
+            if state.client.hostname != client_update.hostname {
+                state.client.addrs = HashSet::new();
+                state.client.active_addr = None;
+                state.client.hostname = client_update.hostname;
+            }
+
+            log::debug!("client updated: {:?}", state);
+            (state.client.hostname.clone(), state.client.handle, state.active)
         };
 
-        // update pos
-        state.client.pos = pos;
-        if state.active {
-            let _ = producer_notify_tx
-                .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client)))
-                .await;
-            let _ = consumer_notify_tx
-                .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
-                .await;
-            let _ = producer_notify_tx
-                .send(ProducerEvent::ClientEvent(ClientEvent::Create(client, pos)))
-                .await;
-            let _ = consumer_notify_tx
-                .send(ConsumerEvent::ClientEvent(ClientEvent::Create(client, pos)))
-                .await;
+        // resolve dns
+        if let Some(hostname) = hostname {
+            let _ = resolve_tx.send((hostname, handle)).await;
         }
 
-        // update port
-        if state.client.port != port {
-            state.client.port = port;
-            state.client.addrs = state
-                .client
-                .addrs
-                .iter()
-                .cloned()
-                .map(|mut a| {
-                    a.set_port(port);
-                    a
-                })
-                .collect();
-            state
-                .client
-                .active_addr
-                .map(|a| SocketAddr::new(a.ip(), port));
+        // update state in event consumer & producer
+        if active {
+            let _ = producer_notify_tx
+                .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client_update.client)))
+                .await;
+            let _ = consumer_notify_tx
+                .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client_update.client)))
+                .await;
+            let _ = producer_notify_tx
+                .send(ProducerEvent::ClientEvent(ClientEvent::Create(client_update.client, client_update.pos)))
+                .await;
+            let _ = consumer_notify_tx
+                .send(ConsumerEvent::ClientEvent(ClientEvent::Create(client_update.client, client_update.pos)))
+                .await;
         }
-
-        // update hostname
-        if state.client.hostname != hostname {
-            state.client.addrs = HashSet::new();
-            state.client.active_addr = None;
-            state.client.hostname = hostname;
-            if let Some(hostname) = state.client.hostname.clone() {
-                let _ = resolve_tx.send((hostname, state.client.handle)).await;
-            }
-        }
-        log::debug!("client updated: {:?}", state);
     }
 
     async fn handle_udp_rx(
@@ -665,7 +679,7 @@ impl Server {
                 }
             }
         });
-        Self::enumerate(&client_manager, frontend).await;
+        Self::enumerate(client_manager, frontend).await;
     }
 
     #[cfg(windows)]
@@ -695,7 +709,7 @@ impl Server {
                 }
             }
         });
-        Self::enumerate(&client_manager, frontend).await;
+        Self::enumerate(client_manager, frontend).await;
     }
 
     async fn handle_frontend_event(
@@ -711,8 +725,8 @@ impl Server {
         match event {
             FrontendEvent::AddClient(hostname, port, pos) => {
                 Self::add_client(
-                    &resolve_tx,
-                    &client_manager,
+                    resolve_tx,
+                    client_manager,
                     frontend,
                     hostname,
                     HashSet::new(),
@@ -723,9 +737,9 @@ impl Server {
             }
             FrontendEvent::ActivateClient(client, active) => {
                 Self::activate_client(
-                    &producer_notify_tx,
-                    &consumer_notify_tx,
-                    &client_manager,
+                    producer_notify_tx,
+                    consumer_notify_tx,
+                    client_manager,
                     client,
                     active,
                 )
@@ -748,29 +762,32 @@ impl Server {
             }
             FrontendEvent::DelClient(client) => {
                 Self::remove_client(
-                    &client_manager,
-                    &producer_notify_tx,
-                    &consumer_notify_tx,
+                    client_manager,
+                    producer_notify_tx,
+                    consumer_notify_tx,
                     frontend,
                     client,
                 )
                 .await;
             }
-            FrontendEvent::Enumerate() => Self::enumerate(&client_manager, frontend).await,
+            FrontendEvent::Enumerate() => Self::enumerate(client_manager, frontend).await,
             FrontendEvent::Shutdown() => {
                 log::info!("terminating gracefully...");
                 return true;
             }
             FrontendEvent::UpdateClient(client, hostname, port, pos) => {
-                Self::update_client(
-                    &producer_notify_tx,
-                    &consumer_notify_tx,
-                    resolve_tx,
-                    &client_manager,
+                let client_update = ClientUpdate {
                     client,
                     hostname,
                     port,
                     pos,
+                };
+                Self::update_client(
+                    producer_notify_tx,
+                    consumer_notify_tx,
+                    resolve_tx,
+                    client_manager,
+                    client_update,
                 )
                 .await
             }
