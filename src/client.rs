@@ -51,6 +51,8 @@ impl Display for Position {
 pub struct Client {
     /// hostname of this client
     pub hostname: Option<String>,
+    /// fix ips, determined by the user
+    pub fix_ips: Vec<IpAddr>,
     /// unique handle to refer to the client.
     /// This way any event consumer / producer backend does not
     /// need to know anything about a client other than its handle.
@@ -105,7 +107,7 @@ impl ClientManager {
     pub fn add_client(
         &mut self,
         hostname: Option<String>,
-        addrs: HashSet<IpAddr>,
+        ips: HashSet<IpAddr>,
         port: u16,
         pos: Position,
     ) -> ClientHandle {
@@ -115,12 +117,16 @@ impl ClientManager {
         // we dont know, which IP is initially active
         let active_addr = None;
 
+        // store fix ip addresses
+        let fix_ips = ips.iter().cloned().collect();
+
         // map ip addresses to socket addresses
-        let addrs = HashSet::from_iter(addrs.into_iter().map(|ip| SocketAddr::new(ip, port)));
+        let addrs = HashSet::from_iter(ips.into_iter().map(|ip| SocketAddr::new(ip, port)));
 
         // store the client
         let client = Client {
             hostname,
+            fix_ips,
             handle,
             active_addr,
             addrs,
