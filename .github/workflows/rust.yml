@@ -46,9 +46,8 @@ jobs:
         python-version: '3.11'
     - name: Install dependencies
       run: |
-        # choco install msys2
-        # choco install python --version=3.11.0
-        # choco install visualstudio2022-workload-vctools
+        choco install msys2
+        choco install visualstudio2022-workload-vctools
         pipx install gvsbuild
         gvsbuild build gtk4 libadwaita librsvg
     - name: Build
