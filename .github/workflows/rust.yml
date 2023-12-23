@@ -41,6 +41,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: Install dependencies
+      run: |
+        # choco install msys2
+        # choco install python --version=3.11.0
+        # choco install visualstudio2022-workload-vctools
+        pipx install gvsbuild
+        gvsbuild build gtk4 libadwaita librsvg
     - name: Build
       run: cargo build --verbose
     - name: Run tests
