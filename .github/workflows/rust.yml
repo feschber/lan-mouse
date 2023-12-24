@@ -38,14 +38,18 @@ jobs:
   build-windows:
 
     runs-on: windows-latest
-    env:
-      PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
 
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+    - uses: actions/cache@v4
+      with:
+        path: C:/gtk-build
+        key: ${{ runner.os }}-gtk-build
+        restore-keys: |
+          ${{ runner.os }}-gtk-build
     - name: Update path
       run: |
         echo "C:\pkg-config-lite-0.28-1\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -61,6 +65,7 @@ jobs:
         cd
         pkg-config --version
     - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
       run: |
         # choco install msys2
         # choco install visualstudio2022-workload-vctools
@@ -74,12 +79,20 @@ jobs:
         Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
     - name: Build
       run: cargo build --verbose
+      env:
+        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Run tests
       run: cargo test --verbose
+      env:
+        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Check Formatting
       run: cargo fmt --check
+      env:
+        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+      env:
+        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
