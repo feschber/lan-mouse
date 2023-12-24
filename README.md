@@ -58,7 +58,7 @@ sudo pacman -S libadwaita gtk libx11 libxtst
 
 #### Fedora and derivatives
 ```sh
-sudo dnf install libadwaita-devel
+sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 ```
 
 #### Windows
