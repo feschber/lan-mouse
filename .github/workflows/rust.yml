@@ -58,15 +58,6 @@ jobs:
         echo "C:\gtk-build\gtk\x64\release\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo $env:GITHUB_PATH
         echo $env:PATH
-        # - name: Install pkgconfig-lite
-        # run: |
-        # Invoke-WebRequest -Uri https://deac-fra.dl.sourceforge.net/project/pkgconfiglite/0.28-1/pkg-config-lite-0.28-1_bin-win32.zip -OutFile /pkg_config_lite.zip -MaximumRetryCount 5
-        # Expand-Archive /pkg_config_lite.zip -DestinationPath C:\
-        # ls C:\
-        # ls C:\pkg-config-lite-0.28-1
-        # ls C:\pkg-config-lite-0.28-1\bin
-        # cd
-        # pkg-config --version
     - name: Install dependencies
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
