@@ -81,9 +81,8 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
-    - name: Copy Dlls
-      shell: bash
-      run: cp "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" "target\\debug"
+    - name: Copy Gtk Dlls
+      run: Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "target\\debug"
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
