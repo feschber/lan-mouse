@@ -65,6 +65,7 @@ jobs:
       run: |
         mkdir "lan-mouse"
         Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "lan-mouse"
+        Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse"
         Compress-Archive -Path "lan-mouse\*" -DestinationPath lan-mouse.zip
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
