@@ -79,13 +79,16 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Copy Dlls
+      shell: bash
+      run: cp "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" "target\\debug"
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
         name: lan-mouse-windows
         path: |
           target/debug/lan-mouse.exe
-          C:\gtk-build\gtk\x64\release\bin\*.dll
+          target/debug/*.dll
 
   build-macos:
     runs-on: macos-latest
