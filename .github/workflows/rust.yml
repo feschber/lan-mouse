@@ -53,19 +53,20 @@ jobs:
           ${{ runner.os }}-gtk-build
     - name: Update path
       run: |
+        echo "PKG_CONFIG=C:\gtk-build\gtk\x64\release\bin\pkgconf.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         echo "C:\pkg-config-lite-0.28-1\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo "C:\gtk-build\gtk\x64\release\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         echo $env:GITHUB_PATH
         echo $env:PATH
-    - name: Install pkgconfig-lite
-      run: |
-        Invoke-WebRequest -Uri https://deac-fra.dl.sourceforge.net/project/pkgconfiglite/0.28-1/pkg-config-lite-0.28-1_bin-win32.zip -OutFile /pkg_config_lite.zip -MaximumRetryCount 5
-        Expand-Archive /pkg_config_lite.zip -DestinationPath C:\
-        ls C:\
-        ls C:\pkg-config-lite-0.28-1
-        ls C:\pkg-config-lite-0.28-1\bin
-        cd
-        pkg-config --version
+        # - name: Install pkgconfig-lite
+        # run: |
+        # Invoke-WebRequest -Uri https://deac-fra.dl.sourceforge.net/project/pkgconfiglite/0.28-1/pkg-config-lite-0.28-1_bin-win32.zip -OutFile /pkg_config_lite.zip -MaximumRetryCount 5
+        # Expand-Archive /pkg_config_lite.zip -DestinationPath C:\
+        # ls C:\
+        # ls C:\pkg-config-lite-0.28-1
+        # ls C:\pkg-config-lite-0.28-1\bin
+        # cd
+        # pkg-config --version
     - name: Install dependencies
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
@@ -76,7 +77,7 @@ jobs:
         # see https://github.com/wingtk/gvsbuild/pull/1004
         Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
         Move-Item "C:\Program Files\Git\bin" "C:\Program Files\Git\notbin"
-        gvsbuild build gtk4 libadwaita librsvg
+        gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
         # Move-Item "C:\Program Files\Git\usr\notbin" "C:\Program Files\Git\usr\bin"
         # Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
     - name: Build
