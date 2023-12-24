@@ -41,6 +41,38 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    # needed for cache restore
+    - name: create gtk dir
+      run: mkdir C:\gtk-build\gtk\x64\release
+    - uses: actions/cache@v3
+      id: cache
+      with:
+        path: c:/gtk-build/gtk/x64/release/**
+        key: gtk-windows-build
+        restore-keys: gtk-windows-build
+    - name: Update path
+      run: |
+        echo "PKG_CONFIG=C:\gtk-build\gtk\x64\release\bin\pkgconf.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "C:\pkg-config-lite-0.28-1\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo "C:\gtk-build\gtk\x64\release\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo $env:GITHUB_PATH
+        echo $env:PATH
+    - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        # choco install msys2
+        # choco install visualstudio2022-workload-vctools
+        # choco install pkgconfiglite
+        pipx install gvsbuild
+        # see https://github.com/wingtk/gvsbuild/pull/1004
+        Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
+        Move-Item "C:\Program Files\Git\bin" "C:\Program Files\Git\notbin"
+        gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
+        Move-Item "C:\Program Files\Git\usr\notbin" "C:\Program Files\Git\usr\bin"
+        Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -49,11 +81,15 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Copy Gtk Dlls
+      run: Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "target\\debug"
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
         name: lan-mouse-windows
-        path: target/debug/lan-mouse.exe
+        path: |
+          target/debug/lan-mouse.exe
+          target/debug/*.dll
 
   build-macos:
     runs-on: macos-latest

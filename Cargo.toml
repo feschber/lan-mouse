@@ -27,6 +27,9 @@ async-trait = "0.1.73"
 futures-core = "0.3.28"
 futures = "0.3.28"
 clap = { version="4.4.11", features = ["derive"] }
+gtk = { package = "gtk4", version = "0.7.2", features = ["v4_2"], optional = true }
+adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional = true }
+async-channel = { version = "2.1.1", optional = true }
 
 [target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
 wayland-client = { version="0.31.1", optional = true }
@@ -38,18 +41,13 @@ ashpd = { version = "0.6.2", default-features = false, features = ["tokio"], opt
 reis = { git = "https://github.com/ids1024/reis", features = [ "tokio" ], optional = true }
 libc = { version="0.2.148", optional = true }
 
-[target.'cfg(unix)'.dependencies]
-gtk = { package = "gtk4", version = "0.7.2", features = ["v4_6"], optional = true }
-adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional = true }
-async-channel = { version = "2.1.1", optional = true }
-
 [target.'cfg(target_os="macos")'.dependencies]
 core-graphics = { version = "0.23", features = ["highsierra"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser"] }
 
-[target.'cfg(unix)'.build-dependencies]
+[build-dependencies]
 glib-build-tools = "0.18.0"
 
 [features]

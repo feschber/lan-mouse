@@ -1,7 +1,9 @@
-use std::{
-    cell::{Cell, RefCell},
-    os::unix::net::UnixStream,
-};
+use std::cell::{Cell, RefCell};
+
+#[cfg(windows)]
+use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
 use adw::{
@@ -29,7 +31,10 @@ pub struct Window {
     #[template_child]
     pub toast_overlay: TemplateChild<ToastOverlay>,
     pub clients: RefCell<Option<gio::ListStore>>,
+    #[cfg(unix)]
     pub stream: RefCell<Option<UnixStream>>,
+    #[cfg(windows)]
+    pub stream: RefCell<Option<TcpStream>>,
     pub port: Cell<u16>,
 }
 

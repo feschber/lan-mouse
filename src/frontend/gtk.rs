@@ -27,7 +27,17 @@ use super::FrontendNotify;
 
 pub fn run() -> glib::ExitCode {
     log::debug!("running gtk frontend");
+    #[cfg(windows)]
+    let ret = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
+        .name("gtk".into())
+        .spawn(gtk_main)
+        .unwrap()
+        .join()
+        .unwrap();
+    #[cfg(not(windows))]
     let ret = gtk_main();
+
     log::debug!("frontend exited");
     ret
 }
