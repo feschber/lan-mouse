@@ -73,24 +73,12 @@ jobs:
         # Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
     - name: Build
       run: cargo build --verbose
-      env:
-        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
-        PKG_CONFIG_LIBDIR: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Run tests
       run: cargo test --verbose
-      env:
-        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
-        PKG_CONFIG_LIBDIR: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Check Formatting
       run: cargo fmt --check
-      env:
-        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
-        PKG_CONFIG_LIBDIR: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
-      env:
-        PKG_CONFIG_PATH: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
-        PKG_CONFIG_LIBDIR: 'C:\gtk-build\gtk\x64\release\lib\pkgconfig'
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
