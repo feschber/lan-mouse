@@ -99,5 +99,6 @@ jobs:
         prerelease: false
         files: |
           lan-mouse-linux/lan-mouse
-          lan-mouse-windows/lan-mouse.exe
           lan-mouse-macos/lan-mouse
+          lan-mouse-windows/lan-mouse.exe
+          lan-mouse-windows/*.dll
