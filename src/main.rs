@@ -39,6 +39,13 @@ pub fn run() -> Result<()> {
         let mut service = start_service()?;
         frontend::run_frontend(&config)?;
         log::info!("terminating service");
+        #[cfg(unix)]
+        {
+            // on unix we give the service a chance to terminate gracefully
+            let pid = service.id() as libc::pid_t;
+            unsafe { libc::kill(pid, libc::SIGINT); }
+            service.wait()?;
+        }
         service.kill()?;
     }
 
