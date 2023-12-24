@@ -53,7 +53,7 @@ sudo apt install libadwaita-1-dev libgtk-4-dev libx11-dev libxtst-dev
 
 #### Arch and derivatives
 ```sh
-sudo pacman -S libadwaita gtk
+sudo pacman -S libadwaita gtk libx11 libxtst
 ```
 
 #### Fedora and derivatives
