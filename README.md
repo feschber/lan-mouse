@@ -101,6 +101,9 @@ gvsbuild build gtk4 libadwaita librsvg
 Make sure to add the directory `C:\gtk-build\gtk\x64\release\bin`
 [to the `PATH` environment variable]((https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574(v=office.14))). Otherwise the project will fail to build.
 
+To avoid building GTK from source, it is possible to disable
+the gtk frontend (see conditional compilation below).
+
 ### Build and run
 Build in release mode:
 ```sh
