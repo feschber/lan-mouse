@@ -45,8 +45,9 @@ jobs:
       with:
         python-version: '3.11'
     - uses: actions/cache@v3
+      id: cache
       with:
-        path: C:/gtk-build
+        path: c:/gtk-build
         key: ${{ runner.os }}-gtk-build
         restore-keys: |
           ${{ runner.os }}-gtk-build
