@@ -39,6 +39,69 @@ input capture (to send events *to* other clients) on different operating systems
 Keycode translation is not yet implemented so on MacOS only mouse emulation works as of right now.
 
 ## Build and Run
+
+### Install Dependencies
+#### Macos
+```sh
+brew install libadwaita
+```
+
+#### Ubuntu and derivatives
+```sh
+sudo apt install libadwaita-1-dev libgtk-4-dev libx11-dev libxtst-dev
+```
+
+#### Arch and derivatives
+```sh
+sudo pacman -S libadwaita gtk
+```
+
+#### Fedora and derivatives
+```sh
+sudo dnf install libadwaita-devel
+```
+
+#### Windows
+Follow the instructions at [gtk-rs.org](https://gtk-rs.org/gtk4-rs/stable/latest/book/installation_windows.html)
+
+*TLDR:*
+
+Build gtk from source
+
+- The following commands should be run in an admin power shell instance:
+```sh
+# install chocolatey
+Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# install python 3.11 (Version is important, as 3.12 does not work currently)
+choco install python --version=3.11.0
+
+# install git
+choco install git
+
+# install msys2
+choco install msys2
+
+# install Visual Studio 2022
+choco install visualstudio2022-workload-vctools
+```
+
+- The following commands should be run in a regular power shell instance:
+
+```sh
+# install gvsbuild with python
+python -m pip install --user pipx
+python -m pipx ensurepath
+pipx install gvsbuild
+
+# build gtk + libadwaita
+gvsbuild build gtk4 libadwaita librsvg
+```
+
+Make sure to add the directory `C:\gtk-build\gtk\x64\release\bin`
+[to the `PATH` environment variable]((https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574(v=office.14))). Otherwise the project will fail to build.
+
+### Build and run
 Build in release mode:
 ```sh
 cargo build --release
