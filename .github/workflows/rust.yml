@@ -83,7 +83,9 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: lan-mouse-windows
-        path: target/debug/lan-mouse.exe
+        path: |
+          target/debug/lan-mouse.exe
+          C:\gtk-build\gtk\x64\release\bin\*.dll
 
   build-macos:
     runs-on: macos-latest

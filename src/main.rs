@@ -38,7 +38,7 @@ pub fn run() -> Result<()> {
         //  run a frontend
         let mut service = start_service()?;
         frontend::run_frontend(&config)?;
-        log::info!("killing service");
+        log::info!("terminating service");
         service.kill()?;
     }
 
