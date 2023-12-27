@@ -126,7 +126,7 @@ pub fn run() -> Result<()> {
             }
         })?;
     match reader.join() {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(e) => {
             let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
                 (Some(&s), _) => s,

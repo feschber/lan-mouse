@@ -43,7 +43,9 @@ pub fn run() -> Result<()> {
         {
             // on unix we give the service a chance to terminate gracefully
             let pid = service.id() as libc::pid_t;
-            unsafe { libc::kill(pid, libc::SIGINT); }
+            unsafe {
+                libc::kill(pid, libc::SIGINT);
+            }
             service.wait()?;
         }
         service.kill()?;
