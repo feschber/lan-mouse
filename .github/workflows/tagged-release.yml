@@ -63,15 +63,15 @@ jobs:
       run: cargo build --release
     - name: Create Archive
       run: |
-        mkdir "lan-mouse"
-        Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "lan-mouse"
-        Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse"
-        Compress-Archive -Path "lan-mouse\*" -DestinationPath lan-mouse.zip
+        mkdir "lan-mouse-windows"
+        Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "lan-mouse-windows"
+        Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse-windows"
+        Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows.zip
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
         name: lan-mouse-windows
-        path: lan-mouse.zip
+        path: lan-mouse-windows.zip
 
   macos-release-build:
     runs-on: macos-latest
@@ -104,4 +104,4 @@ jobs:
         files: |
           lan-mouse-linux/lan-mouse
           lan-mouse-macos/lan-mouse-macos-intel
-          lan-mouse-windows/lan-mouse.zip
+          lan-mouse-windows/lan-mouse-windows.zip
