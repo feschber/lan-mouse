@@ -720,44 +720,12 @@ impl Server {
         }
     }
 
-    #[cfg(unix)]
     async fn handle_frontend_stream(
         client_manager: &Rc<RefCell<ClientManager>>,
         frontend: &mut FrontendListener,
         frontend_tx: &Sender<FrontendEvent>,
-        mut stream: ReadHalf<UnixStream>,
-    ) {
-        use std::io;
-
-        let tx = frontend_tx.clone();
-        tokio::task::spawn_local(async move {
-            loop {
-                let event = frontend::read_event(&mut stream).await;
-                match event {
-                    Ok(event) => {
-                        let _ = tx.send(event).await;
-                    }
-                    Err(e) => {
-                        if let Some(e) = e.downcast_ref::<io::Error>() {
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                return;
-                            }
-                        }
-                        log::error!("error reading frontend event: {e}");
-                        return;
-                    }
-                }
-            }
-        });
-        Self::enumerate(client_manager, frontend).await;
-    }
-
-    #[cfg(windows)]
-    async fn handle_frontend_stream(
-        client_manager: &Rc<RefCell<ClientManager>>,
-        frontend: &mut FrontendListener,
-        frontend_tx: &Sender<FrontendEvent>,
-        mut stream: ReadHalf<TcpStream>,
+        #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
+        #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
     ) {
         use std::io;
 
