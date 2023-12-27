@@ -198,7 +198,10 @@ impl Server {
                             Some(e) => e,
                             None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
                         };
-                        Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
+                        let exit = Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
+                        if exit {
+                            return Ok(());
+                        }
                     }
                     notify = frontend_notify_rx.recv() => {
                         let notify = match notify {
@@ -294,12 +297,23 @@ impl Server {
         let reaper = task::spawn_local(async move {
             tokio::select! {
                 _ = signal::ctrl_c() => {
-                    producer_task.abort();
-                    receiver_task.abort();
-                    frontend_task.abort();
-                    resolver_task.abort();
-                    udp_task.abort();
+                    log::info!("terminating service");
                 },
+                _ = producer_task => {
+                    // TODO restart producer?
+                }
+                _ = receiver_task => {
+                    // TODO restart producer?
+                }
+                _ = frontend_task => {
+                    // frontend exited => exit requested
+                }
+                _ = resolver_task => {
+                    // resolver exited
+                }
+                _ = udp_task => {
+                    // udp exited
+                }
             }
         });
 

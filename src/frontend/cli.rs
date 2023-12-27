@@ -25,7 +25,7 @@ pub fn run() -> Result<()> {
             loop {
                 let mut buf = String::new();
                 match std::io::stdin().read_line(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => return,
                     Ok(len) => {
                         if let Some(events) = parse_cmd(buf, len) {
                             for event in events.iter() {
@@ -48,14 +48,16 @@ pub fn run() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        log::error!("error reading from stdin: {e}");
-                        break;
+                        if e.kind() != ErrorKind::UnexpectedEof {
+                            log::error!("error reading from stdin: {e}");
+                        }
+                        return;
                     }
                 }
             }
         })?;
 
-    let writer = thread::Builder::new()
+    let _ = thread::Builder::new()
         .name("cli-frontend-notify".to_string())
         .spawn(move || {
             loop {
@@ -124,7 +126,7 @@ pub fn run() -> Result<()> {
             }
         })?;
     match reader.join() {
-        Ok(_) => (),
+        Ok(_) => {}
         Err(e) => {
             let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
                 (Some(&s), _) => s,
@@ -132,17 +134,6 @@ pub fn run() -> Result<()> {
                 _ => "no panic info",
             };
             log::error!("reader thread paniced: {msg}");
-        }
-    }
-    match writer.join() {
-        Ok(_) => (),
-        Err(e) => {
-            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
-                (Some(&s), _) => s,
-                (_, Some(s)) => s,
-                _ => "no panic info",
-            };
-            log::error!("writer thread paniced: {msg}");
         }
     }
     Ok(())
