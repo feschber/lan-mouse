@@ -710,10 +710,8 @@ impl Server {
         client_manager: &Rc<RefCell<ClientManager>>,
         frontend: &mut FrontendListener,
         frontend_tx: &Sender<FrontendEvent>,
-        #[cfg(unix)]
-        mut stream: ReadHalf<UnixStream>,
-        #[cfg(windows)]
-        mut stream: ReadHalf<TcpStream>,
+        #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
+        #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
     ) {
         use std::io;
 
