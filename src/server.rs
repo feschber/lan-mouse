@@ -255,9 +255,8 @@ impl Server {
                         let _ = receiver_tx.send(event).await;
                     }
                     event = sender_rx.recv() => {
-                        let (event, addr) = match event {
-                            Some(e) => e,
-                            None => break,
+                        let Some((event, addr)) = event else {
+                            break;
                         };
                         if let Err(e) = send_event(&socket, event, addr) {
                             log::warn!("udp send failed: {e}");
@@ -270,7 +269,7 @@ impl Server {
                         let current_port = socket.local_addr().unwrap().port();
                         if current_port == port {
                             let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(port, None)).await;
-                            return;
+                            continue;
                         };
 
                         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
