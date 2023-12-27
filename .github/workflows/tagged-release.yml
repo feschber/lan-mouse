@@ -80,12 +80,14 @@ jobs:
     - name: install dependencies
       run: brew install gtk4 libadwaita
     - name: Release Build
-      run: cargo build --release
+      run: |
+        cargo build --release
+        cp target/release/lan-mouse lan-mouse-macos-intel
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
         name: lan-mouse-macos
-        path: target/release/lan-mouse
+        path: lan-mouse-macos-intel
 
   tagged-release:
     name: "Tagged Release"
@@ -101,5 +103,5 @@ jobs:
         prerelease: false
         files: |
           lan-mouse-linux/lan-mouse
-          lan-mouse-macos/lan-mouse
+          lan-mouse-macos/lan-mouse-macos-intel
           lan-mouse-windows/lan-mouse.zip
