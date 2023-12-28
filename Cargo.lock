@@ -1226,7 +1226,7 @@ checksum = "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c"
 
 [[package]]
 name = "lan-mouse"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -1729,7 +1729,7 @@ checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
 [[package]]
 name = "reis"
 version = "0.1.0"
-source = "git+https://github.com/ids1024/reis#a12f7e418e1e00c93369f82866b41f93ff8a6eca"
+source = "git+https://github.com/ids1024/reis#c836d229245f19e46b42ed9a09cc446baf49f942"
 dependencies = [
  "futures",
  "rustix 0.38.28",
