@@ -130,6 +130,7 @@ impl Server {
         let state = state_rc.clone();
         let active_client = active_client_rc.clone();
         let sender_ch = sender_tx.clone();
+        let timer_ch = timer_tx.clone();
         let producer_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -138,7 +139,7 @@ impl Server {
                             Some(e) => e?,
                             None => return Err::<(), anyhow::Error>(anyhow!("event producer closed")),
                         };
-                        Self::handle_producer_event(&mut producer, &client_manager, &state, &active_client, &sender_ch, client, event).await;
+                        Self::handle_producer_event(&mut producer, &client_manager, &state, &active_client, &sender_ch, &timer_ch, client, event).await;
                     }
                     e = producer_notify_rx.recv() => {
                         match e {
@@ -742,6 +743,7 @@ impl Server {
         state: &Rc<Cell<State>>,
         active_client: &Rc<Cell<Option<ClientHandle>>>,
         sender_tx: &Sender<(Event, SocketAddr)>,
+        timer_tx: &Sender<()>,
         c: ClientHandle,
         mut e: Event,
     ) {
@@ -790,6 +792,7 @@ impl Server {
             if let State::Receiving | State::AwaitingLeave = state.get() {
                 state.replace(State::AwaitingLeave);
                 active_client.replace(Some(client_state.client.handle));
+                let _ = timer_tx.send(()).await; // restart live tracking timer
                 log::trace!("STATE ===> AwaitingLeave");
                 enter = true;
             }
