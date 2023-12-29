@@ -8,7 +8,7 @@ use std::{
     io::Result,
     net::IpAddr,
     rc::Rc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::{io::ReadHalf, net::UdpSocket, signal, sync::mpsc::Sender, task};
 
@@ -34,6 +34,8 @@ use crate::{
     producer,
 };
 
+const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum State {
     Sending,
@@ -48,6 +50,7 @@ pub enum ProducerEvent {
 
 pub enum ConsumerEvent {
     ClientEvent(ClientEvent),
+    ReleaseKeys(ClientHandle, Vec<u32>),
 }
 
 #[derive(Clone)]
@@ -86,6 +89,7 @@ impl Server {
         let client_manager_rc = Rc::new(RefCell::new(ClientManager::new()));
 
         let state_rc = Rc::new(Cell::new(State::Receiving));
+        let active_client_rc: Rc<Cell<Option<ClientHandle>>> = Rc::new(Cell::new(None));
 
         // channel to notify producer
         let (producer_notify_tx, mut producer_notify_rx) = tokio::sync::mpsc::channel(32);
@@ -104,6 +108,9 @@ impl Server {
         let (sender_tx, mut sender_rx) = tokio::sync::mpsc::channel(32);
         let (port_tx, mut port_rx) = tokio::sync::mpsc::channel(32);
 
+        // channel to notify timer
+        let (timer_tx, mut timer_rx) = tokio::sync::mpsc::channel(32);
+
         // add clients from config
         for (c, h, port, p) in config.get_clients().into_iter() {
             Self::add_client(
@@ -121,6 +128,7 @@ impl Server {
         // event producer
         let client_manager = client_manager_rc.clone();
         let state = state_rc.clone();
+        let active_client = active_client_rc.clone();
         let sender_ch = sender_tx.clone();
         let producer_task = tokio::task::spawn_local(async move {
             loop {
@@ -130,7 +138,7 @@ impl Server {
                             Some(e) => e?,
                             None => return Err::<(), anyhow::Error>(anyhow!("event producer closed")),
                         };
-                        Self::handle_producer_event(&mut producer, &client_manager, &state, &sender_ch, client, event).await;
+                        Self::handle_producer_event(&mut producer, &client_manager, &state, &active_client, &sender_ch, client, event).await;
                     }
                     e = producer_notify_rx.recv() => {
                         match e {
@@ -149,6 +157,7 @@ impl Server {
         let client_manager = client_manager_rc.clone();
         let state = state_rc.clone();
         let producer_notify = producer_notify_tx.clone();
+        let sender_ch = sender_tx.clone();
         let receiver_task = tokio::task::spawn_local(async move {
             let mut last_ignored = None;
 
@@ -160,12 +169,13 @@ impl Server {
                             Some(Err(e)) => return Err::<(), anyhow::Error>(anyhow!("{}", e)),
                             None => return Err::<(), anyhow::Error>(anyhow!("receiver closed")),
                         };
-                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &sender_tx, &state, &mut last_ignored, udp_event).await;
+                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &sender_ch, &state, &mut last_ignored, udp_event, &timer_tx).await;
                     }
                     consumer_event = consumer_notify_rx.recv() => {
                         match consumer_event {
                             Some(e) => match e {
                                 ConsumerEvent::ClientEvent(e) => consumer.notify(e).await,
+                                ConsumerEvent::ReleaseKeys(c, k) => Self::release_keys(&mut consumer, c, k).await,
                             },
                             None => break,
                         }
@@ -180,6 +190,8 @@ impl Server {
 
         // frontend listener
         let client_manager = client_manager_rc.clone();
+        let producer_notify = producer_notify_tx.clone();
+        let consumer_notify = consumer_notify_tx.clone();
         let frontend_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -198,7 +210,7 @@ impl Server {
                             Some(e) => e,
                             None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
                         };
-                        let exit = Self::handle_frontend_event(&producer_notify_tx, &consumer_notify_tx, &client_manager, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
+                        let exit = Self::handle_frontend_event(&producer_notify, &consumer_notify, &client_manager, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
                         if exit {
                             return Ok(());
                         }
@@ -293,6 +305,110 @@ impl Server {
             }
         });
 
+        let client_manager = client_manager_rc.clone();
+
+        // timer task
+        let state = state_rc.clone();
+        let active_client = active_client_rc.clone();
+        let sender_ch = sender_tx.clone();
+        let live_tracker = tokio::task::spawn_local(async move {
+            loop {
+                // wait for wake up signal
+                let Some(_): Option<()> = timer_rx.recv().await else {
+                    break;
+                };
+                loop {
+                    let receiving = state.get() == State::Receiving;
+                    if receiving {
+                        // find clients with pressed keys
+                        let clients_with_keys_down: Vec<ClientHandle> = client_manager
+                            .borrow_mut()
+                            .get_client_states_mut()
+                            .filter_map(|s| if s.pressed_keys.is_empty() {
+                                None
+                            } else {
+                                Some(s.client.handle)
+                            })
+                            .collect();
+
+                        if clients_with_keys_down.is_empty() {
+                            // at this point we dont need to ping anyone until
+                            // another key is pressed again
+                            break;
+                        }
+
+                        // ping all clients to see if they respond
+                        for client in clients_with_keys_down.iter() {
+                            for addr in &client_manager.borrow().get(*client).unwrap().client.addrs {
+                                if sender_ch.send((Event::Ping(), *addr)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // give clients time to resond
+                        tokio::time::sleep(MAX_RESPONSE_TIME).await;
+
+                        // FIXME clients may have pressed keys during wait period
+                        let mut client_manager_borrow = client_manager.borrow_mut();
+                        let unresponsive_clients = clients_with_keys_down
+                            .iter()
+                            .filter(|&c| {
+                                if let Some(state) = client_manager_borrow.get_mut(*c) {
+                                    let unresponsive = !state.alive;
+                                    // reset alive
+                                    state.alive = false;
+                                    unresponsive
+                                } else {
+                                    false // client was removed in the meantime
+                                }
+                            });
+
+                        // if we are receiving and a client has not responded,
+                        // we release its keys
+                        let mut client_manager_borrow = client_manager.borrow_mut();
+                        for client in unresponsive_clients {
+                            let pressed_keys: Vec<u32> = client_manager_borrow
+                                .get_mut(*client)
+                                .unwrap()
+                                .pressed_keys.drain()
+                                .collect();
+                            if consumer_notify_tx.send(ConsumerEvent::ReleaseKeys(*client, pressed_keys)).await.is_err() {
+                                break;
+                            }
+                        }
+                    } else {
+                        let Some(client) = active_client.get() else {
+                            // no longer sending
+                            continue;
+                        };
+                        let mut client_manager = client_manager.borrow_mut();
+                        let client_state = client_manager.get(client).unwrap();
+
+                        // ping client to see if it is alive
+                        for addr in &client_state.client.addrs {
+                            if sender_ch.send((Event::Ping(), *addr)).await.is_err() {
+                                break;
+                            }
+                        }
+
+                        tokio::time::sleep(MAX_RESPONSE_TIME).await;
+
+                        if let Some(state) = client_manager.get_mut(client) {
+                            if !state.alive {
+                                if producer_notify_tx.send(ProducerEvent::Release).await.is_err() {
+                                    break;
+                                }
+                                state_rc.replace(State::Receiving);
+                            }
+                            // reset alive
+                            state.alive = false;
+                        }
+                    }
+                }
+            }
+        });
+
         let reaper = task::spawn_local(async move {
             tokio::select! {
                 _ = signal::ctrl_c() => {
@@ -312,6 +428,8 @@ impl Server {
                 }
                 _ = udp_task => {
                     // udp exited
+                }
+                _ = live_tracker => {
                 }
             }
         });
@@ -443,7 +561,6 @@ impl Server {
                     })
                     .collect();
                 state
-                    .client
                     .active_addr
                     .map(|a| SocketAddr::new(a.ip(), client_update.port));
             }
@@ -451,7 +568,7 @@ impl Server {
             // update hostname
             if state.client.hostname != client_update.hostname {
                 state.client.addrs = HashSet::new();
-                state.client.active_addr = None;
+                state.active_addr = None;
                 state.client.hostname = client_update.hostname;
             }
 
@@ -503,6 +620,7 @@ impl Server {
         state: &Rc<Cell<State>>,
         last_ignored: &mut Option<SocketAddr>,
         event: (Event, SocketAddr),
+        timer_tx: &Sender<()>,
     ) {
         let (event, addr) = event;
 
@@ -534,9 +652,9 @@ impl Server {
             };
 
             // reset ttl for client and
-            client_state.last_seen = Some(Instant::now());
+            client_state.alive = true;
             // set addr as new default for this client
-            client_state.client.active_addr = Some(addr);
+            client_state.active_addr = Some(addr);
         }
 
         match (event, addr) {
@@ -548,6 +666,33 @@ impl Server {
                 // tell clients that we are ready to receive events
                 if let Event::Enter() = event {
                     let _ = sender_tx.send((Event::Leave(), addr)).await;
+                }
+
+                if let Event::Keyboard(KeyboardEvent::Key { time: _, key, state }) = event {
+                    let wake_timer = {
+                        let mut client_manager = client_manager.borrow_mut();
+                        let client_state = match client_manager.get_mut(handle) {
+                            Some(s) => s,
+                            None => {
+                                log::error!("unknown handle");
+                                return;
+                            }
+                        };
+                        match state {
+                            0 => {
+                                client_state.pressed_keys.remove(&key);
+                                false
+                            }
+                            _ => {
+                                client_state.pressed_keys.insert(key);
+                                true
+                            }
+                        }
+                    };
+                    if wake_timer {
+                        // restart live tracking timer
+                        let _ = timer_tx.send(()).await;
+                    }
                 }
                 match state.get() {
                     State::Sending => {
@@ -587,32 +732,6 @@ impl Server {
                 }
             }
         }
-
-        let pong = {
-            let mut client_manager = client_manager.borrow_mut();
-            let client_state = match client_manager.get_mut(handle) {
-                Some(s) => s,
-                None => {
-                    log::error!("unknown handle");
-                    return;
-                }
-            };
-
-            // let the server know we are still alive once every second
-            if client_state.last_replied.is_none()
-                || client_state.last_replied.is_some()
-                    && client_state.last_replied.unwrap().elapsed() > Duration::from_secs(1)
-            {
-                client_state.last_replied = Some(Instant::now());
-                true
-            } else {
-                false
-            }
-        };
-
-        if pong {
-            let _ = sender_tx.send((Event::Pong(), addr)).await;
-        }
     }
 
     const RELEASE_MODIFIERDS: u32 = 77; // ctrl+shift+super+alt
@@ -621,6 +740,7 @@ impl Server {
         producer: &mut Box<dyn EventProducer>,
         client_manager: &Rc<RefCell<ClientManager>>,
         state: &Rc<Cell<State>>,
+        active_client: &Rc<Cell<Option<ClientHandle>>>,
         sender_tx: &Sender<(Event, SocketAddr)>,
         c: ClientHandle,
         mut e: Event,
@@ -648,9 +768,8 @@ impl Server {
             }
         }
 
-        let (addr, enter, ping_addrs) = {
+        let (addr, enter) = {
             let mut enter = false;
-            let mut ping_addrs: Option<Vec<SocketAddr>> = None;
 
             // get client state for handle
             let mut client_manager = client_manager.borrow_mut();
@@ -670,52 +789,18 @@ impl Server {
             // we get a leave event
             if let State::Receiving | State::AwaitingLeave = state.get() {
                 state.replace(State::AwaitingLeave);
+                active_client.replace(Some(client_state.client.handle));
                 log::trace!("STATE ===> AwaitingLeave");
                 enter = true;
             }
 
-            let last_seen = match client_state.last_seen {
-                None => Duration::MAX,
-                Some(i) => i.elapsed(),
-            };
-
-            let last_pinged = match client_state.last_ping {
-                None => Duration::MAX,
-                Some(i) => i.elapsed(),
-            };
-
-            // not seen for one second but pinged at least 500ms ago
-            if last_seen > Duration::from_secs(1)
-                && last_pinged > Duration::from_millis(500)
-                && last_pinged < Duration::from_secs(1)
-            {
-                // client unresponsive -> set state to receiving
-                if state.get() != State::Receiving {
-                    log::info!("client not responding - releasing pointer");
-                    producer.release();
-                    state.replace(State::Receiving);
-                    log::trace!("STATE ===> Receiving");
-                }
-            }
-
-            // last ping > 500ms ago -> ping all interfaces
-            if last_pinged > Duration::from_millis(500) {
-                ping_addrs = Some(client_state.client.addrs.iter().cloned().collect());
-                client_state.last_ping = Some(Instant::now());
-            }
-
-            (client_state.client.active_addr, enter, ping_addrs)
+            (client_state.active_addr, enter)
         };
         if let Some(addr) = addr {
             if enter {
                 let _ = sender_tx.send((Event::Enter(), addr)).await;
             }
             let _ = sender_tx.send((e, addr)).await;
-        }
-        if let Some(addrs) = ping_addrs {
-            for addr in addrs {
-                let _ = sender_tx.send((Event::Ping(), addr)).await;
-            }
         }
     }
 
@@ -820,6 +905,13 @@ impl Server {
             }
         }
         false
+    }
+
+    async fn release_keys(consumer: &mut Box<dyn EventConsumer>, client: ClientHandle, keys: Vec<u32>) {
+        /* TODO */
+        let _ = consumer;
+        let _ = client;
+        let _ = keys;
     }
 
     async fn enumerate(
