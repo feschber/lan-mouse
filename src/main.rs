@@ -67,7 +67,7 @@ fn run_service(config: &Config) -> Result<()> {
         log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
 
         let server = Server::new(config);
-        server.run(config).await?;
+        server.run().await?;
 
         log::debug!("service exiting");
         anyhow::Ok(())

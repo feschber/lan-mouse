@@ -96,7 +96,7 @@ impl Server {
         }
     }
 
-    pub async fn run(&self, config: &Config) -> anyhow::Result<()> {
+    pub async fn run(&self) -> anyhow::Result<()> {
         // create frontend communication adapter
         let mut frontend = match FrontendListener::new().await {
             Some(Err(e)) => return Err(e),
@@ -258,7 +258,7 @@ impl Server {
         });
 
         // bind the udp socket
-        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
+        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), self.port.get());
         let mut socket = UdpSocket::bind(listen_addr).await?;
         // udp task
         let udp_task = tokio::task::spawn_local(async move {
