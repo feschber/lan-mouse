@@ -38,20 +38,28 @@ const MAX_RESPONSE_TIME: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum State {
+    /// Currently sending events to another device
     Sending,
+    /// Currently receiving events from other devices
     Receiving,
+    /// Entered the deadzone of another device but waiting
+    /// for acknowledgement (Leave event) from the device
     AwaitingLeave,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum ProducerEvent {
+    /// producer must release the mouse
     Release,
+    /// producer is notified of a change in client states
     ClientEvent(ClientEvent),
 }
 
 #[derive(Clone, Debug)]
 pub enum ConsumerEvent {
+    /// consumer is notified of a change in client states
     ClientEvent(ClientEvent),
+    /// consumer must release the given keys
     ReleaseKeys(ClientHandle, Vec<u32>),
 }
 
@@ -63,10 +71,32 @@ struct ClientUpdate {
     pos: Position,
 }
 
-pub struct Server {}
+#[derive(Clone)]
+pub struct Server {
+    active_client: Rc<Cell<Option<ClientHandle>>>,
+    client_manager: Rc<RefCell<ClientManager>>,
+    port: Rc<Cell<u16>>,
+    state: Rc<Cell<State>>,
+}
 
 impl Server {
-    pub async fn run(config: &Config) -> anyhow::Result<()> {
+    pub fn new(config: &Config) -> Self {
+        let active_client = Rc::new(Cell::new(None));
+        let client_manager = Rc::new(RefCell::new(ClientManager::new()));
+        let state = Rc::new(Cell::new(State::Receiving));
+        let port = Rc::new(Cell::new(config.port));
+        for (ips, host, port, pos) in config.get_clients() {
+            client_manager.borrow_mut().add_client(host, ips, port, pos);
+        }
+        Self {
+            active_client,
+            client_manager,
+            port,
+            state,
+        }
+    }
+
+    pub async fn run(&self, config: &Config) -> anyhow::Result<()> {
         // create frontend communication adapter
         let mut frontend = match FrontendListener::new().await {
             Some(Err(e)) => return Err(e),
@@ -79,70 +109,30 @@ impl Server {
         };
         let (mut consumer, mut producer) = tokio::join!(consumer::create(), producer::create());
 
-        // create dns resolver
-        let resolver = dns::DnsResolver::new().await?;
-
-        // bind the udp socket
-        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
-        let mut socket = UdpSocket::bind(listen_addr).await?;
         let (frontend_tx, mut frontend_rx) = tokio::sync::mpsc::channel(1);
-
-        // create client manager
-        let client_manager_rc = Rc::new(RefCell::new(ClientManager::new()));
-
-        let state_rc = Rc::new(Cell::new(State::Receiving));
-        let active_client_rc: Rc<Cell<Option<ClientHandle>>> = Rc::new(Cell::new(None));
-
-        // channel to notify producer
         let (producer_notify_tx, mut producer_notify_rx) = tokio::sync::mpsc::channel(32);
-
-        // channel to notify consumer
         let (consumer_notify_tx, mut consumer_notify_rx) = tokio::sync::mpsc::channel(32);
-
-        // channel to request dns resolver
         let (resolve_tx, mut resolve_rx) = tokio::sync::mpsc::channel(32);
-
-        // channel to send events to frontends
         let (frontend_notify_tx, mut frontend_notify_rx) = tokio::sync::mpsc::channel(32);
-
-        // channels for udp send / receive
         let (receiver_tx, mut receiver_rx) = tokio::sync::mpsc::channel(32);
         let (sender_tx, mut sender_rx) = tokio::sync::mpsc::channel(32);
         let (port_tx, mut port_rx) = tokio::sync::mpsc::channel(32);
-
-        // channel to notify timer
         let (timer_tx, mut timer_rx) = tokio::sync::mpsc::channel(1);
 
-        // add clients from config
-        for (c, h, port, p) in config.get_clients().into_iter() {
-            Self::add_client(
-                &resolve_tx,
-                &client_manager_rc,
-                &mut frontend,
-                h,
-                c,
-                port,
-                p,
-            )
-            .await;
-        }
-
         // event producer
-        let client_manager = client_manager_rc.clone();
-        let state = state_rc.clone();
-        let active_client = active_client_rc.clone();
         let sender_ch = sender_tx.clone();
         let timer_ch = timer_tx.clone();
+        let server = self.clone();
         let producer_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
-                    e = producer.next() => {
-                        log::debug!("producer event: {e:?}");
-                        let (client, event) = match e {
+                    event = producer.next() => {
+                        log::debug!("producer event: {event:?}");
+                        let event = match event {
                             Some(e) => e?,
                             None => return Err::<(), anyhow::Error>(anyhow!("event producer closed")),
                         };
-                        Self::handle_producer_event(&mut producer, &client_manager, &state, &active_client, &sender_ch, &timer_ch, client, event).await;
+                        server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await;
                     }
                     e = producer_notify_rx.recv() => {
                         log::debug!("producer notify rx: {e:?}");
@@ -159,10 +149,9 @@ impl Server {
         });
 
         // event consumer
-        let client_manager = client_manager_rc.clone();
-        let state = state_rc.clone();
         let producer_notify = producer_notify_tx.clone();
         let sender_ch = sender_tx.clone();
+        let server = self.clone();
         let receiver_task = tokio::task::spawn_local(async move {
             let mut last_ignored = None;
 
@@ -174,13 +163,13 @@ impl Server {
                             Some(Err(e)) => return Err::<(), anyhow::Error>(anyhow!("{}", e)),
                             None => return Err::<(), anyhow::Error>(anyhow!("receiver closed")),
                         };
-                        Self::handle_udp_rx(&client_manager, &producer_notify, &mut consumer, &sender_ch, &state, &mut last_ignored, udp_event, &timer_tx).await;
+                        server.handle_udp_rx(&producer_notify, &mut consumer, &sender_ch, &mut last_ignored, udp_event, &timer_tx).await;
                     }
                     consumer_event = consumer_notify_rx.recv() => {
                         match consumer_event {
                             Some(e) => match e {
                                 ConsumerEvent::ClientEvent(e) => consumer.notify(e).await,
-                                ConsumerEvent::ReleaseKeys(c, k) => Self::release_keys(&mut consumer, c, k).await,
+                                ConsumerEvent::ReleaseKeys(c, k) => server.release_keys(&mut consumer, c, k).await,
                             },
                             None => break,
                         }
@@ -194,9 +183,10 @@ impl Server {
         });
 
         // frontend listener
-        let client_manager = client_manager_rc.clone();
+        let server = self.clone();
         let producer_notify = producer_notify_tx.clone();
         let consumer_notify = consumer_notify_tx.clone();
+        let frontend_ch = frontend_tx.clone();
         let frontend_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -208,14 +198,14 @@ impl Server {
                                 continue;
                             }
                         };
-                        Self::handle_frontend_stream(&client_manager, &mut frontend, &frontend_tx, stream).await;
+                        server.handle_frontend_stream(&mut frontend, &frontend_ch, stream).await;
                     }
                     event = frontend_rx.recv() => {
                         let frontend_event = match event {
                             Some(e) => e,
                             None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
                         };
-                        let exit = Self::handle_frontend_event(&producer_notify, &consumer_notify, &client_manager, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
+                        let exit = server.handle_frontend_event(&producer_notify, &consumer_notify, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
                         if exit {
                             return Ok(());
                         }
@@ -232,7 +222,10 @@ impl Server {
         });
 
         // dns resolver
-        let client_manager = client_manager_rc.clone();
+
+        // create dns resolver
+        let resolver = dns::DnsResolver::new().await?;
+        let server = self.clone();
         let resolver_task = tokio::task::spawn_local(async move {
             loop {
                 let (host, client): (String, ClientHandle) = match resolve_rx.recv().await {
@@ -246,7 +239,7 @@ impl Server {
                         continue;
                     }
                 };
-                if let Some(state) = client_manager.borrow_mut().get_mut(client) {
+                if let Some(state) = server.client_manager.borrow_mut().get_mut(client) {
                     let port = state.client.port;
                     let mut addrs = HashSet::from_iter(
                         state
@@ -264,6 +257,9 @@ impl Server {
             }
         });
 
+        // bind the udp socket
+        let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
+        let mut socket = UdpSocket::bind(listen_addr).await?;
         // udp task
         let udp_task = tokio::task::spawn_local(async move {
             loop {
@@ -285,14 +281,14 @@ impl Server {
                         };
                         let current_port = socket.local_addr().unwrap().port();
                         if current_port == port {
-                            let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(port, None)).await;
                             continue;
-                        };
+                        }
 
                         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
                         match UdpSocket::bind(listen_addr).await {
                             Ok(new_socket) => {
                                 socket = new_socket;
+                                server.port.replace(port);
                                 let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(port, None)).await;
                             }
                             Err(e) => {
@@ -310,11 +306,8 @@ impl Server {
             }
         });
 
-        let client_manager = client_manager_rc.clone();
-
         // timer task
-        let state = state_rc.clone();
-        let active_client = active_client_rc.clone();
+        let server = self.clone();
         let sender_ch = sender_tx.clone();
         let live_tracker = tokio::task::spawn_local(async move {
             loop {
@@ -323,10 +316,10 @@ impl Server {
                     break;
                 };
                 loop {
-                    let receiving = state.get() == State::Receiving;
+                    let receiving = server.state.get() == State::Receiving;
                     if receiving {
                         let ping_addrs: Vec<SocketAddr> = {
-                            let mut client_manager = client_manager.borrow_mut();
+                            let mut client_manager = server.client_manager.borrow_mut();
                             // find clients with pressed keys
                             let clients_with_keys_down: Vec<ClientHandle> = client_manager
                                 .get_client_states_mut()
@@ -368,7 +361,7 @@ impl Server {
                         tokio::time::sleep(MAX_RESPONSE_TIME).await;
 
                         let pressed_keys = {
-                            let mut client_manager = client_manager.borrow_mut();
+                            let mut client_manager = server.client_manager.borrow_mut();
                             let unresponsive_clients = client_manager
                                 .get_client_states_mut()
                                 .filter(|s| !s.pressed_keys.is_empty())
@@ -408,11 +401,11 @@ impl Server {
                         }
                     } else {
                         let ping_addrs: Vec<SocketAddr> = {
-                            let Some(client) = active_client.get() else {
+                            let Some(client) = server.active_client.get() else {
                                 // no longer sending
                                 continue;
                             };
-                            let client_manager = client_manager.borrow();
+                            let client_manager = server.client_manager.borrow();
                             client_manager
                                 .get(client)
                                 .map(|s| s.client.addrs.iter().cloned().collect())
@@ -429,12 +422,13 @@ impl Server {
                         log::debug!("sleeping 500ms to wait for response from entered client ...");
                         tokio::time::sleep(MAX_RESPONSE_TIME).await;
 
-                        let Some(active_client) = active_client.get() else {
+                        let Some(active_client) = server.active_client.get() else {
                             continue;
                         };
 
                         let release = {
-                            if let Some(state) = client_manager.borrow_mut().get_mut(active_client)
+                            if let Some(state) =
+                                server.client_manager.borrow_mut().get_mut(active_client)
                             {
                                 let unresponsive = !state.alive;
                                 state.alive = false;
@@ -447,13 +441,16 @@ impl Server {
                         // release pointer
                         if release {
                             log::warn!("client not responding, releasing pointer!");
-                            state_rc.replace(State::Receiving);
+                            server.state.replace(State::Receiving);
                             let _ = producer_notify_tx.send(ProducerEvent::Release).await;
                         }
                     }
                 }
             }
         });
+
+        // initial sync of clients
+        frontend_tx.send(FrontendEvent::Enumerate()).await?;
 
         let reaper = task::spawn_local(async move {
             tokio::select! {
@@ -486,8 +483,8 @@ impl Server {
     }
 
     pub async fn add_client(
+        &self,
         resolver_tx: &Sender<(String, ClientHandle)>,
-        client_manager: &Rc<RefCell<ClientManager>>,
         frontend: &mut FrontendListener,
         hostname: Option<String>,
         addr: HashSet<IpAddr>,
@@ -500,7 +497,8 @@ impl Server {
             hostname.as_deref().unwrap_or(""),
             &addr
         );
-        let client = client_manager
+        let client = self
+            .client_manager
             .borrow_mut()
             .add_client(hostname.clone(), addr, port, pos);
 
@@ -516,13 +514,13 @@ impl Server {
     }
 
     pub async fn activate_client(
+        &self,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
-        client_manager: &Rc<RefCell<ClientManager>>,
         client: ClientHandle,
         active: bool,
     ) {
-        let (client, pos) = match client_manager.borrow_mut().get_mut(client) {
+        let (client, pos) = match self.client_manager.borrow_mut().get_mut(client) {
             Some(state) => {
                 state.active = active;
                 (state.client.handle, state.client.pos)
@@ -547,7 +545,7 @@ impl Server {
     }
 
     pub async fn remove_client(
-        client_manager: &Rc<RefCell<ClientManager>>,
+        &self,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
         frontend: &mut FrontendListener,
@@ -560,7 +558,8 @@ impl Server {
             .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
 
-        let Some(client) = client_manager
+        let Some(client) = self
+            .client_manager
             .borrow_mut()
             .remove_client(client)
             .map(|s| s.client.handle)
@@ -577,15 +576,15 @@ impl Server {
     }
 
     async fn update_client(
+        &self,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
         resolve_tx: &Sender<(String, ClientHandle)>,
-        client_manager: &Rc<RefCell<ClientManager>>,
         client_update: ClientUpdate,
     ) {
         let (hostname, handle, active) = {
             // retrieve state
-            let mut client_manager = client_manager.borrow_mut();
+            let mut client_manager = self.client_manager.borrow_mut();
             let Some(state) = client_manager.get_mut(client_update.client) else {
                 return;
             };
@@ -659,11 +658,10 @@ impl Server {
     }
 
     async fn handle_udp_rx(
-        client_manager: &Rc<RefCell<ClientManager>>,
+        &self,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer: &mut Box<dyn EventConsumer>,
         sender_tx: &Sender<(Event, SocketAddr)>,
-        state: &Rc<Cell<State>>,
         last_ignored: &mut Option<SocketAddr>,
         event: (Event, SocketAddr),
         timer_tx: &Sender<()>,
@@ -671,7 +669,7 @@ impl Server {
         let (event, addr) = event;
 
         // get handle for addr
-        let handle = match client_manager.borrow().get_client(addr) {
+        let handle = match self.client_manager.borrow().get_client(addr) {
             Some(a) => a,
             None => {
                 if last_ignored.is_none() || last_ignored.is_some() && last_ignored.unwrap() != addr
@@ -688,7 +686,7 @@ impl Server {
 
         log::trace!("{:20} <-<-<-<------ {addr} ({handle})", event.to_string());
         {
-            let mut client_manager = client_manager.borrow_mut();
+            let mut client_manager = self.client_manager.borrow_mut();
             let client_state = match client_manager.get_mut(handle) {
                 Some(s) => s,
                 None => {
@@ -721,7 +719,7 @@ impl Server {
                 }) = event
                 {
                     let wake_timer = {
-                        let mut client_manager = client_manager.borrow_mut();
+                        let mut client_manager = self.client_manager.borrow_mut();
                         let client_state = match client_manager.get_mut(handle) {
                             Some(s) => s,
                             None => {
@@ -745,15 +743,15 @@ impl Server {
                         let _ = timer_tx.try_send(());
                     }
                 }
-                match state.get() {
+                match self.state.get() {
                     State::Sending => {
                         if let Event::Leave() = event {
                             // ignore additional leave events that may
                             // have been sent for redundancy
                         } else {
                             // upon receiving any event, we go back to receiving mode
+                            self.state.replace(State::Receiving);
                             let _ = producer_notify_tx.send(ProducerEvent::Release).await;
-                            state.replace(State::Receiving);
                             log::trace!("STATE ===> Receiving");
                         }
                     }
@@ -768,14 +766,14 @@ impl Server {
                         // be on the way until a leave event occurs
                         // telling us the client registered the enter
                         if let Event::Leave() = event {
-                            state.replace(State::Sending);
+                            self.state.replace(State::Sending);
                             log::trace!("STATE ===> Sending");
                         }
 
                         // entering a client that is waiting for a leave
                         // event should still be possible
                         if let Event::Enter() = event {
-                            state.replace(State::Receiving);
+                            self.state.replace(State::Receiving);
                             log::trace!("STATE ===> Receiving");
                             let _ = producer_notify_tx.send(ProducerEvent::Release).await;
                         }
@@ -788,15 +786,13 @@ impl Server {
     const RELEASE_MODIFIERDS: u32 = 77; // ctrl+shift+super+alt
 
     async fn handle_producer_event(
+        &self,
         producer: &mut Box<dyn EventProducer>,
-        client_manager: &Rc<RefCell<ClientManager>>,
-        state: &Rc<Cell<State>>,
-        active_client: &Rc<Cell<Option<ClientHandle>>>,
         sender_tx: &Sender<(Event, SocketAddr)>,
         timer_tx: &Sender<()>,
-        c: ClientHandle,
-        mut e: Event,
+        event: (ClientHandle, Event),
     ) {
+        let (c, mut e) = event;
         log::trace!("producer: ({c}) {e:?}");
 
         if let Event::Keyboard(crate::event::KeyboardEvent::Modifiers {
@@ -808,7 +804,7 @@ impl Server {
         {
             if mods_depressed == Self::RELEASE_MODIFIERDS {
                 producer.release();
-                state.replace(State::Receiving);
+                self.state.replace(State::Receiving);
                 log::trace!("STATE ===> Receiving");
                 // send an event to release all the modifiers
                 e = Event::Keyboard(KeyboardEvent::Modifiers {
@@ -825,14 +821,14 @@ impl Server {
             let mut start_timer = false;
 
             // get client state for handle
-            let mut client_manager = client_manager.borrow_mut();
+            let mut client_manager = self.client_manager.borrow_mut();
             let client_state = match client_manager.get_mut(c) {
                 Some(state) => state,
                 None => {
                     // should not happen
                     log::warn!("unknown client!");
                     producer.release();
-                    state.replace(State::Receiving);
+                    self.state.replace(State::Receiving);
                     log::trace!("STATE ===> Receiving");
                     return;
                 }
@@ -840,9 +836,9 @@ impl Server {
 
             // if we just entered the client we want to send additional enter events until
             // we get a leave event
-            if let State::Receiving | State::AwaitingLeave = state.get() {
-                state.replace(State::AwaitingLeave);
-                active_client.replace(Some(client_state.client.handle));
+            if let State::Receiving | State::AwaitingLeave = self.state.get() {
+                self.state.replace(State::AwaitingLeave);
+                self.active_client.replace(Some(client_state.client.handle));
                 log::trace!("Active client => {}", client_state.client.handle);
                 start_timer = true;
                 log::trace!("STATE ===> AwaitingLeave");
@@ -863,7 +859,7 @@ impl Server {
     }
 
     async fn handle_frontend_stream(
-        client_manager: &Rc<RefCell<ClientManager>>,
+        &self,
         frontend: &mut FrontendListener,
         frontend_tx: &Sender<FrontendEvent>,
         #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
@@ -891,13 +887,13 @@ impl Server {
                 }
             }
         });
-        Self::enumerate(client_manager, frontend).await;
+        self.enumerate(frontend).await;
     }
 
     async fn handle_frontend_event(
+        &self,
         producer_notify_tx: &Sender<ProducerEvent>,
         consumer_notify_tx: &Sender<ConsumerEvent>,
-        client_manager: &Rc<RefCell<ClientManager>>,
         resolve_tx: &Sender<(String, ClientHandle)>,
         frontend: &mut FrontendListener,
         port_tx: &Sender<u16>,
@@ -906,41 +902,21 @@ impl Server {
         log::debug!("frontend: {event:?}");
         match event {
             FrontendEvent::AddClient(hostname, port, pos) => {
-                Self::add_client(
-                    resolve_tx,
-                    client_manager,
-                    frontend,
-                    hostname,
-                    HashSet::new(),
-                    port,
-                    pos,
-                )
-                .await;
+                self.add_client(resolve_tx, frontend, hostname, HashSet::new(), port, pos)
+                    .await;
             }
             FrontendEvent::ActivateClient(client, active) => {
-                Self::activate_client(
-                    producer_notify_tx,
-                    consumer_notify_tx,
-                    client_manager,
-                    client,
-                    active,
-                )
-                .await
+                self.activate_client(producer_notify_tx, consumer_notify_tx, client, active)
+                    .await
             }
             FrontendEvent::ChangePort(port) => {
                 let _ = port_tx.send(port).await;
             }
             FrontendEvent::DelClient(client) => {
-                Self::remove_client(
-                    client_manager,
-                    producer_notify_tx,
-                    consumer_notify_tx,
-                    frontend,
-                    client,
-                )
-                .await;
+                self.remove_client(producer_notify_tx, consumer_notify_tx, frontend, client)
+                    .await;
             }
-            FrontendEvent::Enumerate() => Self::enumerate(client_manager, frontend).await,
+            FrontendEvent::Enumerate() => self.enumerate(frontend).await,
             FrontendEvent::Shutdown() => {
                 log::info!("terminating gracefully...");
                 return true;
@@ -952,11 +928,10 @@ impl Server {
                     port,
                     pos,
                 };
-                Self::update_client(
+                self.update_client(
                     producer_notify_tx,
                     consumer_notify_tx,
                     resolve_tx,
-                    client_manager,
                     client_update,
                 )
                 .await
@@ -966,6 +941,7 @@ impl Server {
     }
 
     async fn release_keys(
+        &self,
         consumer: &mut Box<dyn EventConsumer>,
         client: ClientHandle,
         keys: Vec<u32>,
@@ -976,11 +952,9 @@ impl Server {
         let _ = keys;
     }
 
-    async fn enumerate(
-        client_manager: &Rc<RefCell<ClientManager>>,
-        frontend: &mut FrontendListener,
-    ) {
-        let clients = client_manager
+    async fn enumerate(&self, frontend: &mut FrontendListener) {
+        let clients = self
+            .client_manager
             .borrow()
             .get_client_states()
             .map(|s| (s.client.clone(), s.active))

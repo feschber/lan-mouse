@@ -65,7 +65,9 @@ fn run_service(config: &Config) -> Result<()> {
     runtime.block_on(LocalSet::new().run_until(async {
         // run main loop
         log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
-        Server::run(config).await?;
+
+        let server = Server::new(config);
+        server.run(config).await?;
 
         log::debug!("service exiting");
         anyhow::Ok(())
