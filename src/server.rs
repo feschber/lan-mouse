@@ -446,11 +446,11 @@ impl Server {
             }
         });
 
+        reaper.await?;
+
         let _ = consumer_notify_tx.send(ConsumerEvent::Terminate).await;
         let _ = producer_notify_tx.send(ProducerEvent::Terminate).await;
         let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
-
-        reaper.await?;
 
         Ok(())
     }
