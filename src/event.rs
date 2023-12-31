@@ -66,6 +66,9 @@ pub enum Event {
     /// response to a ping event: this event signals that a client
     /// is still alive but must otherwise be ignored
     Pong(),
+    /// explicit disconnect request. The client will no longer
+    /// send events until the next Enter event. All of its keys should be released.
+    Disconnect(),
 }
 
 impl Display for PointerEvent {
@@ -121,6 +124,7 @@ impl Display for Event {
             Event::Leave() => write!(f, "leave"),
             Event::Ping() => write!(f, "ping"),
             Event::Pong() => write!(f, "pong"),
+            Event::Disconnect() => write!(f, "disconnect"),
         }
     }
 }
@@ -134,6 +138,7 @@ impl Event {
             Self::Leave() => EventType::Leave,
             Self::Ping() => EventType::Ping,
             Self::Pong() => EventType::Pong,
+            Self::Disconnect() => EventType::Disconnect,
         }
     }
 }
@@ -175,6 +180,7 @@ enum EventType {
     Leave,
     Ping,
     Pong,
+    Disconnect,
 }
 
 impl TryFrom<u8> for PointerEventType {
@@ -217,6 +223,7 @@ impl From<&Event> for Vec<u8> {
             Event::Leave() => vec![],
             Event::Ping() => vec![],
             Event::Pong() => vec![],
+            Event::Disconnect() => vec![],
         };
         [event_id, event_data].concat()
     }
@@ -246,6 +253,7 @@ impl TryFrom<Vec<u8>> for Event {
             i if i == (EventType::Leave as u8) => Ok(Event::Leave()),
             i if i == (EventType::Ping as u8) => Ok(Event::Ping()),
             i if i == (EventType::Pong as u8) => Ok(Event::Pong()),
+            i if i == (EventType::Disconnect as u8) => Ok(Event::Disconnect()),
             _ => Err(anyhow!(ProtocolError {
                 msg: format!("invalid event_id {}", event_id),
             })),

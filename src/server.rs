@@ -344,16 +344,17 @@ impl Server {
 
                         // get relevant socket addrs for clients
                         let ping_addrs: Vec<SocketAddr> = {
-                            ping_clients.iter()
-                            .flat_map(|&c| client_manager.get(c))
-                            .flat_map(|state| {
-                                if let Some(a) = state.active_addr {
-                                    vec![a]
-                                } else {
-                                    state.client.addrs.iter().cloned().collect()
-                                }
-                            })
-                            .collect()
+                            ping_clients
+                                .iter()
+                                .flat_map(|&c| client_manager.get(c))
+                                .flat_map(|state| {
+                                    if let Some(a) = state.active_addr {
+                                        vec![a]
+                                    } else {
+                                        state.client.addrs.iter().cloned().collect()
+                                    }
+                                })
+                                .collect()
                         };
 
                         // reset alive
@@ -386,12 +387,12 @@ impl Server {
 
                     tokio::time::sleep(MAX_RESPONSE_TIME).await;
 
-
                     // when anything is received from a client,
                     // the alive flag gets set
                     let unresponsive_clients: Vec<_> = {
                         let client_manager = server.client_manager.borrow();
-                        ping_clients.iter()
+                        ping_clients
+                            .iter()
                             .filter_map(|&c| match client_manager.get(c) {
                                 Some(state) if !state.alive => Some(c),
                                 _ => None,
@@ -679,40 +680,15 @@ impl Server {
             (Event::Ping(), addr) => {
                 let _ = sender_tx.send((Event::Pong(), addr)).await;
             }
+            (Event::Disconnect(), _) => {
+                self.release_keys(consumer, handle).await;
+            }
             (event, addr) => {
                 // tell clients that we are ready to receive events
                 if let Event::Enter() = event {
                     let _ = sender_tx.send((Event::Leave(), addr)).await;
                 }
 
-                if let Event::Keyboard(KeyboardEvent::Key {
-                    time: _,
-                    key,
-                    state,
-                }) = event
-                {
-                    let wake_timer = {
-                        let mut client_manager = self.client_manager.borrow_mut();
-                        let client_state = match client_manager.get_mut(handle) {
-                            Some(s) => s,
-                            None => {
-                                log::error!("unknown handle");
-                                return;
-                            }
-                        };
-                        if state == 0 {
-                            client_state.pressed_keys.remove(&key);
-                            false
-                        } else {
-                            client_state.pressed_keys.insert(key);
-                            true
-                        }
-                    };
-                    if wake_timer {
-                        // restart live tracking timer
-                        let _ = timer_tx.try_send(());
-                    }
-                }
                 match self.state.get() {
                     State::Sending => {
                         if let Event::Leave() = event {
@@ -726,6 +702,27 @@ impl Server {
                         }
                     }
                     State::Receiving => {
+                        if let Event::Keyboard(KeyboardEvent::Key {
+                            time: _,
+                            key,
+                            state,
+                        }) = event
+                        {
+                            let mut client_manager = self.client_manager.borrow_mut();
+                            let client_state =
+                                if let Some(client_state) = client_manager.get_mut(handle) {
+                                    client_state
+                                } else {
+                                    log::error!("unknown handle");
+                                    return;
+                                };
+                            if state == 0 {
+                                client_state.pressed_keys.remove(&key);
+                            } else {
+                                client_state.pressed_keys.insert(key);
+                                let _ = timer_tx.try_send(());
+                            }
+                        }
                         // consume event
                         consumer.consume(event, handle).await;
                         log::trace!("{event:?} => consumer");
@@ -777,12 +774,7 @@ impl Server {
                 self.state.replace(State::Receiving);
                 log::trace!("STATE ===> Receiving");
                 // send an event to release all the modifiers
-                e = Event::Keyboard(KeyboardEvent::Modifiers {
-                    mods_depressed: 0,
-                    mods_latched: 0,
-                    mods_locked: 0,
-                    group: 0,
-                });
+                e = Event::Disconnect();
             }
         }
 
@@ -927,6 +919,13 @@ impl Server {
             });
             consumer.consume(event, client).await;
         }
+        let modifiers_event = KeyboardEvent::Modifiers {
+            mods_depressed: 0,
+            mods_latched: 0,
+            mods_locked: 0,
+            group: 0,
+        };
+        consumer.consume(Event::Keyboard(modifiers_event), client).await;
     }
 
     async fn enumerate(&self, frontend: &mut FrontendListener) {
