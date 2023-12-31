@@ -129,15 +129,19 @@ impl Server {
             loop {
                 tokio::select! {
                     event = producer.next() => {
-                        log::debug!("producer event: {event:?}");
                         let event = event.ok_or(anyhow!("event producer closed"))??;
+                        log::debug!("producer event: {event:?}");
                         server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await;
                     }
                     e = producer_notify_rx.recv() => {
                         log::debug!("producer notify rx: {e:?}");
                         match e {
                             Some(e) => match e {
-                                ProducerEvent::Release => producer.release(),
+                                ProducerEvent::Release => {
+                                    producer.release();
+                                    server.state.replace(State::Receiving);
+
+                                }
                                 ProducerEvent::ClientEvent(e) => producer.notify(e),
                                 ProducerEvent::Terminate => break,
                             },
@@ -283,8 +287,8 @@ impl Server {
                         let Some(port) = port else {
                             break;
                         };
-                        let current_port = socket.local_addr().unwrap().port();
-                        if current_port == port {
+
+                        if socket.local_addr().unwrap().port() == port {
                             continue;
                         }
 
@@ -762,8 +766,8 @@ impl Server {
                         // event should still be possible
                         if let Event::Enter() = event {
                             self.state.replace(State::Receiving);
-                            log::trace!("STATE ===> Receiving");
                             let _ = producer_notify_tx.send(ProducerEvent::Release).await;
+                            log::trace!("STATE ===> Receiving");
                         }
                     }
                 }
@@ -929,15 +933,13 @@ impl Server {
     }
 
     async fn release_keys(&self, consumer: &mut Box<dyn EventConsumer>, client: ClientHandle) {
-        let keys = {
-            self.client_manager
-                .borrow_mut()
-                .get_mut(client)
-                .map(|s| s.pressed_keys.drain().collect::<Vec<_>>())
-        };
-        let Some(keys) = keys else {
-            return;
-        };
+        let keys = self
+            .client_manager
+            .borrow_mut()
+            .get_mut(client)
+            .iter_mut()
+            .flat_map(|s| s.pressed_keys.drain())
+            .collect::<Vec<_>>();
 
         for key in keys {
             let event = Event::Keyboard(KeyboardEvent::Key {
