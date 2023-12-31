@@ -33,7 +33,7 @@ use crate::{
     producer,
 };
 
-const MAX_RESPONSE_TIME: Duration = Duration::from_millis(100);
+const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum State {
@@ -327,110 +327,88 @@ impl Server {
                 };
                 loop {
                     let receiving = server.state.get() == State::Receiving;
-                    if receiving {
-                        let ping_addrs: Vec<SocketAddr> = {
-                            server
-                                .client_manager
-                                .borrow_mut()
+                    let (ping_clients, ping_addrs) = {
+                        let mut client_manager = server.client_manager.borrow_mut();
+
+                        let ping_clients: Vec<ClientHandle> = if receiving {
+                            // if receiving we care about clients with pressed keys
+                            client_manager
                                 .get_client_states_mut()
                                 .filter(|s| !s.pressed_keys.is_empty())
-                                .flat_map(|state| {
-                                    if let Some(a) = state.active_addr {
-                                        vec![a]
-                                    } else {
-                                        state.client.addrs.iter().cloned().collect()
-                                    }
-                                })
+                                .map(|s| s.client.handle)
                                 .collect()
+                        } else {
+                            // if sending we care about the active client
+                            server.active_client.get().iter().cloned().collect()
                         };
-                        for addr in ping_addrs {
-                            if sender_ch.send((Event::Ping(), addr)).await.is_err() {
-                                break;
-                            }
+
+                        // get relevant socket addrs for clients
+                        let ping_addrs: Vec<SocketAddr> = {
+                            ping_clients.iter()
+                            .flat_map(|&c| client_manager.get(c))
+                            .flat_map(|state| {
+                                if let Some(a) = state.active_addr {
+                                    vec![a]
+                                } else {
+                                    state.client.addrs.iter().cloned().collect()
+                                }
+                            })
+                            .collect()
+                        };
+
+                        // reset alive
+                        for state in client_manager.get_client_states_mut() {
+                            state.alive = false;
                         }
 
-                        // give clients time to resond
-                        log::debug!(
-                            "sleeping 500ms to wait for response from client with pressed keys ..."
-                        );
-                        tokio::time::sleep(MAX_RESPONSE_TIME).await;
+                        (ping_clients, ping_addrs)
+                    };
 
-                        let unresponsive_clients = {
-                            server
-                                .client_manager
-                                .borrow_mut()
-                                .get_client_states_mut()
-                                .filter(|s| !s.pressed_keys.is_empty())
-                                .filter_map(|s| {
-                                    let unresponsive = !s.alive;
-                                    // reset alive
-                                    s.alive = false;
-                                    if unresponsive {
-                                        Some(s.client.handle)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                        };
+                    if receiving && ping_clients.is_empty() {
+                        // receiving and no client has pressed keys
+                        // -> no need to keep pinging
+                        break;
+                    }
 
-                        if unresponsive_clients.is_empty() {
-                            // at this point we dont need to ping anyone until
-                            // another key is pressed again
+                    // ping clients
+                    for addr in ping_addrs {
+                        if sender_ch.send((Event::Ping(), addr)).await.is_err() {
                             break;
                         }
+                    }
 
-                        log::warn!("device not responding, releasing keys!");
+                    // give clients time to resond
+                    if receiving {
+                        log::debug!("waiting {MAX_RESPONSE_TIME:?} for response from client with pressed keys ...");
+                    } else {
+                        log::debug!("waiting {MAX_RESPONSE_TIME:?} for client to respond ...");
+                    }
+
+                    tokio::time::sleep(MAX_RESPONSE_TIME).await;
+
+
+                    // when anything is received from a client,
+                    // the alive flag gets set
+                    let unresponsive_clients: Vec<_> = {
+                        let client_manager = server.client_manager.borrow();
+                        ping_clients.iter()
+                            .filter_map(|&c| match client_manager.get(c) {
+                                Some(state) if !state.alive => Some(c),
+                                _ => None,
+                            })
+                            .collect()
+                    };
+
+                    // we may not be receiving anymore but we should respond
+                    // to the original state and not the "new" one
+                    if receiving {
                         for c in unresponsive_clients {
-                            if consumer_notify
-                                .send(ConsumerEvent::ReleaseKeys(c))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
+                            log::warn!("device not responding, releasing keys!");
+                            let _ = consumer_notify.send(ConsumerEvent::ReleaseKeys(c)).await;
                         }
                     } else {
-                        let ping_addrs: Vec<SocketAddr> = {
-                            let Some(client) = server.active_client.get() else {
-                                // no longer sending
-                                continue;
-                            };
-                            let client_manager = server.client_manager.borrow();
-                            client_manager
-                                .get(client)
-                                .map(|s| s.client.addrs.iter().cloned().collect())
-                                .unwrap_or_default()
-                        };
-
-                        // ping client to see if it is alive
-                        for addr in ping_addrs {
-                            if sender_ch.send((Event::Ping(), addr)).await.is_err() {
-                                break;
-                            }
-                        }
-
-                        log::debug!("sleeping 500ms to wait for response from entered client ...");
-                        tokio::time::sleep(MAX_RESPONSE_TIME).await;
-
-                        let Some(active_client) = server.active_client.get() else {
-                            continue;
-                        };
-
-                        let release = {
-                            if let Some(state) =
-                                server.client_manager.borrow_mut().get_mut(active_client)
-                            {
-                                let unresponsive = !state.alive;
-                                state.alive = false;
-                                unresponsive
-                            } else {
-                                false
-                            }
-                        };
-
-                        // release pointer
-                        if release {
+                        // release pointer if the active client has not responded
+                        if !unresponsive_clients.is_empty() {
                             log::warn!("client not responding, releasing pointer!");
                             server.state.replace(State::Receiving);
                             let _ = producer_notify.send(ProducerEvent::Release).await;
