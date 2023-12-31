@@ -108,6 +108,7 @@ pub enum FrontendNotify {
     NotifyClientDelete(ClientHandle),
     /// new port, reason of failure (if failed)
     NotifyPortChange(u16, Option<String>),
+    /// Client State, active
     Enumerate(Vec<(Client, bool)>),
     NotifyError(String),
 }

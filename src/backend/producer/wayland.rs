@@ -568,6 +568,7 @@ impl EventProducer for WaylandEventProducer {
     }
 
     fn release(&mut self) {
+        log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
         inner.flush_events();
