@@ -25,7 +25,7 @@ use crate::{
     consumer::EventConsumer,
     dns,
     frontend::{self, FrontendEvent, FrontendListener, FrontendNotify},
-    producer::EventProducer,
+    producer::EventProducer, scancode,
 };
 use crate::{
     consumer,
@@ -918,7 +918,11 @@ impl Server {
                 state: 0,
             });
             consumer.consume(event, client).await;
+            if let Ok(key) = scancode::Linux::try_from(key) {
+                log::debug!("releasing stuck key: {key:?}");
+            }
         }
+
         let modifiers_event = KeyboardEvent::Modifiers {
             mods_depressed: 0,
             mods_latched: 0,
