@@ -451,7 +451,7 @@ impl Server {
         let _ = producer_notify_tx.send(ProducerEvent::Terminate).await;
         let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
 
-        let (a,b,c) = tokio::join!(producer_task, consumer_task, frontend_task);
+        let (a, b, c) = tokio::join!(producer_task, consumer_task, frontend_task);
         a??;
         b??;
         c??;
