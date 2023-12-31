@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
     time::Duration,
 };
-use tokio::{io::ReadHalf, net::UdpSocket, signal, sync::mpsc::Sender, task};
+use tokio::{io::ReadHalf, net::UdpSocket, signal, sync::mpsc::Sender};
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -126,7 +126,7 @@ impl Server {
         let sender_ch = sender_tx.clone();
         let timer_ch = timer_tx.clone();
         let server = self.clone();
-        let producer_task = tokio::task::spawn_local(async move {
+        let mut producer_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
                     event = producer.next() => {
@@ -158,7 +158,7 @@ impl Server {
         let producer_notify = producer_notify_tx.clone();
         let sender_ch = sender_tx.clone();
         let server = self.clone();
-        let consumer_task = tokio::task::spawn_local(async move {
+        let mut consumer_task = tokio::task::spawn_local(async move {
             let mut last_ignored = None;
 
             loop {
@@ -202,7 +202,7 @@ impl Server {
         let producer_notify = producer_notify_tx.clone();
         let consumer_notify = consumer_notify_tx.clone();
         let frontend_ch = frontend_tx.clone();
-        let frontend_task = tokio::task::spawn_local(async move {
+        let mut frontend_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
                     stream = frontend.accept() => {
@@ -235,7 +235,7 @@ impl Server {
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;
         let server = self.clone();
-        let resolver_task = tokio::task::spawn_local(async move {
+        let mut resolver_task = tokio::task::spawn_local(async move {
             loop {
                 let (host, client): (String, ClientHandle) = match resolve_rx.recv().await {
                     Some(r) => r,
@@ -270,7 +270,7 @@ impl Server {
         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), self.port.get());
         let mut socket = UdpSocket::bind(listen_addr).await?;
         // udp task
-        let udp_task = tokio::task::spawn_local(async move {
+        let mut udp_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
                     event = receive_event(&socket) => {
@@ -320,7 +320,7 @@ impl Server {
         let sender_ch = sender_tx.clone();
         let consumer_notify = consumer_notify_tx.clone();
         let producer_notify = producer_notify_tx.clone();
-        let live_tracker = tokio::task::spawn_local(async move {
+        let mut live_tracker = tokio::task::spawn_local(async move {
             loop {
                 // wait for wake up signal
                 let Some(_): Option<()> = timer_rx.recv().await else {
@@ -423,36 +423,42 @@ impl Server {
         // initial sync of clients
         frontend_tx.send(FrontendEvent::Enumerate()).await?;
 
-        let reaper = task::spawn_local(async move {
-            tokio::select! {
-                _ = signal::ctrl_c() => {
-                    log::info!("terminating service");
-                },
-                _ = producer_task => {
-                    // TODO restart producer?
-                }
-                _ = consumer_task => {
-                    // TODO restart producer?
-                }
-                _ = frontend_task => {
-                    // frontend exited => exit requested
-                }
-                _ = resolver_task => {
-                    // resolver exited
-                }
-                _ = udp_task => {
-                    // udp exited
-                }
-                _ = live_tracker => {
-                }
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                log::info!("terminating service");
+            },
+            _ = &mut producer_task => {
+                // TODO restart producer?
             }
-        });
-
-        reaper.await?;
+            _ = &mut consumer_task => {
+                // TODO restart producer?
+            }
+            _ = &mut frontend_task => {
+                // frontend exited => exit requested
+            }
+            _ = &mut resolver_task => {
+                // resolver exited
+            }
+            _ = &mut udp_task => {
+                // udp exited
+            }
+            _ = &mut live_tracker => {
+                // live tracker exited
+            }
+        }
 
         let _ = consumer_notify_tx.send(ConsumerEvent::Terminate).await;
         let _ = producer_notify_tx.send(ProducerEvent::Terminate).await;
         let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
+
+        let (a,b,c) = tokio::join!(producer_task, consumer_task, frontend_task);
+        a??;
+        b??;
+        c??;
+
+        resolver_task.abort();
+        udp_task.abort();
+        live_tracker.abort();
 
         Ok(())
     }
@@ -920,7 +926,7 @@ impl Server {
             });
             consumer.consume(event, client).await;
             if let Ok(key) = scancode::Linux::try_from(key) {
-                log::debug!("releasing stuck key: {key:?}");
+                log::warn!("releasing stuck key: {key:?}");
             }
         }
 
