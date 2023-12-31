@@ -381,7 +381,7 @@ impl Server {
                     if receiving {
                         log::debug!("waiting {MAX_RESPONSE_TIME:?} for response from client with pressed keys ...");
                     } else {
-                        log::debug!("waiting {MAX_RESPONSE_TIME:?} for client to respond ...");
+                        log::debug!("state: {:?} => waiting {MAX_RESPONSE_TIME:?} for client to respond ...", server.state.get());
                     }
 
                     tokio::time::sleep(MAX_RESPONSE_TIME).await;
@@ -806,7 +806,7 @@ impl Server {
 
             // if we just entered the client we want to send additional enter events until
             // we get a leave event
-            if let State::Receiving | State::AwaitingLeave = self.state.get() {
+            if let Event::Enter() = e {
                 self.state.replace(State::AwaitingLeave);
                 self.active_client.replace(Some(client_state.client.handle));
                 log::trace!("Active client => {}", client_state.client.handle);
