@@ -25,7 +25,8 @@ use crate::{
     consumer::EventConsumer,
     dns,
     frontend::{self, FrontendEvent, FrontendListener, FrontendNotify},
-    producer::EventProducer, scancode,
+    producer::EventProducer,
+    scancode,
 };
 use crate::{
     consumer,
@@ -929,7 +930,9 @@ impl Server {
             mods_locked: 0,
             group: 0,
         };
-        consumer.consume(Event::Keyboard(modifiers_event), client).await;
+        consumer
+            .consume(Event::Keyboard(modifiers_event), client)
+            .await;
     }
 
     async fn enumerate(&self, frontend: &mut FrontendListener) {
