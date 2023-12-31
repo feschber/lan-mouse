@@ -4,7 +4,6 @@ use log;
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
-    error::Error,
     io::Result,
     net::IpAddr,
     rc::Rc,
@@ -53,14 +52,18 @@ pub enum ProducerEvent {
     Release,
     /// producer is notified of a change in client states
     ClientEvent(ClientEvent),
+    /// termination signal
+    Terminate,
 }
 
 #[derive(Clone, Debug)]
 pub enum ConsumerEvent {
     /// consumer is notified of a change in client states
     ClientEvent(ClientEvent),
-    /// consumer must release the given keys
-    ReleaseKeys(ClientHandle, Vec<u32>),
+    /// consumer must release keys for client
+    ReleaseKeys(ClientHandle),
+    /// termination signal
+    Terminate,
 }
 
 #[derive(Clone)]
@@ -99,8 +102,7 @@ impl Server {
     pub async fn run(&self) -> anyhow::Result<()> {
         // create frontend communication adapter
         let mut frontend = match FrontendListener::new().await {
-            Some(Err(e)) => return Err(e),
-            Some(Ok(f)) => f,
+            Some(f) => f?,
             None => {
                 // none means some other instance is already running
                 log::info!("service already running, exiting");
@@ -128,10 +130,7 @@ impl Server {
                 tokio::select! {
                     event = producer.next() => {
                         log::debug!("producer event: {event:?}");
-                        let event = match event {
-                            Some(e) => e?,
-                            None => return Err::<(), anyhow::Error>(anyhow!("event producer closed")),
-                        };
+                        let event = event.ok_or(anyhow!("event producer closed"))??;
                         server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await;
                     }
                     e = producer_notify_rx.recv() => {
@@ -140,36 +139,35 @@ impl Server {
                             Some(e) => match e {
                                 ProducerEvent::Release => producer.release(),
                                 ProducerEvent::ClientEvent(e) => producer.notify(e),
+                                ProducerEvent::Terminate => break,
                             },
-                            None => break Ok(()),
+                            None => break,
                         }
                     }
                 }
             }
+            anyhow::Ok(())
         });
 
         // event consumer
         let producer_notify = producer_notify_tx.clone();
         let sender_ch = sender_tx.clone();
         let server = self.clone();
-        let receiver_task = tokio::task::spawn_local(async move {
+        let consumer_task = tokio::task::spawn_local(async move {
             let mut last_ignored = None;
 
             loop {
                 tokio::select! {
                     udp_event = receiver_rx.recv() => {
-                        let udp_event = match udp_event {
-                            Some(Ok(e)) => e,
-                            Some(Err(e)) => return Err::<(), anyhow::Error>(anyhow!("{}", e)),
-                            None => return Err::<(), anyhow::Error>(anyhow!("receiver closed")),
-                        };
+                        let udp_event = udp_event.ok_or(anyhow!("receiver closed"))??;
                         server.handle_udp_rx(&producer_notify, &mut consumer, &sender_ch, &mut last_ignored, udp_event, &timer_tx).await;
                     }
                     consumer_event = consumer_notify_rx.recv() => {
                         match consumer_event {
                             Some(e) => match e {
                                 ConsumerEvent::ClientEvent(e) => consumer.notify(e).await,
-                                ConsumerEvent::ReleaseKeys(c, k) => server.release_keys(&mut consumer, c, k).await,
+                                ConsumerEvent::ReleaseKeys(c) => server.release_keys(&mut consumer, c).await,
+                                ConsumerEvent::Terminate => break,
                             },
                             None => break,
                         }
@@ -177,9 +175,21 @@ impl Server {
                     _ = consumer.dispatch() => { }
                 }
             }
+
+            // release potentially still pressed keys
+            let clients = server
+                .client_manager
+                .borrow()
+                .get_client_states()
+                .map(|s| s.client.handle)
+                .collect::<Vec<_>>();
+            for client in clients {
+                server.release_keys(&mut consumer, client).await;
+            }
+
             // destroy consumer
             consumer.destroy().await;
-            Ok(())
+            anyhow::Ok(())
         });
 
         // frontend listener
@@ -201,24 +211,18 @@ impl Server {
                         server.handle_frontend_stream(&mut frontend, &frontend_ch, stream).await;
                     }
                     event = frontend_rx.recv() => {
-                        let frontend_event = match event {
-                            Some(e) => e,
-                            None => return Err::<(), anyhow::Error>(anyhow!("frontend channel closed")),
-                        };
-                        let exit = server.handle_frontend_event(&producer_notify, &consumer_notify, &resolve_tx, &mut frontend, &port_tx, frontend_event).await;
-                        if exit {
-                            return Ok(());
+                        let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
+                        if server.handle_frontend_event(&producer_notify, &consumer_notify, &resolve_tx, &mut frontend, &port_tx, frontend_event).await {
+                            break;
                         }
                     }
                     notify = frontend_notify_rx.recv() => {
-                        let notify = match notify {
-                            Some(n) => n,
-                            None => return Err::<(), anyhow::Error>(anyhow!("frontend notify closed")),
-                        };
+                        let notify = notify.ok_or(anyhow!("frontend notify closed"))?;
                         let _ = frontend.notify_all(notify).await;
                     }
                 }
             }
+            anyhow::Ok(())
         });
 
         // dns resolver
@@ -309,6 +313,8 @@ impl Server {
         // timer task
         let server = self.clone();
         let sender_ch = sender_tx.clone();
+        let consumer_notify = consumer_notify_tx.clone();
+        let producer_notify = producer_notify_tx.clone();
         let live_tracker = tokio::task::spawn_local(async move {
             loop {
                 // wait for wake up signal
@@ -319,31 +325,16 @@ impl Server {
                     let receiving = server.state.get() == State::Receiving;
                     if receiving {
                         let ping_addrs: Vec<SocketAddr> = {
-                            let mut client_manager = server.client_manager.borrow_mut();
-                            // find clients with pressed keys
-                            let clients_with_keys_down: Vec<ClientHandle> = client_manager
+                            server
+                                .client_manager
+                                .borrow_mut()
                                 .get_client_states_mut()
-                                .filter_map(|s| {
-                                    if s.pressed_keys.is_empty() {
-                                        None
+                                .filter(|s| !s.pressed_keys.is_empty())
+                                .flat_map(|state| {
+                                    if let Some(a) = state.active_addr {
+                                        vec![a]
                                     } else {
-                                        Some(s.client.handle)
-                                    }
-                                })
-                                .collect();
-
-                            // ping all clients to see if they respond
-                            clients_with_keys_down
-                                .iter()
-                                .flat_map(|&c| {
-                                    if let Some(state) = client_manager.get(c) {
-                                        if let Some(a) = state.active_addr {
-                                            vec![a]
-                                        } else {
-                                            state.client.addrs.iter().cloned().collect()
-                                        }
-                                    } else {
-                                        vec![]
+                                        state.client.addrs.iter().cloned().collect()
                                     }
                                 })
                                 .collect()
@@ -360,9 +351,10 @@ impl Server {
                         );
                         tokio::time::sleep(MAX_RESPONSE_TIME).await;
 
-                        let pressed_keys = {
-                            let mut client_manager = server.client_manager.borrow_mut();
-                            let unresponsive_clients = client_manager
+                        let unresponsive_clients = {
+                            server
+                                .client_manager
+                                .borrow_mut()
                                 .get_client_states_mut()
                                 .filter(|s| !s.pressed_keys.is_empty())
                                 .filter_map(|s| {
@@ -370,29 +362,24 @@ impl Server {
                                     // reset alive
                                     s.alive = false;
                                     if unresponsive {
-                                        Some(s)
+                                        Some(s.client.handle)
                                     } else {
                                         None
                                     }
-                                });
-
-                            let pressed_keys: Vec<(ClientHandle, Vec<u32>)> = unresponsive_clients
-                                .map(|s| (s.client.handle, s.pressed_keys.drain().collect()))
-                                .collect();
-
-                            pressed_keys
+                                })
+                                .collect::<Vec<_>>()
                         };
 
-                        if pressed_keys.is_empty() {
+                        if unresponsive_clients.is_empty() {
                             // at this point we dont need to ping anyone until
                             // another key is pressed again
                             break;
                         }
 
                         log::warn!("device not responding, releasing keys!");
-                        for (k, c) in pressed_keys {
-                            if consumer_notify_tx
-                                .send(ConsumerEvent::ReleaseKeys(k, c))
+                        for c in unresponsive_clients {
+                            if consumer_notify
+                                .send(ConsumerEvent::ReleaseKeys(c))
                                 .await
                                 .is_err()
                             {
@@ -442,7 +429,7 @@ impl Server {
                         if release {
                             log::warn!("client not responding, releasing pointer!");
                             server.state.replace(State::Receiving);
-                            let _ = producer_notify_tx.send(ProducerEvent::Release).await;
+                            let _ = producer_notify.send(ProducerEvent::Release).await;
                         }
                     }
                 }
@@ -460,7 +447,7 @@ impl Server {
                 _ = producer_task => {
                     // TODO restart producer?
                 }
-                _ = receiver_task => {
+                _ = consumer_task => {
                     // TODO restart producer?
                 }
                 _ = frontend_task => {
@@ -476,6 +463,10 @@ impl Server {
                 }
             }
         });
+
+        let _ = consumer_notify_tx.send(ConsumerEvent::Terminate).await;
+        let _ = producer_notify_tx.send(ProducerEvent::Terminate).await;
+        let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
 
         reaper.await?;
 
@@ -727,15 +718,12 @@ impl Server {
                                 return;
                             }
                         };
-                        match state {
-                            0 => {
-                                client_state.pressed_keys.remove(&key);
-                                false
-                            }
-                            _ => {
-                                client_state.pressed_keys.insert(key);
-                                true
-                            }
+                        if state == 0 {
+                            client_state.pressed_keys.remove(&key);
+                            false
+                        } else {
+                            client_state.pressed_keys.insert(key);
+                            true
                         }
                     };
                     if wake_timer {
@@ -940,16 +928,25 @@ impl Server {
         false
     }
 
-    async fn release_keys(
-        &self,
-        consumer: &mut Box<dyn EventConsumer>,
-        client: ClientHandle,
-        keys: Vec<u32>,
-    ) {
-        /* TODO */
-        let _ = consumer;
-        let _ = client;
-        let _ = keys;
+    async fn release_keys(&self, consumer: &mut Box<dyn EventConsumer>, client: ClientHandle) {
+        let keys = {
+            self.client_manager
+                .borrow_mut()
+                .get_mut(client)
+                .map(|s| s.pressed_keys.drain().collect::<Vec<_>>())
+        };
+        let Some(keys) = keys else {
+            return;
+        };
+
+        for key in keys {
+            let event = Event::Keyboard(KeyboardEvent::Key {
+                time: 0,
+                key,
+                state: 0,
+            });
+            consumer.consume(event, client).await;
+        }
     }
 
     async fn enumerate(&self, frontend: &mut FrontendListener) {
@@ -968,14 +965,10 @@ impl Server {
     }
 }
 
-async fn receive_event(
-    socket: &UdpSocket,
-) -> std::result::Result<(Event, SocketAddr), Box<dyn Error>> {
+async fn receive_event(socket: &UdpSocket) -> anyhow::Result<(Event, SocketAddr)> {
     let mut buf = vec![0u8; 22];
-    match socket.recv_from(&mut buf).await {
-        Ok((_amt, src)) => Ok((Event::try_from(buf)?, src)),
-        Err(e) => Err(Box::new(e)),
-    }
+    let (_amt, src) = socket.recv_from(&mut buf).await?;
+    Ok((Event::try_from(buf)?, src))
 }
 
 fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize> {

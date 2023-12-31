@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use std::{
     error::Error,
     fmt::{self, Display},
@@ -177,15 +178,15 @@ enum EventType {
 }
 
 impl TryFrom<u8> for PointerEventType {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> Result<Self> {
         match value {
             x if x == Self::Motion as u8 => Ok(Self::Motion),
             x if x == Self::Button as u8 => Ok(Self::Button),
             x if x == Self::Axis as u8 => Ok(Self::Axis),
             x if x == Self::Frame as u8 => Ok(Self::Frame),
-            _ => Err(Box::new(ProtocolError {
+            _ => Err(anyhow!(ProtocolError {
                 msg: format!("invalid pointer event type {}", value),
             })),
         }
@@ -193,13 +194,13 @@ impl TryFrom<u8> for PointerEventType {
 }
 
 impl TryFrom<u8> for KeyboardEventType {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+    fn try_from(value: u8) -> Result<Self> {
         match value {
             x if x == Self::Key as u8 => Ok(Self::Key),
             x if x == Self::Modifiers as u8 => Ok(Self::Modifiers),
-            _ => Err(Box::new(ProtocolError {
+            _ => Err(anyhow!(ProtocolError {
                 msg: format!("invalid keyboard event type {}", value),
             })),
         }
@@ -234,9 +235,9 @@ impl fmt::Display for ProtocolError {
 impl Error for ProtocolError {}
 
 impl TryFrom<Vec<u8>> for Event {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(value: Vec<u8>) -> Result<Self> {
         let event_id = u8::from_be_bytes(value[..1].try_into()?);
         match event_id {
             i if i == (EventType::Pointer as u8) => Ok(Event::Pointer(value.try_into()?)),
@@ -245,7 +246,7 @@ impl TryFrom<Vec<u8>> for Event {
             i if i == (EventType::Leave as u8) => Ok(Event::Leave()),
             i if i == (EventType::Ping as u8) => Ok(Event::Ping()),
             i if i == (EventType::Pong as u8) => Ok(Event::Pong()),
-            _ => Err(Box::new(ProtocolError {
+            _ => Err(anyhow!(ProtocolError {
                 msg: format!("invalid event_id {}", event_id),
             })),
         }
@@ -291,9 +292,9 @@ impl From<&PointerEvent> for Vec<u8> {
 }
 
 impl TryFrom<Vec<u8>> for PointerEvent {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
-    fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(data: Vec<u8>) -> Result<Self> {
         match data.get(1) {
             Some(id) => {
                 let event_type = match id.to_owned().try_into() {
@@ -305,7 +306,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
                                 }))
                             }
@@ -313,7 +314,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let relative_x = match data.get(6..14) {
                             Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 8 Bytes at index 6".into(),
                                 }))
                             }
@@ -321,7 +322,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let relative_y = match data.get(14..22) {
                             Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 8 Bytes at index 14".into(),
                                 }))
                             }
@@ -336,7 +337,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
                                 }))
                             }
@@ -344,7 +345,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let button = match data.get(6..10) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
                                 }))
                             }
@@ -352,7 +353,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let state = match data.get(10..14) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 14".into(),
                                 }))
                             }
@@ -367,7 +368,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 2".into(),
                                 }))
                             }
@@ -375,7 +376,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let axis = match data.get(6) {
                             Some(d) => *d,
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 1 Byte at index 6".into(),
                                 }));
                             }
@@ -383,7 +384,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                         let value = match data.get(7..15) {
                             Some(d) => f64::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 8 Bytes at index 7".into(),
                                 }));
                             }
@@ -393,7 +394,7 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                     PointerEventType::Frame => Ok(Self::Frame {}),
                 }
             }
-            None => Err(Box::new(ProtocolError {
+            None => Err(anyhow!(ProtocolError {
                 msg: "Expected an element at index 0".into(),
             })),
         }
@@ -434,9 +435,9 @@ impl From<&KeyboardEvent> for Vec<u8> {
 }
 
 impl TryFrom<Vec<u8>> for KeyboardEvent {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
-    fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
+    fn try_from(data: Vec<u8>) -> Result<Self> {
         match data.get(1) {
             Some(id) => {
                 let event_type = match id.to_owned().try_into() {
@@ -448,7 +449,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let time = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 6".into(),
                                 }))
                             }
@@ -456,7 +457,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let key = match data.get(6..10) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
                                 }))
                             }
@@ -464,7 +465,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let state = match data.get(10) {
                             Some(d) => *d,
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 1 Bytes at index 14".into(),
                                 }))
                             }
@@ -475,7 +476,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let mods_depressed = match data.get(2..6) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 6".into(),
                                 }))
                             }
@@ -483,7 +484,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let mods_latched = match data.get(6..10) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 10".into(),
                                 }))
                             }
@@ -491,7 +492,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let mods_locked = match data.get(10..14) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 14".into(),
                                 }))
                             }
@@ -499,7 +500,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                         let group = match data.get(14..18) {
                             Some(d) => u32::from_be_bytes(d.try_into()?),
                             None => {
-                                return Err(Box::new(ProtocolError {
+                                return Err(anyhow!(ProtocolError {
                                     msg: "Expected 4 Bytes at index 18".into(),
                                 }))
                             }
@@ -513,7 +514,7 @@ impl TryFrom<Vec<u8>> for KeyboardEvent {
                     }
                 }
             }
-            None => Err(Box::new(ProtocolError {
+            None => Err(anyhow!(ProtocolError {
                 msg: "Expected an element at index 0".into(),
             })),
         }
