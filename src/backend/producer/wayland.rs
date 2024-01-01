@@ -125,6 +125,7 @@ struct Window {
     buffer: wl_buffer::WlBuffer,
     surface: wl_surface::WlSurface,
     layer_surface: ZwlrLayerSurfaceV1,
+    pos: Position,
 }
 
 impl Window {
@@ -179,6 +180,7 @@ impl Window {
         surface.set_input_region(None);
         surface.commit();
         Window {
+            pos,
             buffer,
             surface,
             layer_surface,
@@ -381,6 +383,24 @@ impl WaylandEventProducer {
 
         Ok(WaylandEventProducer(inner))
     }
+
+    fn add_client(&mut self, handle: ClientHandle, pos: Position) {
+        self.0.get_mut().state.add_client(handle, pos);
+    }
+
+    fn delete_client(&mut self, handle: ClientHandle) {
+        let inner = self.0.get_mut();
+        // remove all windows corresponding to this client
+        while let Some(i) = inner
+            .state
+            .client_for_window
+            .iter()
+            .position(|(_, c)| *c == handle)
+        {
+            inner.state.client_for_window.remove(i);
+            inner.state.focused = None;
+        }
+    }
 }
 
 impl State {
@@ -475,6 +495,19 @@ impl State {
             self.client_for_window.push((window, client));
         });
     }
+
+    fn update_windows(&mut self) {
+        log::debug!("updating windows");
+        log::debug!("output info: {:?}", self.output_info);
+        let clients: Vec<_> = self
+            .client_for_window
+            .drain(..)
+            .map(|(w, c)| (c, w.pos))
+            .collect();
+        for (client, pos) in clients {
+            self.add_client(client, pos);
+        }
+    }
 }
 
 impl Inner {
@@ -548,20 +581,10 @@ impl EventProducer for WaylandEventProducer {
     fn notify(&mut self, client_event: ClientEvent) -> io::Result<()> {
         match client_event {
             ClientEvent::Create(handle, pos) => {
-                self.0.get_mut().state.add_client(handle, pos);
+                self.add_client(handle, pos);
             }
             ClientEvent::Destroy(handle) => {
-                let inner = self.0.get_mut();
-                // remove all windows corresponding to this client
-                while let Some(i) = inner
-                    .state
-                    .client_for_window
-                    .iter()
-                    .position(|(_, c)| *c == handle)
-                {
-                    inner.state.client_for_window.remove(i);
-                    inner.state.focused = None;
-                }
+                self.delete_client(handle);
             }
         }
         let inner = self.0.get_mut();
@@ -929,6 +952,21 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
     }
 }
 
+impl Dispatch<wl_output::WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        event: <wl_output::WlOutput as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Done = event {
+            state.update_windows();
+        }
+    }
+}
+
 // don't emit any events
 delegate_noop!(State: wl_region::WlRegion);
 delegate_noop!(State: wl_shm_pool::WlShmPool);
@@ -939,7 +977,6 @@ delegate_noop!(State: ZwpKeyboardShortcutsInhibitManagerV1);
 delegate_noop!(State: ZwpPointerConstraintsV1);
 
 // ignore events
-delegate_noop!(State: ignore wl_output::WlOutput);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: ignore wl_buffer::WlBuffer);
