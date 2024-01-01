@@ -3,7 +3,11 @@ use std::{io, task::Poll};
 
 use futures_core::Stream;
 
-use crate::{client::ClientHandle, event::Event, producer::EventProducer};
+use crate::{
+    client::{ClientEvent, ClientHandle},
+    event::Event,
+    producer::EventProducer,
+};
 
 pub struct LibeiProducer {}
 
@@ -14,9 +18,13 @@ impl LibeiProducer {
 }
 
 impl EventProducer for LibeiProducer {
-    fn notify(&mut self, _event: crate::client::ClientEvent) {}
+    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+        Ok(())
+    }
 
-    fn release(&mut self) {}
+    fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Stream for LibeiProducer {

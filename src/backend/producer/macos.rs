@@ -23,7 +23,11 @@ impl Stream for MacOSProducer {
 }
 
 impl EventProducer for MacOSProducer {
-    fn notify(&mut self, _event: ClientEvent) {}
+    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+        Ok(())
+    }
 
-    fn release(&mut self) {}
+    fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }

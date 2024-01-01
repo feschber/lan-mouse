@@ -54,8 +54,8 @@ pub async fn create() -> Box<dyn EventProducer> {
 
 pub trait EventProducer: Stream<Item = io::Result<(ClientHandle, Event)>> + Unpin {
     /// notify event producer of configuration changes
-    fn notify(&mut self, event: ClientEvent);
+    fn notify(&mut self, event: ClientEvent) -> io::Result<()>;
 
     /// release mouse
-    fn release(&mut self);
+    fn release(&mut self) -> io::Result<()>;
 }
