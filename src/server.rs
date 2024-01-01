@@ -586,7 +586,7 @@ impl Server {
                         a
                     })
                     .collect();
-                state
+                state.active_addr = state
                     .active_addr
                     .map(|a| SocketAddr::new(a.ip(), client_update.port));
             }
