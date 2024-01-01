@@ -18,9 +18,13 @@ impl X11Producer {
 }
 
 impl EventProducer for X11Producer {
-    fn notify(&mut self, _: ClientEvent) {}
+    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+        Ok(())
+    }
 
-    fn release(&mut self) {}
+    fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Stream for X11Producer {

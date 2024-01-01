@@ -132,18 +132,18 @@ impl Server {
                     event = producer.next() => {
                         let event = event.ok_or(anyhow!("event producer closed"))??;
                         log::debug!("producer event: {event:?}");
-                        server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await;
+                        server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await?;
                     }
                     e = producer_notify_rx.recv() => {
                         log::debug!("producer notify rx: {e:?}");
                         match e {
                             Some(e) => match e {
                                 ProducerEvent::Release => {
-                                    producer.release();
+                                    producer.release()?;
                                     server.state.replace(State::Receiving);
 
                                 }
-                                ProducerEvent::ClientEvent(e) => producer.notify(e),
+                                ProducerEvent::ClientEvent(e) => producer.notify(e)?,
                                 ProducerEvent::Terminate => break,
                             },
                             None => break,
@@ -426,35 +426,47 @@ impl Server {
         tokio::select! {
             _ = signal::ctrl_c() => {
                 log::info!("terminating service");
-            },
-            _ = &mut producer_task => {
-                // TODO restart producer?
             }
-            _ = &mut consumer_task => {
-                // TODO restart producer?
+            e = &mut producer_task => {
+                if let Ok(Err(e)) = e {
+                    log::error!("error in event producer: {e}");
+                }
             }
-            _ = &mut frontend_task => {
-                // frontend exited => exit requested
+            e = &mut consumer_task => {
+                if let Ok(Err(e)) = e {
+                    log::error!("error in event consumer: {e}");
+                }
             }
-            _ = &mut resolver_task => {
-                // resolver exited
+            e = &mut frontend_task => {
+                if let Ok(Err(e)) = e {
+                    log::error!("error in frontend listener: {e}");
+                }
             }
-            _ = &mut udp_task => {
-                // udp exited
-            }
-            _ = &mut live_tracker => {
-                // live tracker exited
-            }
+            _ = &mut resolver_task => { }
+            _ = &mut udp_task => { }
+            _ = &mut live_tracker => { }
         }
 
         let _ = consumer_notify_tx.send(ConsumerEvent::Terminate).await;
         let _ = producer_notify_tx.send(ProducerEvent::Terminate).await;
         let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
 
-        let (a, b, c) = tokio::join!(producer_task, consumer_task, frontend_task);
-        a??;
-        b??;
-        c??;
+        if !producer_task.is_finished() {
+            if let Err(e) = producer_task.await {
+                log::error!("error in event producer: {e}");
+            }
+        }
+        if !consumer_task.is_finished() {
+            if let Err(e) = consumer_task.await {
+                log::error!("error in event consumer: {e}");
+            }
+        }
+
+        if !frontend_task.is_finished() {
+            if let Err(e) = frontend_task.await {
+                log::error!("error in frontend listener: {e}");
+            }
+        }
 
         resolver_task.abort();
         udp_task.abort();
@@ -765,7 +777,7 @@ impl Server {
         sender_tx: &Sender<(Event, SocketAddr)>,
         timer_tx: &Sender<()>,
         event: (ClientHandle, Event),
-    ) {
+    ) -> Result<()> {
         let (c, mut e) = event;
         log::trace!("producer: ({c}) {e:?}");
 
@@ -777,7 +789,7 @@ impl Server {
         }) = e
         {
             if mods_depressed == Self::RELEASE_MODIFIERDS {
-                producer.release();
+                producer.release()?;
                 self.state.replace(State::Receiving);
                 log::trace!("STATE ===> Receiving");
                 // send an event to release all the modifiers
@@ -796,10 +808,10 @@ impl Server {
                 None => {
                     // should not happen
                     log::warn!("unknown client!");
-                    producer.release();
+                    producer.release()?;
                     self.state.replace(State::Receiving);
                     log::trace!("STATE ===> Receiving");
-                    return;
+                    return Ok(());
                 }
             };
 
@@ -825,6 +837,7 @@ impl Server {
             }
             let _ = sender_tx.send((e, addr)).await;
         }
+        Ok(())
     }
 
     async fn handle_frontend_stream(

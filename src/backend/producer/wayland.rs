@@ -527,24 +527,25 @@ impl Inner {
         }
     }
 
-    fn flush_events(&mut self) {
+    fn flush_events(&mut self) -> io::Result<()> {
         // flush outgoing events
         match self.queue.flush() {
             Ok(_) => (),
             Err(e) => match e {
                 WaylandError::Io(e) => {
-                    log::error!("error writing to wayland socket: {e}")
+                    return Err(e);
                 }
                 WaylandError::Protocol(e) => {
                     panic!("wayland protocol violation: {e}")
                 }
             },
         }
+        Ok(())
     }
 }
 
 impl EventProducer for WaylandEventProducer {
-    fn notify(&mut self, client_event: ClientEvent) {
+    fn notify(&mut self, client_event: ClientEvent) -> io::Result<()> {
         match client_event {
             ClientEvent::Create(handle, pos) => {
                 self.0.get_mut().state.add_client(handle, pos);
@@ -564,14 +565,14 @@ impl EventProducer for WaylandEventProducer {
             }
         }
         let inner = self.0.get_mut();
-        inner.flush_events();
+        inner.flush_events()
     }
 
-    fn release(&mut self) {
+    fn release(&mut self) -> io::Result<()> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
-        inner.flush_events();
+        inner.flush_events()
     }
 }
 
@@ -602,7 +603,11 @@ impl Stream for WaylandEventProducer {
                 inner.dispatch_events();
 
                 // flush outgoing events
-                inner.flush_events();
+                if let Err(e) = inner.flush_events() {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        return Poll::Ready(Some(Err(e)));
+                    }
+                }
 
                 // prepare for the next read
                 match inner.prepare_read() {
