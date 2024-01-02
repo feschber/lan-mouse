@@ -79,18 +79,18 @@ impl LibeiProducer {
 
     fn handle_libei_event(&mut self, event: ei::Event) -> Option<(ClientHandle, Event)> {
         match event {
-            ei::Event::Handshake(_, _) => todo!(),
-            ei::Event::Connection(_, _) => todo!(),
-            ei::Event::Callback(_, _) => todo!(),
-            ei::Event::Pingpong(_, _) => todo!(),
-            ei::Event::Seat(_, _) => todo!(),
-            ei::Event::Device(_, _) => todo!(),
-            ei::Event::Pointer(_, _) => todo!(),
-            ei::Event::PointerAbsolute(_, _) => todo!(),
-            ei::Event::Scroll(_, _) => todo!(),
-            ei::Event::Button(_, _) => todo!(),
-            ei::Event::Keyboard(_, _) => todo!(),
-            ei::Event::Touchscreen(_, _) => todo!(),
+            ei::Event::Handshake(_, _) => None,
+            ei::Event::Connection(_, _) => None,
+            ei::Event::Callback(_, _) => None,
+            ei::Event::Pingpong(_, _) => None,
+            ei::Event::Seat(_, _) => None,
+            ei::Event::Device(_, _) => None,
+            ei::Event::Pointer(_, _) => None,
+            ei::Event::PointerAbsolute(_, _) => None,
+            ei::Event::Scroll(_, _) => None,
+            ei::Event::Button(_, _) => None,
+            ei::Event::Keyboard(_, _) => None,
+            ei::Event::Touchscreen(_, _) => None,
             _ => todo!(),
         }
     }
@@ -110,7 +110,7 @@ impl Stream for LibeiProducer {
                 Some(Ok(event)) => event,
             };
             let event = match event {
-                reis::PendingRequestResult::ProtocolError(e) => {
+                reis::PendingRequestResult::ParseError(e) => {
                     log::warn!("libei protocol error: {e}");
                     return Poll::Ready(None)
                 }
