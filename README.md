@@ -14,7 +14,7 @@ The primary target is Wayland on Linux but Windows and MacOS and Linux on Xorg h
 </picture>
 
 
-Goal of this project is to be an open-source replacement for proprietary tools like [Synergy](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
+Goal of this project is to be an open-source replacement for proprietary tools like [Synergy 2/3](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/).
 
 Focus lies on performance and a clean, manageable implementation that can easily be expanded to support additional backends like e.g. Android, iOS, ... .
 
@@ -210,7 +210,8 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] respect xdg-config-home for config file location.
 - [x] IP Address switching
 - [x] Liveness tracking Automatically ungrab mouse when client unreachable
-- [ ] Liveness tracking: Automatically release keys, when server offline
+- [x] Liveness tracking: Automatically release keys, when server offline
+- [ ] Libei Input Capture
 - [ ] X11 Input Capture
 - [ ] Windows Input Capture
 - [ ] MacOS Input Capture
