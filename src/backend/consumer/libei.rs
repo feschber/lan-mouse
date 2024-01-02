@@ -47,7 +47,6 @@ async fn get_ei_fd() -> Result<RawFd, ashpd::Error> {
     let proxy = RemoteDesktop::new().await?;
     let session = proxy.create_session().await?;
 
-    // I HATE EVERYTHING, THIS TOOK 8 HOURS OF DEBUGGING
     proxy
         .select_devices(
             &session,
