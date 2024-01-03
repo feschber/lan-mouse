@@ -22,6 +22,18 @@ Focus lies on performance and a clean, manageable implementation that can easily
 
 For an alternative (with slightly different goals) you may check out [Input Leap](https://github.com/input-leap).
 
+
+> [!WARNING]
+> Since this tool has gained a bit of popularity over the past couple of days:
+>
+> All network traffic is currently **unencrypted** and sent in **plaintext**.
+>
+> A malicious actor with access to the network could read input data or send input events with spoofed IPs to take control over a device.
+>
+> Therefore you should only use this tool in your local network with trusted devices for now
+> and I take no responsibility for any leakage of data!
+
+
 ## OS Support
 
 The following table shows support for input emulation (to emulate events received from other clients) and
