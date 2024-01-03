@@ -24,11 +24,11 @@ use crate::{
 };
 
 #[allow(dead_code)]
-pub struct LibeiProducer<'a> {
+pub struct LibeiProducer {
     context: ei::Context,
     event_stream: EiConvertEventStream,
-    input_capture: InputCapture<'a>,
-    session: Session<'a>,
+    // input_capture: InputCapture<'a>,
+    // session: Session<'a>,
     zones: Zones,
 }
 
@@ -68,7 +68,7 @@ fn select_barriers(zones: &Zones, pos: Position) -> Vec<Barrier> {
         .collect()
 }
 
-impl<'a> LibeiProducer<'a> {
+impl LibeiProducer {
     pub async fn new() -> Result<Self> {
         // connect to eis for input capture
         log::debug!("creating input capture proxy");
@@ -110,12 +110,12 @@ impl<'a> LibeiProducer<'a> {
 
         log::debug!("enabling session");
         input_capture.enable(&session).await?;
-        let activated = match input_capture.receive_activated().await?.next().await.ok_or("could not receive activation_signal") {
-            Ok(s) => Ok(s),
-            Err(s) => Err(anyhow!("failed to receive activation token: {s}")),
-        }?;
-        log::debug!("received activation: {activated:?}");
-        activated.activation_id();
+        // let activated = match input_capture.receive_activated().await?.next().await.ok_or("could not receive activation_signal") {
+            // Ok(s) => Ok(s),
+            // Err(s) => Err(anyhow!("failed to receive activation token: {s}")),
+        // }?;
+        // log::debug!("received activation: {activated:?}");
+        // activated.activation_id();
 
         // create unix stream from fd
         let stream = unsafe { UnixStream::from_raw_fd(eifd) };
@@ -138,8 +138,8 @@ impl<'a> LibeiProducer<'a> {
         let event_stream = EiConvertEventStream::new(event_stream);
         let producer = Self {
             context,
-            input_capture,
-            session,
+            // input_capture,
+            // session,
             event_stream,
             zones,
         };
@@ -148,19 +148,19 @@ impl<'a> LibeiProducer<'a> {
     }
 }
 
-impl<'a> EventProducer for LibeiProducer<'a> {
+impl EventProducer for LibeiProducer {
     fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
         Ok(())
     }
 
     fn release(&mut self) -> io::Result<()> {
         // FIXME
-        self.input_capture.release(&self.session, 0, (1.,0.));
+        // self.input_capture.release(&self.session, 0, (1.,0.));
         Ok(())
     }
 }
 
-impl<'a> LibeiProducer<'a> {
+impl LibeiProducer {
     fn handle_libei_event(&mut self, event: EiEvent) -> Option<(ClientHandle, Event)> {
         // FIXME
         let client = 0;
@@ -251,7 +251,7 @@ impl<'a> LibeiProducer<'a> {
     }
 }
 
-impl<'a> Stream for LibeiProducer<'a> {
+impl Stream for LibeiProducer {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

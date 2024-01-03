@@ -46,7 +46,6 @@ pub async fn create() -> Box<dyn EventConsumer> {
         Err(e) => log::info!("wayland backend not available: {e}"),
     }
 
-    /*
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     match consumer::libei::LibeiConsumer::new().await {
         Ok(c) => {
@@ -64,7 +63,6 @@ pub async fn create() -> Box<dyn EventConsumer> {
         }
         Err(e) => log::info!("remote desktop portal not available: {e}"),
     }
-    */
 
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     match consumer::x11::X11Consumer::new() {

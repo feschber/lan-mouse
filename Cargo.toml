@@ -42,8 +42,7 @@ wayland-protocols = { version="0.31.0", features=["client", "staging", "unstable
 wayland-protocols-wlr = { version="0.2.0", features=["client"], optional = true }
 wayland-protocols-misc = { version="0.2.0", features=["client"], optional = true }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-# ashpd = "0.6" # -> currently broken with input capture portal
-ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", optional = true }
+ashpd = { version = "0.6", default-features = false, features = ["tokio"], optional = true }
 reis = { git = "https://github.com/ids1024/reis", features = [ "tokio" ], optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]
