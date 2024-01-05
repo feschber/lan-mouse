@@ -5,6 +5,8 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use std::time::Duration;
+use tokio::task::AbortHandle;
 use winapi::um::winuser::{SendInput, KEYEVENTF_EXTENDEDKEY};
 use winapi::{
     self,
@@ -21,11 +23,16 @@ use crate::{
     event::Event,
 };
 
-pub struct WindowsConsumer {}
+const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
+
+pub struct WindowsConsumer {
+    repeat_task: Option<AbortHandle>,
+}
 
 impl WindowsConsumer {
     pub fn new() -> Result<Self> {
-        Ok(Self {})
+        Ok(Self { repeat_task: None })
     }
 }
 
@@ -58,7 +65,15 @@ impl EventConsumer for WindowsConsumer {
                     time: _,
                     key,
                     state,
-                } => key_event(key, state),
+                } => {
+                    match state {
+                        // pressed
+                        0 => self.kill_repeat_task(),
+                        1 => self.spawn_repeat_task(key).await,
+                        _ => {}
+                    }
+                    key_event(key, state)
+                }
                 KeyboardEvent::Modifiers { .. } => {}
             },
             _ => {}
@@ -70,6 +85,27 @@ impl EventConsumer for WindowsConsumer {
     }
 
     async fn destroy(&mut self) {}
+}
+
+impl WindowsConsumer {
+    async fn spawn_repeat_task(&mut self, key: u32) {
+        // there can only be one repeating key and it's
+        // always the last to be pressed
+        self.kill_repeat_task();
+        let repeat_task = tokio::task::spawn_local(async move {
+            tokio::time::sleep(DEFAULT_REPEAT_DELAY).await;
+            loop {
+                key_event(key, 1);
+                tokio::time::sleep(DEFAULT_REPEAT_INTERVAL).await;
+            }
+        });
+        self.repeat_task = Some(repeat_task.abort_handle());
+    }
+    fn kill_repeat_task(&mut self) {
+        if let Some(task) = self.repeat_task.take() {
+            task.abort();
+        }
+    }
 }
 
 fn send_mouse_input(mi: MOUSEINPUT) {
