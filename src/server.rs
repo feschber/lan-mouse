@@ -824,6 +824,11 @@ impl Server {
                 start_timer = true;
                 log::trace!("STATE ===> AwaitingLeave");
                 enter = true;
+            } else {
+                // ignore any potential events in receiving mode
+                if self.state.get() == State::Receiving && e != Event::Disconnect() {
+                    return Ok(());
+                }
             }
 
             (client_state.active_addr, enter, start_timer)

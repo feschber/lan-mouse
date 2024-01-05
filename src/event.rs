@@ -11,7 +11,7 @@ pub const BTN_MIDDLE: u32 = 0x112;
 pub const BTN_BACK: u32 = 0x113;
 pub const BTN_FORWARD: u32 = 0x114;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum PointerEvent {
     Motion {
         time: u32,
@@ -31,7 +31,7 @@ pub enum PointerEvent {
     Frame {},
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum KeyboardEvent {
     Key {
         time: u32,
@@ -46,7 +46,7 @@ pub enum KeyboardEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Event {
     /// pointer event (motion / button / axis)
     Pointer(PointerEvent),
