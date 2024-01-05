@@ -50,6 +50,10 @@ input capture (to send events *to* other clients) on different operating systems
 
 Keycode translation is not yet implemented so on MacOS only mouse emulation works as of right now.
 
+> [!Important]
+> If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**.
+> Otherwise input capture will not work.
+
 ## Build and Run
 
 ### Install Dependencies
