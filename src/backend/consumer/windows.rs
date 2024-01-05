@@ -1,4 +1,3 @@
-use std::time::Duration;
 use crate::{
     consumer::EventConsumer,
     event::{KeyboardEvent, PointerEvent},
@@ -6,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use std::time::Duration;
 use tokio::task::AbortHandle;
 use winapi::um::winuser::{SendInput, KEYEVENTF_EXTENDEDKEY};
 use winapi::{
@@ -32,9 +32,7 @@ pub struct WindowsConsumer {
 
 impl WindowsConsumer {
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            repeat_task: None,
-        })
+        Ok(Self { repeat_task: None })
     }
 }
 
@@ -68,13 +66,14 @@ impl EventConsumer for WindowsConsumer {
                     key,
                     state,
                 } => {
-                    match state { // pressed
+                    match state {
+                        // pressed
                         0 => self.kill_repeat_task(),
                         1 => self.spawn_repeat_task(key).await,
                         _ => {}
                     }
                     key_event(key, state)
-                },
+                }
                 KeyboardEvent::Modifiers { .. } => {}
             },
             _ => {}
