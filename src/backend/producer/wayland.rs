@@ -712,6 +712,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 app.pending_events.push_back((*client, Event::Enter()));
             }
             wl_pointer::Event::Leave { .. } => {
+                /* There are rare cases, where when a window is opened in
+                 * just the wrong moment, the pointer is released, while
+                 * still grabbed.
+                 * In that case, the pointer must be ungrabbed, otherwise
+                 * it is impossible to grab it again (since the pointer
+                 * lock, relative pointer,... objects are still in place)
+                 */
                 app.ungrab();
             }
             wl_pointer::Event::Button {

@@ -131,7 +131,6 @@ impl Server {
                 tokio::select! {
                     event = producer.next() => {
                         let event = event.ok_or(anyhow!("event producer closed"))??;
-                        log::debug!("producer event: {event:?}");
                         server.handle_producer_event(&mut producer, &sender_ch, &timer_ch, event).await?;
                     }
                     e = producer_notify_rx.recv() => {
