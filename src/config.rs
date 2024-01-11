@@ -23,7 +23,7 @@ pub struct ConfigToml {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct Client {
-    pub host_name: Option<String>,
+    pub hostname: Option<String>,
     pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
 }
@@ -165,8 +165,8 @@ impl Config {
                 } else {
                     HashSet::new()
                 };
-                let host_name = c.host_name.clone();
-                (ips, host_name, port, *p)
+                let hostname = c.hostname.clone();
+                (ips, hostname, port, *p)
             })
             .collect()
     }
