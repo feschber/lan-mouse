@@ -26,6 +26,7 @@ pub struct Client {
     pub hostname: Option<String>,
     pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
+    pub activate_on_startup: Option<bool>,
 }
 
 impl ConfigToml {
@@ -155,7 +156,7 @@ impl Config {
         })
     }
 
-    pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16, Position)> {
+    pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16, Position, bool)> {
         self.clients
             .iter()
             .map(|(c, p)| {
@@ -166,7 +167,8 @@ impl Config {
                     HashSet::new()
                 };
                 let hostname = c.hostname.clone();
-                (ips, hostname, port, *p)
+                let active = c.activate_on_startup.unwrap_or(false);
+                (ips, hostname, port, *p, active)
             })
             .collect()
     }

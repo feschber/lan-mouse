@@ -112,6 +112,7 @@ impl ClientManager {
         ips: HashSet<IpAddr>,
         port: u16,
         pos: Position,
+        active: bool,
     ) -> ClientHandle {
         // get a new client_handle
         let handle = self.free_id();
@@ -135,7 +136,7 @@ impl ClientManager {
         // client was never seen, nor pinged
         let client_state = ClientState {
             client,
-            active: false,
+            active,
             active_addr: None,
             alive: false,
             pressed_keys: HashSet::new(),
