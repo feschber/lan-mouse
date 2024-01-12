@@ -89,10 +89,14 @@ impl Server {
         let client_manager = Rc::new(RefCell::new(ClientManager::new()));
         let state = Rc::new(Cell::new(State::Receiving));
         let port = Rc::new(Cell::new(config.port));
-        for (ips, host, port, pos, active) in config.get_clients() {
-            client_manager
-                .borrow_mut()
-                .add_client(host, ips, port, pos, active);
+        for config_client in config.get_clients() {
+            client_manager.borrow_mut().add_client(
+                config_client.hostname,
+                config_client.ips,
+                config_client.port,
+                config_client.pos,
+                config_client.active,
+            );
         }
         Self {
             active_client,
