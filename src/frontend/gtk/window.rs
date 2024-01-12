@@ -8,7 +8,7 @@ use glib::{clone, Object};
 use gtk::{gio, glib, NoSelection};
 
 use crate::{
-    client::{ClientHandle, Position, Client},
+    client::{Client, ClientHandle, Position},
     config::DEFAULT_PORT,
     frontend::{gtk::client_object::ClientObject, FrontendEvent},
 };

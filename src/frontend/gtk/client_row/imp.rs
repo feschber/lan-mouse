@@ -56,8 +56,8 @@ impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
         let idx = self.obj().index() as u32;
-        if let Err(e) = switch
-            .activate_action("win.request-client-update", Some(&idx.to_variant())) {
+        if let Err(e) = switch.activate_action("win.request-client-update", Some(&idx.to_variant()))
+        {
             log::error!("{e}");
         }
         switch.set_state(state);

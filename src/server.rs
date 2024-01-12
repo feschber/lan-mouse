@@ -90,7 +90,9 @@ impl Server {
         let state = Rc::new(Cell::new(State::Receiving));
         let port = Rc::new(Cell::new(config.port));
         for (ips, host, port, pos, active) in config.get_clients() {
-            client_manager.borrow_mut().add_client(host, ips, port, pos, active);
+            client_manager
+                .borrow_mut()
+                .add_client(host, ips, port, pos, active);
         }
         Self {
             active_client,
@@ -421,15 +423,22 @@ impl Server {
 
         // initial sync of clients
         frontend_tx.send(FrontendEvent::Enumerate()).await?;
-        let active = self.client_manager.borrow().get_client_states().filter_map(|s| {
-            if s.active {
-                Some(s.client.handle)
-            } else {
-                None
-            }
-        }).collect::<Vec<_>>();
+        let active = self
+            .client_manager
+            .borrow()
+            .get_client_states()
+            .filter_map(|s| {
+                if s.active {
+                    Some(s.client.handle)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         for client in active {
-            frontend_tx.send(FrontendEvent::ActivateClient(client, true)).await?;
+            frontend_tx
+                .send(FrontendEvent::ActivateClient(client, true))
+                .await?;
         }
 
         tokio::select! {
@@ -499,10 +508,10 @@ impl Server {
             hostname.as_deref().unwrap_or(""),
             &addr
         );
-        let client = self
-            .client_manager
-            .borrow_mut()
-            .add_client(hostname.clone(), addr, port, pos, false);
+        let client =
+            self.client_manager
+                .borrow_mut()
+                .add_client(hostname.clone(), addr, port, pos, false);
 
         log::debug!("add_client {client}");
         if let Some(hostname) = hostname.clone() {
