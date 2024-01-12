@@ -38,7 +38,6 @@ pub fn run() -> Result<()> {
         //  run a frontend
         let mut service = start_service()?;
         frontend::run_frontend(&config)?;
-        log::info!("terminating service");
         #[cfg(unix)]
         {
             // on unix we give the service a chance to terminate gracefully

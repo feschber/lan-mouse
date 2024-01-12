@@ -8,7 +8,7 @@ use glib::{clone, Object};
 use gtk::{gio, glib, NoSelection};
 
 use crate::{
-    client::{ClientHandle, Position},
+    client::{ClientHandle, Position, Client},
     config::DEFAULT_PORT,
     frontend::{gtk::client_object::ClientObject, FrontendEvent},
 };
@@ -106,6 +106,19 @@ impl Window {
         }
     }
 
+    pub fn update_client(&self, handle: ClientHandle, client: Client, active: bool) {
+        let Some(idx) = self.client_idx(handle) else {
+            log::warn!("could not find client with handle {handle}");
+            return;
+        };
+        let client_object = self.clients().item(idx as u32).unwrap();
+        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
+        client_object.set_hostname(client.hostname.unwrap_or("".into()));
+        client_object.set_port(client.port as u32);
+        client_object.set_position(client.pos.to_string());
+        client_object.set_active(active);
+    }
+
     pub fn request_client_create(&self) {
         let event = FrontendEvent::AddClient(None, DEFAULT_PORT, Position::default());
         self.imp().set_port(DEFAULT_PORT);
@@ -123,11 +136,8 @@ impl Window {
 
     pub fn request_client_update(&self, client: &ClientObject) {
         let data = client.get_data();
-        let position = match data.position.as_str() {
-            "left" => Position::Left,
-            "right" => Position::Right,
-            "top" => Position::Top,
-            "bottom" => Position::Bottom,
+        let position = match Position::try_from(data.position.as_str()) {
+            Ok(pos) => pos,
             _ => {
                 log::error!("invalid position: {}", data.position);
                 return;

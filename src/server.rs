@@ -919,7 +919,7 @@ impl Server {
                 self.remove_client(producer_notify_tx, consumer_notify_tx, frontend, client)
                     .await;
             }
-            FrontendEvent::Enumerate() => self.enumerate(frontend).await,
+            FrontendEvent::Enumerate() => {}
             FrontendEvent::Shutdown() => {
                 log::info!("terminating gracefully...");
                 return true;
@@ -937,9 +937,10 @@ impl Server {
                     resolve_tx,
                     client_update,
                 )
-                .await
+                .await;
             }
         }
+        self.enumerate(frontend).await;
         false
     }
 

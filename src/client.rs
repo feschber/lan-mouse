@@ -46,6 +46,20 @@ impl Display for Position {
     }
 }
 
+impl TryFrom<&str> for Position {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "left" => Ok(Position::Left),
+            "right" => Ok(Position::Right),
+            "top" => Ok(Position::Top),
+            "bottom" => Ok(Position::Bottom),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Client {
     /// hostname of this client

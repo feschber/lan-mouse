@@ -224,7 +224,6 @@ impl FrontendListener {
         log::debug!("json: {json}, len: {}", payload.len());
 
         let mut keep = vec![];
-
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
             // write len + payload
