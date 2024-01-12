@@ -721,6 +721,7 @@ impl Server {
                         }
                     }
                     State::Receiving => {
+                        let mut ignore_event = false;
                         if let Event::Keyboard(KeyboardEvent::Key {
                             time: _,
                             key,
@@ -736,15 +737,21 @@ impl Server {
                                     return;
                                 };
                             if state == 0 {
-                                client_state.pressed_keys.remove(&key);
+                                // ignore release event if key not pressed
+                                ignore_event = !client_state.pressed_keys.remove(&key);
                             } else {
-                                client_state.pressed_keys.insert(key);
+                                // ignore press event if key not released
+                                ignore_event = !client_state.pressed_keys.insert(key);
                                 let _ = timer_tx.try_send(());
                             }
                         }
-                        // consume event
-                        consumer.consume(event, handle).await;
-                        log::trace!("{event:?} => consumer");
+                        // ignore double press / release events to
+                        // workaround buggy rdp backend.
+                        if !ignore_event {
+                            // consume event
+                            consumer.consume(event, handle).await;
+                            log::trace!("{event:?} => consumer");
+                        }
                     }
                     State::AwaitingLeave => {
                         // we just entered the deadzone of a client, so
