@@ -1,13 +1,12 @@
 [Desktop Entry]
 Categories=Utility;
-Comment[en_US]=mouse & keyboard sharing via LAN
+Comment[en_US]=Mouse & Keyboard sharing via LAN
+Comment=Mouse & Keyboard sharing via LAN
 Comment[de_DE]=Maus- und Tastaturfreigabe über LAN
 Exec=lan-mouse
-Icon=mouse-icon.svg
+Icon=mouse-icon
 Name[en_US]=Lan Mouse
-Name[de_DE]=Lan Maus
 Name=Lan Mouse
 StartupNotify=true
 Terminal=false
 Type=Application
-Version=0.5.1
