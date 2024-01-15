@@ -24,6 +24,28 @@ impl ClientRow {
 
         let active_binding = client_object
             .bind_property("active", &self.imp().enable_switch.get(), "state")
+            .transform_to(|_, a: bool| {
+                log::warn!("setting switch state to {a}");
+                Some(a)
+            })
+            .transform_to(|_, a: bool| {
+                log::warn!("state changed -> setting client_object active to {a}");
+                Some(a)
+            })
+            .bidirectional()
+            .sync_create()
+            .build();
+
+        let switch_position_binding = client_object
+            .bind_property("active", &self.imp().enable_switch.get(), "active")
+            .transform_to(|_, a: bool| {
+                log::warn!("setting switch active to {a}");
+                Some(a)
+            })
+            .transform_to(|_, a: bool| {
+                log::warn!("active changed -> setting client_object active to {a}");
+                Some(a)
+            })
             .bidirectional()
             .sync_create()
             .build();
@@ -104,6 +126,7 @@ impl ClientRow {
             .build();
 
         bindings.push(active_binding);
+        bindings.push(switch_position_binding);
         bindings.push(hostname_binding);
         bindings.push(title_binding);
         bindings.push(port_binding);

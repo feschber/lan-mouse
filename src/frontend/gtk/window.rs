@@ -5,7 +5,7 @@ use std::io::Write;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::{clone, Object};
-use gtk::{gio, glib, NoSelection};
+use gtk::{gio, glib::{self, closure_local}, NoSelection};
 
 use crate::{
     client::{Client, ClientHandle, Position},
@@ -45,6 +45,13 @@ impl Window {
             clone!(@weak self as window => @default-panic, move |obj| {
                 let client_object = obj.downcast_ref().expect("Expected object of type `ClientObject`.");
                 let row = window.create_client_row(client_object);
+                row.connect_closure("request-update", false, closure_local!(@strong window => move |_row: ClientRow, index: u32, active: bool| {
+                    let Some(client) = window.clients().item(index) else {
+                        return;
+                    };
+                    let client = client.downcast_ref::<ClientObject>().unwrap();
+                    window.request_client_update(client, active);
+                }));
                 row.upcast()
             })
         );
@@ -113,10 +120,23 @@ impl Window {
         };
         let client_object = self.clients().item(idx as u32).unwrap();
         let client_object: &ClientObject = client_object.downcast_ref().unwrap();
-        client_object.set_hostname(client.hostname.unwrap_or("".into()));
-        client_object.set_port(client.port as u32);
-        client_object.set_position(client.pos.to_string());
-        client_object.set_active(active);
+        let data = client_object.get_data();
+
+        /* only change if it actually has changed, otherwise
+         * the update signal is triggered */
+        if data.hostname != client.hostname {
+            client_object.set_hostname(client.hostname.unwrap_or("".into()));
+        }
+        if data.port != client.port as u32 {
+            client_object.set_port(client.port as u32);
+        }
+        if data.position != client.pos.to_string() {
+            client_object.set_position(client.pos.to_string());
+        }
+        if data.active != active {
+            client_object.set_active(active);
+            log::warn!("set active to {active}");
+        }
     }
 
     pub fn request_client_create(&self) {
@@ -134,7 +154,7 @@ impl Window {
         }
     }
 
-    pub fn request_client_update(&self, client: &ClientObject) {
+    pub fn request_client_update(&self, client: &ClientObject, active: bool) {
         let data = client.get_data();
         let position = match Position::try_from(data.position.as_str()) {
             Ok(pos) => pos,
@@ -148,7 +168,8 @@ impl Window {
         let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
         self.request(event);
 
-        let event = FrontendEvent::ActivateClient(client.handle(), !client.active());
+        let event = FrontendEvent::ActivateClient(client.handle(), active);
+        log::warn!("requesting update: {event:?}");
         self.request(event);
     }
 

@@ -7,10 +7,12 @@ use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
 use adw::{
-    prelude::{EditableExt, WidgetExt},
+    prelude::*,
     ActionRow, ToastOverlay,
 };
 use glib::subclass::InitializingObject;
+use gtk::glib::once_cell::sync::Lazy;
+use gtk::glib::subclass::Signal;
 use gtk::{gio, glib, Button, CompositeTemplate, Entry, ListBox};
 
 use crate::config::DEFAULT_PORT;
@@ -42,6 +44,8 @@ pub struct Window {
 impl ObjectSubclass for Window {
     // `NAME` needs to match `class` attribute of template
     const NAME: &'static str = "LanMouseWindow";
+    const ABSTRACT: bool = false;
+
     type Type = super::Window;
     type ParentType = adw::ApplicationWindow;
 
@@ -101,6 +105,15 @@ impl ObjectImpl for Window {
         let obj = self.obj();
         obj.setup_icon();
         obj.setup_clients();
+    }
+
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
+            vec![Signal::builder("request-update")
+                .param_types([u32::static_type(), bool::static_type()])
+                .build()]
+        });
+        SIGNALS.as_ref()
     }
 }
 
