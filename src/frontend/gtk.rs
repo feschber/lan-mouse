@@ -46,7 +46,7 @@ fn gtk_main() -> glib::ExitCode {
     gio::resources_register_include!("lan-mouse.gresource").expect("Failed to register resources.");
 
     let app = Application::builder()
-        .application_id("de.feschber.lan-mouse")
+        .application_id("de.feschber.LanMouse")
         .build();
 
     app.connect_startup(|_| load_icons());

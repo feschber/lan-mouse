@@ -62,7 +62,7 @@ impl Window {
     }
 
     fn setup_icon(&self) {
-        self.set_icon_name(Some("mouse-icon"));
+        self.set_icon_name(Some("de.feschber.LanMouse"));
     }
 
     fn create_client_row(&self, client_object: &ClientObject) -> ClientRow {

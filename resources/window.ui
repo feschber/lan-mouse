@@ -35,7 +35,7 @@
 							<object class="AdwStatusPage">
 								<property name="title" translatable="yes">Lan Mouse</property>
 								<property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
-								<property name="icon-name">mouse-icon</property>
+								<property name="icon-name">de.feschber.LanMouse</property>
 								<property name="child">
 								  <object class="AdwClamp">
 									<property name="maximum-size">600</property>
