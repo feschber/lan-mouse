@@ -417,6 +417,24 @@ impl Server {
             }
         });
 
+        let active = self
+            .client_manager
+            .borrow()
+            .get_client_states()
+            .filter_map(|s| {
+                if s.active {
+                    Some(s.client.handle)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for client in active {
+            frontend_tx
+                .send(FrontendEvent::ActivateClient(client, true))
+                .await?;
+        }
+
         tokio::select! {
             _ = signal::ctrl_c() => {
                 log::info!("terminating service");
