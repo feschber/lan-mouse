@@ -103,6 +103,7 @@ pub enum FrontendEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendNotify {
+    NotifyClientActivate(ClientHandle, bool),
     NotifyClientCreate(Client),
     NotifyClientUpdate(Client),
     NotifyClientDelete(ClientHandle),

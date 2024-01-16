@@ -83,6 +83,13 @@ pub fn run() -> Result<()> {
                     Err(e) => break log::error!("{e}"),
                 };
                 match notify {
+                    FrontendNotify::NotifyClientActivate(handle, active) => {
+                        if active {
+                            log::info!("client {handle} activated");
+                        } else {
+                            log::info!("client {handle} deactivated");
+                        }
+                    }
                     FrontendNotify::NotifyClientCreate(client) => {
                         let handle = client.handle;
                         let port = client.port;

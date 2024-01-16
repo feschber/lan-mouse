@@ -60,8 +60,7 @@ impl ObjectImpl for ClientRow {
                 Signal::builder("request-update")
                     .param_types([bool::static_type()])
                     .build(),
-                Signal::builder("request-delete")
-                    .build(),
+                Signal::builder("request-delete").build(),
             ]
         });
         SIGNALS.as_ref()

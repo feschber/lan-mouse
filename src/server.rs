@@ -210,7 +210,7 @@ impl Server {
                                 continue;
                             }
                         };
-                        server.handle_frontend_stream(&mut frontend, &frontend_ch, stream).await;
+                        server.handle_frontend_stream(&frontend_ch, stream).await;
                     }
                     event = frontend_rx.recv() => {
                         let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
@@ -492,7 +492,6 @@ impl Server {
     pub async fn add_client(
         &self,
         resolver_tx: &Sender<(String, ClientHandle)>,
-        frontend: &mut FrontendListener,
         hostname: Option<String>,
         addr: HashSet<IpAddr>,
         port: u16,
@@ -509,23 +508,12 @@ impl Server {
                 .borrow_mut()
                 .add_client(hostname.clone(), addr, port, pos, false);
 
-        let client = self
-            .client_manager
-            .borrow()
-            .get(handle)
-            .unwrap()
-            .client
-            .clone();
         log::debug!("add_client {handle}");
 
         if let Some(hostname) = hostname {
             let _ = resolver_tx.send((hostname, handle)).await;
         }
 
-        let notify = FrontendNotify::NotifyClientCreate(client);
-        if let Err(e) = frontend.notify_all(notify).await {
-            log::error!("error notifying frontend: {e}");
-        };
         handle
     }
 
@@ -866,7 +854,6 @@ impl Server {
 
     async fn handle_frontend_stream(
         &self,
-        frontend: &mut FrontendListener,
         frontend_tx: &Sender<FrontendEvent>,
         #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
         #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
@@ -893,7 +880,7 @@ impl Server {
                 }
             }
         });
-        self.enumerate(frontend).await;
+        let _ = frontend_tx.send(FrontendEvent::Enumerate()).await;
     }
 
     async fn handle_frontend_event(
@@ -906,38 +893,73 @@ impl Server {
         event: FrontendEvent,
     ) -> bool {
         log::debug!("frontend: {event:?}");
-        match event {
+        let response = match event {
             FrontendEvent::AddClient(hostname, port, pos) => {
-                self.add_client(resolve_tx, frontend, hostname, HashSet::new(), port, pos)
+                let handle = self
+                    .add_client(resolve_tx, hostname, HashSet::new(), port, pos)
                     .await;
+
+                let client = self
+                    .client_manager
+                    .borrow()
+                    .get(handle)
+                    .unwrap()
+                    .client
+                    .clone();
+                Some(FrontendNotify::NotifyClientCreate(client))
             }
             FrontendEvent::ActivateClient(handle, active) => {
                 self.activate_client(producer_tx, consumer_tx, handle, active)
                     .await;
+                Some(FrontendNotify::NotifyClientActivate(handle, active))
             }
             FrontendEvent::ChangePort(port) => {
                 let _ = port_tx.send(port).await;
+                None
             }
             FrontendEvent::DelClient(handle) => {
                 self.remove_client(producer_tx, consumer_tx, frontend, handle)
                     .await;
+                Some(FrontendNotify::NotifyClientDelete(handle))
             }
-            FrontendEvent::Enumerate() => {}
+            FrontendEvent::Enumerate() => {
+                let clients = self
+                    .client_manager
+                    .borrow()
+                    .get_client_states()
+                    .map(|s| (s.client.clone(), s.active))
+                    .collect();
+                Some(FrontendNotify::Enumerate(clients))
+            }
             FrontendEvent::Shutdown() => {
                 log::info!("terminating gracefully...");
                 return true;
             }
-            FrontendEvent::UpdateClient(client, hostname, port, pos) => {
+            FrontendEvent::UpdateClient(handle, hostname, port, pos) => {
                 self.update_client(
                     producer_tx,
                     consumer_tx,
                     resolve_tx,
-                    (client, hostname, port, pos),
+                    (handle, hostname, port, pos),
                 )
                 .await;
+
+                let client = self
+                    .client_manager
+                    .borrow()
+                    .get(handle)
+                    .unwrap()
+                    .client
+                    .clone();
+                Some(FrontendNotify::NotifyClientUpdate(client))
             }
+        };
+        let Some(response) = response else {
+            return false;
+        };
+        if let Err(e) = frontend.notify_all(response).await {
+            log::error!("error notifying frontend: {e}");
         }
-        self.enumerate(frontend).await;
         false
     }
 
@@ -971,21 +993,6 @@ impl Server {
         consumer
             .consume(Event::Keyboard(modifiers_event), client)
             .await;
-    }
-
-    async fn enumerate(&self, frontend: &mut FrontendListener) {
-        let clients = self
-            .client_manager
-            .borrow()
-            .get_client_states()
-            .map(|s| (s.client.clone(), s.active))
-            .collect();
-        if let Err(e) = frontend
-            .notify_all(FrontendNotify::Enumerate(clients))
-            .await
-        {
-            log::error!("error notifying frontend: {e}");
-        }
     }
 }
 

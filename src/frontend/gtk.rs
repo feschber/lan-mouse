@@ -126,6 +126,9 @@ fn build_ui(app: &Application) {
         loop {
             let notify = receiver.recv().await.unwrap();
             match notify {
+                FrontendNotify::NotifyClientActivate(handle, active) => {
+                    window.activate_client(handle, active);
+                }
                 FrontendNotify::NotifyClientCreate(client) => {
                     window.new_client(client, false);
                 },

@@ -177,11 +177,13 @@ impl Window {
         };
         let hostname = data.hostname;
         let port = data.port as u16;
-        let event = FrontendEvent::ActivateClient(client.handle(), active);
-        self.request(event);
 
         let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
         log::debug!("requesting update: {event:?}");
+        self.request(event);
+
+        let event = FrontendEvent::ActivateClient(client.handle(), active);
+        log::debug!("requesting activate: {event:?}");
         self.request(event);
     }
 
