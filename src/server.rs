@@ -898,8 +898,8 @@ impl Server {
 
     async fn handle_frontend_event(
         &self,
-        producer_notify_tx: &Sender<ProducerEvent>,
-        consumer_notify_tx: &Sender<ConsumerEvent>,
+        producer_tx: &Sender<ProducerEvent>,
+        consumer_tx: &Sender<ConsumerEvent>,
         resolve_tx: &Sender<(String, ClientHandle)>,
         frontend: &mut FrontendListener,
         port_tx: &Sender<u16>,
@@ -911,15 +911,15 @@ impl Server {
                 self.add_client(resolve_tx, frontend, hostname, HashSet::new(), port, pos)
                     .await;
             }
-            FrontendEvent::ActivateClient(client, active) => {
-                self.activate_client(producer_notify_tx, consumer_notify_tx, client, active)
+            FrontendEvent::ActivateClient(handle, active) => {
+                self.activate_client(producer_tx, consumer_tx, handle, active)
                     .await;
             }
             FrontendEvent::ChangePort(port) => {
                 let _ = port_tx.send(port).await;
             }
-            FrontendEvent::DelClient(client) => {
-                self.remove_client(producer_notify_tx, consumer_notify_tx, frontend, client)
+            FrontendEvent::DelClient(handle) => {
+                self.remove_client(producer_tx, consumer_tx, frontend, handle)
                     .await;
             }
             FrontendEvent::Enumerate() => {}
@@ -929,8 +929,8 @@ impl Server {
             }
             FrontendEvent::UpdateClient(client, hostname, port, pos) => {
                 self.update_client(
-                    producer_notify_tx,
-                    consumer_notify_tx,
+                    producer_tx,
+                    consumer_tx,
                     resolve_tx,
                     (client, hostname, port, pos),
                 )

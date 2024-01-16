@@ -12,12 +12,8 @@ use crate::frontend::gtk::window::Window;
 
 use adw::Application;
 use gtk::{
-    gdk::Display,
-    gio::{SimpleAction, SimpleActionGroup},
-    glib::clone,
-    prelude::*,
-    subclass::prelude::ObjectSubclassIsExt,
-    CssProvider, IconTheme,
+    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, CssProvider,
+    IconTheme,
 };
 use gtk::{gio, glib, prelude::ApplicationExt};
 
@@ -68,8 +64,8 @@ fn load_css() {
 }
 
 fn load_icons() {
-    let icon_theme =
-        IconTheme::for_display(&Display::default().expect("Could not connect to a display."));
+    let display = &Display::default().expect("Could not connect to a display.");
+    let icon_theme = IconTheme::for_display(display);
     icon_theme.add_resource_path("/de/feschber/LanMouse/icons");
 }
 
@@ -162,20 +158,5 @@ fn build_ui(app: &Application) {
         }
     }));
 
-    // remove client
-    let action_client_delete =
-        SimpleAction::new("request-client-delete", Some(&u32::static_variant_type()));
-
-    action_client_delete.connect_activate(clone!(@weak window => move |_action, param| {
-        log::debug!("delete-client");
-        let idx = param.unwrap()
-            .get::<u32>()
-            .unwrap();
-        window.request_client_delete(idx);
-    }));
-
-    let actions = SimpleActionGroup::new();
-    window.insert_action_group("win", Some(&actions));
-    actions.add_action(&action_client_delete);
     window.present();
 }

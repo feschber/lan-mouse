@@ -56,9 +56,13 @@ impl ObjectImpl for ClientRow {
 
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
-            vec![Signal::builder("request-update")
-                .param_types([u32::static_type(), bool::static_type()])
-                .build()]
+            vec![
+                Signal::builder("request-update")
+                    .param_types([bool::static_type()])
+                    .build(),
+                Signal::builder("request-delete")
+                    .build(),
+            ]
         });
         SIGNALS.as_ref()
     }
@@ -68,20 +72,15 @@ impl ObjectImpl for ClientRow {
 impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, _switch: &Switch) -> bool {
-        let idx = self.obj().index() as u32;
-        self.obj()
-            .emit_by_name::<()>("request-update", &[&idx, &state]);
-
+        log::debug!("state change -> requesting update");
+        self.obj().emit_by_name::<()>("request-update", &[&state]);
         true // dont run default handler
     }
 
     #[template_callback]
-    fn handle_client_delete(&self, button: &Button) {
-        log::debug!("delete button pressed");
-        let idx = self.obj().index() as u32;
-        button
-            .activate_action("win.request-client-delete", Some(&idx.to_variant()))
-            .unwrap();
+    fn handle_client_delete(&self, _button: &Button) {
+        log::debug!("delete button pressed -> requesting delete");
+        self.obj().emit_by_name::<()>("request-delete", &[]);
     }
 }
 

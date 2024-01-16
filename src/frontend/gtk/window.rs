@@ -49,12 +49,17 @@ impl Window {
             clone!(@weak self as window => @default-panic, move |obj| {
                 let client_object = obj.downcast_ref().expect("Expected object of type `ClientObject`.");
                 let row = window.create_client_row(client_object);
-                row.connect_closure("request-update", false, closure_local!(@strong window => move |_row: ClientRow, index: u32, active: bool| {
+                row.connect_closure("request-update", false, closure_local!(@strong window => move |row: ClientRow, active: bool| {
+                    let index = row.index() as u32;
                     let Some(client) = window.clients().item(index) else {
                         return;
                     };
                     let client = client.downcast_ref::<ClientObject>().unwrap();
                     window.request_client_update(client, active);
+                }));
+                row.connect_closure("request-delete", false, closure_local!(@strong window => move |row: ClientRow| {
+                    let index = row.index() as u32;
+                    window.request_client_delete(index);
                 }));
                 row.upcast()
             })
