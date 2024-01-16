@@ -417,26 +417,6 @@ impl Server {
             }
         });
 
-        // initial sync of clients
-        frontend_tx.send(FrontendEvent::Enumerate()).await?;
-        let active = self
-            .client_manager
-            .borrow()
-            .get_client_states()
-            .filter_map(|s| {
-                if s.active {
-                    Some(s.client.handle)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        for client in active {
-            frontend_tx
-                .send(FrontendEvent::ActivateClient(client, true))
-                .await?;
-        }
-
         tokio::select! {
             _ = signal::ctrl_c() => {
                 log::info!("terminating service");
@@ -862,6 +842,7 @@ impl Server {
 
         let tx = frontend_tx.clone();
         tokio::task::spawn_local(async move {
+            let _ = tx.send(FrontendEvent::Enumerate()).await;
             loop {
                 let event = frontend::read_event(&mut stream).await;
                 match event {
