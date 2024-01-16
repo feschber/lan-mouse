@@ -205,6 +205,8 @@ port = 4242
 [right]
 # hostname
 hostname = "iridium"
+# activate this client immediately when lan-mouse is started
+activate_on_startup = true
 # optional list of (known) ip addresses
 ips = ["192.168.178.156"]
 
