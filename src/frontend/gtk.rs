@@ -141,6 +141,7 @@ fn build_ui(app: &Application) {
                 FrontendNotify::Enumerate(clients) => {
                     for (client, active) in clients {
                         if window.client_idx(client.handle).is_some() {
+                            window.activate_client(client.handle, active);
                             window.update_client(client);
                         } else {
                             window.new_client(client, active);
