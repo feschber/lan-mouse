@@ -5,7 +5,11 @@ use std::io::Write;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::{clone, Object};
-use gtk::{gio, glib::{self, closure_local}, NoSelection};
+use gtk::{
+    gio,
+    glib::{self, closure_local},
+    NoSelection,
+};
 
 use crate::{
     client::{Client, ClientHandle, Position},

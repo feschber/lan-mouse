@@ -6,10 +6,7 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
-use adw::{
-    prelude::*,
-    ActionRow, ToastOverlay,
-};
+use adw::{prelude::*, ActionRow, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::once_cell::sync::Lazy;
 use gtk::glib::subclass::Signal;

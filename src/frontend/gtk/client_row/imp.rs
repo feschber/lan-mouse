@@ -68,9 +68,9 @@ impl ObjectImpl for ClientRow {
 impl ClientRow {
     #[template_callback]
     fn handle_client_set_state(&self, state: bool, _switch: &Switch) -> bool {
-
         let idx = self.obj().index() as u32;
-        self.obj().emit_by_name::<()>("request-update", &[&idx, &state]);
+        self.obj()
+            .emit_by_name::<()>("request-update", &[&idx, &state]);
 
         true // dont run default handler
     }
