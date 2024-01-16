@@ -199,6 +199,7 @@ impl Server {
         let producer_notify = producer_notify_tx.clone();
         let consumer_notify = consumer_notify_tx.clone();
         let frontend_ch = frontend_tx.clone();
+        let resolve_ch = resolve_tx.clone();
         let mut frontend_task = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -214,7 +215,7 @@ impl Server {
                     }
                     event = frontend_rx.recv() => {
                         let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
-                        if server.handle_frontend_event(&producer_notify, &consumer_notify, &resolve_tx, &mut frontend, &port_tx, frontend_event).await {
+                        if server.handle_frontend_event(&producer_notify, &consumer_notify, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
                             break;
                         }
                     }
@@ -423,16 +424,19 @@ impl Server {
             .get_client_states()
             .filter_map(|s| {
                 if s.active {
-                    Some(s.client.handle)
+                    Some((s.client.handle, s.client.hostname.clone()))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        for client in active {
+        for (handle, hostname) in active {
             frontend_tx
-                .send(FrontendEvent::ActivateClient(client, true))
+                .send(FrontendEvent::ActivateClient(handle, true))
                 .await?;
+            if let Some(hostname) = hostname {
+                let _ = resolve_tx.send((hostname, handle)).await;
+            }
         }
 
         tokio::select! {
