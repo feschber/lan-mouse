@@ -861,7 +861,6 @@ impl Server {
                 }
             }
         });
-        let _ = frontend_tx.send(FrontendEvent::Enumerate()).await;
     }
 
     async fn handle_frontend_event(
