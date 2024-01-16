@@ -14,7 +14,7 @@ use adw::Application;
 use gtk::{
     gdk::Display,
     gio::{SimpleAction, SimpleActionGroup},
-    glib::{clone, closure_local},
+    glib::clone,
     prelude::*,
     subclass::prelude::ObjectSubclassIsExt,
     CssProvider, IconTheme,
@@ -173,9 +173,6 @@ fn build_ui(app: &Application) {
         }
     }));
 
-    let action_request_client_update =
-        SimpleAction::new("request-client-update", Some(&u32::static_variant_type()));
-
     // remove client
     let action_client_delete =
         SimpleAction::new("request-client-delete", Some(&u32::static_variant_type()));
@@ -190,7 +187,6 @@ fn build_ui(app: &Application) {
 
     let actions = SimpleActionGroup::new();
     window.insert_action_group("win", Some(&actions));
-    actions.add_action(&action_request_client_update);
     actions.add_action(&action_client_delete);
     window.present();
 }

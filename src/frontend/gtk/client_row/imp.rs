@@ -67,12 +67,8 @@ impl ObjectImpl for ClientRow {
 #[gtk::template_callbacks]
 impl ClientRow {
     #[template_callback]
-    fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
-        log::warn!("state: {state}, active: {}", switch.is_active());
-        switch.set_active(state);
-        switch.set_state(state);
+    fn handle_client_set_state(&self, state: bool, _switch: &Switch) -> bool {
 
-        log::warn!("REQUESTING CLIENT UPDATE");
         let idx = self.obj().index() as u32;
         self.obj().emit_by_name::<()>("request-update", &[&idx, &state]);
 
