@@ -34,7 +34,12 @@ pub fn run() -> glib::ExitCode {
     #[cfg(not(windows))]
     let ret = gtk_main();
 
-    log::debug!("frontend exited");
+    if ret == glib::ExitCode::FAILURE {
+        log::error!("frontend exited with failure");
+    } else {
+        log::info!("frontend exited successfully");
+    }
+
     ret
 }
 

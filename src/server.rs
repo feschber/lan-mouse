@@ -110,7 +110,7 @@ impl Server {
         };
         let (mut consumer, mut producer) = tokio::join!(consumer::create(), producer::create());
 
-        let (frontend_tx, mut frontend_rx) = tokio::sync::mpsc::channel(1);
+        let (frontend_tx, mut frontend_rx) = tokio::sync::mpsc::channel(32);
         let (producer_notify_tx, mut producer_notify_rx) = tokio::sync::mpsc::channel(32);
         let (consumer_notify_tx, mut consumer_notify_rx) = tokio::sync::mpsc::channel(32);
         let (resolve_tx, mut resolve_rx) = tokio::sync::mpsc::channel(32);
