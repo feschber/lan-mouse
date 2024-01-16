@@ -24,6 +24,7 @@ pub struct ConfigToml {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct TomlClient {
     pub hostname: Option<String>,
+    pub host_name: Option<String>,
     pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
     pub activate_on_startup: Option<bool>,
@@ -174,7 +175,10 @@ impl Config {
                 } else {
                     HashSet::new()
                 };
-                let hostname = c.hostname.clone();
+                let hostname = match &c.hostname {
+                    Some(h) => Some(h.clone()),
+                    None => c.host_name.clone(),
+                };
                 let active = c.activate_on_startup.unwrap_or(false);
                 ConfigClient {
                     ips,
