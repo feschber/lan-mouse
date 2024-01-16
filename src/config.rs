@@ -15,17 +15,19 @@ pub const DEFAULT_PORT: u16 = 4242;
 pub struct ConfigToml {
     pub port: Option<u16>,
     pub frontend: Option<String>,
-    pub left: Option<Client>,
-    pub right: Option<Client>,
-    pub top: Option<Client>,
-    pub bottom: Option<Client>,
+    pub left: Option<TomlClient>,
+    pub right: Option<TomlClient>,
+    pub top: Option<TomlClient>,
+    pub bottom: Option<TomlClient>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct Client {
+pub struct TomlClient {
+    pub hostname: Option<String>,
     pub host_name: Option<String>,
     pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
+    pub activate_on_startup: Option<bool>,
 }
 
 impl ConfigToml {
@@ -66,8 +68,16 @@ pub enum Frontend {
 pub struct Config {
     pub frontend: Frontend,
     pub port: u16,
-    pub clients: Vec<(Client, Position)>,
+    pub clients: Vec<(TomlClient, Position)>,
     pub daemon: bool,
+}
+
+pub struct ConfigClient {
+    pub ips: HashSet<IpAddr>,
+    pub hostname: Option<String>,
+    pub port: u16,
+    pub pos: Position,
+    pub active: bool,
 }
 
 impl Config {
@@ -128,7 +138,7 @@ impl Config {
             },
         };
 
-        let mut clients: Vec<(Client, Position)> = vec![];
+        let mut clients: Vec<(TomlClient, Position)> = vec![];
 
         if let Some(config_toml) = config_toml {
             if let Some(c) = config_toml.right {
@@ -155,18 +165,28 @@ impl Config {
         })
     }
 
-    pub fn get_clients(&self) -> Vec<(HashSet<IpAddr>, Option<String>, u16, Position)> {
+    pub fn get_clients(&self) -> Vec<ConfigClient> {
         self.clients
             .iter()
-            .map(|(c, p)| {
+            .map(|(c, pos)| {
                 let port = c.port.unwrap_or(DEFAULT_PORT);
                 let ips: HashSet<IpAddr> = if let Some(ips) = c.ips.as_ref() {
                     HashSet::from_iter(ips.iter().cloned())
                 } else {
                     HashSet::new()
                 };
-                let host_name = c.host_name.clone();
-                (ips, host_name, port, *p)
+                let hostname = match &c.hostname {
+                    Some(h) => Some(h.clone()),
+                    None => c.host_name.clone(),
+                };
+                let active = c.activate_on_startup.unwrap_or(false);
+                ConfigClient {
+                    ips,
+                    hostname,
+                    port,
+                    pos: *pos,
+                    active,
+                }
             })
             .collect()
     }

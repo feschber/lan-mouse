@@ -103,8 +103,9 @@ pub enum FrontendEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendNotify {
-    NotifyClientCreate(ClientHandle, Option<String>, u16, Position),
-    NotifyClientUpdate(ClientHandle, Option<String>, u16, Position),
+    NotifyClientActivate(ClientHandle, bool),
+    NotifyClientCreate(Client),
+    NotifyClientUpdate(Client),
     NotifyClientDelete(ClientHandle),
     /// new port, reason of failure (if failed)
     NotifyPortChange(u16, Option<String>),
@@ -224,7 +225,6 @@ impl FrontendListener {
         log::debug!("json: {json}, len: {}", payload.len());
 
         let mut keep = vec![];
-
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
             // write len + payload

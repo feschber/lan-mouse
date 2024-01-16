@@ -28,6 +28,12 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        let switch_position_binding = client_object
+            .bind_property("active", &self.imp().enable_switch.get(), "active")
+            .bidirectional()
+            .sync_create()
+            .build();
+
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
             .transform_to(|_, v: Option<String>| {
@@ -104,6 +110,7 @@ impl ClientRow {
             .build();
 
         bindings.push(active_binding);
+        bindings.push(switch_position_binding);
         bindings.push(hostname_binding);
         bindings.push(title_binding);
         bindings.push(port_binding);

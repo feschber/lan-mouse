@@ -6,10 +6,7 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
-use adw::{
-    prelude::{EditableExt, WidgetExt},
-    ActionRow, ToastOverlay,
-};
+use adw::{prelude::*, ActionRow, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::{gio, glib, Button, CompositeTemplate, Entry, ListBox};
 
@@ -42,6 +39,8 @@ pub struct Window {
 impl ObjectSubclass for Window {
     // `NAME` needs to match `class` attribute of template
     const NAME: &'static str = "LanMouseWindow";
+    const ABSTRACT: bool = false;
+
     type Type = super::Window;
     type ParentType = adw::ApplicationWindow;
 

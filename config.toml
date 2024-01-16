@@ -8,7 +8,7 @@ port = 4242
 # define a client on the right side with host name "iridium"
 [right]
 # hostname
-host_name = "iridium"
+hostname = "iridium"
 # optional list of (known) ip addresses
 ips = ["192.168.178.156"]
 
@@ -16,7 +16,7 @@ ips = ["192.168.178.156"]
 [left]
 # The hostname is optional: When no hostname is specified,
 # at least one ip address needs to be specified.
-host_name = "thorium"
+hostname = "thorium"
 # ips for ethernet and wifi
 ips = ["192.168.178.189", "192.168.178.172"]
 # optional port

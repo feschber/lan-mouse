@@ -4,6 +4,8 @@ use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, ComboRow};
 use glib::{subclass::InitializingObject, Binding};
 use gtk::glib::clone;
+use gtk::glib::once_cell::sync::Lazy;
+use gtk::glib::subclass::Signal;
 use gtk::{glib, Button, CompositeTemplate, Switch};
 
 #[derive(CompositeTemplate, Default)]
@@ -28,6 +30,8 @@ pub struct ClientRow {
 impl ObjectSubclass for ClientRow {
     // `NAME` needs to match `class` attribute of template
     const NAME: &'static str = "ClientRow";
+    const ABSTRACT: bool = false;
+
     type Type = super::ClientRow;
     type ParentType = adw::ExpanderRow;
 
@@ -49,28 +53,33 @@ impl ObjectImpl for ClientRow {
                 row.handle_client_delete(button);
             }));
     }
+
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
+            vec![
+                Signal::builder("request-update")
+                    .param_types([bool::static_type()])
+                    .build(),
+                Signal::builder("request-delete").build(),
+            ]
+        });
+        SIGNALS.as_ref()
+    }
 }
 
 #[gtk::template_callbacks]
 impl ClientRow {
     #[template_callback]
-    fn handle_client_set_state(&self, state: bool, switch: &Switch) -> bool {
-        let idx = self.obj().index() as u32;
-        switch
-            .activate_action("win.request-client-update", Some(&idx.to_variant()))
-            .unwrap();
-        switch.set_state(state);
-
+    fn handle_client_set_state(&self, state: bool, _switch: &Switch) -> bool {
+        log::debug!("state change -> requesting update");
+        self.obj().emit_by_name::<()>("request-update", &[&state]);
         true // dont run default handler
     }
 
     #[template_callback]
-    fn handle_client_delete(&self, button: &Button) {
-        log::debug!("delete button pressed");
-        let idx = self.obj().index() as u32;
-        button
-            .activate_action("win.request-client-delete", Some(&idx.to_variant()))
-            .unwrap();
+    fn handle_client_delete(&self, _button: &Button) {
+        log::debug!("delete button pressed -> requesting delete");
+        self.obj().emit_by_name::<()>("request-delete", &[]);
     }
 }
 

@@ -83,17 +83,26 @@ pub fn run() -> Result<()> {
                     Err(e) => break log::error!("{e}"),
                 };
                 match notify {
-                    FrontendNotify::NotifyClientCreate(client, host, port, pos) => {
-                        log::info!(
-                            "new client ({client}): {}:{port} - {pos}",
-                            host.as_deref().unwrap_or("")
-                        );
+                    FrontendNotify::NotifyClientActivate(handle, active) => {
+                        if active {
+                            log::info!("client {handle} activated");
+                        } else {
+                            log::info!("client {handle} deactivated");
+                        }
                     }
-                    FrontendNotify::NotifyClientUpdate(client, host, port, pos) => {
-                        log::info!(
-                            "client ({client}) updated: {}:{port} - {pos}",
-                            host.as_deref().unwrap_or("")
-                        );
+                    FrontendNotify::NotifyClientCreate(client) => {
+                        let handle = client.handle;
+                        let port = client.port;
+                        let pos = client.pos;
+                        let hostname = client.hostname.as_deref().unwrap_or("");
+                        log::info!("new client ({handle}): {hostname}:{port} - {pos}");
+                    }
+                    FrontendNotify::NotifyClientUpdate(client) => {
+                        let handle = client.handle;
+                        let port = client.port;
+                        let pos = client.pos;
+                        let hostname = client.hostname.as_deref().unwrap_or("");
+                        log::info!("client ({handle}) updated: {hostname}:{port} - {pos}");
                     }
                     FrontendNotify::NotifyClientDelete(client) => {
                         log::info!("client ({client}) deleted.");
