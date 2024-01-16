@@ -82,15 +82,8 @@ impl Window {
         row
     }
 
-    pub fn new_client(
-        &self,
-        handle: ClientHandle,
-        hostname: Option<String>,
-        port: u16,
-        position: Position,
-        active: bool,
-    ) {
-        let client = ClientObject::new(handle, hostname, port as u32, position.to_string(), active);
+    pub fn new_client(&self, client: Client, active: bool) {
+        let client = ClientObject::new(client, active);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
     }
@@ -117,9 +110,9 @@ impl Window {
         }
     }
 
-    pub fn update_client(&self, handle: ClientHandle, client: Client, active: bool) {
-        let Some(idx) = self.client_idx(handle) else {
-            log::warn!("could not find client with handle {handle}");
+    pub fn update_client(&self, client: Client) {
+        let Some(idx) = self.client_idx(client.handle) else {
+            log::warn!("could not find client with handle {}", client.handle);
             return;
         };
         let client_object = self.clients().item(idx as u32).unwrap();
@@ -137,9 +130,19 @@ impl Window {
         if data.position != client.pos.to_string() {
             client_object.set_position(client.pos.to_string());
         }
+    }
+
+    pub fn activate_client(&self, handle: ClientHandle, active: bool) {
+        let Some(idx) = self.client_idx(handle) else {
+            log::warn!("could not find client with handle {handle}");
+            return;
+        };
+        let client_object = self.clients().item(idx as u32).unwrap();
+        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
+        let data = client_object.get_data();
         if data.active != active {
             client_object.set_active(active);
-            log::warn!("set active to {active}");
+            log::debug!("set active to {active}");
         }
     }
 
@@ -173,7 +176,7 @@ impl Window {
         self.request(event);
 
         let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
-        log::warn!("requesting update: {event:?}");
+        log::debug!("requesting update: {event:?}");
         self.request(event);
     }
 

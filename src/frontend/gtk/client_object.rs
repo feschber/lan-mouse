@@ -3,26 +3,20 @@ mod imp;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use crate::client::ClientHandle;
+use crate::client::{Client, ClientHandle};
 
 glib::wrapper! {
     pub struct ClientObject(ObjectSubclass<imp::ClientObject>);
 }
 
 impl ClientObject {
-    pub fn new(
-        handle: ClientHandle,
-        hostname: Option<String>,
-        port: u32,
-        position: String,
-        active: bool,
-    ) -> Self {
+    pub fn new(client: Client, active: bool) -> Self {
         Object::builder()
-            .property("handle", handle)
-            .property("hostname", hostname)
-            .property("port", port)
+            .property("handle", client.handle)
+            .property("hostname", client.hostname)
+            .property("port", client.port as u32)
+            .property("position", client.pos.to_string())
             .property("active", active)
-            .property("position", position)
             .build()
     }
 

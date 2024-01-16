@@ -8,7 +8,7 @@ use std::{
     process, str,
 };
 
-use crate::{config::DEFAULT_PORT, frontend::gtk::window::Window};
+use crate::frontend::gtk::window::Window;
 
 use adw::Application;
 use gtk::{
@@ -130,15 +130,14 @@ fn build_ui(app: &Application) {
         loop {
             let notify = receiver.recv().await.unwrap();
             match notify {
-                FrontendNotify::NotifyClientCreate(client, hostname, port, position) => {
-                    window.new_client(client, hostname, port, position, false);
+                FrontendNotify::NotifyClientCreate(client) => {
+                    window.new_client(client, false);
                 },
-                FrontendNotify::NotifyClientUpdate(client, hostname, port, position) => {
-                    log::info!("client updated: {client}, {}:{port}, {position}", hostname.unwrap_or("".to_string()));
+                FrontendNotify::NotifyClientUpdate(client) => {
+                    window.update_client(client);
                 }
                 FrontendNotify::NotifyError(e) => {
-                    // TODO
-                    log::error!("{e}");
+                    window.show_toast(e.as_str());
                 },
                 FrontendNotify::NotifyClientDelete(client) => {
                     window.delete_client(client);
@@ -146,20 +145,10 @@ fn build_ui(app: &Application) {
                 FrontendNotify::Enumerate(clients) => {
                     for (client, active) in clients {
                         if window.client_idx(client.handle).is_some() {
-                            window.update_client(client.handle, client, active);
-                            continue
+                            window.update_client(client);
+                        } else {
+                            window.new_client(client, active);
                         }
-                        window.new_client(
-                            client.handle,
-                            client.hostname,
-                            client.addrs
-                                .iter()
-                                .next()
-                                .map(|s| s.port())
-                                .unwrap_or(DEFAULT_PORT),
-                            client.pos,
-                            active,
-                        );
                     }
                 },
                 FrontendNotify::NotifyPortChange(port, msg) => {

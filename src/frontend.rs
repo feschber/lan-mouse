@@ -103,8 +103,8 @@ pub enum FrontendEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendNotify {
-    NotifyClientCreate(ClientHandle, Option<String>, u16, Position),
-    NotifyClientUpdate(ClientHandle, Option<String>, u16, Position),
+    NotifyClientCreate(Client),
+    NotifyClientUpdate(Client),
     NotifyClientDelete(ClientHandle),
     /// new port, reason of failure (if failed)
     NotifyPortChange(u16, Option<String>),
