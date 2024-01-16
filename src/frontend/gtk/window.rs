@@ -165,10 +165,10 @@ impl Window {
         };
         let hostname = data.hostname;
         let port = data.port as u16;
-        let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
+        let event = FrontendEvent::ActivateClient(client.handle(), active);
         self.request(event);
 
-        let event = FrontendEvent::ActivateClient(client.handle(), active);
+        let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
         log::warn!("requesting update: {event:?}");
         self.request(event);
     }
