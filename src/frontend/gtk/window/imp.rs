@@ -103,15 +103,6 @@ impl ObjectImpl for Window {
         obj.setup_icon();
         obj.setup_clients();
     }
-
-    fn signals() -> &'static [glib::subclass::Signal] {
-        static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
-            vec![Signal::builder("request-update")
-                .param_types([u32::static_type(), bool::static_type()])
-                .build()]
-        });
-        SIGNALS.as_ref()
-    }
 }
 
 impl WidgetImpl for Window {}
