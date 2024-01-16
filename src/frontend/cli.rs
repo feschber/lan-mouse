@@ -118,7 +118,7 @@ pub fn run() -> Result<()> {
                                 client.hostname.as_deref().unwrap_or(""),
                                 if active { "yes" } else { "no" },
                                 client
-                                    .addrs
+                                    .ips
                                     .into_iter()
                                     .map(|a| a.to_string())
                                     .collect::<Vec<String>>()
