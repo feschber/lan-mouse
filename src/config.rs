@@ -103,7 +103,7 @@ impl Config {
 
         let config_toml = match ConfigToml::new(config_path.as_str()) {
             Err(e) => {
-                log::error!("{config_path}: {e}");
+                log::warn!("{config_path}: {e}");
                 log::warn!("Continuing without config file ...");
                 None
             }
