@@ -720,6 +720,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                  * lock, relative pointer,... objects are still in place)
                  */
                 app.ungrab();
+                log::warn!("compositor released mouse");
             }
             wl_pointer::Event::Button {
                 serial: _,
