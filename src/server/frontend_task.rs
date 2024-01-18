@@ -17,14 +17,16 @@ use crate::{
     frontend::{self, FrontendEvent, FrontendListener, FrontendNotify},
 };
 
-use super::{consumer_task::ConsumerEvent, producer_task::ProducerEvent, Server};
+use super::{
+    consumer_task::ConsumerEvent, producer_task::ProducerEvent, resolver_task::DnsRequest, Server,
+};
 
 pub(crate) fn new(
     mut frontend: FrontendListener,
     server: Server,
     producer_notify: Sender<ProducerEvent>,
     consumer_notify: Sender<ConsumerEvent>,
-    resolve_ch: Sender<(String, u32)>,
+    resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
 ) -> (
     JoinHandle<Result<()>>,
@@ -98,7 +100,7 @@ async fn handle_frontend_event(
     server: &Server,
     producer_tx: &Sender<ProducerEvent>,
     consumer_tx: &Sender<ConsumerEvent>,
-    resolve_tx: &Sender<(String, ClientHandle)>,
+    resolve_tx: &Sender<DnsRequest>,
     frontend: &mut FrontendListener,
     port_tx: &Sender<u16>,
     event: FrontendEvent,
@@ -173,7 +175,7 @@ async fn handle_frontend_event(
 
 pub async fn add_client(
     server: &Server,
-    resolver_tx: &Sender<(String, ClientHandle)>,
+    resolver_tx: &Sender<DnsRequest>,
     hostname: Option<String>,
     addr: HashSet<IpAddr>,
     port: u16,
@@ -194,7 +196,7 @@ pub async fn add_client(
     log::debug!("add_client {handle}");
 
     if let Some(hostname) = hostname {
-        let _ = resolver_tx.send((hostname, handle)).await;
+        let _ = resolver_tx.send(DnsRequest { hostname, handle }).await;
     }
 
     handle
@@ -266,7 +268,7 @@ async fn update_client(
     server: &Server,
     producer_notify_tx: &Sender<ProducerEvent>,
     consumer_notify_tx: &Sender<ConsumerEvent>,
-    resolve_tx: &Sender<(String, ClientHandle)>,
+    resolve_tx: &Sender<DnsRequest>,
     client_update: (ClientHandle, Option<String>, u16, Position),
 ) {
     let (handle, hostname, port, pos) = client_update;
@@ -303,7 +305,7 @@ async fn update_client(
 
     // resolve dns
     if let Some(hostname) = hostname {
-        let _ = resolve_tx.send((hostname, handle)).await;
+        let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
     }
 
     // update state in event consumer & producer

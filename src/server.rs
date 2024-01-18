@@ -1,7 +1,6 @@
 use log;
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
     io::Result,
     rc::Rc,
     time::Duration,
@@ -21,11 +20,12 @@ use crate::{
 };
 use crate::{consumer, producer};
 
-use self::consumer_task::ConsumerEvent;
+use self::{consumer_task::ConsumerEvent, resolver_task::DnsRequest};
 
 mod consumer_task;
 mod frontend_task;
 mod producer_task;
+mod resolver_task;
 
 const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
@@ -83,7 +83,6 @@ impl Server {
         };
         let (consumer, producer) = tokio::join!(consumer::create(), producer::create());
 
-        let (resolve_tx, mut resolve_rx) = tokio::sync::mpsc::channel(32);
         let (receiver_tx, receiver_rx) = tokio::sync::mpsc::channel(32);
         let (sender_tx, mut sender_rx) = tokio::sync::mpsc::channel(32);
         let (port_tx, mut port_rx) = tokio::sync::mpsc::channel(32);
@@ -103,6 +102,10 @@ impl Server {
             timer_tx,
         );
 
+        // create dns resolver
+        let resolver = dns::DnsResolver::new().await?;
+        let (mut resolver_task, resolve_tx) = resolver_task::new(resolver, self.clone());
+
         // frontend listener
         let (mut frontend_task, frontend_tx, frontend_notify_tx) = frontend_task::new(
             frontend,
@@ -113,37 +116,10 @@ impl Server {
             port_tx,
         );
 
-        // dns resolver
-
-        // create dns resolver
-        let resolver = dns::DnsResolver::new().await?;
-        let server = self.clone();
-        let mut resolver_task = tokio::task::spawn_local(async move {
-            loop {
-                let (host, client): (String, ClientHandle) = match resolve_rx.recv().await {
-                    Some(r) => r,
-                    None => break,
-                };
-                let ips = match resolver.resolve(&host).await {
-                    Ok(ips) => ips,
-                    Err(e) => {
-                        log::warn!("could not resolve host '{host}': {e}");
-                        continue;
-                    }
-                };
-                if let Some(state) = server.client_manager.borrow_mut().get_mut(client) {
-                    let mut addrs = HashSet::from_iter(state.client.fix_ips.iter().cloned());
-                    for ip in ips {
-                        addrs.insert(ip);
-                    }
-                    state.client.ips = addrs;
-                }
-            }
-        });
-
         // bind the udp socket
         let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), self.port.get());
         let mut socket = UdpSocket::bind(listen_addr).await?;
+        let server = self.clone();
         // udp task
         let mut udp_task = tokio::task::spawn_local(async move {
             loop {
@@ -318,7 +294,7 @@ impl Server {
                 .send(FrontendEvent::ActivateClient(handle, true))
                 .await?;
             if let Some(hostname) = hostname {
-                let _ = resolve_tx.send((hostname, handle)).await;
+                let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
             }
         }
 
