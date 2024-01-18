@@ -10,7 +10,11 @@ use tokio::net::UnixStream;
 use tokio::net::TcpStream;
 
 use anyhow::{anyhow, Result};
-use tokio::{io::ReadHalf, sync::mpsc::Sender, task::JoinHandle};
+use tokio::{
+    io::ReadHalf,
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
 use crate::{
     client::{ClientEvent, ClientHandle, Position},
@@ -23,18 +27,14 @@ use super::{
 
 pub(crate) fn new(
     mut frontend: FrontendListener,
+    mut notify_rx: Receiver<FrontendNotify>,
     server: Server,
     producer_notify: Sender<ProducerEvent>,
     consumer_notify: Sender<ConsumerEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
-) -> (
-    JoinHandle<Result<()>>,
-    Sender<FrontendEvent>,
-    Sender<FrontendNotify>,
-) {
+) -> (JoinHandle<Result<()>>, Sender<FrontendEvent>) {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
-    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
     let event_tx_clone = event_tx.clone();
     let frontend_task = tokio::task::spawn_local(async move {
         loop {
@@ -63,7 +63,7 @@ pub(crate) fn new(
         }
         anyhow::Ok(())
     });
-    (frontend_task, event_tx, notify_tx)
+    (frontend_task, event_tx)
 }
 
 async fn handle_frontend_stream(
