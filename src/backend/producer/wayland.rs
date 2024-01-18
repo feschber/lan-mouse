@@ -719,8 +719,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                  * it is impossible to grab it again (since the pointer
                  * lock, relative pointer,... objects are still in place)
                  */
+                if app.pointer_lock.is_some() {
+                    log::warn!("compositor released mouse");
+                }
                 app.ungrab();
-                log::warn!("compositor released mouse");
             }
             wl_pointer::Event::Button {
                 serial: _,
