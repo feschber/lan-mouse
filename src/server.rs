@@ -247,19 +247,11 @@ impl Server {
                     }
                 };
                 if let Some(state) = server.client_manager.borrow_mut().get_mut(client) {
-                    let port = state.client.port;
-                    let mut addrs = HashSet::from_iter(
-                        state
-                            .client
-                            .fix_ips
-                            .iter()
-                            .map(|a| SocketAddr::new(*a, port)),
-                    );
+                    let mut addrs = HashSet::from_iter(state.client.fix_ips.iter().cloned());
                     for ip in ips {
-                        let sock_addr = SocketAddr::new(ip, port);
-                        addrs.insert(sock_addr);
+                        addrs.insert(ip);
                     }
-                    state.client.addrs = addrs;
+                    state.client.ips = addrs;
                 }
             }
         });
@@ -347,10 +339,16 @@ impl Server {
                                 .iter()
                                 .flat_map(|&c| client_manager.get(c))
                                 .flat_map(|state| {
-                                    if let Some(a) = state.active_addr {
-                                        vec![a]
+                                    if state.alive && state.active_addr.is_some() {
+                                        vec![state.active_addr.unwrap()]
                                     } else {
-                                        state.client.addrs.iter().cloned().collect()
+                                        state
+                                            .client
+                                            .ips
+                                            .iter()
+                                            .cloned()
+                                            .map(|ip| SocketAddr::new(ip, state.client.port))
+                                            .collect()
                                     }
                                 })
                                 .collect()
@@ -602,22 +600,12 @@ impl Server {
             // update port
             if state.client.port != port {
                 state.client.port = port;
-                state.client.addrs = state
-                    .client
-                    .addrs
-                    .iter()
-                    .cloned()
-                    .map(|mut a| {
-                        a.set_port(port);
-                        a
-                    })
-                    .collect();
                 state.active_addr = state.active_addr.map(|a| SocketAddr::new(a.ip(), port));
             }
 
             // update hostname
             if state.client.hostname != hostname {
-                state.client.addrs = HashSet::new();
+                state.client.ips = HashSet::new();
                 state.active_addr = None;
                 state.client.hostname = hostname;
             }
