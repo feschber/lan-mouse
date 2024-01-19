@@ -54,9 +54,76 @@ Keycode translation is not yet implemented so on MacOS only mouse emulation work
 > If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
 > Otherwise input capture will not work.
 
-## Build and Run
+## Installation
 
-### Install Dependencies
+### Download from Releases
+The easiest way to install Lan Mouse is to download precompiled release binaries from the [releases section](https://github.com/feschber/lan-mouse/releases).
+
+For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies).
+
+### Arch Linux
+Lan Mouse is available on the AUR:
+```sh
+# git version (includes latest changes)
+paru -S lan-mouse-git
+
+# alternatively
+paru -S lan-mouse-bin
+```
+
+
+### Building from Source
+
+Build in release mode:
+```sh
+cargo build --release
+```
+
+Run directly:
+```sh
+cargo run --release
+```
+
+Install the files:
+```sh
+# install lan-mouse
+sudo cp target/release/lan-mouse /usr/local/bin/
+
+# install app icon
+sudo mkdir -p /usr/local/share/icons/hicolor/scalable/apps
+sudo cp resources/de.feschber.LanMouse.svg /usr/local/share/icons/hicolor/scalable/apps
+
+# update icon cache
+gtk-update-icon-cache /usr/local/share/icons/hicolor/
+
+# install desktop entry
+sudo mkdir -p /usr/local/share/applications
+sudo cp de.feschber.LanMouse.dekstop /usr/local/share/applications
+```
+
+### Conditional Compilation
+
+Currently only x11, wayland, windows and MacOS are supported backends.
+Depending on the toolchain used, support for other platforms is omitted
+automatically (it does not make sense to build a Windows `.exe` with
+support for x11 and wayland backends).
+
+However one might still want to omit support for e.g. wayland, x11 or libei on
+a Linux system.
+
+This is possible through
+[cargo features](https://doc.rust-lang.org/cargo/reference/features.html).
+
+E.g. if only wayland support is needed, the following command produces
+an executable with just support for wayland:
+```sh
+cargo build --no-default-features --features wayland
+```
+For a detailed list of available features, checkout the [Cargo.toml](./Cargo.toml)
+
+
+## Installing Dependencies
+
 #### Macos
 ```sh
 brew install libadwaita
@@ -78,6 +145,9 @@ sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 ```
 
 #### Windows
+> [!NOTE]
+> This is only necessary when building lan-mouse from source. The windows release comes with precompiled gtk dlls.
+
 Follow the instructions at [gtk-rs.org](https://gtk-rs.org/gtk4-rs/stable/latest/book/installation_windows.html)
 
 *TLDR:*
@@ -119,37 +189,6 @@ Make sure to add the directory `C:\gtk-build\gtk\x64\release\bin`
 
 To avoid building GTK from source, it is possible to disable
 the gtk frontend (see conditional compilation below).
-
-### Build and run
-Build in release mode:
-```sh
-cargo build --release
-```
-
-Run directly:
-```sh
-cargo run --release
-```
-
-### Conditional Compilation
-
-Currently only x11, wayland, windows and MacOS are supported backends.
-Depending on the toolchain used, support for other platforms is omitted
-automatically (it does not make sense to build a Windows `.exe` with
-support for x11 and wayland backends).
-
-However one might still want to omit support for e.g. wayland, x11 or libei on
-a Linux system.
-
-This is possible through
-[cargo features](https://doc.rust-lang.org/cargo/reference/features.html).
-
-E.g. if only wayland support is needed, the following command produces
-an executable with just support for wayland:
-```sh
-cargo build --no-default-features --features wayland
-```
-For a detailed list of available features, checkout the [Cargo.toml](./Cargo.toml)
 
 ## Usage
 ### Gtk Frontend
