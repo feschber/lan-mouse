@@ -150,6 +150,7 @@ impl Server {
                 let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
             }
         }
+        log::info!("running service");
 
         tokio::select! {
             _ = signal::ctrl_c() => {

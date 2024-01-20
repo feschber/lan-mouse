@@ -26,6 +26,7 @@ pub fn new(
                 break;
             };
             loop {
+                log::info!("Checking for ping...");
                 let receiving = server.state.get() == State::Receiving;
                 let (ping_clients, ping_addrs) = {
                     let mut client_manager = server.client_manager.borrow_mut();

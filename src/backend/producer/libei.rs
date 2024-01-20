@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::{input_capture::{Barrier, Capabilities, InputCapture, Zones}, Session};
+use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones};
 use futures::StreamExt;
 use reis::{
     ei::{self, keyboard::KeyState},
     eis::button::ButtonState,
-    event::{DeviceCapability, EiEvent, Device},
+    event::{DeviceCapability, EiEvent},
     tokio::{EiConvertEventStream, EiEventStream},
 };
+use tokio::task::JoinHandle;
 use std::{
     io,
     os::{fd::FromRawFd, unix::net::UnixStream},
@@ -23,13 +24,16 @@ use crate::{
     producer::EventProducer,
 };
 
+enum ProducerEvent {
+    Release,
+    ClientEvent(ClientEvent),
+}
+
 #[allow(dead_code)]
 pub struct LibeiProducer {
-    context: ei::Context,
-    event_stream: EiConvertEventStream,
-    // input_capture: InputCapture<'a>,
-    // session: Session<'a>,
-    zones: Zones,
+    libei_task: JoinHandle<Result<()>>,
+    event_rx: tokio::sync::mpsc::Receiver<(u32, Event)>,
+    notify_tx: tokio::sync::mpsc::Sender<ProducerEvent>,
 }
 
 static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
@@ -73,181 +77,216 @@ impl LibeiProducer {
         // connect to eis for input capture
         log::debug!("creating input capture proxy");
         let input_capture = InputCapture::new().await?;
-        // create input capture session
-        log::debug!("creating input capture session");
-        let (session, _cap) = input_capture
-            .create_session(
-                &ashpd::WindowIdentifier::default(),
-                (Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen).into(),
-            )
-            .await?;
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
+        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
+        let libei_task = tokio::task::spawn_local(async move {
+            // create input capture session
+            log::debug!("creating input capture session");
+            let (session, _cap) = input_capture
+                .create_session(
+                    &ashpd::WindowIdentifier::default(),
+                    (Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen).into(),
+                )
+                .await?;
 
-        // connect to eis server
-        log::debug!("connect_to_eis");
-        let fd = input_capture.connect_to_eis(&session).await?;
-        let eifd = unsafe {
-            let fd = libc::dup(fd);
-            if fd < 0 {
-                return Err(anyhow!(
-                    "failed to dup eifd: {}",
-                    io::Error::last_os_error()
-                ));
-            } else {
-                fd
+            // connect to eis server
+            log::debug!("connect_to_eis");
+            let fd = input_capture.connect_to_eis(&session).await?;
+            let eifd = unsafe {
+                let fd = libc::dup(fd);
+                if fd < 0 {
+                    return Err(anyhow!(
+                        "failed to dup eifd: {}",
+                        io::Error::last_os_error()
+                    ));
+                } else {
+                    fd
+                }
+            };
+
+            log::debug!("selecting zones");
+            let zones = input_capture.zones(&session).await?.response()?;
+            log::debug!("{zones:?}");
+            // FIXME: position
+            let barriers = select_barriers(&zones, Position::Left);
+
+            log::debug!("selecting barriers: {barriers:?}");
+            input_capture
+                .set_pointer_barriers(&session, &barriers, zones.zone_set())
+                .await?;
+
+            log::debug!("enabling session");
+            input_capture.enable(&session).await?;
+
+            loop {
+
+                // create unix stream from fd
+                let stream = unsafe { UnixStream::from_raw_fd(eifd) };
+                stream.set_nonblocking(true)?;
+
+                // create ei context
+                let context = ei::Context::new(stream)?;
+                context.flush()?;
+
+                let mut event_stream = EiEventStream::new(context.clone())?;
+                let _handshake = match reis::tokio::ei_handshake(
+                    &mut event_stream,
+                    "lan-mouse",
+                    ei::handshake::ContextType::Receiver,
+                    &INTERFACES,
+                ).await {
+                    Ok(res) => res,
+                    Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
+                };
+
+                let mut event_stream = EiConvertEventStream::new(event_stream);
+                let mut entered = false;
+                loop {
+                    tokio::select! { biased;
+                        ei_event = event_stream.next() => {
+                            let ei_event = match ei_event {
+                                Some(Ok(e)) => e,
+                                _ => return Ok(()),
+                            };
+                            let lan_mouse_event = to_lan_mouse_event(ei_event, &context);
+                            if !entered {
+                                // FIXME
+                                let _ = event_tx.send((0, Event::Enter())).await;
+                                entered = true;
+                            }
+                            if let Some(event) = lan_mouse_event {
+                                let _ = event_tx.send(event).await;
+                            }
+                        }
+                        producer_event = notify_rx.recv() => {
+                            let producer_event = match producer_event {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            match producer_event {
+                                ProducerEvent::Release => break,
+                                ProducerEvent::ClientEvent(_) => { log::warn!("TODO") },
+                            }
+                        },
+                    }
+                }
+                input_capture.disable(&session).await.unwrap(); // FIXME
             }
-        };
+        });
 
-        log::debug!("selecting zones");
-        let zones = input_capture.zones(&session).await?.response()?;
-        log::debug!("{zones:?}");
-        // FIXME: position
-        let barriers = select_barriers(&zones, Position::Left);
-
-        log::debug!("selecting barriers: {barriers:?}");
-        input_capture
-            .set_pointer_barriers(&session, &barriers, zones.zone_set())
-            .await?;
-
-        log::debug!("enabling session");
-        input_capture.enable(&session).await?;
-        // let activated = match input_capture.receive_activated().await?.next().await.ok_or("could not receive activation_signal") {
-            // Ok(s) => Ok(s),
-            // Err(s) => Err(anyhow!("failed to receive activation token: {s}")),
-        // }?;
-        // log::debug!("received activation: {activated:?}");
-        // activated.activation_id();
-
-        // create unix stream from fd
-        let stream = unsafe { UnixStream::from_raw_fd(eifd) };
-        stream.set_nonblocking(true)?;
-
-        // create ei context
-        let context = ei::Context::new(stream)?;
-        context.flush()?;
-
-        let mut event_stream = EiEventStream::new(context.clone())?;
-        let _handshake = match reis::tokio::ei_handshake(
-            &mut event_stream,
-            "lan-mouse",
-            ei::handshake::ContextType::Receiver,
-            &INTERFACES,
-        ).await {
-            Ok(res) => res,
-            Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
-        };
-        let event_stream = EiConvertEventStream::new(event_stream);
         let producer = Self {
-            context,
-            // input_capture,
-            // session,
-            event_stream,
-            zones,
+            event_rx,
+            libei_task,
+            notify_tx,
         };
 
         Ok(producer)
     }
 }
 
+fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(ClientHandle, Event)> {
+    let client = 0; // FIXME
+    match ei_event {
+        EiEvent::SeatAdded(seat_event) => {
+            seat_event.seat.bind_capabilities(&[
+                DeviceCapability::Pointer,
+                DeviceCapability::PointerAbsolute,
+                DeviceCapability::Keyboard,
+                DeviceCapability::Touch,
+                DeviceCapability::Scroll,
+                DeviceCapability::Button,
+            ]);
+            let _ = context.flush();
+            None
+        }
+        EiEvent::SeatRemoved(_) => None,
+        EiEvent::DeviceAdded(_) => None,
+        EiEvent::DeviceRemoved(_) => None,
+        EiEvent::DevicePaused(_) => None,
+        EiEvent::DeviceResumed(_) => None,
+        EiEvent::KeyboardModifiers(mods) => {
+            let modifier_event = KeyboardEvent::Modifiers {
+                mods_depressed: mods.depressed,
+                mods_latched: mods.latched,
+                mods_locked: mods.locked,
+                group: mods.group,
+            };
+            Some((client, Event::Keyboard(modifier_event)))
+        }
+        EiEvent::Frame(_) => None,
+        EiEvent::DeviceStartEmulating(_) => None,
+        EiEvent::DeviceStopEmulating(_) => None,
+        EiEvent::PointerMotion(motion) => {
+            let motion_event = PointerEvent::Motion {
+                time: 0,
+                relative_x: motion.dx as f64,
+                relative_y: motion.dy as f64,
+            };
+            Some((client, Event::Pointer(motion_event)))
+        }
+        EiEvent::PointerMotionAbsolute(_) => None,
+        EiEvent::Button(button) => {
+            let button_event = PointerEvent::Button {
+                time: button.time as u32,
+                button: button.button,
+                state: match button.state {
+                    ButtonState::Released => 0,
+                    ButtonState::Press => 1,
+                },
+            };
+            Some((client, Event::Pointer(button_event)))
+        }
+        EiEvent::ScrollDelta(_) => None,
+        EiEvent::ScrollStop(_) => None,
+        EiEvent::ScrollCancel(_) => None,
+        EiEvent::ScrollDiscrete(scroll) => {
+            let axis_event = if scroll.discrete_dy > 0 {
+                PointerEvent::Axis {
+                    time: 0,
+                    axis: 0,
+                    value: scroll.discrete_dy as f64,
+                }
+            } else {
+                PointerEvent::Axis {
+                    time: 0,
+                    axis: 1,
+                    value: scroll.discrete_dx as f64,
+                }
+            };
+            Some((client, Event::Pointer(axis_event)))
+        }
+        EiEvent::KeyboardKey(key) => {
+            let key_event = KeyboardEvent::Key {
+                key: key.key,
+                state: match key.state {
+                    KeyState::Press => 1,
+                    KeyState::Released => 0,
+                },
+                time: key.time as u32,
+            };
+            Some((client, Event::Keyboard(key_event)))
+        }
+        EiEvent::TouchDown(_) => None,
+        EiEvent::TouchUp(_) => None,
+        EiEvent::TouchMotion(_) => None,
+    }
+}
+
 impl EventProducer for LibeiProducer {
-    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+    fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
+        let notify_tx = self.notify_tx.clone(); // FIXME
+        tokio::task::spawn_local(async move {
+            notify_tx.send(ProducerEvent::ClientEvent(event)).await.unwrap(); // FIXME
+        });
         Ok(())
     }
 
     fn release(&mut self) -> io::Result<()> {
-        // FIXME
-        // self.input_capture.release(&self.session, 0, (1.,0.));
+        let notify_tx = self.notify_tx.clone(); // FIXME
+        tokio::task::spawn_local(async move {
+            notify_tx.send(ProducerEvent::Release).await.unwrap(); // FIXME
+        });
         Ok(())
-    }
-}
-
-impl LibeiProducer {
-    fn handle_libei_event(&mut self, event: EiEvent) -> Option<(ClientHandle, Event)> {
-        // FIXME
-        let client = 0;
-        match event {
-            EiEvent::SeatAdded(seat_event) => {
-                seat_event.seat.bind_capabilities(&[
-                    DeviceCapability::Pointer,
-                    DeviceCapability::PointerAbsolute,
-                    DeviceCapability::Keyboard,
-                    DeviceCapability::Touch,
-                    DeviceCapability::Scroll,
-                    DeviceCapability::Button,
-                ]);
-                let _ = self.context.flush();
-                None
-            }
-            EiEvent::SeatRemoved(_) => None,
-            EiEvent::DeviceAdded(d) => None,
-            EiEvent::DeviceRemoved(_) => None,
-            EiEvent::DevicePaused(_) => None,
-            EiEvent::DeviceResumed(_) => None,
-            EiEvent::KeyboardModifiers(mods) => {
-                let modifier_event = KeyboardEvent::Modifiers {
-                    mods_depressed: mods.depressed,
-                    mods_latched: mods.latched,
-                    mods_locked: mods.locked,
-                    group: mods.group,
-                };
-                Some((client, Event::Keyboard(modifier_event)))
-            }
-            EiEvent::Frame(_) => None,
-            EiEvent::DeviceStartEmulating(_) => None,
-            EiEvent::DeviceStopEmulating(_) => None,
-            EiEvent::PointerMotion(motion) => {
-                let motion_event = PointerEvent::Motion {
-                    time: 0,
-                    relative_x: motion.dx as f64,
-                    relative_y: motion.dy as f64,
-                };
-                Some((client, Event::Pointer(motion_event)))
-            }
-            EiEvent::PointerMotionAbsolute(_) => None,
-            EiEvent::Button(button) => {
-                let button_event = PointerEvent::Button {
-                    time: button.time as u32,
-                    button: button.button,
-                    state: match button.state {
-                        ButtonState::Released => 0,
-                        ButtonState::Press => 1,
-                    },
-                };
-                Some((client, Event::Pointer(button_event)))
-            }
-            EiEvent::ScrollDelta(_) => None,
-            EiEvent::ScrollStop(_) => None,
-            EiEvent::ScrollCancel(_) => None,
-            EiEvent::ScrollDiscrete(scroll) => {
-                let axis_event = if scroll.discrete_dy > 0 {
-                    PointerEvent::Axis {
-                        time: 0,
-                        axis: 0,
-                        value: scroll.discrete_dy as f64,
-                    }
-                } else {
-                    PointerEvent::Axis {
-                        time: 0,
-                        axis: 1,
-                        value: scroll.discrete_dx as f64,
-                    }
-                };
-                Some((client, Event::Pointer(axis_event)))
-            }
-            EiEvent::KeyboardKey(key) => {
-                let key_event = KeyboardEvent::Key {
-                    key: key.key,
-                    state: match key.state {
-                        KeyState::Press => 1,
-                        KeyState::Released => 0,
-                    },
-                    time: key.time as u32,
-                };
-                Some((client, Event::Keyboard(key_event)))
-            }
-            EiEvent::TouchDown(_) => None,
-            EiEvent::TouchUp(_) => None,
-            EiEvent::TouchMotion(_) => None,
-        }
     }
 }
 
@@ -256,24 +295,10 @@ impl Stream for LibeiProducer {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            let event = match ready!(self.event_stream.poll_next_unpin(cx)) {
+            match ready!(self.event_rx.poll_recv(cx)) {
                 None => return Poll::Ready(None),
-                Some(Err(e)) => match e {
-                    reis::tokio::EiConvertEventStreamError::Io(e) => {
-                        return Poll::Ready(Some(Err(e)))
-                    }
-                    reis::tokio::EiConvertEventStreamError::Parse(e) => {
-                        panic!("parse error: {}", e)
-                    }
-                    reis::tokio::EiConvertEventStreamError::Event(e) => {
-                        panic!("event error: {:?}", e)
-                    }
-                },
-                Some(Ok(event)) => event,
+                Some(e) => return Poll::Ready(Some(Ok(e))),
             };
-            if let Some(e) = self.handle_libei_event(event) {
-                return Poll::Ready(Some(Ok(e)));
-            }
         }
     }
 }
