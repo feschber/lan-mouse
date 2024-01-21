@@ -223,6 +223,17 @@ To do so, add `--daemon` to the commandline args:
 $ cargo run --release -- --daemon
 ```
 
+In order to start lan-mouse with a graphical session automatically,
+the [systemd-service](service/lan-mouse.service) can be used:
+
+Copy the file to `~/.config/systemd/user/` and enable the service:
+
+```sh
+cp service/lan-mouse.service ~/.config/systemd/user
+systemctl --user daemon-reload
+systemctl --user enable --now lan-mouse.service
+```
+
 ## Configuration
 To automatically load clients on startup, the file `$XDG_CONFIG_HOME/lan-mouse/config.toml` is parsed.
 `$XDG_CONFIG_HOME` defaults to `~/.config/`.

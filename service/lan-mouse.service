@@ -1,0 +1,13 @@
+[Unit]
+Description=Lan Mouse
+# lan mouse needs an active graphical session
+After=graphical-session.target
+# make sure the service terminates with the graphical session
+BindsTo=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/lan-mouse --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
