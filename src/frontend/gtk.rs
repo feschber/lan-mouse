@@ -129,14 +129,7 @@ fn build_ui(app: &Application) {
     window.imp().stream.borrow_mut().replace(tx);
     glib::spawn_future_local(clone!(@weak window => async move {
         loop {
-            let notify = receiver.recv().await;
-            let notify = match notify {
-                Ok(n) => n,
-                _ => {
-                    window.show_exit_dialog("service exited");
-                    break;
-                }
-            };
+            let notify = receiver.recv().await.unwrap();
             match notify {
                 FrontendNotify::NotifyClientActivate(handle, active) => {
                     window.activate_client(handle, active);

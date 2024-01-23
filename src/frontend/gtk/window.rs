@@ -1,6 +1,6 @@
 mod imp;
 
-use std::{io::Write, process};
+use std::io::Write;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -217,17 +217,5 @@ impl Window {
         let toast = adw::Toast::new(msg);
         let toast_overlay = &self.imp().toast_overlay;
         toast_overlay.add_toast(toast);
-    }
-
-    pub fn show_exit_dialog(&self, msg: &str) {
-        let dialog = adw::MessageDialog::builder()
-            .transient_for(self)
-            // .heading(msg)
-            .body(msg)
-            .build();
-
-        dialog.add_response("close", "Close");
-        dialog.connect_response(Some("close"), move |_, _| process::exit(1));
-        dialog.show();
     }
 }
