@@ -54,7 +54,9 @@ pub fn new(
                         None => break,
                     }
                 }
-                _ = consumer.dispatch() => { }
+                res = consumer.dispatch() => {
+                    res?;
+                }
             }
         }
 
