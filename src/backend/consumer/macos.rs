@@ -5,9 +5,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
-    CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
+    CGEvent, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use keycode::{KeyMap, KeyMapping};
 use std::ops::{Index, IndexMut};
 
 pub struct MacOSConsumer {
@@ -209,22 +210,33 @@ impl EventConsumer for MacOSConsumer {
                 PointerEvent::Frame { .. } => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
-                KeyboardEvent::Key { .. } => {
-                    /*
-                    let code = CGKeyCode::from_le(key as u16);
+                KeyboardEvent::Key {
+                    time: _,
+                    key,
+                    state,
+                } => {
+                    let code = match KeyMap::from_key_mapping(KeyMapping::Evdev(key as u16)) {
+                        Ok(k) => k.mac as CGKeyCode,
+                        Err(_) => {
+                            log::warn!("unable to map key event");
+                            return;
+                        }
+                    };
                     let event = match CGEvent::new_keyboard_event(
                         self.event_source.clone(),
                         code,
-                        match state { 1 => true, _ => false }
+                        match state {
+                            1 => true,
+                            _ => false,
+                        },
                     ) {
                         Ok(e) => e,
                         Err(_) => {
                             log::warn!("unable to create key event");
-                            return
+                            return;
                         }
                     };
                     event.post(CGEventTapLocation::HID);
-                    */
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
