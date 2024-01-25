@@ -10,9 +10,15 @@ use core_graphics::event::{
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use keycode::{KeyMap, KeyMapping};
 use std::ops::{Index, IndexMut};
+use std::time::Duration;
+use tokio::task::AbortHandle;
+
+const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
+const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
 pub struct MacOSConsumer {
     pub event_source: CGEventSource,
+    repeat_task: Option<AbortHandle>,
     button_state: ButtonState,
 }
 
@@ -60,6 +66,7 @@ impl MacOSConsumer {
         Ok(Self {
             event_source,
             button_state,
+            repeat_task: None,
         })
     }
 
@@ -67,6 +74,44 @@ impl MacOSConsumer {
         let event: CGEvent = CGEvent::new(self.event_source.clone()).ok()?;
         Some(event.location())
     }
+
+    async fn spawn_repeat_task(&mut self, key: u16) {
+        // there can only be one repeating key and it's
+        // always the last to be pressed
+        self.kill_repeat_task();
+        let event_source = self.event_source.clone();
+        let repeat_task = tokio::task::spawn_local(async move {
+            tokio::time::sleep(DEFAULT_REPEAT_DELAY).await;
+            loop {
+                key_event(event_source.clone(), key, 1);
+                tokio::time::sleep(DEFAULT_REPEAT_INTERVAL).await;
+            }
+        });
+        self.repeat_task = Some(repeat_task.abort_handle());
+    }
+    fn kill_repeat_task(&mut self) {
+        if let Some(task) = self.repeat_task.take() {
+            task.abort();
+        }
+    }
+}
+
+fn key_event(event_source: CGEventSource, key: u16, state: u8) {
+    let event = match CGEvent::new_keyboard_event(
+        event_source,
+        key,
+        match state {
+            1 => true,
+            _ => false,
+        },
+    ) {
+        Ok(e) => e,
+        Err(_) => {
+            log::warn!("unable to create key event");
+            return;
+        }
+    };
+    event.post(CGEventTapLocation::HID);
 }
 
 #[async_trait]
@@ -222,21 +267,12 @@ impl EventConsumer for MacOSConsumer {
                             return;
                         }
                     };
-                    let event = match CGEvent::new_keyboard_event(
-                        self.event_source.clone(),
-                        code,
-                        match state {
-                            1 => true,
-                            _ => false,
-                        },
-                    ) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            log::warn!("unable to create key event");
-                            return;
-                        }
-                    };
-                    event.post(CGEventTapLocation::HID);
+                    match state {
+                        // pressed
+                        1 => self.spawn_repeat_task(code).await,
+                        _ => self.kill_repeat_task(),
+                    }
+                    key_event(self.event_source.clone(), code, state)
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
