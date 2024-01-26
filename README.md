@@ -46,9 +46,7 @@ input capture (to send events *to* other clients) on different operating systems
 | Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
 | X11                       | :heavy_check_mark:       | WIP                                  |
 | Windows                   | :heavy_check_mark:       | WIP                                  |
-| MacOS                     | ( :heavy_check_mark: )   | WIP                                  |
-
-Keycode translation is not yet implemented so on MacOS only mouse emulation works as of right now.
+| MacOS                     | :heavy_check_mark:       | WIP                                  |
 
 > [!Important]
 > If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
