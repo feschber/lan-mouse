@@ -30,6 +30,7 @@ clap = { version="4.4.11", features = ["derive"] }
 gtk = { package = "gtk4", version = "0.7.2", features = ["v4_2"], optional = true }
 adw = { package = "libadwaita", version = "0.5.2", features = ["v1_1"], optional = true }
 async-channel = { version = "2.1.1", optional = true }
+keycode = "0.4.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
