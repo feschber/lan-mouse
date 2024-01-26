@@ -1,0 +1,24 @@
+name: Binary Cache
+
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  nix:
+    name: "Build"
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - uses: DeterminateSystems/nix-installer-action@main
+      with:
+        logger: pretty
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: cachix/cachix-action@v12
+      with:
+        name: lan-mouse
+        authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+    - name: Build lan-mouse
+      run: nix build --print-build-logs
