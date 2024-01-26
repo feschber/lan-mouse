@@ -97,14 +97,7 @@ impl MacOSConsumer {
 }
 
 fn key_event(event_source: CGEventSource, key: u16, state: u8) {
-    let event = match CGEvent::new_keyboard_event(
-        event_source,
-        key,
-        match state {
-            1 => true,
-            _ => false,
-        },
-    ) {
+    let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
         Ok(e) => e,
         Err(_) => {
             log::warn!("unable to create key event");
