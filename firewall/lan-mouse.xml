@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- for packaging: /usr/lib/firewalld/services/lan-mouse.xml -->
+<!-- configure manually: /etc/firewalld/services/lan-mouse.xml -->
+<service>
+  <short>LAN Mouse</short>
+  <description>mouse and keyboard sharing via LAN</description>
+  <port port="4242" protocol="udp"/>
+</service>
