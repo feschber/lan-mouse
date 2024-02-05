@@ -113,7 +113,7 @@ gtk-update-icon-cache /usr/local/share/icons/hicolor/
 
 # install desktop entry
 sudo mkdir -p /usr/local/share/applications
-sudo cp de.feschber.LanMouse.dekstop /usr/local/share/applications
+sudo cp de.feschber.LanMouse.desktop /usr/local/share/applications
 
 # when using firewalld: install firewall rule
 sudo cp firewall/lan-mouse.xml /etc/firewalld/services
