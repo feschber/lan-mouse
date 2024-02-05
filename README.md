@@ -49,8 +49,25 @@ input capture (to send events *to* other clients) on different operating systems
 | MacOS                     | :heavy_check_mark:       | WIP                                  |
 
 > [!Important]
+> **Sway**
+>
+> In recent sway git versions, there has been a regression regarding the `wlr-layer-shell` protocol: https://github.com/swaywm/sway/issues/7936
+> This causes `sway` to break in a way that makes it impossible to focus any window surfaces after entering and exiting any client in Lan Mouse.
+> If you are using `sway-git` on Arch Linux, you should either downgrade to `sway` or wait for a fix.
+
+> [!Important]
+> **Wayfire**
+>
 > If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
 > Otherwise input capture will not work.
+
+> [!Important]
+> **Hyprland**
+>
+> Hyprland has several problems, namely:
+> - `shortcuts-inhibit` is advertised to be available but not actually implemented: This causes any Hyprland keybindings to be interpreted by hyprland instead of being sent to the remote client (https://github.com/hyprwm/Hyprland/issues/4568)
+> - `layer-shell` had a regression in regards to the `pointer-constraints` protocol, which now does not work anymore. (https://github.com/hyprwm/Hyprland/issues/4465)
+> - Without this regression, `layer-shell` still has problems with `pointer-constraints` being released when the mouse is moved to far (such that it *would* be moved onto a different output in the state where it should actually be locked) (https://github.com/hyprwm/Hyprland/issues/4464)
 
 ## Installation
 
@@ -97,6 +114,10 @@ gtk-update-icon-cache /usr/local/share/icons/hicolor/
 # install desktop entry
 sudo mkdir -p /usr/local/share/applications
 sudo cp de.feschber.LanMouse.dekstop /usr/local/share/applications
+
+# when using firewalld: install firewall rule
+sudo cp firewall/lan-mouse.xml /etc/firewalld/services
+# -> enable the service in firewalld settings
 ```
 
 ### Conditional Compilation
@@ -157,7 +178,7 @@ Build gtk from source
 # install chocolatey
 Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-# install python 3.11 (Version is important, as 3.12 does not work currently)
+# install python 3.11 (Version is important, as 3.12 does not work currently) -> Has been fixed recently
 choco install python --version=3.11.0
 
 # install git
@@ -176,6 +197,10 @@ choco install visualstudio2022-workload-vctools
 # install gvsbuild with python
 python -m pip install --user pipx
 python -m pipx ensurepath
+```
+
+- Relaunch your powershell instance so the changes in the environment are reflected.
+```sh
 pipx install gvsbuild
 
 # build gtk + libadwaita
@@ -277,11 +302,11 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] IP Address switching
 - [x] Liveness tracking Automatically ungrab mouse when client unreachable
 - [x] Liveness tracking: Automatically release keys, when server offline
+- [x] MacOS KeyCode Translation
 - [ ] Libei Input Capture
 - [ ] X11 Input Capture
 - [ ] Windows Input Capture
 - [ ] MacOS Input Capture
-- [ ] MacOS KeyCode Translation
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization
 - [ ] Clipboard support
