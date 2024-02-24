@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    io,
     os::{
-        fd::{FromRawFd, RawFd},
+        fd::OwnedFd,
         unix::net::UnixStream,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -43,7 +42,7 @@ pub struct LibeiConsumer {
     serial: u32,
 }
 
-async fn get_ei_fd() -> Result<RawFd, ashpd::Error> {
+async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
     let proxy = RemoteDesktop::new().await?;
     let session = proxy.create_session().await?;
 
@@ -65,15 +64,7 @@ impl LibeiConsumer {
     pub async fn new() -> Result<Self> {
         // fd is owned by the message, so we need to dup it
         let eifd = get_ei_fd().await?;
-        let eifd = unsafe {
-            let ret = libc::dup(eifd);
-            if ret < 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(ret)
-            }
-        }?;
-        let stream = unsafe { UnixStream::from_raw_fd(eifd) };
+        let stream = UnixStream::from(eifd);
         // let stream = UnixStream::connect("/run/user/1000/eis-0")?;
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;

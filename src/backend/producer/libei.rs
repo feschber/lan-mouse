@@ -10,7 +10,7 @@ use reis::{
 use tokio::task::JoinHandle;
 use std::{
     io,
-    os::{fd::FromRawFd, unix::net::UnixStream},
+    os::unix::net::UnixStream,
     pin::Pin,
     task::{ready, Context, Poll}, collections::HashMap,
 };
@@ -92,17 +92,6 @@ impl LibeiProducer {
             // connect to eis server
             log::debug!("connect_to_eis");
             let fd = input_capture.connect_to_eis(&session).await?;
-            let eifd = unsafe {
-                let fd = libc::dup(fd);
-                if fd < 0 {
-                    return Err(anyhow!(
-                        "failed to dup eifd: {}",
-                        io::Error::last_os_error()
-                    ));
-                } else {
-                    fd
-                }
-            };
 
             log::debug!("selecting zones");
             let zones = input_capture.zones(&session).await?.response()?;
@@ -118,15 +107,20 @@ impl LibeiProducer {
             log::debug!("enabling session");
             input_capture.enable(&session).await?;
 
+            let mut activated = input_capture.receive_activated().await?;
+
+            log::debug!("receiving activation token");
+            let activated = activated.next().await.unwrap();
+            log::debug!("activation token: {activated:?}");
+
+            // create unix stream from fd
+            let stream = UnixStream::from(fd);
+            stream.set_nonblocking(true)?;
+            // create ei context
+            let context = ei::Context::new(stream)?;
+            context.flush()?;
+
             loop {
-
-                // create unix stream from fd
-                let stream = unsafe { UnixStream::from_raw_fd(eifd) };
-                stream.set_nonblocking(true)?;
-
-                // create ei context
-                let context = ei::Context::new(stream)?;
-                context.flush()?;
 
                 let mut event_stream = EiEventStream::new(context.clone())?;
                 let _handshake = match reis::tokio::ei_handshake(
@@ -170,7 +164,8 @@ impl LibeiProducer {
                         },
                     }
                 }
-                input_capture.disable(&session).await.unwrap(); // FIXME
+                log::debug!("releasing input capture");
+                input_capture.release(&session, activated.activation_id(), (100., 100.)).await.unwrap(); // FIXME
             }
         });
 
