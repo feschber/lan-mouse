@@ -65,9 +65,14 @@ input capture (to send events *to* other clients) on different operating systems
 > **Hyprland**
 >
 > Hyprland has several problems, namely:
-> - `shortcuts-inhibit` is advertised to be available but not actually implemented: This causes any Hyprland keybindings to be interpreted by hyprland instead of being sent to the remote client (https://github.com/hyprwm/Hyprland/issues/4568)
+> - ~`shortcuts-inhibit` is advertised to be available but not actually implemented: This causes any Hyprland keybindings to be interpreted by hyprland instead of being sent to the remote client (https://github.com/hyprwm/Hyprland/issues/4568)~
+>
+> fixed in [e3373669e5544c3f18cf1edcd8fcfff9c6222f5c](https://github.com/hyprwm/Hyprland/commit/e3373669e5544c3f18cf1edcd8fcfff9c6222f5c)
+>
 > - `layer-shell` had a regression in regards to the `pointer-constraints` protocol, which now does not work anymore. (https://github.com/hyprwm/Hyprland/issues/4465)
 > - Without this regression, `layer-shell` still has problems with `pointer-constraints` being released when the mouse is moved to far (such that it *would* be moved onto a different output in the state where it should actually be locked) (https://github.com/hyprwm/Hyprland/issues/4464)
+>
+> Both of the later issues are going to be fixed in https://github.com/hyprwm/Hyprland/pull/4889
 
 ## Installation
 
