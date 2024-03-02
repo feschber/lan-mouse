@@ -50,10 +50,9 @@ input capture (to send events *to* other clients) on different operating systems
 
 > [!Important]
 > **Sway**
->
-> In recent sway git versions, there has been a regression regarding the `wlr-layer-shell` protocol: https://github.com/swaywm/sway/issues/7936
+> In Sway version `1.9` and git versions leading up to that release, there has been a regression regarding the `wlr-layer-shell` protocol: https://github.com/swaywm/sway/issues/7936
 > This causes `sway` to break in a way that makes it impossible to focus any window surfaces after entering and exiting any client in Lan Mouse.
-> If you are using `sway-git` on Arch Linux, you should either downgrade to `sway` or wait for a fix.
+> A fix is scheduled for sway `1.10`. Until then, you will need to downgrade to Sway `1.8`.
 
 > [!Important]
 > **Wayfire**
