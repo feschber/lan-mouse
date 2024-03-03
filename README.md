@@ -49,12 +49,6 @@ input capture (to send events *to* other clients) on different operating systems
 | MacOS                     | :heavy_check_mark:       | WIP                                  |
 
 > [!Important]
-> **Sway**
-> In Sway version `1.9` and git versions leading up to that release, there has been a regression regarding the `wlr-layer-shell` protocol: https://github.com/swaywm/sway/issues/7936
-> This causes `sway` to break in a way that makes it impossible to focus any window surfaces after entering and exiting any client in Lan Mouse.
-> A fix is scheduled for sway `1.10`. Until then, you will need to downgrade to Sway `1.8`.
-
-> [!Important]
 > **Wayfire**
 >
 > If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
