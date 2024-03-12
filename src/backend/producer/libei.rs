@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones};
+use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones, Activated};
 use futures::StreamExt;
 use reis::{
     ei::{self, keyboard::KeyState},
@@ -93,6 +93,26 @@ impl LibeiProducer {
             log::debug!("connect_to_eis");
             let fd = input_capture.connect_to_eis(&session).await?;
 
+            // create unix stream from fd
+            let stream = UnixStream::from(fd);
+            stream.set_nonblocking(true)?;
+
+            // create ei context
+            let context = ei::Context::new(stream)?;
+            let mut event_stream = EiEventStream::new(context.clone())?;
+            let _handshake = match reis::tokio::ei_handshake(
+                &mut event_stream,
+                "lan-mouse",
+                ei::handshake::ContextType::Receiver,
+                &INTERFACES,
+            ).await {
+                Ok(res) => res,
+                Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
+            };
+
+            let mut event_stream = EiConvertEventStream::new(event_stream);
+
+
             log::debug!("selecting zones");
             let zones = input_capture.zones(&session).await?.response()?;
             log::debug!("{zones:?}");
@@ -108,32 +128,15 @@ impl LibeiProducer {
             input_capture.enable(&session).await?;
 
             let mut activated = input_capture.receive_activated().await?;
-
-            log::debug!("receiving activation token");
-            let activated = activated.next().await.unwrap();
-            log::debug!("activation token: {activated:?}");
-
-            // create unix stream from fd
-            let stream = UnixStream::from(fd);
-            stream.set_nonblocking(true)?;
-            // create ei context
-            let context = ei::Context::new(stream)?;
-            context.flush()?;
+            let mut activated = input_capture.receive_all_signals().await?;
 
             loop {
+                log::debug!("receiving activation token");
+                let activated = activated.next().await.unwrap();
+                log::debug!("activation token: {activated:?}");
+                let activated: Activated = activated.body().deserialize().unwrap();
 
-                let mut event_stream = EiEventStream::new(context.clone())?;
-                let _handshake = match reis::tokio::ei_handshake(
-                    &mut event_stream,
-                    "lan-mouse",
-                    ei::handshake::ContextType::Receiver,
-                    &INTERFACES,
-                ).await {
-                    Ok(res) => res,
-                    Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
-                };
 
-                let mut event_stream = EiConvertEventStream::new(event_stream);
                 let mut entered = false;
                 loop {
                     tokio::select! { biased;
@@ -289,11 +292,9 @@ impl Stream for LibeiProducer {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            match ready!(self.event_rx.poll_recv(cx)) {
-                None => return Poll::Ready(None),
-                Some(e) => return Poll::Ready(Some(Ok(e))),
-            };
+        match ready!(self.event_rx.poll_recv(cx)) {
+            None => return Poll::Ready(None),
+            Some(e) => return Poll::Ready(Some(Ok(e))),
         }
     }
 }
