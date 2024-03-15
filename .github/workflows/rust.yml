@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: install dependencies
       run: |
         sudo apt-get update
@@ -30,7 +30,7 @@ jobs:
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse
         path: target/debug/lan-mouse
@@ -40,7 +40,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
@@ -84,7 +84,7 @@ jobs:
     - name: Copy Gtk Dlls
       run: Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "target\\debug"
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-windows
         path: |
@@ -94,7 +94,7 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: install dependencies
       run: brew install gtk4 libadwaita
     - name: Build
@@ -106,7 +106,7 @@ jobs:
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos
         path: target/debug/lan-mouse
