@@ -86,9 +86,9 @@ pub fn new(
 
                 // give clients time to resond
                 if receiving {
-                    log::debug!("waiting {MAX_RESPONSE_TIME:?} for response from client with pressed keys ...");
+                    log::trace!("waiting {MAX_RESPONSE_TIME:?} for response from client with pressed keys ...");
                 } else {
-                    log::debug!(
+                    log::trace!(
                         "state: {:?} => waiting {MAX_RESPONSE_TIME:?} for client to respond ...",
                         server.state.get()
                     );
