@@ -13,7 +13,7 @@ jobs:
   linux-release-build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: install dependencies
       run: |
         sudo apt-get update
@@ -22,7 +22,7 @@ jobs:
     - name: Release Build
       run: cargo build --release
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-linux
         path: target/release/lan-mouse
@@ -62,7 +62,7 @@ jobs:
         gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
         Move-Item "C:\Program Files\Git\usr\notbin" "C:\Program Files\Git\usr\bin"
         Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Release Build
       run: cargo build --release
     - name: Create Archive
@@ -72,7 +72,7 @@ jobs:
         Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse-windows"
         Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows.zip
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-windows
         path: lan-mouse-windows.zip
@@ -80,7 +80,7 @@ jobs:
   macos-release-build:
     runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: install dependencies
       run: brew install gtk4 libadwaita
     - name: Release Build
@@ -88,7 +88,7 @@ jobs:
         cargo build --release
         cp target/release/lan-mouse lan-mouse-macos-intel
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos
         path: lan-mouse-macos-intel
