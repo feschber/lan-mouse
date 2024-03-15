@@ -54,9 +54,12 @@ use wayland_client::{
     delegate_noop,
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
-        wl_buffer, wl_compositor, wl_keyboard,
+        wl_buffer, wl_compositor,
+        wl_keyboard::{self, WlKeyboard},
         wl_output::{self, WlOutput},
-        wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+        wl_pointer::{self, WlPointer},
+        wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+        wl_surface::WlSurface,
     },
     Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
 };
@@ -73,7 +76,7 @@ struct Globals {
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
     layer_shell: ZwlrLayerShellV1,
-    outputs: Vec<wl_output::WlOutput>,
+    outputs: Vec<WlOutput>,
     xdg_output_manager: ZxdgOutputManagerV1,
 }
 
@@ -95,6 +98,8 @@ impl OutputInfo {
 }
 
 struct State {
+    pointer: Option<WlPointer>,
+    keyboard: Option<WlKeyboard>,
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
@@ -123,7 +128,7 @@ pub struct WaylandEventProducer(AsyncFd<Inner>);
 
 struct Window {
     buffer: wl_buffer::WlBuffer,
-    surface: wl_surface::WlSurface,
+    surface: WlSurface,
     layer_surface: ZwlrLayerSurfaceV1,
     pos: Position,
 }
@@ -136,6 +141,7 @@ impl Window {
         pos: Position,
         size: (i32, i32),
     ) -> Window {
+        log::debug!("creating window output: {output:?}, size: {size:?}");
         let g = &state.g;
 
         let (width, height) = match pos {
@@ -217,6 +223,7 @@ fn get_edges(outputs: &[(WlOutput, OutputInfo)], pos: Position) -> Vec<(WlOutput
 fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, OutputInfo)> {
     // get all output edges corresponding to the position
     let edges = get_edges(&state.output_info, pos);
+    log::debug!("edges: {edges:?}");
     let opposite_edges = get_edges(&state.output_info, pos.opposite());
 
     // remove those edges that are at the same position
@@ -331,6 +338,8 @@ impl WaylandEventProducer {
         std::mem::drop(read_guard);
 
         let mut state = State {
+            pointer: None,
+            keyboard: None,
             g,
             pointer_lock: None,
             rel_pointer: None,
@@ -406,8 +415,8 @@ impl WaylandEventProducer {
 impl State {
     fn grab(
         &mut self,
-        surface: &wl_surface::WlSurface,
-        pointer: &wl_pointer::WlPointer,
+        surface: &WlSurface,
+        pointer: &WlPointer,
         serial: u32,
         qh: &QueueHandle<State>,
     ) {
@@ -489,6 +498,7 @@ impl State {
     fn add_client(&mut self, client: ClientHandle, pos: Position) {
         let outputs = get_output_configuration(self, pos);
 
+        log::debug!("outputs: {outputs:?}");
         outputs.iter().for_each(|(o, i)| {
             let window = Window::new(self, &self.qh, o, pos, i.size);
             let window = Rc::new(window);
@@ -654,7 +664,7 @@ impl Stream for WaylandEventProducer {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         seat: &wl_seat::WlSeat,
         event: <wl_seat::WlSeat as wayland_client::Proxy>::Event,
         _: &(),
@@ -665,21 +675,21 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
             capabilities: WEnum::Value(capabilities),
         } = event
         {
-            if capabilities.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(qh, ());
+            if capabilities.contains(wl_seat::Capability::Pointer) && state.pointer.is_none() {
+                state.pointer.replace(seat.get_pointer(qh, ()));
             }
-            if capabilities.contains(wl_seat::Capability::Keyboard) {
+            if capabilities.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
                 seat.get_keyboard(qh, ());
             }
         }
     }
 }
 
-impl Dispatch<wl_pointer::WlPointer, ()> for State {
+impl Dispatch<WlPointer, ()> for State {
     fn event(
         app: &mut Self,
-        pointer: &wl_pointer::WlPointer,
-        event: <wl_pointer::WlPointer as wayland_client::Proxy>::Event,
+        pointer: &WlPointer,
+        event: <WlPointer as wayland_client::Proxy>::Event,
         _: &(),
         _: &Connection,
         qh: &QueueHandle<Self>,
@@ -761,10 +771,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
     }
 }
 
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
+impl Dispatch<WlKeyboard, ()> for State {
     fn event(
         app: &mut Self,
-        _: &wl_keyboard::WlKeyboard,
+        _: &WlKeyboard,
         event: wl_keyboard::Event,
         _: &(),
         _: &Connection,
@@ -917,7 +927,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state
                         .g
                         .outputs
-                        .push(registry.bind::<wl_output::WlOutput, _, _>(name, 4, qh, ()))
+                        .push(registry.bind::<WlOutput, _, _>(name, 4, qh, ()))
                 }
             }
             wl_registry::Event::GlobalRemove { .. } => {}
@@ -962,11 +972,11 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for State {
+impl Dispatch<WlOutput, ()> for State {
     fn event(
         state: &mut Self,
-        _proxy: &wl_output::WlOutput,
-        event: <wl_output::WlOutput as wayland_client::Proxy>::Event,
+        _proxy: &WlOutput,
+        event: <WlOutput as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
@@ -990,6 +1000,6 @@ delegate_noop!(State: ZwpPointerConstraintsV1);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore wl_shm::WlShm);
 delegate_noop!(State: ignore wl_buffer::WlBuffer);
-delegate_noop!(State: ignore wl_surface::WlSurface);
+delegate_noop!(State: ignore WlSurface);
 delegate_noop!(State: ignore ZwpKeyboardShortcutsInhibitorV1);
 delegate_noop!(State: ignore ZwpLockedPointerV1);
