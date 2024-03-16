@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones};
+use ashpd::desktop::{input_capture::{Barrier, BarrierID, Capabilities, InputCapture, Region, Zones}, Session};
 use futures::StreamExt;
 use reis::{
     ei::{self, keyboard::KeyState},
@@ -25,6 +25,7 @@ use crate::{
     producer::EventProducer,
 };
 
+#[derive(Debug)]
 enum ProducerEvent {
     Release,
     ClientEvent(ClientEvent),
@@ -53,24 +54,59 @@ static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
     m
 });
 
-fn select_barriers(zones: &Zones, pos: Position) -> Vec<Barrier> {
-    zones
-        .regions()
-        .iter()
-        .enumerate()
-        .map(|(n, r)| {
-            let id = n as u32;
-            let (x, y) = (r.x_offset(), r.y_offset());
-            let (width, height) = (r.width() as i32, r.height() as i32);
-            let barrier_pos = match pos {
-                Position::Left => (x, y, x, y + height - 1), // start pos, end pos, inclusive
-                Position::Right => (x + width - 1, y, x + width - 1, y + height - 1),
-                Position::Top => (x, y, x + width - 1, y),
-                Position::Bottom => (x, y + height - 1, x + width - 1, y + height - 1),
-            };
-            Barrier::new(id, barrier_pos)
-        })
-        .collect()
+fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
+    let (x, y) = (r.x_offset(), r.y_offset());
+    let (width, height) = (r.width() as i32, r.height() as i32);
+    match pos {
+        Position::Left => (x, y, x, y + height - 1), // start pos, end pos, inclusive
+        Position::Right => (x + width - 1, y, x + width - 1, y + height - 1),
+        Position::Top => (x, y, x + width - 1, y),
+        Position::Bottom => (x, y + height - 1, x + width - 1, y + height - 1),
+    }
+}
+
+fn select_barriers(zones: &Zones, clients: &Vec<(ClientHandle,Position)>, next_barrier_id: &mut u32) -> (Vec<Barrier>, HashMap<BarrierID, ClientHandle>) {
+    let mut client_for_barrier = HashMap::new();
+    let mut barriers: Vec<Barrier> = vec![];
+
+    for (handle, pos) in clients {
+        let mut client_barriers = zones
+            .regions()
+            .iter()
+            .map(|r| {
+                let id = *next_barrier_id as u32;
+                *next_barrier_id = id + 1;
+                let position = pos_to_barrier(r, *pos);
+                client_for_barrier.insert(id, *handle);
+                Barrier::new(id, position)
+            })
+            .collect();
+        barriers.append(&mut client_barriers);
+    }
+    (barriers, client_for_barrier)
+}
+
+async fn update_barriers(
+    input_capture: &InputCapture<'_>,
+    session: &Session<'_>,
+    active_clients: &Vec<(ClientHandle, Position)>,
+    client_for_barrier_id: &mut HashMap<BarrierID, ClientHandle>,
+    next_barrier_id: &mut u32,
+) -> Result<()> {
+    log::debug!("selecting zones");
+    let zones = input_capture.zones(&session).await?.response()?;
+    log::debug!("{zones:?}");
+
+    let (barriers, new_map) = select_barriers(&zones, &active_clients, next_barrier_id);
+    *client_for_barrier_id = new_map;
+
+    log::debug!("selecting barriers: {barriers:?}");
+    let response = input_capture
+        .set_pointer_barriers(&session, &barriers, zones.zone_set())
+        .await?;
+    let response = response.response()?;
+    log::debug!("response: {response:?}");
+    Ok(())
 }
 
 impl LibeiProducer {
@@ -115,16 +151,9 @@ impl LibeiProducer {
 
             let mut event_stream = EiConvertEventStream::new(event_stream);
 
-            log::debug!("selecting zones");
-            let zones = input_capture.zones(&session).await?.response()?;
-            log::debug!("{zones:?}");
-            // FIXME: position
-            let barriers = select_barriers(&zones, Position::Left);
-
-            log::debug!("selecting barriers: {barriers:?}");
-            input_capture
-                .set_pointer_barriers(&session, &barriers, zones.zone_set())
-                .await?;
+            let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
+            let mut client_for_barrier_id: HashMap<BarrierID, ClientHandle> = HashMap::new();
+            let mut next_barrier_id = 0u32;
 
             log::debug!("enabling session");
             input_capture.enable(&session).await?;
@@ -132,12 +161,48 @@ impl LibeiProducer {
             let mut activated = input_capture.receive_activated().await?;
 
             loop {
-                log::debug!("receiving activation token");
-                let activated = activated
-                    .next()
-                    .await
-                    .ok_or(anyhow!("error receiving activation token"))?;
-                log::debug!("activation token: {activated:?}");
+                let (activated, current_client) = {
+                    log::debug!("receiving activation token");
+                    tokio::select! {
+                        activated = activated.next() => {
+                            let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
+                            log::debug!("activation token: {activated:?}");
+                            let current_client = match client_for_barrier_id.get(&activated.barrier_id()) {
+                                None => {
+                                    log::warn!("invalid barrier id!");
+                                    continue;
+                                }
+                                Some(c) => *c,
+                            };
+                            (activated, current_client)
+                        }
+                        producer_event = notify_rx.recv() => {
+                            let producer_event = match producer_event {
+                                Some(e) => e,
+                                None => continue,
+                            };
+                            log::debug!("handling event: {producer_event:?}");
+                            match producer_event {
+                                ProducerEvent::Release => {
+                                    continue;
+                                },
+                                ProducerEvent::ClientEvent(c) => match c {
+                                    ClientEvent::Create(c, p) => {
+                                        active_clients.push((c, p));
+                                        update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                                        log::debug!("client for barrier id: {client_for_barrier_id:?}");
+                                    }
+                                    ClientEvent::Destroy(c) => {
+                                        active_clients.retain(|(h, _)| *h != c);
+                                        update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                                        log::debug!("client for barrier id: {client_for_barrier_id:?}");
+                                    }
+                                },
+                            }
+                            continue;
+                        },
+                    }
+                };
 
                 let mut entered = false;
                 loop {
@@ -149,8 +214,7 @@ impl LibeiProducer {
                             };
                             let lan_mouse_event = to_lan_mouse_event(ei_event, &context);
                             if !entered {
-                                // FIXME
-                                let _ = event_tx.send((0, Event::Enter())).await;
+                                let _ = event_tx.send((current_client, Event::Enter())).await;
                                 entered = true;
                             }
                             if let Some(event) = lan_mouse_event {
@@ -160,12 +224,25 @@ impl LibeiProducer {
                         producer_event = notify_rx.recv() => {
                             let producer_event = match producer_event {
                                 Some(e) => e,
-                                None => continue,
+                                None => break,
                             };
+                            log::debug!("handling event: {producer_event:?}");
                             match producer_event {
-                                ProducerEvent::Release => break,
-                                ProducerEvent::ClientEvent(_) => { log::warn!("TODO") },
+                                ProducerEvent::Release => {},
+                                ProducerEvent::ClientEvent(c) => match c {
+                                    ClientEvent::Create(c, p) => {
+                                        active_clients.push((c, p));
+                                        update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                                        log::debug!("client for barrier id: {client_for_barrier_id:?}");
+                                    }
+                                    ClientEvent::Destroy(c) => {
+                                        active_clients.retain(|(h, _)| *h != c);
+                                        update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                                        log::debug!("client for barrier id: {client_for_barrier_id:?}");
+                                    }
+                                },
                             }
+                            break;
                         },
                     }
                 }
@@ -175,8 +252,7 @@ impl LibeiProducer {
                 let cursor_position = (x as f64 + 1., y as f64);
                 input_capture
                     .release(&session, activated.activation_id(), cursor_position)
-                    .await
-                    .unwrap(); // FIXME
+                    .await?;
             }
         });
 
@@ -280,20 +356,20 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
 
 impl EventProducer for LibeiProducer {
     fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
-        let notify_tx = self.notify_tx.clone(); // FIXME
+        let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            notify_tx
-                .send(ProducerEvent::ClientEvent(event))
-                .await
-                .unwrap(); // FIXME
+            log::debug!("notifying {event:?}");
+            let _ = notify_tx.send(ProducerEvent::ClientEvent(event)).await.unwrap();
+            log::debug!("done !");
         });
         Ok(())
     }
 
     fn release(&mut self) -> io::Result<()> {
-        let notify_tx = self.notify_tx.clone(); // FIXME
+        let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            notify_tx.send(ProducerEvent::Release).await.unwrap(); // FIXME
+            log::debug!("notifying Release");
+            let _ = notify_tx.send(ProducerEvent::Release).await.unwrap();
         });
         Ok(())
     }
