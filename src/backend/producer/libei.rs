@@ -86,8 +86,7 @@ impl LibeiProducer {
             let (session, _cap) = input_capture
                 .create_session(
                     &ashpd::WindowIdentifier::default(),
-                    (Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen)
-                        .into(),
+                    Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
                 )
                 .await?;
 
@@ -305,8 +304,8 @@ impl Stream for LibeiProducer {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
-            None => return Poll::Ready(None),
-            Some(e) => return Poll::Ready(Some(Ok(e))),
+            None => Poll::Ready(None),
+            Some(e) => Poll::Ready(Some(Ok(e))),
         }
     }
 }
