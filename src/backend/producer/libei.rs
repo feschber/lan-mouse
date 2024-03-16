@@ -251,8 +251,20 @@ impl LibeiProducer {
                 }
                 log::debug!("releasing input capture");
                 let (x, y) = activated.cursor_position();
+                let pos = active_clients
+                    .iter()
+                    .filter(|(c,_)| *c == current_client)
+                    .map(|(_,p)| p)
+                    .next()
+                    .unwrap(); // FIXME
+                let (dx, dy) = match pos { // offset cursor position to not enter again immediately
+                    Position::Left => (1., 0.),
+                    Position::Right => (-1., 0.),
+                    Position::Top => (0., 1.),
+                    Position::Bottom => (0., -1.),
+                };
                 // release 1px to the right of the entered zone
-                let cursor_position = (x as f64 + 1., y as f64);
+                let cursor_position = (x as f64 + dx, y as f64 + dy);
                 input_capture
                     .release(&session, activated.activation_id(), cursor_position)
                     .await?;
