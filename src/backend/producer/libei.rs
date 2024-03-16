@@ -59,7 +59,7 @@ fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
     let (width, height) = (r.width() as i32, r.height() as i32);
     match pos {
         Position::Left => (x, y, x, y + height - 1), // start pos, end pos, inclusive
-        Position::Right => (x + width - 1, y, x + width - 1, y + height - 1),
+        Position::Right => (x + width, y, x + width, y + height - 1),
         Position::Top => (x, y, x + width - 1, y),
         Position::Bottom => (x, y + height - 1, x + width - 1, y + height - 1),
     }
@@ -93,6 +93,8 @@ async fn update_barriers(
     client_for_barrier_id: &mut HashMap<BarrierID, ClientHandle>,
     next_barrier_id: &mut u32,
 ) -> Result<()> {
+    input_capture.disable(session).await?;
+
     log::debug!("selecting zones");
     let zones = input_capture.zones(&session).await?.response()?;
     log::debug!("{zones:?}");
@@ -106,6 +108,7 @@ async fn update_barriers(
         .await?;
     let response = response.response()?;
     log::debug!("response: {response:?}");
+    input_capture.enable(session).await?;
     Ok(())
 }
 
@@ -153,7 +156,7 @@ impl LibeiProducer {
 
             let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
             let mut client_for_barrier_id: HashMap<BarrierID, ClientHandle> = HashMap::new();
-            let mut next_barrier_id = 0u32;
+            let mut next_barrier_id = 1u32;
 
             log::debug!("enabling session");
             input_capture.enable(&session).await?;
