@@ -135,6 +135,7 @@ impl LibeiProducer {
                 let activated = activated.next().await.unwrap();
                 log::debug!("activation token: {activated:?}");
                 let activated: Activated = activated.body().deserialize().unwrap();
+                log::debug!("activated: {activated:?}");
 
 
                 let mut entered = false;
@@ -168,7 +169,10 @@ impl LibeiProducer {
                     }
                 }
                 log::debug!("releasing input capture");
-                input_capture.release(&session, activated.activation_id(), (100., 100.)).await.unwrap(); // FIXME
+                let (x, y) = activated.cursor_position();
+                 // release 1px to the right of the entered zone
+                let cursor_position = (x as f64 + 1., y as f64);
+                input_capture.release(&session, activated.activation_id(), cursor_position).await.unwrap(); // FIXME
             }
         });
 
