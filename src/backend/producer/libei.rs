@@ -221,7 +221,7 @@ impl LibeiProducer {
                                 entered = true;
                             }
                             if let Some(event) = lan_mouse_event {
-                                let _ = event_tx.send(event).await;
+                                let _ = event_tx.send((current_client, event)).await;
                             }
                         }
                         producer_event = notify_rx.recv() => {
@@ -281,8 +281,7 @@ impl LibeiProducer {
     }
 }
 
-fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(ClientHandle, Event)> {
-    let client = 0; // FIXME
+fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event> {
     match ei_event {
         EiEvent::SeatAdded(seat_event) => {
             seat_event.seat.bind_capabilities(&[
@@ -308,7 +307,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
                 mods_locked: mods.locked,
                 group: mods.group,
             };
-            Some((client, Event::Keyboard(modifier_event)))
+            Some(Event::Keyboard(modifier_event))
         }
         EiEvent::Frame(_) => None,
         EiEvent::DeviceStartEmulating(_) => None,
@@ -319,7 +318,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
                 relative_x: motion.dx as f64,
                 relative_y: motion.dy as f64,
             };
-            Some((client, Event::Pointer(motion_event)))
+            Some(Event::Pointer(motion_event))
         }
         EiEvent::PointerMotionAbsolute(_) => None,
         EiEvent::Button(button) => {
@@ -331,7 +330,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
                     ButtonState::Press => 1,
                 },
             };
-            Some((client, Event::Pointer(button_event)))
+            Some(Event::Pointer(button_event))
         }
         EiEvent::ScrollDelta(_) => None,
         EiEvent::ScrollStop(_) => None,
@@ -350,7 +349,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
                     value: scroll.discrete_dx as f64,
                 }
             };
-            Some((client, Event::Pointer(axis_event)))
+            Some(Event::Pointer(axis_event))
         }
         EiEvent::KeyboardKey(key) => {
             let key_event = KeyboardEvent::Key {
@@ -361,7 +360,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<(Clien
                 },
                 time: key.time as u32,
             };
-            Some((client, Event::Keyboard(key_event)))
+            Some(Event::Keyboard(key_event))
         }
         EiEvent::TouchDown(_) => None,
         EiEvent::TouchUp(_) => None,
