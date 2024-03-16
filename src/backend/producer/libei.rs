@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones, Activated};
+use ashpd::desktop::input_capture::{Barrier, Capabilities, InputCapture, Zones};
 use futures::StreamExt;
 use reis::{
     ei::{self, keyboard::KeyState},
@@ -128,14 +128,11 @@ impl LibeiProducer {
             input_capture.enable(&session).await?;
 
             let mut activated = input_capture.receive_activated().await?;
-            let mut activated = input_capture.receive_all_signals().await?;
 
             loop {
                 log::debug!("receiving activation token");
-                let activated = activated.next().await.unwrap();
+                let activated = activated.next().await.ok_or(anyhow!("error receiving activation token"))?;
                 log::debug!("activation token: {activated:?}");
-                let activated: Activated = activated.body().deserialize().unwrap();
-                log::debug!("activated: {activated:?}");
 
 
                 let mut entered = false;
