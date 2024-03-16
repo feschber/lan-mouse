@@ -1,9 +1,6 @@
 use std::{
     collections::HashMap,
-    os::{
-        fd::OwnedFd,
-        unix::net::UnixStream,
-    },
+    os::{fd::OwnedFd, unix::net::UnixStream},
     time::{SystemTime, UNIX_EPOCH},
 };
 

@@ -7,13 +7,14 @@ use reis::{
     event::{DeviceCapability, EiEvent},
     tokio::{EiConvertEventStream, EiEventStream},
 };
-use tokio::task::JoinHandle;
 use std::{
+    collections::HashMap,
     io,
     os::unix::net::UnixStream,
     pin::Pin,
-    task::{ready, Context, Poll}, collections::HashMap,
+    task::{ready, Context, Poll},
 };
+use tokio::task::JoinHandle;
 
 use futures_core::Stream;
 use once_cell::sync::Lazy;
@@ -85,7 +86,8 @@ impl LibeiProducer {
             let (session, _cap) = input_capture
                 .create_session(
                     &ashpd::WindowIdentifier::default(),
-                    (Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen).into(),
+                    (Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen)
+                        .into(),
                 )
                 .await?;
 
@@ -105,13 +107,14 @@ impl LibeiProducer {
                 "lan-mouse",
                 ei::handshake::ContextType::Receiver,
                 &INTERFACES,
-            ).await {
+            )
+            .await
+            {
                 Ok(res) => res,
                 Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
             };
 
             let mut event_stream = EiConvertEventStream::new(event_stream);
-
 
             log::debug!("selecting zones");
             let zones = input_capture.zones(&session).await?.response()?;
@@ -131,9 +134,11 @@ impl LibeiProducer {
 
             loop {
                 log::debug!("receiving activation token");
-                let activated = activated.next().await.ok_or(anyhow!("error receiving activation token"))?;
+                let activated = activated
+                    .next()
+                    .await
+                    .ok_or(anyhow!("error receiving activation token"))?;
                 log::debug!("activation token: {activated:?}");
-
 
                 let mut entered = false;
                 loop {
@@ -167,9 +172,12 @@ impl LibeiProducer {
                 }
                 log::debug!("releasing input capture");
                 let (x, y) = activated.cursor_position();
-                 // release 1px to the right of the entered zone
+                // release 1px to the right of the entered zone
                 let cursor_position = (x as f64 + 1., y as f64);
-                input_capture.release(&session, activated.activation_id(), cursor_position).await.unwrap(); // FIXME
+                input_capture
+                    .release(&session, activated.activation_id(), cursor_position)
+                    .await
+                    .unwrap(); // FIXME
             }
         });
 
@@ -275,7 +283,10 @@ impl EventProducer for LibeiProducer {
     fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
         let notify_tx = self.notify_tx.clone(); // FIXME
         tokio::task::spawn_local(async move {
-            notify_tx.send(ProducerEvent::ClientEvent(event)).await.unwrap(); // FIXME
+            notify_tx
+                .send(ProducerEvent::ClientEvent(event))
+                .await
+                .unwrap(); // FIXME
         });
         Ok(())
     }
