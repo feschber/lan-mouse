@@ -81,7 +81,7 @@ fn select_barriers(
             .regions()
             .iter()
             .map(|r| {
-                let id = *next_barrier_id as u32;
+                let id = *next_barrier_id;
                 *next_barrier_id = id + 1;
                 let position = pos_to_barrier(r, *pos);
                 client_for_barrier.insert(id, *handle);
@@ -103,15 +103,15 @@ async fn update_barriers(
     input_capture.disable(session).await?;
 
     log::debug!("selecting zones");
-    let zones = input_capture.zones(&session).await?.response()?;
+    let zones = input_capture.zones(session).await?.response()?;
     log::debug!("{zones:?}");
 
-    let (barriers, new_map) = select_barriers(&zones, &active_clients, next_barrier_id);
+    let (barriers, new_map) = select_barriers(&zones, active_clients, next_barrier_id);
     *client_for_barrier_id = new_map;
 
     log::debug!("selecting barriers: {barriers:?}");
     let response = input_capture
-        .set_pointer_barriers(&session, &barriers, zones.zone_set())
+        .set_pointer_barriers(session, &barriers, zones.zone_set())
         .await?;
     let response = response.response()?;
     log::debug!("response: {response:?}");
