@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::{input_capture::{Barrier, BarrierID, Capabilities, InputCapture, Region, Zones}, Session};
+use ashpd::desktop::{
+    input_capture::{Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
+    Session,
+};
 use futures::StreamExt;
 use reis::{
     ei::{self, keyboard::KeyState},
@@ -65,7 +68,11 @@ fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
     }
 }
 
-fn select_barriers(zones: &Zones, clients: &Vec<(ClientHandle,Position)>, next_barrier_id: &mut u32) -> (Vec<Barrier>, HashMap<BarrierID, ClientHandle>) {
+fn select_barriers(
+    zones: &Zones,
+    clients: &Vec<(ClientHandle, Position)>,
+    next_barrier_id: &mut u32,
+) -> (Vec<Barrier>, HashMap<BarrierID, ClientHandle>) {
     let mut client_for_barrier = HashMap::new();
     let mut barriers: Vec<Barrier> = vec![];
 
@@ -253,11 +260,12 @@ impl LibeiProducer {
                 let (x, y) = activated.cursor_position();
                 let pos = active_clients
                     .iter()
-                    .filter(|(c,_)| *c == current_client)
-                    .map(|(_,p)| p)
+                    .filter(|(c, _)| *c == current_client)
+                    .map(|(_, p)| p)
                     .next()
                     .unwrap(); // FIXME
-                let (dx, dy) = match pos { // offset cursor position to not enter again immediately
+                let (dx, dy) = match pos {
+                    // offset cursor position to not enter again immediately
                     Position::Left => (1., 0.),
                     Position::Right => (-1., 0.),
                     Position::Top => (0., 1.),
@@ -373,7 +381,7 @@ impl EventProducer for LibeiProducer {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying {event:?}");
-            let _ = notify_tx.send(ProducerEvent::ClientEvent(event)).await.unwrap();
+            let _ = notify_tx.send(ProducerEvent::ClientEvent(event)).await;
             log::debug!("done !");
         });
         Ok(())
@@ -383,7 +391,7 @@ impl EventProducer for LibeiProducer {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await.unwrap();
+            let _ = notify_tx.send(ProducerEvent::Release).await;
         });
         Ok(())
     }
