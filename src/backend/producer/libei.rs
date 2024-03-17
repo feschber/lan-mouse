@@ -258,14 +258,7 @@ async fn do_capture(
         if let EiEvent::DeviceResumed(_) = ei_event {
             break Ok(()); // FIXME
         }
-        let lan_mouse_event = to_lan_mouse_event(ei_event, context);
-        context.flush().unwrap();
-        if let Some(event) = lan_mouse_event {
-            event_tx
-                .send((current_client, event))
-                .await
-                .expect("channel closed");
-        }
+        handle_ei_event(ei_event, current_client, context, &event_tx).await;
     }
 }
 
@@ -310,7 +303,12 @@ async fn handle_producer_event(
     Ok(())
 }
 
-fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event> {
+async fn handle_ei_event(
+    ei_event: EiEvent,
+    current_client: ClientHandle,
+    context: &ei::Context,
+    event_tx: &Sender<(u32, Event)>,
+) {
     match ei_event {
         EiEvent::SeatAdded(s) => {
             s.seat.bind_capabilities(&[
@@ -322,13 +320,12 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event>
                 DeviceCapability::Button,
             ]);
             context.flush().unwrap();
-            None
         }
-        EiEvent::SeatRemoved(_) => None,
-        EiEvent::DeviceAdded(_) => None,
-        EiEvent::DeviceRemoved(_) => None,
-        EiEvent::DevicePaused(_) => None,
-        EiEvent::DeviceResumed(_) => None,
+        EiEvent::SeatRemoved(_) => {}
+        EiEvent::DeviceAdded(_) => {}
+        EiEvent::DeviceRemoved(_) => {}
+        EiEvent::DevicePaused(_) => {}
+        EiEvent::DeviceResumed(_) => {}
         EiEvent::KeyboardModifiers(mods) => {
             let modifier_event = KeyboardEvent::Modifiers {
                 mods_depressed: mods.depressed,
@@ -336,20 +333,26 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event>
                 mods_locked: mods.locked,
                 group: mods.group,
             };
-            Some(Event::Keyboard(modifier_event))
+            event_tx
+                .send((current_client, Event::Keyboard(modifier_event)))
+                .await
+                .unwrap();
         }
-        EiEvent::Frame(_) => None,
-        EiEvent::DeviceStartEmulating(_) => None,
-        EiEvent::DeviceStopEmulating(_) => None,
+        EiEvent::Frame(_) => {}
+        EiEvent::DeviceStartEmulating(_) => {}
+        EiEvent::DeviceStopEmulating(_) => {}
         EiEvent::PointerMotion(motion) => {
             let motion_event = PointerEvent::Motion {
                 time: 0,
                 relative_x: motion.dx as f64,
                 relative_y: motion.dy as f64,
             };
-            Some(Event::Pointer(motion_event))
+            event_tx
+                .send((current_client, Event::Pointer(motion_event)))
+                .await
+                .unwrap();
         }
-        EiEvent::PointerMotionAbsolute(_) => None,
+        EiEvent::PointerMotionAbsolute(_) => {}
         EiEvent::Button(button) => {
             let button_event = PointerEvent::Button {
                 time: button.time as u32,
@@ -359,26 +362,37 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event>
                     ButtonState::Press => 1,
                 },
             };
-            Some(Event::Pointer(button_event))
+            event_tx
+                .send((current_client, Event::Pointer(button_event)))
+                .await
+                .unwrap();
         }
-        EiEvent::ScrollDelta(_) => None,
-        EiEvent::ScrollStop(_) => None,
-        EiEvent::ScrollCancel(_) => None,
+        EiEvent::ScrollDelta(_) => {}
+        EiEvent::ScrollStop(_) => {}
+        EiEvent::ScrollCancel(_) => {}
         EiEvent::ScrollDiscrete(scroll) => {
-            let axis_event = if scroll.discrete_dy > 0 {
-                PointerEvent::Axis {
+            if scroll.discrete_dy != 0 {
+                let event = PointerEvent::Axis {
                     time: 0,
                     axis: 0,
                     value: scroll.discrete_dy as f64,
-                }
-            } else {
-                PointerEvent::Axis {
+                };
+                event_tx
+                    .send((current_client, Event::Pointer(event)))
+                    .await
+                    .unwrap();
+            }
+            if scroll.discrete_dx != 0 {
+                let event = PointerEvent::Axis {
                     time: 0,
                     axis: 1,
                     value: scroll.discrete_dx as f64,
-                }
+                };
+                event_tx
+                    .send((current_client, Event::Pointer(event)))
+                    .await
+                    .unwrap();
             };
-            Some(Event::Pointer(axis_event))
         }
         EiEvent::KeyboardKey(key) => {
             let key_event = KeyboardEvent::Key {
@@ -389,11 +403,14 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event>
                 },
                 time: key.time as u32,
             };
-            Some(Event::Keyboard(key_event))
+            event_tx
+                .send((current_client, Event::Keyboard(key_event)))
+                .await
+                .unwrap();
         }
-        EiEvent::TouchDown(_) => None,
-        EiEvent::TouchUp(_) => None,
-        EiEvent::TouchMotion(_) => None,
+        EiEvent::TouchDown(_) => {}
+        EiEvent::TouchUp(_) => {}
+        EiEvent::TouchMotion(_) => {}
     }
 }
 
