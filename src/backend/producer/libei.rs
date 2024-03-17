@@ -177,33 +177,23 @@ impl LibeiProducer {
                         activated = activated.next() => {
                             let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
                             log::debug!("activation token: {activated:?}");
-                            let current_client = match client_for_barrier_id.get(&activated.barrier_id()) {
-                                None => {
-                                    log::warn!("invalid barrier id!");
-                                    continue;
-                                }
-                                Some(c) => *c,
-                            };
+                            let current_client = *client_for_barrier_id
+                                .get(&activated.barrier_id())
+                                .expect("invalid barrier id");
                             event_tx.send((current_client, Event::Enter())).await?;
                             tokio::select! {
                                 res = do_capture(&context, &mut event_stream, current_client, event_tx.clone()) => {
                                     res?;
                                 }
                                 producer_event = notify_rx.recv() => {
-                                    let producer_event = match producer_event {
-                                        Some(e) => e,
-                                        None => continue,
-                                    };
+                                    let producer_event = producer_event.expect("channel closed");
                                     handle_producer_event(producer_event, &input_capture, &session, &mut next_barrier_id, &mut client_for_barrier_id, &mut active_clients).await?;
                                 }
                             }
                             (activated, current_client)
                         }
                         producer_event = notify_rx.recv() => {
-                            let producer_event = match producer_event {
-                                Some(e) => e,
-                                None => continue,
-                            };
+                            let producer_event = producer_event.expect("channel closed");
                             handle_producer_event(producer_event, &input_capture, &session, &mut next_barrier_id, &mut client_for_barrier_id, &mut active_clients).await?;
                             continue;
                         },
