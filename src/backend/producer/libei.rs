@@ -119,6 +119,12 @@ async fn update_barriers(
     Ok(())
 }
 
+impl Drop for LibeiProducer {
+    fn drop(&mut self) {
+        self.libei_task.abort();
+    }
+}
+
 impl LibeiProducer {
     pub async fn new() -> Result<Self> {
         // connect to eis for input capture
