@@ -135,12 +135,13 @@ impl LibeiProducer {
         let libei_task = tokio::task::spawn_local(async move {
             // create input capture session
             log::debug!("creating input capture session");
-            let (session, _cap) = input_capture
+            let (session, capabilities) = input_capture
                 .create_session(
                     &ashpd::WindowIdentifier::default(),
                     Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
                 )
                 .await?;
+            log::debug!("input capture session capabilities: {capabilities:?}");
 
             // connect to eis server
             log::debug!("connect_to_eis");
@@ -155,7 +156,7 @@ impl LibeiProducer {
             let mut event_stream = EiEventStream::new(context.clone())?;
             let _handshake = match reis::tokio::ei_handshake(
                 &mut event_stream,
-                "lan-mouse",
+                "de.feschber.LanMouse",
                 ei::handshake::ContextType::Receiver,
                 &INTERFACES,
             )
@@ -164,6 +165,7 @@ impl LibeiProducer {
                 Ok(res) => res,
                 Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
             };
+            context.flush()?;
 
             let mut event_stream = EiConvertEventStream::new(event_stream);
 
@@ -189,6 +191,7 @@ impl LibeiProducer {
                             event_tx.send((current_client, Event::Enter())).await?;
                             tokio::select! {
                                 res = do_capture(&context, &mut event_stream, current_client, event_tx.clone()) => {
+                                    log::debug!("done capturing");
                                     res?;
                                 }
                                 producer_event = notify_rx.recv() => {
@@ -251,9 +254,17 @@ async fn do_capture(
             Some(Err(e)) => return Err(anyhow!("libei connection closed: {e:?}")),
             None => return Err(anyhow!("libei connection closed")),
         };
+        log::trace!("from ei: {ei_event:?}");
+        if let EiEvent::DeviceResumed(_) = ei_event {
+            break Ok(()); // FIXME
+        }
         let lan_mouse_event = to_lan_mouse_event(ei_event, context);
+        context.flush().unwrap();
         if let Some(event) = lan_mouse_event {
-            let _ = event_tx.send((current_client, event)).await;
+            event_tx
+                .send((current_client, event))
+                .await
+                .expect("channel closed");
         }
     }
 }
@@ -301,8 +312,8 @@ async fn handle_producer_event(
 
 fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event> {
     match ei_event {
-        EiEvent::SeatAdded(seat_event) => {
-            seat_event.seat.bind_capabilities(&[
+        EiEvent::SeatAdded(s) => {
+            s.seat.bind_capabilities(&[
                 DeviceCapability::Pointer,
                 DeviceCapability::PointerAbsolute,
                 DeviceCapability::Keyboard,
@@ -310,7 +321,7 @@ fn to_lan_mouse_event(ei_event: EiEvent, context: &ei::Context) -> Option<Event>
                 DeviceCapability::Scroll,
                 DeviceCapability::Button,
             ]);
-            let _ = context.flush();
+            context.flush().unwrap();
             None
         }
         EiEvent::SeatRemoved(_) => None,
