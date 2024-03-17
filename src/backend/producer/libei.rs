@@ -17,7 +17,7 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll},
 };
-use tokio::{task::JoinHandle, sync::mpsc::Sender};
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 use futures_core::Stream;
 use once_cell::sync::Lazy;
@@ -243,14 +243,19 @@ impl LibeiProducer {
     }
 }
 
-async fn do_capture(context: &ei::Context, event_stream: &mut EiConvertEventStream, current_client: ClientHandle, event_tx: Sender<(ClientHandle, Event)>) -> Result<()> {
+async fn do_capture(
+    context: &ei::Context,
+    event_stream: &mut EiConvertEventStream,
+    current_client: ClientHandle,
+    event_tx: Sender<(ClientHandle, Event)>,
+) -> Result<()> {
     loop {
         let ei_event = match event_stream.next().await {
             Some(Ok(event)) => event,
             Some(Err(e)) => return Err(anyhow!("libei connection closed: {e:?}")),
             None => return Err(anyhow!("libei connection closed")),
         };
-        let lan_mouse_event = to_lan_mouse_event(ei_event, &context);
+        let lan_mouse_event = to_lan_mouse_event(ei_event, context);
         if let Some(event) = lan_mouse_event {
             let _ = event_tx.send((current_client, event)).await;
         }
@@ -267,16 +272,30 @@ async fn handle_producer_event(
 ) -> Result<()> {
     log::debug!("handling event: {producer_event:?}");
     match producer_event {
-        ProducerEvent::Release => { },
+        ProducerEvent::Release => {}
         ProducerEvent::ClientEvent(c) => match c {
             ClientEvent::Create(c, p) => {
                 active_clients.push((c, p));
-                update_barriers(&input_capture, &session, &active_clients, client_for_barrier_id, next_barrier_id).await?;
+                update_barriers(
+                    input_capture,
+                    session,
+                    active_clients,
+                    client_for_barrier_id,
+                    next_barrier_id,
+                )
+                .await?;
                 log::debug!("client for barrier id: {client_for_barrier_id:?}");
             }
             ClientEvent::Destroy(c) => {
                 active_clients.retain(|(h, _)| *h != c);
-                update_barriers(&input_capture, &session, &active_clients, client_for_barrier_id, next_barrier_id).await?;
+                update_barriers(
+                    input_capture,
+                    session,
+                    active_clients,
+                    client_for_barrier_id,
+                    next_barrier_id,
+                )
+                .await?;
                 log::debug!("client for barrier id: {client_for_barrier_id:?}");
             }
         },
