@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /*
  * https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input
  */
@@ -165,7 +167,7 @@ pub enum Windows {
  * https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
  */
 #[repr(u32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[allow(dead_code)]
 pub enum Linux {
     KeyReserved = 0,
@@ -210,7 +212,7 @@ pub enum Linux {
     KeySemicolon = 39,
     KeyApostrophe = 40,
     KeyGrave = 41,
-    KeyLeftshift = 42,
+    KeyLeftShift = 42,
     KeyBackslash = 43,
     KeyZ = 44,
     KeyX = 45,
@@ -224,7 +226,7 @@ pub enum Linux {
     KeySlash = 53,
     KeyRightShift = 54,
     KeyKpAsterisk = 55,
-    KeyLeftalt = 56,
+    KeyLeftAlt = 56,
     KeySpace = 57,
     KeyCapsLock = 58,
     KeyF1 = 59,
@@ -294,7 +296,7 @@ pub enum Linux {
     // KEY_HANGUEL = KeyHangeul,
     KeyHanja = 123,
     KeyYen = 124,
-    KeyLeftmeta = 125,
+    KeyLeftMeta = 125,
     KeyRightmeta = 126,
     KeyCompose = 127,
     KeyStop = 128, /* AC Stop */
@@ -485,7 +487,7 @@ impl TryFrom<Linux> for Windows {
             Linux::KeySemicolon => Ok(Self::KeySemiColon),
             Linux::KeyApostrophe => Ok(Self::KeyApostrophe),
             Linux::KeyGrave => Ok(Self::KeyGrave),
-            Linux::KeyLeftshift => Ok(Self::KeyLeftShift),
+            Linux::KeyLeftShift => Ok(Self::KeyLeftShift),
             Linux::KeyBackslash => Ok(Self::KeyBackslash),
             Linux::KeyZ => Ok(Self::KeyZ),
             Linux::KeyX => Ok(Self::KeyX),
@@ -499,7 +501,7 @@ impl TryFrom<Linux> for Windows {
             Linux::KeySlash => Ok(Self::KeySlash),
             Linux::KeyRightShift => Ok(Self::KeyRightShift),
             Linux::KeyKpAsterisk => Ok(Self::KeypadStar),
-            Linux::KeyLeftalt => Ok(Self::KeyLeftAlt),
+            Linux::KeyLeftAlt => Ok(Self::KeyLeftAlt),
             Linux::KeySpace => Ok(Self::KeySpace),
             Linux::KeyCapsLock => Ok(Self::KeyCapsLock),
             Linux::KeyF1 => Ok(Self::KeyF1),
@@ -567,7 +569,7 @@ impl TryFrom<Linux> for Windows {
             Linux::KeyHangeul => Ok(Self::KeyInternational1), // TODO unsure
             Linux::KeyHanja => Ok(Self::KeyInternational2),   // TODO unsure
             Linux::KeyYen => Ok(Self::KeyInternational3),     // TODO unsure
-            Linux::KeyLeftmeta => Ok(Self::KeyLeftGUI),
+            Linux::KeyLeftMeta => Ok(Self::KeyLeftGUI),
             Linux::KeyRightmeta => Ok(Self::KeyRightGUI),
             Linux::KeyCompose => Ok(Self::KeyApplication),
             Linux::KeyStop => Ok(Self::ACStop),

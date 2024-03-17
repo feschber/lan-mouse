@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use std::net::SocketAddr;
+use std::{collections::HashSet, net::SocketAddr};
 
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
@@ -8,6 +8,7 @@ use crate::{
     client::{ClientEvent, ClientHandle},
     event::{Event, KeyboardEvent},
     producer::EventProducer,
+    scancode,
     server::State,
 };
 
@@ -28,14 +29,16 @@ pub fn new(
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
     timer_tx: Sender<()>,
+    release_bind: Vec<scancode::Linux>,
 ) -> (JoinHandle<Result<()>>, Sender<ProducerEvent>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let task = tokio::task::spawn_local(async move {
+        let mut pressed_keys = HashSet::new();
         loop {
             tokio::select! {
                 event = producer.next() => {
                     let event = event.ok_or(anyhow!("event producer closed"))??;
-                    handle_producer_event(&server, &mut producer, &sender_tx, &timer_tx, event).await?;
+                    handle_producer_event(&server, &mut producer, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?;
                 }
                 e = rx.recv() => {
                     log::debug!("producer notify rx: {e:?}");
@@ -59,7 +62,15 @@ pub fn new(
     (task, tx)
 }
 
-const RELEASE_MODIFIERDS: u32 = 77; // ctrl+shift+super+alt
+fn update_pressed_keys(pressed_keys: &mut HashSet<scancode::Linux>, key: u32, state: u8) {
+    if let Ok(scancode) = scancode::Linux::try_from(key) {
+        log::debug!("key: {key}, state: {state}, scancode: {scancode:?}");
+        match state {
+            1 => pressed_keys.insert(scancode),
+            _ => pressed_keys.remove(&scancode),
+        };
+    }
+}
 
 async fn handle_producer_event(
     server: &Server,
@@ -67,12 +78,18 @@ async fn handle_producer_event(
     sender_tx: &Sender<(Event, SocketAddr)>,
     timer_tx: &Sender<()>,
     event: (ClientHandle, Event),
+    pressed_keys: &mut HashSet<scancode::Linux>,
+    release_bind: &[scancode::Linux],
 ) -> Result<()> {
     let (c, mut e) = event;
     log::trace!("({c}) {e:?}");
 
-    if let Event::Keyboard(KeyboardEvent::Modifiers { mods_depressed, .. }) = e {
-        if mods_depressed == RELEASE_MODIFIERDS {
+    if let Event::Keyboard(KeyboardEvent::Key { key, state, .. }) = e {
+        update_pressed_keys(pressed_keys, key, state);
+        log::debug!("{pressed_keys:?}");
+        if release_bind.iter().all(|k| pressed_keys.contains(k)) {
+            pressed_keys.clear();
+            log::info!("releasing pointer");
             producer.release()?;
             server.state.replace(State::Receiving);
             log::trace!("STATE ===> Receiving");

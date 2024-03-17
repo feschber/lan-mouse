@@ -40,6 +40,7 @@ pub struct Server {
     client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
     state: Rc<Cell<State>>,
+    release_bind: Vec<crate::scancode::Linux>,
 }
 
 impl Server {
@@ -57,11 +58,13 @@ impl Server {
                 config_client.active,
             );
         }
+        let release_bind = config.release_bind.clone();
         Self {
             active_client,
             client_manager,
             port,
             state,
+            release_bind,
         }
     }
 
@@ -85,8 +88,13 @@ impl Server {
             network_task::new(self.clone(), frontend_notify_tx).await?;
 
         // event producer
-        let (mut producer_task, producer_channel) =
-            producer_task::new(producer, self.clone(), sender_tx.clone(), timer_tx.clone());
+        let (mut producer_task, producer_channel) = producer_task::new(
+            producer,
+            self.clone(),
+            sender_tx.clone(),
+            timer_tx.clone(),
+            self.release_bind.clone(),
+        );
 
         // event consumer
         let (mut consumer_task, consumer_channel) = consumer_task::new(

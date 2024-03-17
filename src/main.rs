@@ -29,6 +29,7 @@ pub fn run() -> Result<()> {
     // parse config file + cli args
     let config = Config::new()?;
     log::debug!("{config:?}");
+    log::info!("release bind: {:?}", config.release_bind);
 
     if config.daemon {
         // if daemon is specified we run the service
