@@ -71,6 +71,10 @@ paru -S lan-mouse-git
 paru -S lan-mouse-bin
 ```
 
+### Nix
+- nixpkgs: [search.nixos.org](https://search.nixos.org/packages?channel=unstable&show=lan-mouse&from=0&size=50&sort=relevance&type=packages&query=lan-mouse)
+- flake: [README.md](./nix/README.md)
+
 
 ### Building from Source
 
