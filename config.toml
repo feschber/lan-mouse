@@ -1,5 +1,8 @@
 # example configuration
 
+# release bind
+release_bind = [ "KeyA", "KeyS", "KeyD", "KeyS" ]
+
 # optional port (defaults to 4242)
 port = 4242
 # optional frontend -> defaults to gtk if available
