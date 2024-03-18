@@ -255,7 +255,7 @@ async fn do_capture(
             None => return Err(anyhow!("libei connection closed")),
         };
         log::trace!("from ei: {ei_event:?}");
-        if let EiEvent::DeviceStopEmulating(_) = ei_event {
+        if let EiEvent::DeviceResumed(_) = ei_event {
             break Ok(()); // FIXME
         }
         handle_ei_event(ei_event, current_client, context, &event_tx).await;
