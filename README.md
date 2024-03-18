@@ -253,9 +253,16 @@ To automatically load clients on startup, the file `$XDG_CONFIG_HOME/lan-mouse/c
 To create this file you can copy the following example config:
 
 ### Example config
+> [!TIP]
+> key symbols in the release bind are named according
+> to their names in [src/scancode.rs#L172](src/scancode.rs#L172).
+> This is bound to change
 
 ```toml
 # example configuration
+
+# configure release bind
+release_bind = [ "KeyA", "KeyS", "KeyD", "KeyS" ]
 
 # optional port (defaults to 4242)
 port = 4242
