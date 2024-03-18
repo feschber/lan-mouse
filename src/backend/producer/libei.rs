@@ -149,19 +149,23 @@ impl LibeiProducer {
             let mut client_for_barrier_id: HashMap<BarrierID, ClientHandle> = HashMap::new();
             let mut next_barrier_id = 1u32;
 
-            log::debug!("enabling session");
-
             let mut activated = input_capture.receive_activated().await?;
             let mut deactivated = input_capture.receive_deactivated().await?;
             let mut disabled = input_capture.receive_disabled().await?;
             let mut zones_changed = input_capture.receive_zones_changed().await?;
+            let mut all_signals = input_capture.receive_all_signals().await?;
 
+            log::info!("enabling session");
             input_capture.enable(&session).await?;
 
             loop {
                 tokio::select! {
+                    signal = all_signals.next() => {
+                        log::error!("signal: {signal:?}");
+                    }
                     activated = activated.next() => {
                         let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
+                        log::info!("activated: {activated:?}");
                         let current_client = *client_for_barrier_id
                             .get(&activated.barrier_id())
                             .expect("invalid barrier id");
@@ -172,6 +176,7 @@ impl LibeiProducer {
                                 res?;
                             }
                             producer_event = notify_rx.recv() => {
+                                log::error!("handle producer event: INNER");
                                 let producer_event = producer_event.expect("channel closed");
                                 handle_producer_event(
                                     producer_event,
@@ -205,6 +210,7 @@ impl LibeiProducer {
                     }
                     producer_event = notify_rx.recv() => {
                         let producer_event = producer_event.expect("channel closed");
+                        log::error!("handle producer event: OUTER");
                         handle_producer_event(
                             producer_event,
                             &input_capture,
@@ -271,7 +277,7 @@ async fn do_capture(
             None => return Err(anyhow!("libei connection closed")),
         };
         log::info!("from ei: {ei_event:?}");
-        if let EiEvent::DeviceResumed(_) = ei_event {
+        if let EiEvent::DeviceAdded(_) = ei_event {
             break Ok(()); // FIXME
         }
         handle_ei_event(ei_event, current_client, context, &event_tx).await;
@@ -378,8 +384,12 @@ async fn handle_ei_event(
                 .unwrap();
         }
         EiEvent::Frame(_) => {}
-        EiEvent::DeviceStartEmulating(_) => {}
-        EiEvent::DeviceStopEmulating(_) => {}
+        EiEvent::DeviceStartEmulating(_) => {
+            log::error!("START EMULATING =============>");
+        }
+        EiEvent::DeviceStopEmulating(_) => {
+            log::error!("==================> STOP EMULATING");
+        }
         EiEvent::PointerMotion(motion) => {
             let motion_event = PointerEvent::Motion {
                 time: 0,
