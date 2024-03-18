@@ -37,8 +37,11 @@ pub fn new(
         loop {
             tokio::select! {
                 event = producer.next() => {
-                    let event = event.ok_or(anyhow!("event producer closed"))??;
-                    handle_producer_event(&server, &mut producer, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?;
+                    match event {
+                        Some(Ok(event)) => handle_producer_event(&server, &mut producer, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?,
+                        Some(Err(e)) => return Err(anyhow!("event producer: {e:?}")),
+                        None => return Err(anyhow!("event producer closed")),
+                    }
                 }
                 e = rx.recv() => {
                     log::debug!("producer notify rx: {e:?}");
