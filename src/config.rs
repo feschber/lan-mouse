@@ -8,6 +8,8 @@ use std::{error::Error, fs};
 use toml;
 
 use crate::client::Position;
+use crate::scancode;
+use crate::scancode::Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift};
 
 pub const DEFAULT_PORT: u16 = 4242;
 
@@ -15,6 +17,7 @@ pub const DEFAULT_PORT: u16 = 4242;
 pub struct ConfigToml {
     pub port: Option<u16>,
     pub frontend: Option<String>,
+    pub release_bind: Option<Vec<scancode::Linux>>,
     pub left: Option<TomlClient>,
     pub right: Option<TomlClient>,
     pub top: Option<TomlClient>,
@@ -70,6 +73,7 @@ pub struct Config {
     pub port: u16,
     pub clients: Vec<(TomlClient, Position)>,
     pub daemon: bool,
+    pub release_bind: Vec<scancode::Linux>,
 }
 
 pub struct ConfigClient {
@@ -79,6 +83,9 @@ pub struct ConfigClient {
     pub pos: Position,
     pub active: bool,
 }
+
+const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
+    [KeyLeftCtrl, KeyLeftShift, KeyLeftMeta, KeyLeftAlt];
 
 impl Config {
     pub fn new() -> Result<Self> {
@@ -138,6 +145,12 @@ impl Config {
             },
         };
 
+        log::debug!("{config_toml:?}");
+        let release_bind = config_toml
+            .as_ref()
+            .and_then(|c| c.release_bind.clone())
+            .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()));
+
         let mut clients: Vec<(TomlClient, Position)> = vec![];
 
         if let Some(config_toml) = config_toml {
@@ -162,6 +175,7 @@ impl Config {
             frontend,
             clients,
             port,
+            release_bind,
         })
     }
 
