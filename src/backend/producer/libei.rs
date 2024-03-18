@@ -161,7 +161,7 @@ impl LibeiProducer {
             loop {
                 tokio::select! {
                     signal = all_signals.next() => {
-                        log::error!("signal: {signal:?}");
+                        log::debug!("signal: {signal:?}");
                     }
                     activated = activated.next() => {
                         let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
@@ -176,7 +176,6 @@ impl LibeiProducer {
                                 res?;
                             }
                             producer_event = notify_rx.recv() => {
-                                log::error!("handle producer event: INNER");
                                 let producer_event = producer_event.expect("channel closed");
                                 handle_producer_event(
                                     producer_event,
@@ -210,7 +209,6 @@ impl LibeiProducer {
                     }
                     producer_event = notify_rx.recv() => {
                         let producer_event = producer_event.expect("channel closed");
-                        log::error!("handle producer event: OUTER");
                         handle_producer_event(
                             producer_event,
                             &input_capture,
@@ -239,7 +237,7 @@ async fn connect_to_eis(
     session: &Session<'_>,
 ) -> Result<(ei::Context, EiConvertEventStream)> {
     log::info!("connect_to_eis");
-    let fd = input_capture.connect_to_eis(&session).await?;
+    let fd = input_capture.connect_to_eis(session).await?;
 
     // create unix stream from fd
     let stream = UnixStream::from(fd);
@@ -248,7 +246,7 @@ async fn connect_to_eis(
     // create ei context
     let context = ei::Context::new(stream)?;
     let mut event_stream = EiEventStream::new(context.clone())?;
-    let _response = match reis::tokio::ei_handshake(
+    let response = match reis::tokio::ei_handshake(
         &mut event_stream,
         "de.feschber.LanMouse",
         ei::handshake::ContextType::Receiver,
@@ -259,7 +257,7 @@ async fn connect_to_eis(
         Ok(res) => res,
         Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
     };
-    let event_stream = EiConvertEventStream::new(event_stream);
+    let event_stream = EiConvertEventStream::new(event_stream, response.serial);
 
     Ok((context, event_stream))
 }
@@ -289,7 +287,7 @@ async fn release_capture(
     session: &Session<'_>,
     activated: Activated,
     current_client: ClientHandle,
-    active_clients: &Vec<(ClientHandle, Position)>,
+    active_clients: &[(ClientHandle, Position)],
 ) -> Result<()> {
     log::debug!("releasing input capture {}", activated.activation_id());
     let (x, y) = activated.cursor_position();
@@ -309,7 +307,7 @@ async fn release_capture(
     // release 1px to the right of the entered zone
     let cursor_position = (x as f64 + dx, y as f64 + dy);
     input_capture
-        .release(&session, activated.activation_id(), cursor_position)
+        .release(session, activated.activation_id(), cursor_position)
         .await?;
     Ok(())
 }
@@ -385,10 +383,10 @@ async fn handle_ei_event(
         }
         EiEvent::Frame(_) => {}
         EiEvent::DeviceStartEmulating(_) => {
-            log::error!("START EMULATING =============>");
+            log::debug!("START EMULATING =============>");
         }
         EiEvent::DeviceStopEmulating(_) => {
-            log::error!("==================> STOP EMULATING");
+            log::debug!("==================> STOP EMULATING");
         }
         EiEvent::PointerMotion(motion) => {
             let motion_event = PointerEvent::Motion {
@@ -460,6 +458,9 @@ async fn handle_ei_event(
         EiEvent::TouchDown(_) => {}
         EiEvent::TouchUp(_) => {}
         EiEvent::TouchMotion(_) => {}
+        EiEvent::Disconnected(d) => {
+            log::info!("disconnect: {d:?}");
+        }
     }
 }
 
