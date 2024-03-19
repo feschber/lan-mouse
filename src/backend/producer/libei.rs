@@ -25,7 +25,7 @@ use once_cell::sync::Lazy;
 use crate::{
     client::{ClientEvent, ClientHandle, Position},
     event::{Event, KeyboardEvent, PointerEvent},
-    producer::EventProducer,
+    producer::{self, EventProducer},
 };
 
 #[derive(Debug)]
@@ -100,8 +100,6 @@ async fn update_barriers(
     client_for_barrier_id: &mut HashMap<BarrierID, ClientHandle>,
     next_barrier_id: &mut u32,
 ) -> Result<()> {
-    input_capture.disable(session).await?;
-
     let zones = input_capture.zones(session).await?.response()?;
     log::info!("get zones: {zones:?}");
 
@@ -114,8 +112,6 @@ async fn update_barriers(
         .await?;
     let response = response.response()?;
     log::info!("response: {response:?}");
-
-    input_capture.enable(session).await?;
     Ok(())
 }
 
@@ -132,94 +128,97 @@ impl LibeiProducer {
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
         let libei_task = tokio::task::spawn_local(async move {
-            // create input capture session
-            log::info!("creating input capture session");
-            let (session, capabilities) = input_capture
-                .create_session(
-                    &ashpd::WindowIdentifier::default(),
-                    Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
-                )
-                .await?;
-            log::info!("capabilities: {capabilities:?}");
-
-            // connect to eis server
-            let (context, mut ei_event_stream) = connect_to_eis(&input_capture, &session).await?;
-
             let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
             let mut client_for_barrier_id: HashMap<BarrierID, ClientHandle> = HashMap::new();
             let mut next_barrier_id = 1u32;
 
-            let mut activated = input_capture.receive_activated().await?;
-            let mut deactivated = input_capture.receive_deactivated().await?;
-            let mut disabled = input_capture.receive_disabled().await?;
-            let mut zones_changed = input_capture.receive_zones_changed().await?;
-            let mut all_signals = input_capture.receive_all_signals().await?;
-
-            log::info!("enabling session");
-            input_capture.enable(&session).await?;
+            /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
+             * prevents receiving further events after a session has been disabled once.
+             * Therefore we need to recreate the session everytime the barriers are updated */
 
             loop {
-                tokio::select! {
-                    signal = all_signals.next() => {
-                        log::debug!("signal: {signal:?}");
-                    }
-                    activated = activated.next() => {
-                        let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
-                        log::info!("activated: {activated:?}");
-                        let current_client = *client_for_barrier_id
-                            .get(&activated.barrier_id())
-                            .expect("invalid barrier id");
-                        event_tx.send((current_client, Event::Enter())).await?;
-                        tokio::select! {
-                            res = do_capture(&context, &mut ei_event_stream, current_client, event_tx.clone()) => {
-                                log::info!("done capturing");
-                                res?;
-                            }
-                            producer_event = notify_rx.recv() => {
-                                let producer_event = producer_event.expect("channel closed");
-                                handle_producer_event(
-                                    producer_event,
-                                    &input_capture,
-                                    &session,
-                                    &mut next_barrier_id,
-                                    &mut client_for_barrier_id,
-                                    &mut active_clients,
-                                ).await?;
-                            }
-                            deactivated = deactivated.next() => {
-                                log::debug!("capture deactivated: {deactivated:?}");
-                                continue;
-                            }
-                            disabled = disabled.next() => {
-                                log::debug!("capture disabled: {disabled:?}");
-                                continue;
-                            }
-                            zones_changed = zones_changed.next() => {
-                                log::debug!("zones changed: {zones_changed:?}");
-                                continue;
-                            }
+
+                // otherwise it asks to capture input even with no active clients
+                if active_clients.is_empty() {
+                    // wait for a client update
+                    while let Some(producer_event) = notify_rx.recv().await {
+                        if let ProducerEvent::ClientEvent(c) = producer_event {
+                            handle_producer_event(ProducerEvent::ClientEvent(c), &mut active_clients)?;
+                            break;
                         }
-                        release_capture(
-                            &input_capture,
-                            &session,
-                            activated,
-                            current_client,
-                            &active_clients,
-                        ).await?;
                     }
-                    producer_event = notify_rx.recv() => {
-                        let producer_event = producer_event.expect("channel closed");
-                        handle_producer_event(
-                            producer_event,
-                            &input_capture,
-                            &session,
-                            &mut next_barrier_id,
-                            &mut client_for_barrier_id,
-                            &mut active_clients,
-                        ).await?;
-                    },
+                    continue;
                 }
+
+                // create input capture session
+                log::info!("creating input capture session");
+                let (session, capabilities) = input_capture
+                    .create_session(
+                        &ashpd::WindowIdentifier::default(),
+                        Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
+                    )
+                    .await?;
+                log::info!("capabilities: {capabilities:?}");
+
+                // connect to eis server
+                let (context, mut ei_event_stream) = connect_to_eis(&input_capture, &session).await?;
+
+                let mut activated = input_capture.receive_activated().await?;
+                let mut zones_changed = input_capture.receive_zones_changed().await?;
+
+                // set barriers
+                update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                log::debug!("client for barrier id: {client_for_barrier_id:?}");
+
+                log::info!("enabling session");
+                input_capture.enable(&session).await?;
+
+                loop {
+                    tokio::select! {
+                        activated = activated.next() => {
+                            let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
+                            log::info!("activated: {activated:?}");
+                            let current_client = *client_for_barrier_id
+                                .get(&activated.barrier_id())
+                                .expect("invalid barrier id");
+                            event_tx.send((current_client, Event::Enter())).await?;
+                            tokio::select! {
+                                res = do_capture(&context, &mut ei_event_stream, current_client, event_tx.clone()) => {
+                                    log::info!("done capturing");
+                                    res?;
+                                }
+                                producer_event = notify_rx.recv() => {
+                                    let producer_event = producer_event.expect("channel closed");
+                                    if handle_producer_event(producer_event, &mut active_clients)? {
+                                        /* clients updated */
+                                        break;
+                                    }
+                                }
+                                zones_changed = zones_changed.next() => {
+                                    log::debug!("zones changed: {zones_changed:?}");
+                                    break;
+                                }
+                            }
+                            release_capture(
+                                &input_capture,
+                                &session,
+                                activated,
+                                current_client,
+                                &active_clients,
+                            ).await?;
+                        }
+                        producer_event = notify_rx.recv() => {
+                            let producer_event = producer_event.expect("channel closed");
+                            if handle_producer_event(producer_event, &mut active_clients)? {
+                                /* clients updated */
+                                break;
+                            }
+                        },
+                    }
+                }
+                input_capture.disable(&session).await?;
             }
+
         });
 
         let producer = Self {
@@ -312,38 +311,23 @@ async fn release_capture(
     Ok(())
 }
 
-async fn handle_producer_event(
+fn handle_producer_event(
     producer_event: ProducerEvent,
-    input_capture: &InputCapture<'_>,
-    session: &Session<'_>,
-    next_barrier_id: &mut u32,
-    client_for_barrier_id: &mut HashMap<BarrierID, ClientHandle>,
     active_clients: &mut Vec<(ClientHandle, Position)>,
-) -> Result<()> {
+) -> Result<bool> {
     log::debug!("handling event: {producer_event:?}");
-    match producer_event {
-        ProducerEvent::Release => {}
-        ProducerEvent::ClientEvent(c) => {
-            match c {
-                ClientEvent::Create(c, p) => {
-                    active_clients.push((c, p));
-                }
-                ClientEvent::Destroy(c) => {
-                    active_clients.retain(|(h, _)| *h != c);
-                }
-            }
-            update_barriers(
-                input_capture,
-                session,
-                active_clients,
-                client_for_barrier_id,
-                next_barrier_id,
-            )
-            .await?;
-            log::debug!("client for barrier id: {client_for_barrier_id:?}");
+    let updated = match producer_event {
+        ProducerEvent::Release => { false }
+        ProducerEvent::ClientEvent(ClientEvent::Create(c, p)) => {
+            active_clients.push((c, p));
+            true
         }
-    }
-    Ok(())
+        ProducerEvent::ClientEvent(ClientEvent::Destroy(c)) => {
+            active_clients.retain(|(h, _)| *h != c);
+            true
+        }
+    };
+    Ok(updated)
 }
 
 async fn handle_ei_event(
@@ -390,7 +374,7 @@ async fn handle_ei_event(
         }
         EiEvent::PointerMotion(motion) => {
             let motion_event = PointerEvent::Motion {
-                time: 0,
+                time: motion.time as u32,
                 relative_x: motion.dx as f64,
                 relative_y: motion.dy as f64,
             };
@@ -459,7 +443,7 @@ async fn handle_ei_event(
         EiEvent::TouchUp(_) => {}
         EiEvent::TouchMotion(_) => {}
         EiEvent::Disconnected(d) => {
-            log::info!("disconnect: {d:?}");
+            log::error!("disconnect: {d:?}");
         }
     }
 }
