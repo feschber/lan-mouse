@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use ashpd::desktop::{
     input_capture::{Activated, Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
-    Session,
+    ResponseError, Session,
 };
 use futures::StreamExt;
 use reis::{
@@ -156,12 +156,21 @@ impl LibeiProducer {
 
                 // create input capture session
                 log::info!("creating input capture session");
-                let (session, capabilities) = input_capture
-                    .create_session(
-                        &ashpd::WindowIdentifier::default(),
-                        Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
-                    )
-                    .await?;
+                let (session, capabilities) = loop {
+                    match input_capture
+                        .create_session(
+                            &ashpd::WindowIdentifier::default(),
+                            Capabilities::Keyboard
+                                | Capabilities::Pointer
+                                | Capabilities::Touchscreen,
+                        )
+                        .await
+                    {
+                        Ok(s) => break s,
+                        Err(ashpd::Error::Response(ResponseError::Cancelled)) => continue,
+                        o => o?,
+                    };
+                };
                 log::info!("capabilities: {capabilities:?}");
 
                 // connect to eis server
