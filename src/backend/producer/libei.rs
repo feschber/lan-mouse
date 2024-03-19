@@ -25,7 +25,7 @@ use once_cell::sync::Lazy;
 use crate::{
     client::{ClientEvent, ClientHandle, Position},
     event::{Event, KeyboardEvent, PointerEvent},
-    producer::{self, EventProducer},
+    producer::EventProducer,
 };
 
 #[derive(Debug)]
@@ -137,13 +137,15 @@ impl LibeiProducer {
              * Therefore we need to recreate the session everytime the barriers are updated */
 
             loop {
-
                 // otherwise it asks to capture input even with no active clients
                 if active_clients.is_empty() {
                     // wait for a client update
                     while let Some(producer_event) = notify_rx.recv().await {
                         if let ProducerEvent::ClientEvent(c) = producer_event {
-                            handle_producer_event(ProducerEvent::ClientEvent(c), &mut active_clients)?;
+                            handle_producer_event(
+                                ProducerEvent::ClientEvent(c),
+                                &mut active_clients,
+                            )?;
                             break;
                         }
                     }
@@ -161,13 +163,21 @@ impl LibeiProducer {
                 log::info!("capabilities: {capabilities:?}");
 
                 // connect to eis server
-                let (context, mut ei_event_stream) = connect_to_eis(&input_capture, &session).await?;
+                let (context, mut ei_event_stream) =
+                    connect_to_eis(&input_capture, &session).await?;
 
                 let mut activated = input_capture.receive_activated().await?;
                 let mut zones_changed = input_capture.receive_zones_changed().await?;
 
                 // set barriers
-                update_barriers(&input_capture, &session, &active_clients, &mut client_for_barrier_id, &mut next_barrier_id).await?;
+                update_barriers(
+                    &input_capture,
+                    &session,
+                    &active_clients,
+                    &mut client_for_barrier_id,
+                    &mut next_barrier_id,
+                )
+                .await?;
                 log::debug!("client for barrier id: {client_for_barrier_id:?}");
 
                 log::info!("enabling session");
@@ -218,7 +228,6 @@ impl LibeiProducer {
                 }
                 input_capture.disable(&session).await?;
             }
-
         });
 
         let producer = Self {
@@ -317,7 +326,7 @@ fn handle_producer_event(
 ) -> Result<bool> {
     log::debug!("handling event: {producer_event:?}");
     let updated = match producer_event {
-        ProducerEvent::Release => { false }
+        ProducerEvent::Release => false,
         ProducerEvent::ClientEvent(ClientEvent::Create(c, p)) => {
             active_clients.push((c, p));
             true
