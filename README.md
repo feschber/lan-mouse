@@ -262,7 +262,7 @@ To create this file you can copy the following example config:
 # example configuration
 
 # configure release bind
-release_bind = [ "KeyA", "KeyS", "KeyD", "KeyS" ]
+release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 
 # optional port (defaults to 4242)
 port = 4242
