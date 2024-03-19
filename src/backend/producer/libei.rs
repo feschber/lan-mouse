@@ -123,6 +123,8 @@ impl Drop for LibeiProducer {
 
 impl LibeiProducer {
     pub async fn new() -> Result<Self> {
+        // FIXME somehow detect if libei is supported
+
         // connect to eis for input capture
         let input_capture = InputCapture::new().await?;
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
