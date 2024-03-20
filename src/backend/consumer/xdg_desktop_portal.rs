@@ -2,7 +2,7 @@ use anyhow::Result;
 use ashpd::{
     desktop::{
         remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
-        Session,
+        ResponseError, Session,
     },
     WindowIdentifier,
 };
@@ -26,17 +26,32 @@ impl<'a> DesktopPortalConsumer<'a> {
     pub async fn new() -> Result<DesktopPortalConsumer<'a>> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
-        log::debug!("creating session ...");
-        let session = proxy.create_session().await?;
-        log::debug!("selecting devices ...");
-        proxy
-            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
-            .await?;
 
-        let _ = proxy
-            .start(&session, &WindowIdentifier::default())
-            .await?
-            .response()?;
+        // retry when user presses the cancel button
+        let (session, _) = loop {
+            log::debug!("creating session ...");
+            let session = proxy.create_session().await?;
+
+            log::debug!("selecting devices ...");
+            proxy
+                .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+                .await?;
+
+            log::info!("requesting permission for input emulation");
+            match proxy
+                .start(&session, &WindowIdentifier::default())
+                .await?
+                .response()
+            {
+                Ok(d) => break (session, d),
+                Err(ashpd::Error::Response(ResponseError::Cancelled)) => {
+                    log::warn!("request cancelled!");
+                    continue;
+                }
+                e => e?,
+            };
+        };
+
         log::debug!("started session");
 
         Ok(Self { proxy, session })

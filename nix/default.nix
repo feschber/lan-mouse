@@ -28,7 +28,7 @@ rustPlatform.buildRustPackage {
   cargoLock.lockFile = ../Cargo.lock;
 
   cargoLock.outputHashes = {
-    "reis-0.1.0" = "sha256-sRZqm6QdmgqfkTjEENV8erQd+0RL5z1+qjdmY18W3bA=";
+    "reis-0.1.0" = "sha256-QhsRIkzW3wgOlcHpkx3axjS8Vfed00Uf36av9ossPwQ=";
   };
 
   # Set Environment Variables

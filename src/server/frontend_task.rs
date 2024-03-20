@@ -240,21 +240,23 @@ pub async fn remove_client(
     frontend: &mut FrontendListener,
     client: ClientHandle,
 ) -> Option<ClientHandle> {
-    let _ = producer_notify_tx
-        .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client)))
-        .await;
-    let _ = consumer_notify_tx
-        .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
-        .await;
-
-    let Some(client) = server
+    let Some((client, active)) = server
         .client_manager
         .borrow_mut()
         .remove_client(client)
-        .map(|s| s.client.handle)
+        .map(|s| (s.client.handle, s.active))
     else {
         return None;
     };
+
+    if active {
+        let _ = producer_notify_tx
+            .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client)))
+            .await;
+        let _ = consumer_notify_tx
+            .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
+            .await;
+    }
 
     let notify = FrontendNotify::NotifyClientDelete(client);
     log::debug!("{notify:?}");
@@ -272,6 +274,7 @@ async fn update_client(
     client_update: (ClientHandle, Option<String>, u16, Position),
 ) {
     let (handle, hostname, port, pos) = client_update;
+    let mut changed = false;
     let (hostname, handle, active) = {
         // retrieve state
         let mut client_manager = server.client_manager.borrow_mut();
@@ -280,12 +283,16 @@ async fn update_client(
         };
 
         // update pos
-        state.client.pos = pos;
+        if state.client.pos != pos {
+            state.client.pos = pos;
+            changed = true;
+        }
 
         // update port
         if state.client.port != port {
             state.client.port = port;
             state.active_addr = state.active_addr.map(|a| SocketAddr::new(a.ip(), port));
+            changed = true;
         }
 
         // update hostname
@@ -293,6 +300,7 @@ async fn update_client(
             state.client.ips = HashSet::new();
             state.active_addr = None;
             state.client.hostname = hostname;
+            changed = true;
         }
 
         log::debug!("client updated: {:?}", state);
@@ -303,13 +311,14 @@ async fn update_client(
         )
     };
 
-    // resolve dns
-    if let Some(hostname) = hostname {
-        let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
-    }
-
     // update state in event consumer & producer
-    if active {
+    if changed && active {
+        // resolve dns
+        if let Some(hostname) = hostname {
+            let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
+        }
+
+        // update state
         let _ = producer_notify_tx
             .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(handle)))
             .await;

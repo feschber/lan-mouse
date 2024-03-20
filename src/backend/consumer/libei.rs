@@ -1,15 +1,17 @@
 use std::{
     collections::HashMap,
-    io,
-    os::{
-        fd::{FromRawFd, RawFd},
-        unix::net::UnixStream,
-    },
+    os::{fd::OwnedFd, unix::net::UnixStream},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Result};
-use ashpd::desktop::remote_desktop::{DeviceType, RemoteDesktop};
+use ashpd::{
+    desktop::{
+        remote_desktop::{DeviceType, RemoteDesktop},
+        ResponseError,
+    },
+    WindowIdentifier,
+};
 use async_trait::async_trait;
 use futures::StreamExt;
 
@@ -43,22 +45,34 @@ pub struct LibeiConsumer {
     serial: u32,
 }
 
-async fn get_ei_fd() -> Result<RawFd, ashpd::Error> {
+async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
     let proxy = RemoteDesktop::new().await?;
-    let session = proxy.create_session().await?;
 
-    // I HATE EVERYTHING, THIS TOOK 8 HOURS OF DEBUGGING
-    proxy
-        .select_devices(
-            &session,
-            DeviceType::Pointer | DeviceType::Keyboard | DeviceType::Touchscreen,
-        )
-        .await?;
+    // retry when user presses the cancel button
+    let (session, _) = loop {
+        log::debug!("creating session ...");
+        let session = proxy.create_session().await?;
 
-    proxy
-        .start(&session, &ashpd::WindowIdentifier::default())
-        .await?
-        .response()?;
+        log::debug!("selecting devices ...");
+        proxy
+            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+            .await?;
+
+        log::info!("requesting permission for input emulation");
+        match proxy
+            .start(&session, &WindowIdentifier::default())
+            .await?
+            .response()
+        {
+            Ok(d) => break (session, d),
+            Err(ashpd::Error::Response(ResponseError::Cancelled)) => {
+                log::warn!("request cancelled!");
+                continue;
+            }
+            e => e?,
+        };
+    };
+
     proxy.connect_to_eis(&session).await
 }
 
@@ -66,15 +80,7 @@ impl LibeiConsumer {
     pub async fn new() -> Result<Self> {
         // fd is owned by the message, so we need to dup it
         let eifd = get_ei_fd().await?;
-        let eifd = unsafe {
-            let ret = libc::dup(eifd);
-            if ret < 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(ret)
-            }
-        }?;
-        let stream = unsafe { UnixStream::from_raw_fd(eifd) };
+        let stream = UnixStream::from(eifd);
         // let stream = UnixStream::connect("/run/user/1000/eis-0")?;
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;

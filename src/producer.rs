@@ -22,7 +22,7 @@ pub async fn create() -> Box<dyn EventProducer> {
     }
 
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    match producer::libei::LibeiProducer::new() {
+    match producer::libei::LibeiProducer::new().await {
         Ok(p) => {
             log::info!("using libei event producer");
             return Box::new(p);
