@@ -22,7 +22,7 @@ use std::{
     rc::Rc,
     task::{ready, Context, Poll},
 };
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::{sync::mpsc::{Receiver, Sender}, task::JoinHandle};
 
 use futures_core::Stream;
 use once_cell::sync::Lazy;
@@ -146,6 +146,36 @@ async fn create_session<'a>(
     Ok((session, capabilities))
 }
 
+async fn connect_to_eis(
+    input_capture: &InputCapture<'_>,
+    session: &Session<'_>,
+) -> Result<(ei::Context, EiConvertEventStream)> {
+    log::info!("connect_to_eis");
+    let fd = input_capture.connect_to_eis(session).await?;
+
+    // create unix stream from fd
+    let stream = UnixStream::from(fd);
+    stream.set_nonblocking(true)?;
+
+    // create ei context
+    let context = ei::Context::new(stream)?;
+    let mut event_stream = EiEventStream::new(context.clone())?;
+    let response = match reis::tokio::ei_handshake(
+        &mut event_stream,
+        "de.feschber.LanMouse",
+        ei::handshake::ContextType::Receiver,
+        &INTERFACES,
+    )
+    .await
+    {
+        Ok(res) => res,
+        Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
+    };
+    let event_stream = EiConvertEventStream::new(event_stream, response.serial);
+
+    Ok((context, event_stream))
+}
+
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
@@ -164,6 +194,23 @@ async fn libei_event_handler(
     }
 }
 
+async fn wait_for_active_client(
+    notify_rx: &mut Receiver<ProducerEvent>,
+    active_clients: &mut Vec<(ClientHandle, Position)>,
+) -> Result<()> {
+    // wait for a client update
+    while let Some(producer_event) = notify_rx.recv().await {
+        if let ProducerEvent::ClientEvent(c) = producer_event {
+            handle_producer_event(
+                ProducerEvent::ClientEvent(c),
+                active_clients,
+            )?;
+            break;
+        }
+    }
+    Ok(())
+}
+
 impl LibeiProducer {
     pub async fn new() -> Result<Self> {
         // FIXME somehow detect if libei is supported
@@ -178,21 +225,12 @@ impl LibeiProducer {
 
             /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
              * prevents receiving further events after a session has been disabled once.
-             * Therefore we need to recreate the session everytime the barriers are updated */
+             * Therefore the session needs to recreated when the barriers are updated */
 
             loop {
                 // otherwise it asks to capture input even with no active clients
                 if active_clients.is_empty() {
-                    // wait for a client update
-                    while let Some(producer_event) = notify_rx.recv().await {
-                        if let ProducerEvent::ClientEvent(c) = producer_event {
-                            handle_producer_event(
-                                ProducerEvent::ClientEvent(c),
-                                &mut active_clients,
-                            )?;
-                            break;
-                        }
-                    }
+                    wait_for_active_client(&mut notify_rx, &mut active_clients).await?;
                     continue;
                 }
 
@@ -282,6 +320,7 @@ impl LibeiProducer {
                         }
                     }
                 }
+                ei_task.abort();
                 input_capture.disable(&session).await?;
             }
         });
@@ -294,36 +333,6 @@ impl LibeiProducer {
 
         Ok(producer)
     }
-}
-
-async fn connect_to_eis(
-    input_capture: &InputCapture<'_>,
-    session: &Session<'_>,
-) -> Result<(ei::Context, EiConvertEventStream)> {
-    log::info!("connect_to_eis");
-    let fd = input_capture.connect_to_eis(session).await?;
-
-    // create unix stream from fd
-    let stream = UnixStream::from(fd);
-    stream.set_nonblocking(true)?;
-
-    // create ei context
-    let context = ei::Context::new(stream)?;
-    let mut event_stream = EiEventStream::new(context.clone())?;
-    let response = match reis::tokio::ei_handshake(
-        &mut event_stream,
-        "de.feschber.LanMouse",
-        ei::handshake::ContextType::Receiver,
-        &INTERFACES,
-    )
-    .await
-    {
-        Ok(res) => res,
-        Err(e) => return Err(anyhow!("ei handshake failed: {e:?}")),
-    };
-    let event_stream = EiConvertEventStream::new(event_stream, response.serial);
-
-    Ok((context, event_stream))
 }
 
 async fn release_capture(
