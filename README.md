@@ -43,10 +43,13 @@ input capture (to send events *to* other clients) on different operating systems
 |---------------------------|--------------------------|--------------------------------------|
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
-| Wayland (Gnome)           | :heavy_check_mark:       | WIP                                  |
+| Wayland (Gnome)           | :heavy_check_mark:       | :heavy_check_mark:                   |
 | X11                       | :heavy_check_mark:       | WIP                                  |
 | Windows                   | :heavy_check_mark:       | WIP                                  |
 | MacOS                     | :heavy_check_mark:       | WIP                                  |
+
+> [!Important]
+> Gnome -> Sway only partially works (modifier events are not handled correctly)
 
 > [!Important]
 > **Wayfire**
@@ -299,7 +302,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] Liveness tracking Automatically ungrab mouse when client unreachable
 - [x] Liveness tracking: Automatically release keys, when server offline
 - [x] MacOS KeyCode Translation
-- [ ] Libei Input Capture
+- [x] Libei Input Capture
 - [ ] X11 Input Capture
 - [ ] Windows Input Capture
 - [ ] MacOS Input Capture
