@@ -22,7 +22,10 @@ use std::{
     rc::Rc,
     task::{ready, Context, Poll},
 };
-use tokio::{sync::mpsc::{Receiver, Sender}, task::JoinHandle};
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
 use futures_core::Stream;
 use once_cell::sync::Lazy;
@@ -40,7 +43,8 @@ enum ProducerEvent {
 }
 
 #[allow(dead_code)]
-pub struct LibeiProducer {
+pub struct LibeiProducer<'a> {
+    input_capture: Pin<Box<InputCapture<'a>>>,
     libei_task: JoinHandle<Result<()>>,
     event_rx: tokio::sync::mpsc::Receiver<(u32, Event)>,
     notify_tx: tokio::sync::mpsc::Sender<ProducerEvent>,
@@ -119,7 +123,7 @@ async fn update_barriers(
     Ok(id_map)
 }
 
-impl Drop for LibeiProducer {
+impl<'a> Drop for LibeiProducer<'a> {
     fn drop(&mut self) {
         self.libei_task.abort();
     }
@@ -201,25 +205,25 @@ async fn wait_for_active_client(
     // wait for a client update
     while let Some(producer_event) = notify_rx.recv().await {
         if let ProducerEvent::ClientEvent(c) = producer_event {
-            handle_producer_event(
-                ProducerEvent::ClientEvent(c),
-                active_clients,
-            )?;
+            handle_producer_event(ProducerEvent::ClientEvent(c), active_clients)?;
             break;
         }
     }
     Ok(())
 }
 
-impl LibeiProducer {
+impl<'a> LibeiProducer<'a> {
     pub async fn new() -> Result<Self> {
-        // FIXME somehow detect if libei is supported
+        let input_capture = Box::pin(InputCapture::new().await?);
+        let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture<'static>;
+        let mut first_session = Some(create_session(unsafe { &*input_capture_ptr }).await?);
 
-        // connect to eis for input capture
-        let input_capture = InputCapture::new().await?;
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
         let libei_task = tokio::task::spawn_local(async move {
+            /* safety: libei_task does not outlive Self */
+            let input_capture = unsafe { &*input_capture_ptr };
+
             let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
             let mut next_barrier_id = 1u32;
 
@@ -237,10 +241,13 @@ impl LibeiProducer {
                 let current_client = Rc::new(Cell::new(None));
 
                 // create session
-                let (session, _) = create_session(&input_capture).await?;
+                let (session, _) = match first_session.take() {
+                    Some(s) => s,
+                    _ => create_session(input_capture).await?,
+                };
 
                 // connect to eis server
-                let (context, ei_event_stream) = connect_to_eis(&input_capture, &session).await?;
+                let (context, ei_event_stream) = connect_to_eis(input_capture, &session).await?;
 
                 // async event task
                 let mut ei_task: JoinHandle<Result<(), anyhow::Error>> =
@@ -256,7 +263,7 @@ impl LibeiProducer {
 
                 // set barriers
                 let client_for_barrier_id = update_barriers(
-                    &input_capture,
+                    input_capture,
                     &session,
                     &active_clients,
                     &mut next_barrier_id,
@@ -298,7 +305,7 @@ impl LibeiProducer {
                                 }
                             }
                             release_capture(
-                                &input_capture,
+                                input_capture,
                                 &session,
                                 activated,
                                 client,
@@ -326,6 +333,7 @@ impl LibeiProducer {
         });
 
         let producer = Self {
+            input_capture,
             event_rx,
             libei_task,
             notify_tx,
@@ -514,7 +522,7 @@ async fn handle_ei_event(
     }
 }
 
-impl EventProducer for LibeiProducer {
+impl<'a> EventProducer for LibeiProducer<'a> {
     fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
@@ -535,7 +543,7 @@ impl EventProducer for LibeiProducer {
     }
 }
 
-impl Stream for LibeiProducer {
+impl<'a> Stream for LibeiProducer<'a> {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
