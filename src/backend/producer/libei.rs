@@ -146,7 +146,7 @@ async fn create_session<'a>(
             o => o?,
         };
     };
-    log::info!("capabilities: {capabilities:?}");
+    log::debug!("capabilities: {capabilities:?}");
     Ok((session, capabilities))
 }
 
@@ -192,7 +192,7 @@ async fn libei_event_handler(
             Some(Err(e)) => return Err(anyhow!("libei connection closed: {e:?}")),
             None => return Err(anyhow!("libei connection closed")),
         };
-        log::info!("from ei: {ei_event:?}");
+        log::trace!("from ei: {ei_event:?}");
         let client = current_client.get();
         handle_ei_event(ei_event, client, &context, &event_tx).await;
     }
@@ -277,7 +277,7 @@ impl<'a> LibeiProducer<'a> {
                     tokio::select! {
                         activated = activated.next() => {
                             let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
-                            log::info!("activated: {activated:?}");
+                            log::debug!("activated: {activated:?}");
 
                             let client = *client_for_barrier_id
                                 .get(&activated.barrier_id())
