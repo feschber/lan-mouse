@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
-use ashpd::desktop::{
-    input_capture::{Activated, Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
-    ResponseError, Session,
+use ashpd::{
+    desktop::{
+        input_capture::{Activated, Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
+        ResponseError, Session,
+    },
+    enumflags2::BitFlags,
 };
 use futures::StreamExt;
 use reis::{
@@ -11,10 +14,12 @@ use reis::{
     tokio::{EiConvertEventStream, EiEventStream},
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
     io,
     os::unix::net::UnixStream,
     pin::Pin,
+    rc::Rc,
     task::{ready, Context, Poll},
 };
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
@@ -97,27 +102,65 @@ async fn update_barriers(
     input_capture: &InputCapture<'_>,
     session: &Session<'_>,
     active_clients: &Vec<(ClientHandle, Position)>,
-    client_for_barrier_id: &mut HashMap<BarrierID, ClientHandle>,
     next_barrier_id: &mut u32,
-) -> Result<()> {
+) -> Result<HashMap<BarrierID, ClientHandle>> {
     let zones = input_capture.zones(session).await?.response()?;
-    log::info!("get zones: {zones:?}");
+    log::debug!("zones: {zones:?}");
 
-    let (barriers, new_map) = select_barriers(&zones, active_clients, next_barrier_id);
-    *client_for_barrier_id = new_map;
+    let (barriers, id_map) = select_barriers(&zones, active_clients, next_barrier_id);
+    log::debug!("barriers: {barriers:?}");
+    log::debug!("client for barrier id: {id_map:?}");
 
-    log::info!("set barriers: {barriers:?}");
     let response = input_capture
         .set_pointer_barriers(session, &barriers, zones.zone_set())
         .await?;
     let response = response.response()?;
-    log::info!("response: {response:?}");
-    Ok(())
+    log::info!("{response:?}");
+    Ok(id_map)
 }
 
 impl Drop for LibeiProducer {
     fn drop(&mut self) {
         self.libei_task.abort();
+    }
+}
+
+async fn create_session<'a>(
+    input_capture: &'a InputCapture<'a>,
+) -> Result<(Session<'a>, BitFlags<Capabilities>)> {
+    log::info!("creating input capture session");
+    let (session, capabilities) = loop {
+        match input_capture
+            .create_session(
+                &ashpd::WindowIdentifier::default(),
+                Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
+            )
+            .await
+        {
+            Ok(s) => break s,
+            Err(ashpd::Error::Response(ResponseError::Cancelled)) => continue,
+            o => o?,
+        };
+    };
+    log::info!("capabilities: {capabilities:?}");
+    Ok((session, capabilities))
+}
+
+async fn libei_event_handler(
+    mut ei_event_stream: EiConvertEventStream,
+    context: ei::Context,
+    event_tx: Sender<(u32, Event)>,
+    current_client: Rc<Cell<Option<ClientHandle>>>,
+) -> Result<()> {
+    loop {
+        let ei_event = match ei_event_stream.next().await {
+            Some(Ok(event)) => event,
+            Some(Err(e)) => return Err(anyhow!("libei connection closed: {e:?}")),
+            None => return Err(anyhow!("libei connection closed")),
+        };
+        log::info!("from ei: {ei_event:?}");
+        let client = current_client.get();
+        handle_ei_event(ei_event, client, &context, &event_tx).await;
     }
 }
 
@@ -131,7 +174,6 @@ impl LibeiProducer {
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
         let libei_task = tokio::task::spawn_local(async move {
             let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
-            let mut client_for_barrier_id: HashMap<BarrierID, ClientHandle> = HashMap::new();
             let mut next_barrier_id = 1u32;
 
             /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
@@ -154,42 +196,34 @@ impl LibeiProducer {
                     continue;
                 }
 
-                // create input capture session
-                log::info!("creating input capture session");
-                let (session, capabilities) = loop {
-                    match input_capture
-                        .create_session(
-                            &ashpd::WindowIdentifier::default(),
-                            Capabilities::Keyboard
-                                | Capabilities::Pointer
-                                | Capabilities::Touchscreen,
-                        )
-                        .await
-                    {
-                        Ok(s) => break s,
-                        Err(ashpd::Error::Response(ResponseError::Cancelled)) => continue,
-                        o => o?,
-                    };
-                };
-                log::info!("capabilities: {capabilities:?}");
+                let current_client = Rc::new(Cell::new(None));
+
+                // create session
+                let (session, _) = create_session(&input_capture).await?;
 
                 // connect to eis server
-                let (context, mut ei_event_stream) =
-                    connect_to_eis(&input_capture, &session).await?;
+                let (context, ei_event_stream) = connect_to_eis(&input_capture, &session).await?;
+
+                // async event task
+                let mut ei_task: JoinHandle<Result<(), anyhow::Error>> =
+                    tokio::task::spawn_local(libei_event_handler(
+                        ei_event_stream,
+                        context,
+                        event_tx.clone(),
+                        current_client.clone(),
+                    ));
 
                 let mut activated = input_capture.receive_activated().await?;
                 let mut zones_changed = input_capture.receive_zones_changed().await?;
 
                 // set barriers
-                update_barriers(
+                let client_for_barrier_id = update_barriers(
                     &input_capture,
                     &session,
                     &active_clients,
-                    &mut client_for_barrier_id,
                     &mut next_barrier_id,
                 )
                 .await?;
-                log::debug!("client for barrier id: {client_for_barrier_id:?}");
 
                 log::info!("enabling session");
                 input_capture.enable(&session).await?;
@@ -199,24 +233,29 @@ impl LibeiProducer {
                         activated = activated.next() => {
                             let activated = activated.ok_or(anyhow!("error receiving activation token"))?;
                             log::info!("activated: {activated:?}");
-                            let current_client = *client_for_barrier_id
+
+                            let client = *client_for_barrier_id
                                 .get(&activated.barrier_id())
                                 .expect("invalid barrier id");
-                            event_tx.send((current_client, Event::Enter())).await?;
+                            current_client.replace(Some(client));
+
+                            event_tx.send((client, Event::Enter())).await?;
+
                             tokio::select! {
-                                res = do_capture(&context, &mut ei_event_stream, current_client, event_tx.clone()) => {
-                                    log::info!("done capturing");
-                                    res?;
-                                }
                                 producer_event = notify_rx.recv() => {
                                     let producer_event = producer_event.expect("channel closed");
                                     if handle_producer_event(producer_event, &mut active_clients)? {
-                                        /* clients updated */
-                                        break;
+                                        break; /* clients updated */
                                     }
                                 }
                                 zones_changed = zones_changed.next() => {
                                     log::debug!("zones changed: {zones_changed:?}");
+                                    break;
+                                }
+                                res = &mut ei_task => {
+                                    if let Err(e) = res.expect("ei task paniced") {
+                                        log::warn!("libei task exited: {e}");
+                                    }
                                     break;
                                 }
                             }
@@ -224,7 +263,7 @@ impl LibeiProducer {
                                 &input_capture,
                                 &session,
                                 activated,
-                                current_client,
+                                client,
                                 &active_clients,
                             ).await?;
                         }
@@ -235,6 +274,12 @@ impl LibeiProducer {
                                 break;
                             }
                         },
+                        res = &mut ei_task => {
+                            if let Err(e) = res.expect("ei task paniced") {
+                                log::warn!("libei task exited: {e}");
+                            }
+                            break;
+                        }
                     }
                 }
                 input_capture.disable(&session).await?;
@@ -279,26 +324,6 @@ async fn connect_to_eis(
     let event_stream = EiConvertEventStream::new(event_stream, response.serial);
 
     Ok((context, event_stream))
-}
-
-async fn do_capture(
-    context: &ei::Context,
-    event_stream: &mut EiConvertEventStream,
-    current_client: ClientHandle,
-    event_tx: Sender<(ClientHandle, Event)>,
-) -> Result<()> {
-    loop {
-        let ei_event = match event_stream.next().await {
-            Some(Ok(event)) => event,
-            Some(Err(e)) => return Err(anyhow!("libei connection closed: {e:?}")),
-            None => return Err(anyhow!("libei connection closed")),
-        };
-        log::info!("from ei: {ei_event:?}");
-        if let EiEvent::DeviceAdded(_) = ei_event {
-            break Ok(()); // FIXME
-        }
-        handle_ei_event(ei_event, current_client, context, &event_tx).await;
-    }
 }
 
 async fn release_capture(
@@ -352,7 +377,7 @@ fn handle_producer_event(
 
 async fn handle_ei_event(
     ei_event: EiEvent,
-    current_client: ClientHandle,
+    current_client: Option<ClientHandle>,
     context: &ei::Context,
     event_tx: &Sender<(u32, Event)>,
 ) {
@@ -380,10 +405,12 @@ async fn handle_ei_event(
                 mods_locked: mods.locked,
                 group: mods.group,
             };
-            event_tx
-                .send((current_client, Event::Keyboard(modifier_event)))
-                .await
-                .unwrap();
+            if let Some(current_client) = current_client {
+                event_tx
+                    .send((current_client, Event::Keyboard(modifier_event)))
+                    .await
+                    .unwrap();
+            }
         }
         EiEvent::Frame(_) => {}
         EiEvent::DeviceStartEmulating(_) => {
@@ -398,10 +425,12 @@ async fn handle_ei_event(
                 relative_x: motion.dx as f64,
                 relative_y: motion.dy as f64,
             };
-            event_tx
-                .send((current_client, Event::Pointer(motion_event)))
-                .await
-                .unwrap();
+            if let Some(current_client) = current_client {
+                event_tx
+                    .send((current_client, Event::Pointer(motion_event)))
+                    .await
+                    .unwrap();
+            }
         }
         EiEvent::PointerMotionAbsolute(_) => {}
         EiEvent::Button(button) => {
@@ -413,10 +442,12 @@ async fn handle_ei_event(
                     ButtonState::Press => 1,
                 },
             };
-            event_tx
-                .send((current_client, Event::Pointer(button_event)))
-                .await
-                .unwrap();
+            if let Some(current_client) = current_client {
+                event_tx
+                    .send((current_client, Event::Pointer(button_event)))
+                    .await
+                    .unwrap();
+            }
         }
         EiEvent::ScrollDelta(_) => {}
         EiEvent::ScrollStop(_) => {}
@@ -428,10 +459,12 @@ async fn handle_ei_event(
                     axis: 0,
                     value: scroll.discrete_dy as f64,
                 };
-                event_tx
-                    .send((current_client, Event::Pointer(event)))
-                    .await
-                    .unwrap();
+                if let Some(current_client) = current_client {
+                    event_tx
+                        .send((current_client, Event::Pointer(event)))
+                        .await
+                        .unwrap();
+                }
             }
             if scroll.discrete_dx != 0 {
                 let event = PointerEvent::Axis {
@@ -439,10 +472,12 @@ async fn handle_ei_event(
                     axis: 1,
                     value: scroll.discrete_dx as f64,
                 };
-                event_tx
-                    .send((current_client, Event::Pointer(event)))
-                    .await
-                    .unwrap();
+                if let Some(current_client) = current_client {
+                    event_tx
+                        .send((current_client, Event::Pointer(event)))
+                        .await
+                        .unwrap();
+                }
             };
         }
         EiEvent::KeyboardKey(key) => {
@@ -454,10 +489,12 @@ async fn handle_ei_event(
                 },
                 time: key.time as u32,
             };
-            event_tx
-                .send((current_client, Event::Keyboard(key_event)))
-                .await
-                .unwrap();
+            if let Some(current_client) = current_client {
+                event_tx
+                    .send((current_client, Event::Keyboard(key_event)))
+                    .await
+                    .unwrap();
+            }
         }
         EiEvent::TouchDown(_) => {}
         EiEvent::TouchUp(_) => {}
