@@ -4,20 +4,20 @@ use std::task::Poll;
 
 use futures_core::Stream;
 
+use crate::capture::InputCapture;
 use crate::event::Event;
-use crate::producer::EventProducer;
 
 use crate::client::{ClientEvent, ClientHandle};
 
-pub struct X11Producer {}
+pub struct X11InputCapture {}
 
-impl X11Producer {
+impl X11InputCapture {
     pub fn new() -> Result<Self> {
         Err(anyhow!("not implemented"))
     }
 }
 
-impl EventProducer for X11Producer {
+impl InputCapture for X11InputCapture {
     fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
         Ok(())
     }
@@ -27,7 +27,7 @@ impl EventProducer for X11Producer {
     }
 }
 
-impl Stream for X11Producer {
+impl Stream for X11InputCapture {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(

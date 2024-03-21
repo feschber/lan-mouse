@@ -7,15 +7,15 @@ use tokio::{
 
 use crate::{client::ClientHandle, event::Event};
 
-use super::{consumer_task::ConsumerEvent, producer_task::ProducerEvent, Server, State};
+use super::{capture_task::CaptureEvent, emulation_task::EmulationEvent, Server, State};
 
 const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
 pub fn new(
     server: Server,
     sender_ch: Sender<(Event, SocketAddr)>,
-    consumer_notify: Sender<ConsumerEvent>,
-    producer_notify: Sender<ProducerEvent>,
+    emulate_notify: Sender<EmulationEvent>,
+    capture_notify: Sender<CaptureEvent>,
     mut timer_rx: Receiver<()>,
 ) -> JoinHandle<()> {
     // timer task
@@ -114,14 +114,14 @@ pub fn new(
                 if receiving {
                     for c in unresponsive_clients {
                         log::warn!("device not responding, releasing keys!");
-                        let _ = consumer_notify.send(ConsumerEvent::ReleaseKeys(c)).await;
+                        let _ = emulate_notify.send(EmulationEvent::ReleaseKeys(c)).await;
                     }
                 } else {
                     // release pointer if the active client has not responded
                     if !unresponsive_clients.is_empty() {
                         log::warn!("client not responding, releasing pointer!");
                         server.state.replace(State::Receiving);
-                        let _ = producer_notify.send(ProducerEvent::Release).await;
+                        let _ = capture_notify.send(CaptureEvent::Release).await;
                     }
                 }
             }

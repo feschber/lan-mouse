@@ -1,5 +1,5 @@
 use crate::client::{ClientEvent, ClientHandle};
-use crate::consumer::EventConsumer;
+use crate::emulate::InputEmulation;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use tokio::task::AbortHandle;
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
-pub struct MacOSConsumer {
+pub struct MacOSEmulation {
     pub event_source: CGEventSource,
     repeat_task: Option<AbortHandle>,
     button_state: ButtonState,
@@ -50,9 +50,9 @@ impl IndexMut<CGMouseButton> for ButtonState {
     }
 }
 
-unsafe impl Send for MacOSConsumer {}
+unsafe impl Send for MacOSEmulation {}
 
-impl MacOSConsumer {
+impl MacOSEmulation {
     pub fn new() -> Result<Self> {
         let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
             Ok(e) => e,
@@ -108,7 +108,7 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8) {
 }
 
 #[async_trait]
-impl EventConsumer for MacOSConsumer {
+impl InputEmulation for MacOSEmulation {
     async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {

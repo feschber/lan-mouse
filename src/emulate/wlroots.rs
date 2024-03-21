@@ -1,5 +1,5 @@
 use crate::client::{ClientEvent, ClientHandle};
-use crate::consumer::EventConsumer;
+use crate::emulate::InputEmulation;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
@@ -40,13 +40,13 @@ struct State {
 }
 
 // App State, implements Dispatch event handlers
-pub(crate) struct WlrootsConsumer {
+pub(crate) struct WlrootsEmulation {
     last_flush_failed: bool,
     state: State,
     queue: EventQueue<State>,
 }
 
-impl WlrootsConsumer {
+impl WlrootsEmulation {
     pub fn new() -> Result<Self> {
         let conn = Connection::connect_to_env()?;
         let (globals, queue) = registry_queue_init::<State>(&conn)?;
@@ -62,7 +62,7 @@ impl WlrootsConsumer {
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
 
-        let mut consumer = WlrootsConsumer {
+        let mut emulate = WlrootsEmulation {
             last_flush_failed: false,
             state: State {
                 keymap: None,
@@ -74,16 +74,13 @@ impl WlrootsConsumer {
             },
             queue,
         };
-        while consumer.state.keymap.is_none() {
-            consumer
-                .queue
-                .blocking_dispatch(&mut consumer.state)
-                .unwrap();
+        while emulate.state.keymap.is_none() {
+            emulate.queue.blocking_dispatch(&mut emulate.state).unwrap();
         }
-        // let fd = unsafe { &File::from_raw_fd(consumer.state.keymap.unwrap().1.as_raw_fd()) };
+        // let fd = unsafe { &File::from_raw_fd(emulate.state.keymap.unwrap().1.as_raw_fd()) };
         // let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
         // log::debug!("{:?}", &mmap[..100]);
-        Ok(consumer)
+        Ok(emulate)
     }
 }
 
@@ -106,7 +103,7 @@ impl State {
 }
 
 #[async_trait]
-impl EventConsumer for WlrootsConsumer {
+impl InputEmulation for WlrootsEmulation {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
             if self.last_flush_failed {

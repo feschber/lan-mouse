@@ -8,53 +8,53 @@ use tokio::{
 
 use crate::{
     client::{ClientEvent, ClientHandle},
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::{Event, KeyboardEvent},
     scancode,
     server::State,
 };
 
-use super::{ProducerEvent, Server};
+use super::{CaptureEvent, Server};
 
 #[derive(Clone, Debug)]
-pub enum ConsumerEvent {
-    /// consumer is notified of a change in client states
+pub enum EmulationEvent {
+    /// input emulation is notified of a change in client states
     ClientEvent(ClientEvent),
-    /// consumer must release keys for client
+    /// input emulation must release keys for client
     ReleaseKeys(ClientHandle),
     /// termination signal
     Terminate,
 }
 
 pub fn new(
-    mut consumer: Box<dyn EventConsumer>,
+    mut emulate: Box<dyn InputEmulation>,
     server: Server,
     mut udp_rx: Receiver<Result<(Event, SocketAddr)>>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    producer_tx: Sender<ProducerEvent>,
+    capture_tx: Sender<CaptureEvent>,
     timer_tx: Sender<()>,
-) -> (JoinHandle<Result<()>>, Sender<ConsumerEvent>) {
+) -> (JoinHandle<Result<()>>, Sender<EmulationEvent>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let consumer_task = tokio::task::spawn_local(async move {
+    let emulate_task = tokio::task::spawn_local(async move {
         let mut last_ignored = None;
 
         loop {
             tokio::select! {
                 udp_event = udp_rx.recv() => {
                     let udp_event = udp_event.ok_or(anyhow!("receiver closed"))??;
-                    handle_udp_rx(&server, &producer_tx, &mut consumer, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await;
+                    handle_udp_rx(&server, &capture_tx, &mut emulate, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await;
                 }
-                consumer_event = rx.recv() => {
-                    match consumer_event {
+                emulate_event = rx.recv() => {
+                    match emulate_event {
                         Some(e) => match e {
-                            ConsumerEvent::ClientEvent(e) => consumer.notify(e).await,
-                            ConsumerEvent::ReleaseKeys(c) => release_keys(&server, &mut consumer, c).await,
-                            ConsumerEvent::Terminate => break,
+                            EmulationEvent::ClientEvent(e) => emulate.notify(e).await,
+                            EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulate, c).await,
+                            EmulationEvent::Terminate => break,
                         },
                         None => break,
                     }
                 }
-                res = consumer.dispatch() => {
+                res = emulate.dispatch() => {
                     res?;
                 }
             }
@@ -68,20 +68,20 @@ pub fn new(
             .map(|s| s.client.handle)
             .collect::<Vec<_>>();
         for client in clients {
-            release_keys(&server, &mut consumer, client).await;
+            release_keys(&server, &mut emulate, client).await;
         }
 
-        // destroy consumer
-        consumer.destroy().await;
+        // destroy emulator
+        emulate.destroy().await;
         anyhow::Ok(())
     });
-    (consumer_task, tx)
+    (emulate_task, tx)
 }
 
 async fn handle_udp_rx(
     server: &Server,
-    producer_notify_tx: &Sender<ProducerEvent>,
-    consumer: &mut Box<dyn EventConsumer>,
+    capture_tx: &Sender<CaptureEvent>,
+    emulate: &mut Box<dyn InputEmulation>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     last_ignored: &mut Option<SocketAddr>,
     event: (Event, SocketAddr),
@@ -127,7 +127,7 @@ async fn handle_udp_rx(
             let _ = sender_tx.send((Event::Pong(), addr)).await;
         }
         (Event::Disconnect(), _) => {
-            release_keys(server, consumer, handle).await;
+            release_keys(server, emulate, handle).await;
         }
         (event, addr) => {
             // tell clients that we are ready to receive events
@@ -143,7 +143,7 @@ async fn handle_udp_rx(
                     } else {
                         // upon receiving any event, we go back to receiving mode
                         server.state.replace(State::Receiving);
-                        let _ = producer_notify_tx.send(ProducerEvent::Release).await;
+                        let _ = capture_tx.send(CaptureEvent::Release).await;
                         log::trace!("STATE ===> Receiving");
                     }
                 }
@@ -176,8 +176,8 @@ async fn handle_udp_rx(
                     // workaround buggy rdp backend.
                     if !ignore_event {
                         // consume event
-                        consumer.consume(event, handle).await;
-                        log::trace!("{event:?} => consumer");
+                        emulate.consume(event, handle).await;
+                        log::trace!("{event:?} => emulate");
                     }
                 }
                 State::AwaitingLeave => {
@@ -194,7 +194,7 @@ async fn handle_udp_rx(
                     // event should still be possible
                     if let Event::Enter() = event {
                         server.state.replace(State::Receiving);
-                        let _ = producer_notify_tx.send(ProducerEvent::Release).await;
+                        let _ = capture_tx.send(CaptureEvent::Release).await;
                         log::trace!("STATE ===> Receiving");
                     }
                 }
@@ -205,7 +205,7 @@ async fn handle_udp_rx(
 
 async fn release_keys(
     server: &Server,
-    consumer: &mut Box<dyn EventConsumer>,
+    emulate: &mut Box<dyn InputEmulation>,
     client: ClientHandle,
 ) {
     let keys = server
@@ -222,7 +222,7 @@ async fn release_keys(
             key,
             state: 0,
         });
-        consumer.consume(event, client).await;
+        emulate.consume(event, client).await;
         if let Ok(key) = scancode::Linux::try_from(key) {
             log::warn!("releasing stuck key: {key:?}");
         }
@@ -234,7 +234,7 @@ async fn release_keys(
         mods_locked: 0,
         group: 0,
     };
-    consumer
+    emulate
         .consume(Event::Keyboard(modifiers_event), client)
         .await;
 }

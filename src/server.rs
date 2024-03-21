@@ -5,22 +5,22 @@ use std::{
 };
 use tokio::signal;
 
+use crate::{capture, emulate};
 use crate::{
     client::{ClientHandle, ClientManager},
     config::Config,
     dns,
     frontend::{FrontendEvent, FrontendListener},
-    server::producer_task::ProducerEvent,
+    server::capture_task::CaptureEvent,
 };
-use crate::{consumer, producer};
 
-use self::{consumer_task::ConsumerEvent, resolver_task::DnsRequest};
+use self::{emulation_task::EmulationEvent, resolver_task::DnsRequest};
 
-mod consumer_task;
+mod capture_task;
+mod emulation_task;
 mod frontend_task;
 mod network_task;
 mod ping_task;
-mod producer_task;
 mod resolver_task;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,7 +78,7 @@ impl Server {
                 return anyhow::Ok(());
             }
         };
-        let (consumer, producer) = tokio::join!(consumer::create(), producer::create());
+        let (emulate, capture) = tokio::join!(emulate::create(), capture::create());
 
         let (timer_tx, timer_rx) = tokio::sync::mpsc::channel(1);
         let (frontend_notify_tx, frontend_notify_rx) = tokio::sync::mpsc::channel(1);
@@ -87,22 +87,22 @@ impl Server {
         let (mut udp_task, sender_tx, receiver_rx, port_tx) =
             network_task::new(self.clone(), frontend_notify_tx).await?;
 
-        // event producer
-        let (mut producer_task, producer_channel) = producer_task::new(
-            producer,
+        // input capture
+        let (mut capture_task, capture_channel) = capture_task::new(
+            capture,
             self.clone(),
             sender_tx.clone(),
             timer_tx.clone(),
             self.release_bind.clone(),
         );
 
-        // event consumer
-        let (mut consumer_task, consumer_channel) = consumer_task::new(
-            consumer,
+        // input emulation
+        let (mut emulation_task, emulate_channel) = emulation_task::new(
+            emulate,
             self.clone(),
             receiver_rx,
             sender_tx.clone(),
-            producer_channel.clone(),
+            capture_channel.clone(),
             timer_tx,
         );
 
@@ -115,8 +115,8 @@ impl Server {
             frontend,
             frontend_notify_rx,
             self.clone(),
-            producer_channel.clone(),
-            consumer_channel.clone(),
+            capture_channel.clone(),
+            emulate_channel.clone(),
             resolve_tx.clone(),
             port_tx,
         );
@@ -125,8 +125,8 @@ impl Server {
         let mut ping_task = ping_task::new(
             self.clone(),
             sender_tx.clone(),
-            consumer_channel.clone(),
-            producer_channel.clone(),
+            emulate_channel.clone(),
+            capture_channel.clone(),
             timer_rx,
         );
 
@@ -156,14 +156,14 @@ impl Server {
             _ = signal::ctrl_c() => {
                 log::info!("terminating service");
             }
-            e = &mut producer_task => {
+            e = &mut capture_task => {
                 if let Ok(Err(e)) = e {
-                    log::error!("error in event producer: {e}");
+                    log::error!("error in input capture task: {e}");
                 }
             }
-            e = &mut consumer_task => {
+            e = &mut emulation_task => {
                 if let Ok(Err(e)) = e {
-                    log::error!("error in event consumer: {e}");
+                    log::error!("error in input emulation task: {e}");
                 }
             }
             e = &mut frontend_task => {
@@ -176,18 +176,18 @@ impl Server {
             _ = &mut ping_task => { }
         }
 
-        let _ = consumer_channel.send(ConsumerEvent::Terminate).await;
-        let _ = producer_channel.send(ProducerEvent::Terminate).await;
+        let _ = emulate_channel.send(EmulationEvent::Terminate).await;
+        let _ = capture_channel.send(CaptureEvent::Terminate).await;
         let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
 
-        if !producer_task.is_finished() {
-            if let Err(e) = producer_task.await {
-                log::error!("error in event producer: {e}");
+        if !capture_task.is_finished() {
+            if let Err(e) = capture_task.await {
+                log::error!("error in input capture task: {e}");
             }
         }
-        if !consumer_task.is_finished() {
-            if let Err(e) = consumer_task.await {
-                log::error!("error in event consumer: {e}");
+        if !emulation_task.is_finished() {
+            if let Err(e) = emulation_task.await {
+                log::error!("error in input emulation task: {e}");
             }
         }
 

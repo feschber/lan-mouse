@@ -4,8 +4,8 @@ pub mod dns;
 pub mod event;
 pub mod server;
 
-pub mod consumer;
-pub mod producer;
+pub mod capture;
+pub mod emulate;
 
 pub mod frontend;
 pub mod scancode;

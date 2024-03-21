@@ -22,55 +22,55 @@ pub mod windows;
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 pub mod x11;
 
-/// fallback event producer
+/// fallback input capture (does not produce events)
 pub mod dummy;
 
-pub async fn create() -> Box<dyn EventProducer> {
+pub async fn create() -> Box<dyn InputCapture> {
     #[cfg(target_os = "macos")]
-    match macos::MacOSProducer::new() {
+    match macos::MacOSInputCapture::new() {
         Ok(p) => return Box::new(p),
-        Err(e) => log::info!("macos event producer not available: {e}"),
+        Err(e) => log::info!("macos input capture not available: {e}"),
     }
 
     #[cfg(windows)]
-    match windows::WindowsProducer::new() {
+    match windows::WindowsInputCapture::new() {
         Ok(p) => return Box::new(p),
-        Err(e) => log::info!("windows event producer not available: {e}"),
+        Err(e) => log::info!("windows input capture not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    match libei::LibeiProducer::new().await {
+    match libei::LibeiInputCapture::new().await {
         Ok(p) => {
-            log::info!("using libei event producer");
+            log::info!("using libei input capture");
             return Box::new(p);
         }
-        Err(e) => log::info!("libei event producer not available: {e}"),
+        Err(e) => log::info!("libei input capture not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-    match wayland::WaylandEventProducer::new() {
+    match wayland::WaylandInputCapture::new() {
         Ok(p) => {
-            log::info!("using layer-shell event producer");
+            log::info!("using layer-shell input capture");
             return Box::new(p);
         }
-        Err(e) => log::info!("layer_shell event producer not available: {e}"),
+        Err(e) => log::info!("layer_shell input capture not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-    match x11::X11Producer::new() {
+    match x11::X11InputCapture::new() {
         Ok(p) => {
-            log::info!("using x11 event producer");
+            log::info!("using x11 input capture");
             return Box::new(p);
         }
-        Err(e) => log::info!("x11 event producer not available: {e}"),
+        Err(e) => log::info!("x11 input capture not available: {e}"),
     }
 
-    log::error!("falling back to dummy event producer");
-    Box::new(dummy::DummyProducer::new())
+    log::error!("falling back to dummy input capture");
+    Box::new(dummy::DummyInputCapture::new())
 }
 
-pub trait EventProducer: Stream<Item = io::Result<(ClientHandle, Event)>> + Unpin {
-    /// notify event producer of configuration changes
+pub trait InputCapture: Stream<Item = io::Result<(ClientHandle, Event)>> + Unpin {
+    /// notify input capture of configuration changes
     fn notify(&mut self, event: ClientEvent) -> io::Result<()>;
 
     /// release mouse

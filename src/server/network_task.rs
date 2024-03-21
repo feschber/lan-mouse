@@ -84,7 +84,6 @@ fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize> {
     log::trace!("{:20} ------>->->-> {addr}", e.to_string());
     let data: Vec<u8> = (&e).into();
     // When udp blocks, we dont want to block the event loop.
-    // Dropping events is better than potentially crashing the event
-    // producer.
+    // Dropping events is better than potentially crashing the input capture.
     Ok(sock.try_send_to(&data, addr)?)
 }

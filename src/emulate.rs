@@ -25,11 +25,11 @@ pub mod libei;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
-/// fallback consumer
+/// fallback input emulation (logs events)
 pub mod dummy;
 
 #[async_trait]
-pub trait EventConsumer: Send {
+pub trait InputEmulation: Send {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle);
     async fn notify(&mut self, client_event: ClientEvent);
     /// this function is waited on continuously and can be used to handle events
@@ -41,58 +41,58 @@ pub trait EventConsumer: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create() -> Box<dyn EventConsumer> {
+pub async fn create() -> Box<dyn InputEmulation> {
     #[cfg(windows)]
-    match windows::WindowsConsumer::new() {
+    match windows::WindowsEmulation::new() {
         Ok(c) => return Box::new(c),
-        Err(e) => log::warn!("windows event consumer unavailable: {e}"),
+        Err(e) => log::warn!("windows input emulation unavailable: {e}"),
     }
 
     #[cfg(target_os = "macos")]
-    match macos::MacOSConsumer::new() {
+    match macos::MacOSEmulation::new() {
         Ok(c) => {
-            log::info!("using macos event consumer");
+            log::info!("using macos input emulation");
             return Box::new(c);
         }
-        Err(e) => log::error!("macos consumer not available: {e}"),
+        Err(e) => log::error!("macos input emulatino not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-    match wlroots::WlrootsConsumer::new() {
+    match wlroots::WlrootsEmulation::new() {
         Ok(c) => {
-            log::info!("using wlroots event consumer");
+            log::info!("using wlroots input emulation");
             return Box::new(c);
         }
         Err(e) => log::info!("wayland backend not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    match libei::LibeiConsumer::new().await {
+    match libei::LibeiEmulation::new().await {
         Ok(c) => {
-            log::info!("using libei event consumer");
+            log::info!("using libei input emulation");
             return Box::new(c);
         }
         Err(e) => log::info!("libei not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
-    match xdg_desktop_portal::DesktopPortalConsumer::new().await {
+    match xdg_desktop_portal::DesktopPortalEmulation::new().await {
         Ok(c) => {
-            log::info!("using xdg-remote-desktop-portal event consumer");
+            log::info!("using xdg-remote-desktop-portal input emulation");
             return Box::new(c);
         }
         Err(e) => log::info!("remote desktop portal not available: {e}"),
     }
 
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-    match x11::X11Consumer::new() {
+    match x11::X11Emulation::new() {
         Ok(c) => {
-            log::info!("using x11 event consumer");
+            log::info!("using x11 input emulation");
             return Box::new(c);
         }
-        Err(e) => log::info!("x11 consumer not available: {e}"),
+        Err(e) => log::info!("x11 input emulation not available: {e}"),
     }
 
-    log::error!("falling back to dummy event consumer");
-    Box::new(dummy::DummyConsumer::new())
+    log::error!("falling back to dummy input emulation");
+    Box::new(dummy::DummyEmulation::new())
 }

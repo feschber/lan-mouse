@@ -22,15 +22,15 @@ use crate::{
 };
 
 use super::{
-    consumer_task::ConsumerEvent, producer_task::ProducerEvent, resolver_task::DnsRequest, Server,
+    capture_task::CaptureEvent, emulation_task::EmulationEvent, resolver_task::DnsRequest, Server,
 };
 
 pub(crate) fn new(
     mut frontend: FrontendListener,
     mut notify_rx: Receiver<FrontendNotify>,
     server: Server,
-    producer_notify: Sender<ProducerEvent>,
-    consumer_notify: Sender<ConsumerEvent>,
+    capture_notify: Sender<CaptureEvent>,
+    emulate_notify: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
 ) -> (JoinHandle<Result<()>>, Sender<FrontendEvent>) {
@@ -51,7 +51,7 @@ pub(crate) fn new(
                 }
                 event = event_rx.recv() => {
                     let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
-                    if handle_frontend_event(&server, &producer_notify, &consumer_notify, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
+                    if handle_frontend_event(&server, &capture_notify, &emulate_notify, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
                         break;
                     }
                 }
@@ -98,8 +98,8 @@ async fn handle_frontend_stream(
 
 async fn handle_frontend_event(
     server: &Server,
-    producer_tx: &Sender<ProducerEvent>,
-    consumer_tx: &Sender<ConsumerEvent>,
+    capture_tx: &Sender<CaptureEvent>,
+    emulate_tx: &Sender<EmulationEvent>,
     resolve_tx: &Sender<DnsRequest>,
     frontend: &mut FrontendListener,
     port_tx: &Sender<u16>,
@@ -120,7 +120,7 @@ async fn handle_frontend_event(
             Some(FrontendNotify::NotifyClientCreate(client))
         }
         FrontendEvent::ActivateClient(handle, active) => {
-            activate_client(server, producer_tx, consumer_tx, handle, active).await;
+            activate_client(server, capture_tx, emulate_tx, handle, active).await;
             Some(FrontendNotify::NotifyClientActivate(handle, active))
         }
         FrontendEvent::ChangePort(port) => {
@@ -128,7 +128,7 @@ async fn handle_frontend_event(
             None
         }
         FrontendEvent::DelClient(handle) => {
-            remove_client(server, producer_tx, consumer_tx, frontend, handle).await;
+            remove_client(server, capture_tx, emulate_tx, frontend, handle).await;
             Some(FrontendNotify::NotifyClientDelete(handle))
         }
         FrontendEvent::Enumerate() => {
@@ -147,8 +147,8 @@ async fn handle_frontend_event(
         FrontendEvent::UpdateClient(handle, hostname, port, pos) => {
             update_client(
                 server,
-                producer_tx,
-                consumer_tx,
+                capture_tx,
+                emulate_tx,
                 resolve_tx,
                 (handle, hostname, port, pos),
             )
@@ -204,8 +204,8 @@ pub async fn add_client(
 
 pub async fn activate_client(
     server: &Server,
-    producer_notify_tx: &Sender<ProducerEvent>,
-    consumer_notify_tx: &Sender<ConsumerEvent>,
+    capture_notify_tx: &Sender<CaptureEvent>,
+    emulate_notify_tx: &Sender<EmulationEvent>,
     client: ClientHandle,
     active: bool,
 ) {
@@ -217,26 +217,28 @@ pub async fn activate_client(
         None => return,
     };
     if active {
-        let _ = producer_notify_tx
-            .send(ProducerEvent::ClientEvent(ClientEvent::Create(client, pos)))
+        let _ = capture_notify_tx
+            .send(CaptureEvent::ClientEvent(ClientEvent::Create(client, pos)))
             .await;
-        let _ = consumer_notify_tx
-            .send(ConsumerEvent::ClientEvent(ClientEvent::Create(client, pos)))
+        let _ = emulate_notify_tx
+            .send(EmulationEvent::ClientEvent(ClientEvent::Create(
+                client, pos,
+            )))
             .await;
     } else {
-        let _ = producer_notify_tx
-            .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client)))
+        let _ = capture_notify_tx
+            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
-        let _ = consumer_notify_tx
-            .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
+        let _ = emulate_notify_tx
+            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
     }
 }
 
 pub async fn remove_client(
     server: &Server,
-    producer_notify_tx: &Sender<ProducerEvent>,
-    consumer_notify_tx: &Sender<ConsumerEvent>,
+    capture_notify_tx: &Sender<CaptureEvent>,
+    emulate_notify_tx: &Sender<EmulationEvent>,
     frontend: &mut FrontendListener,
     client: ClientHandle,
 ) -> Option<ClientHandle> {
@@ -250,11 +252,11 @@ pub async fn remove_client(
     };
 
     if active {
-        let _ = producer_notify_tx
-            .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(client)))
+        let _ = capture_notify_tx
+            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
-        let _ = consumer_notify_tx
-            .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(client)))
+        let _ = emulate_notify_tx
+            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(client)))
             .await;
     }
 
@@ -268,8 +270,8 @@ pub async fn remove_client(
 
 async fn update_client(
     server: &Server,
-    producer_notify_tx: &Sender<ProducerEvent>,
-    consumer_notify_tx: &Sender<ConsumerEvent>,
+    capture_notify_tx: &Sender<CaptureEvent>,
+    emulate_notify_tx: &Sender<EmulationEvent>,
     resolve_tx: &Sender<DnsRequest>,
     client_update: (ClientHandle, Option<String>, u16, Position),
 ) {
@@ -311,7 +313,7 @@ async fn update_client(
         )
     };
 
-    // update state in event consumer & producer
+    // update state in event input emulator & input capture
     if changed && active {
         // resolve dns
         if let Some(hostname) = hostname {
@@ -319,17 +321,19 @@ async fn update_client(
         }
 
         // update state
-        let _ = producer_notify_tx
-            .send(ProducerEvent::ClientEvent(ClientEvent::Destroy(handle)))
+        let _ = capture_notify_tx
+            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(handle)))
             .await;
-        let _ = consumer_notify_tx
-            .send(ConsumerEvent::ClientEvent(ClientEvent::Destroy(handle)))
+        let _ = emulate_notify_tx
+            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(handle)))
             .await;
-        let _ = producer_notify_tx
-            .send(ProducerEvent::ClientEvent(ClientEvent::Create(handle, pos)))
+        let _ = capture_notify_tx
+            .send(CaptureEvent::ClientEvent(ClientEvent::Create(handle, pos)))
             .await;
-        let _ = consumer_notify_tx
-            .send(ConsumerEvent::ClientEvent(ClientEvent::Create(handle, pos)))
+        let _ = emulate_notify_tx
+            .send(EmulationEvent::ClientEvent(ClientEvent::Create(
+                handle, pos,
+            )))
             .await;
     }
 }

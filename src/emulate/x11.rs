@@ -8,19 +8,19 @@ use x11::{
 
 use crate::{
     client::ClientHandle,
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::{
         Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
     },
 };
 
-pub struct X11Consumer {
+pub struct X11Emulation {
     display: *mut xlib::Display,
 }
 
-unsafe impl Send for X11Consumer {}
+unsafe impl Send for X11Emulation {}
 
-impl X11Consumer {
+impl X11Emulation {
     pub fn new() -> Result<Self> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
@@ -91,7 +91,7 @@ impl X11Consumer {
     }
 }
 
-impl Drop for X11Consumer {
+impl Drop for X11Emulation {
     fn drop(&mut self) {
         unsafe {
             XCloseDisplay(self.display);
@@ -100,7 +100,7 @@ impl Drop for X11Consumer {
 }
 
 #[async_trait]
-impl EventConsumer for X11Consumer {
+impl InputEmulation for X11Emulation {
     async fn consume(&mut self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
