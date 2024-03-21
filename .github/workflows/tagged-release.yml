@@ -86,8 +86,24 @@ jobs:
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-macos
+        name: lan-mouse-macos-intel
         path: lan-mouse-macos-intel
+
+  macos-aarch64-release-build:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+    - name: install dependencies
+      run: brew install gtk4 libadwaita
+    - name: Release Build
+      run: |
+        cargo build --release
+        cp target/release/lan-mouse lan-mouse-macos-aarch64
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: lan-mouse-macos-aarch64
+        path: lan-mouse-macos-aarch64
 
   tagged-release:
     name: "Tagged Release"
@@ -103,5 +119,6 @@ jobs:
         prerelease: false
         files: |
           lan-mouse-linux/lan-mouse
-          lan-mouse-macos/lan-mouse-macos-intel
+          lan-mouse-macos-intel/lan-mouse-macos-intel
+          lan-mouse-macos-aarch64/lan-mouse-macos-aarch64
           lan-mouse-windows/lan-mouse-windows.zip
