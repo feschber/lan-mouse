@@ -4,9 +4,9 @@ use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, ComboRow};
 use glib::{subclass::InitializingObject, Binding};
 use gtk::glib::clone;
-use gtk::glib::once_cell::sync::Lazy;
 use gtk::glib::subclass::Signal;
 use gtk::{glib, Button, CompositeTemplate, Switch};
+use std::sync::OnceLock;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
@@ -55,15 +55,15 @@ impl ObjectImpl for ClientRow {
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
-        static SIGNALS: Lazy<Vec<Signal>> = Lazy::new(|| {
+        static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
+        SIGNALS.get_or_init(|| {
             vec![
                 Signal::builder("request-update")
                     .param_types([bool::static_type()])
                     .build(),
                 Signal::builder("request-delete").build(),
             ]
-        });
-        SIGNALS.as_ref()
+        })
     }
 }
 
