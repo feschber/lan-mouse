@@ -112,7 +112,7 @@ jobs:
         path: target/debug/lan-mouse
 
   build-macos-arm64:
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
     - uses: actions/checkout@v3
     - name: install dependencies
