@@ -114,16 +114,19 @@ jobs:
   build-macos-aarch64:
     runs-on: macos-14
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: install dependencies
-      run: |
-        brew install gtk4 libadwaita
-        rustup target add aarch64-apple-darwin
-        rustup update
+      run: brew install gtk4 libadwaita
     - name: Build
-      run: SDKROOT=$(xcrun -sdk macosx --show-sdk-path) MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version) cargo build --target=aarch64-apple-darwin
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Check Formatting
+      run: cargo fmt --check
+    - name: Clippy
+      run: cargo clippy --all-features --all-targets -- --deny warnings
     - name: Upload build artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos-aarch64
         path: target/debug/lan-mouse
