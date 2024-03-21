@@ -129,7 +129,7 @@ fn build_ui(app: &Application) {
     window.imp().stream.borrow_mut().replace(tx);
     glib::spawn_future_local(clone!(@weak window => async move {
         loop {
-            let notify = receiver.recv().await.unwrap();
+            let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
             match notify {
                 FrontendNotify::NotifyClientActivate(handle, active) => {
                     window.activate_client(handle, active);
