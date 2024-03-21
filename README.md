@@ -58,6 +58,10 @@ input capture (to send events *to* other clients) on different operating systems
 > Otherwise input capture will not work.
 
 ## Installation
+### Install with cargo
+```sh
+cargo install lan-mouse
+```
 
 ### Download from Releases
 The easiest way to install Lan Mouse is to download precompiled release binaries from the [releases section](https://github.com/feschber/lan-mouse/releases).
