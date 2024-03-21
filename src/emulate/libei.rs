@@ -23,11 +23,11 @@ use reis::{
 
 use crate::{
     client::{ClientEvent, ClientHandle},
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::Event,
 };
 
-pub struct LibeiConsumer {
+pub struct LibeiEmulation {
     handshake: bool,
     context: ei::Context,
     events: EiEventStream,
@@ -76,7 +76,7 @@ async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
     proxy.connect_to_eis(&session).await
 }
 
-impl LibeiConsumer {
+impl LibeiEmulation {
     pub async fn new() -> Result<Self> {
         // fd is owned by the message, so we need to dup it
         let eifd = get_ei_fd().await?;
@@ -107,7 +107,7 @@ impl LibeiConsumer {
 }
 
 #[async_trait]
-impl EventConsumer for LibeiConsumer {
+impl InputEmulation for LibeiEmulation {
     async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

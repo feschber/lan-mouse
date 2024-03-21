@@ -10,20 +10,20 @@ use async_trait::async_trait;
 
 use crate::{
     client::ClientEvent,
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::{
         Event::{Keyboard, Pointer},
         KeyboardEvent, PointerEvent,
     },
 };
 
-pub struct DesktopPortalConsumer<'a> {
+pub struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
     session: Session<'a>,
 }
 
-impl<'a> DesktopPortalConsumer<'a> {
-    pub async fn new() -> Result<DesktopPortalConsumer<'a>> {
+impl<'a> DesktopPortalEmulation<'a> {
+    pub async fn new() -> Result<DesktopPortalEmulation<'a>> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
 
@@ -59,7 +59,7 @@ impl<'a> DesktopPortalConsumer<'a> {
 }
 
 #[async_trait]
-impl<'a> EventConsumer for DesktopPortalConsumer<'a> {
+impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
     async fn consume(&mut self, event: crate::event::Event, _client: crate::client::ClientHandle) {
         match event {
             Pointer(p) => {

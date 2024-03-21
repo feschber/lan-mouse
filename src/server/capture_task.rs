@@ -5,9 +5,9 @@ use std::{collections::HashSet, net::SocketAddr};
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 use crate::{
+    capture::InputCapture,
     client::{ClientEvent, ClientHandle},
     event::{Event, KeyboardEvent},
-    producer::EventProducer,
     scancode,
     server::State,
 };
@@ -15,45 +15,45 @@ use crate::{
 use super::Server;
 
 #[derive(Clone, Copy, Debug)]
-pub enum ProducerEvent {
-    /// producer must release the mouse
+pub enum CaptureEvent {
+    /// capture must release the mouse
     Release,
-    /// producer is notified of a change in client states
+    /// capture is notified of a change in client states
     ClientEvent(ClientEvent),
     /// termination signal
     Terminate,
 }
 
 pub fn new(
-    mut producer: Box<dyn EventProducer>,
+    mut capture: Box<dyn InputCapture>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
     timer_tx: Sender<()>,
     release_bind: Vec<scancode::Linux>,
-) -> (JoinHandle<Result<()>>, Sender<ProducerEvent>) {
+) -> (JoinHandle<Result<()>>, Sender<CaptureEvent>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let task = tokio::task::spawn_local(async move {
         let mut pressed_keys = HashSet::new();
         loop {
             tokio::select! {
-                event = producer.next() => {
+                event = capture.next() => {
                     match event {
-                        Some(Ok(event)) => handle_producer_event(&server, &mut producer, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?,
-                        Some(Err(e)) => return Err(anyhow!("event producer: {e:?}")),
-                        None => return Err(anyhow!("event producer closed")),
+                        Some(Ok(event)) => handle_capture_event(&server, &mut capture, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?,
+                        Some(Err(e)) => return Err(anyhow!("input capture: {e:?}")),
+                        None => return Err(anyhow!("input capture terminated")),
                     }
                 }
                 e = rx.recv() => {
-                    log::debug!("producer notify rx: {e:?}");
+                    log::debug!("input capture notify rx: {e:?}");
                     match e {
                         Some(e) => match e {
-                            ProducerEvent::Release => {
-                                producer.release()?;
+                            CaptureEvent::Release => {
+                                capture.release()?;
                                 server.state.replace(State::Receiving);
 
                             }
-                            ProducerEvent::ClientEvent(e) => producer.notify(e)?,
-                            ProducerEvent::Terminate => break,
+                            CaptureEvent::ClientEvent(e) => capture.notify(e)?,
+                            CaptureEvent::Terminate => break,
                         },
                         None => break,
                     }
@@ -75,9 +75,9 @@ fn update_pressed_keys(pressed_keys: &mut HashSet<scancode::Linux>, key: u32, st
     }
 }
 
-async fn handle_producer_event(
+async fn handle_capture_event(
     server: &Server,
-    producer: &mut Box<dyn EventProducer>,
+    capture: &mut Box<dyn InputCapture>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     timer_tx: &Sender<()>,
     event: (ClientHandle, Event),
@@ -93,7 +93,7 @@ async fn handle_producer_event(
         if release_bind.iter().all(|k| pressed_keys.contains(k)) {
             pressed_keys.clear();
             log::info!("releasing pointer");
-            producer.release()?;
+            capture.release()?;
             server.state.replace(State::Receiving);
             log::trace!("STATE ===> Receiving");
             // send an event to release all the modifiers
@@ -112,7 +112,7 @@ async fn handle_producer_event(
             None => {
                 // should not happen
                 log::warn!("unknown client!");
-                producer.release()?;
+                capture.release()?;
                 server.state.replace(State::Receiving);
                 log::trace!("STATE ===> Receiving");
                 return Ok(());

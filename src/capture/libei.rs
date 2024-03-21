@@ -31,9 +31,9 @@ use futures_core::Stream;
 use once_cell::sync::Lazy;
 
 use crate::{
+    capture::InputCapture as LanMouseInputCapture,
     client::{ClientEvent, ClientHandle, Position},
     event::{Event, KeyboardEvent, PointerEvent},
-    producer::EventProducer,
 };
 
 #[derive(Debug)]
@@ -43,7 +43,7 @@ enum ProducerEvent {
 }
 
 #[allow(dead_code)]
-pub struct LibeiProducer<'a> {
+pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     libei_task: JoinHandle<Result<()>>,
     event_rx: tokio::sync::mpsc::Receiver<(u32, Event)>,
@@ -123,7 +123,7 @@ async fn update_barriers(
     Ok(id_map)
 }
 
-impl<'a> Drop for LibeiProducer<'a> {
+impl<'a> Drop for LibeiInputCapture<'a> {
     fn drop(&mut self) {
         self.libei_task.abort();
     }
@@ -212,7 +212,7 @@ async fn wait_for_active_client(
     Ok(())
 }
 
-impl<'a> LibeiProducer<'a> {
+impl<'a> LibeiInputCapture<'a> {
     pub async fn new() -> Result<Self> {
         let input_capture = Box::pin(InputCapture::new().await?);
         let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture<'static>;
@@ -522,7 +522,7 @@ async fn handle_ei_event(
     }
 }
 
-impl<'a> EventProducer for LibeiProducer<'a> {
+impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
@@ -543,7 +543,7 @@ impl<'a> EventProducer for LibeiProducer<'a> {
     }
 }
 
-impl<'a> Stream for LibeiProducer<'a> {
+impl<'a> Stream for LibeiInputCapture<'a> {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

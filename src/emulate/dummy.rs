@@ -1,21 +1,21 @@
 use crate::{
     client::{ClientEvent, ClientHandle},
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::Event,
 };
 use async_trait::async_trait;
 
 #[derive(Default)]
-pub struct DummyConsumer;
+pub struct DummyEmulation;
 
-impl DummyConsumer {
+impl DummyEmulation {
     pub fn new() -> Self {
         Self {}
     }
 }
 
 #[async_trait]
-impl EventConsumer for DummyConsumer {
+impl InputEmulation for DummyEmulation {
     async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
         log::info!("received event: ({client_handle}) {event}");
     }

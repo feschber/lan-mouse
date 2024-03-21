@@ -67,7 +67,7 @@ pub struct Client {
     /// fix ips, determined by the user
     pub fix_ips: Vec<IpAddr>,
     /// unique handle to refer to the client.
-    /// This way any event consumer / producer backend does not
+    /// This way any emulation / capture backend does not
     /// need to know anything about a client other than its handle.
     pub handle: ClientHandle,
     /// all ip addresses associated with a particular client

@@ -1,6 +1,6 @@
 use crate::{
+    capture::InputCapture,
     client::{ClientEvent, ClientHandle, Position},
-    producer::EventProducer,
 };
 
 use anyhow::{anyhow, Result};
@@ -124,7 +124,7 @@ impl AsRawFd for Inner {
     }
 }
 
-pub struct WaylandEventProducer(AsyncFd<Inner>);
+pub struct WaylandInputCapture(AsyncFd<Inner>);
 
 struct Window {
     buffer: wl_buffer::WlBuffer,
@@ -256,7 +256,7 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     }
 }
 
-impl WaylandEventProducer {
+impl WaylandInputCapture {
     pub fn new() -> Result<Self> {
         let conn = match Connection::connect_to_env() {
             Ok(c) => c,
@@ -390,7 +390,7 @@ impl WaylandEventProducer {
 
         let inner = AsyncFd::new(Inner { queue, state })?;
 
-        Ok(WaylandEventProducer(inner))
+        Ok(WaylandInputCapture(inner))
     }
 
     fn add_client(&mut self, handle: ClientHandle, pos: Position) {
@@ -587,7 +587,7 @@ impl Inner {
     }
 }
 
-impl EventProducer for WaylandEventProducer {
+impl InputCapture for WaylandInputCapture {
     fn notify(&mut self, client_event: ClientEvent) -> io::Result<()> {
         match client_event {
             ClientEvent::Create(handle, pos) => {
@@ -609,7 +609,7 @@ impl EventProducer for WaylandEventProducer {
     }
 }
 
-impl Stream for WaylandEventProducer {
+impl Stream for WaylandInputCapture {
     type Item = io::Result<(ClientHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

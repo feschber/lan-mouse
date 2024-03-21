@@ -1,5 +1,5 @@
 use crate::{
-    consumer::EventConsumer,
+    emulate::InputEmulation,
     event::{KeyboardEvent, PointerEvent},
     scancode,
 };
@@ -26,18 +26,18 @@ use crate::{
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
-pub struct WindowsConsumer {
+pub struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
 }
 
-impl WindowsConsumer {
+impl WindowsEmulation {
     pub fn new() -> Result<Self> {
         Ok(Self { repeat_task: None })
     }
 }
 
 #[async_trait]
-impl EventConsumer for WindowsConsumer {
+impl InputEmulation for WindowsEmulation {
     async fn consume(&mut self, event: Event, _: ClientHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
@@ -87,7 +87,7 @@ impl EventConsumer for WindowsConsumer {
     async fn destroy(&mut self) {}
 }
 
-impl WindowsConsumer {
+impl WindowsEmulation {
     async fn spawn_repeat_task(&mut self, key: u32) {
         // there can only be one repeating key and it's
         // always the last to be pressed

@@ -4,14 +4,14 @@ use futures::Stream;
 use std::{io, pin::Pin};
 
 use crate::{
+    capture::InputCapture,
     client::{ClientEvent, ClientHandle},
     event::Event,
-    producer::EventProducer,
 };
 
-pub struct WindowsProducer {}
+pub struct WindowsInputCapture {}
 
-impl EventProducer for WindowsProducer {
+impl InputCapture for WindowsInputCapture {
     fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
         Ok(())
     }
@@ -21,13 +21,13 @@ impl EventProducer for WindowsProducer {
     }
 }
 
-impl WindowsProducer {
+impl WindowsInputCapture {
     pub(crate) fn new() -> Result<Self> {
         Err(anyhow!("not implemented"))
     }
 }
 
-impl Stream for WindowsProducer {
+impl Stream for WindowsInputCapture {
     type Item = io::Result<(ClientHandle, Event)>;
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending
