@@ -5,17 +5,15 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use std::ops::BitOrAssign;
 use std::time::Duration;
 use tokio::task::AbortHandle;
-use winapi::um::winuser::{SendInput, KEYEVENTF_EXTENDEDKEY};
-use winapi::{
-    self,
-    um::winuser::{
-        INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
-        LPINPUT, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
-    },
+use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT_0, KEYEVENTF_EXTENDEDKEY};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
+    MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+    MOUSEEVENTF_WHEEL, MOUSEINPUT,
 };
 
 use crate::{
@@ -108,21 +106,30 @@ impl WindowsEmulation {
     }
 }
 
-fn send_mouse_input(mi: MOUSEINPUT) {
+fn send_input_safe(input: INPUT) {
     unsafe {
-        let mut input = INPUT {
-            type_: INPUT_MOUSE,
-            u: std::mem::transmute(mi),
-        };
-
-        SendInput(
-            1_u32,
-            &mut input as LPINPUT,
-            std::mem::size_of::<INPUT>() as i32,
-        );
+        loop {
+            /* retval = number of successfully submitted events */
+            if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) > 0 {
+                break;
+            }
+        }
     }
 }
 
+fn send_mouse_input(mi: MOUSEINPUT) {
+    send_input_safe(INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 { mi },
+    });
+}
+
+fn send_keyboard_input(ki: KEYBDINPUT) {
+    send_input_safe(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki },
+    });
+}
 fn rel_mouse(dx: i32, dy: i32) {
     let mi = MOUSEINPUT {
         dx,
@@ -186,31 +193,21 @@ fn key_event(key: u32, state: u8) {
     };
     let extended = scancode > 0xff;
     let scancode = scancode & 0xff;
+    let mut flags = KEYEVENTF_SCANCODE;
+    if extended {
+        flags.bitor_assign(KEYEVENTF_EXTENDEDKEY);
+    }
+    if state == 0 {
+        flags.bitor_assign(KEYEVENTF_KEYUP);
+    }
     let ki = KEYBDINPUT {
-        wVk: 0,
+        wVk: Default::default(),
         wScan: scancode,
-        dwFlags: KEYEVENTF_SCANCODE
-            | if extended { KEYEVENTF_EXTENDEDKEY } else { 0 }
-            | match state {
-                0 => KEYEVENTF_KEYUP,
-                1 => 0u32,
-                _ => return,
-            },
+        dwFlags: flags,
         time: 0,
         dwExtraInfo: 0,
     };
     send_keyboard_input(ki);
-}
-
-fn send_keyboard_input(ki: KEYBDINPUT) {
-    unsafe {
-        let mut input = INPUT {
-            type_: INPUT_KEYBOARD,
-            u: std::mem::zeroed(),
-        };
-        *input.u.ki_mut() = ki;
-        SendInput(1_u32, &mut input, std::mem::size_of::<INPUT>() as i32);
-    }
 }
 
 fn linux_keycode_to_windows_scancode(linux_keycode: u32) -> Option<u16> {
