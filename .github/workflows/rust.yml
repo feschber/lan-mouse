@@ -111,7 +111,7 @@ jobs:
         name: lan-mouse-macos
         path: target/debug/lan-mouse
 
-  build-macos-arm64:
+  build-macos-aarch64:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v3
@@ -125,5 +125,5 @@ jobs:
     - name: Upload build artifact
       uses: actions/upload-artifact@v3
       with:
-        name: lan-mouse-macos-arm64
+        name: lan-mouse-macos-aarch64
         path: target/debug/lan-mouse
