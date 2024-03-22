@@ -313,13 +313,16 @@ async fn update_client(
         )
     };
 
-    // update state in event input emulator & input capture
-    if changed && active {
+    // resolve dns if something changed
+    if changed {
         // resolve dns
         if let Some(hostname) = hostname {
             let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
         }
+    }
 
+    // update state in event input emulator & input capture
+    if changed && active {
         // update state
         let _ = capture_notify_tx
             .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(handle)))
