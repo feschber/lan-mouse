@@ -49,7 +49,7 @@ reis = { version = "0.2", features = [ "tokio" ], optional = true }
 core-graphics = { version = "0.23", features = ["highsierra"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = {  version = "0.54.0", features = [ "Win32_UI_Input_KeyboardAndMouse" ] }
+windows = {  version = "0.54.0", features = [ "Win32_System_LibraryLoader", "Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging" ] }
 
 [build-dependencies]
 glib-build-tools = "0.19.0"
