@@ -35,6 +35,8 @@ impl InputCapture for WindowsInputCapture {
     }
 }
 
+static mut LOCKED: bool = false;
+
 unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let msllhookstruct: MSLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam);
@@ -48,7 +50,11 @@ unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
         WPARAM(p) if p == WM_MOUSEWHEEL as usize => log::info!("SCROLL {:?}", wparam),
         _ => {}
     };
-    CallNextHookEx(HHOOK::default(), i, wparam, lparam)
+    if LOCKED {
+        LRESULT(1) /* dont pass event */
+    } else {
+        CallNextHookEx(HHOOK::default(), i, wparam, lparam)
+    }
 }
 
 unsafe extern "system" fn kybrd_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
