@@ -2,7 +2,9 @@ use anyhow::Result;
 use core::task::{Context, Poll};
 use futures::Stream;
 use std::ptr::addr_of_mut;
-use std::{io, pin::Pin, ptr};
+use std::{io, pin::Pin, ptr, thread};
+use std::task::ready;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::Win32::Foundation::{
     BOOL, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
 };
@@ -22,8 +24,13 @@ use crate::{
     client::{ClientEvent, ClientHandle},
     event::Event,
 };
+use crate::client::Position;
+use crate::event::{BTN_LEFT, BTN_RIGHT, PointerEvent};
 
-pub struct WindowsInputCapture {}
+pub struct WindowsInputCapture {
+    event_rx: Receiver<(ClientHandle, Event)>,
+    msg_thread: std::thread::JoinHandle<()>,
+}
 
 impl InputCapture for WindowsInputCapture {
     fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
@@ -36,20 +43,59 @@ impl InputCapture for WindowsInputCapture {
 }
 
 static mut LOCKED: bool = false;
+static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
 
 unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let msllhookstruct: MSLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam);
-    let (x, y) = (msllhookstruct.pt.x, msllhookstruct.pt.y);
-    match wparam {
-        WPARAM(p) if p == WM_LBUTTONDOWN as usize => log::info!("LEFT BUTTON DOWN"),
-        WPARAM(p) if p == WM_RBUTTONDOWN as usize => log::info!("RIGHT BUTTON DOWN"),
-        WPARAM(p) if p == WM_LBUTTONUP as usize => log::info!("LEFT BUTTON UP"),
-        WPARAM(p) if p == WM_RBUTTONUP as usize => log::info!("RIGHT BUTTON UP"),
-        WPARAM(p) if p == WM_MOUSEMOVE as usize => log::info!("MOUSE MOVE: {x},{y}"),
-        WPARAM(p) if p == WM_MOUSEWHEEL as usize => log::info!("SCROLL {:?}", wparam),
-        _ => {}
+    let pointer_event = match wparam {
+        WPARAM(p) if p == WM_LBUTTONDOWN as usize => PointerEvent::Button {
+            time: 0,
+            button: BTN_LEFT,
+            state: 1,
+        },
+        WPARAM(p) if p == WM_RBUTTONDOWN as usize => PointerEvent::Button {
+            time: 0,
+            button: BTN_LEFT,
+            state: 1,
+        },
+        WPARAM(p) if p == WM_LBUTTONUP as usize => PointerEvent::Button {
+            time: 0,
+            button: BTN_LEFT,
+            state: 0,
+        },
+        WPARAM(p) if p == WM_RBUTTONUP as usize => PointerEvent::Button {
+            time: 0,
+            button: BTN_RIGHT,
+            state: 0,
+        },
+        WPARAM(p) if p == WM_MOUSEMOVE as usize => {
+            static mut PREV_X: Option<i32> = None;
+            static mut PREV_Y: Option<i32> = None;
+            let (x, y) = (msllhookstruct.pt.x, msllhookstruct.pt.y);
+            let dx = if let Some(px) = PREV_X { x - px } else { 0 };
+            let dy = if let Some(py) = PREV_Y { y - py } else { 0 };
+            PREV_X.replace(x);
+            PREV_Y.replace(y);
+            PointerEvent::Motion {
+                time: 0,
+                relative_x: dx as f64,
+                relative_y: dy as f64,
+            }
+        },
+        WPARAM(p) if p == WM_MOUSEWHEEL as usize => PointerEvent::Axis {
+            time: 0,
+            axis: 0,
+            value: msllhookstruct.mouseData as f64,
+        },
+        _ => todo!(),
     };
+    let client = 0;
+    let event = Event::Pointer(pointer_event);
+    let event = (client, event);
+    if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
+        log::warn!("e: {e}");
+    }
     if LOCKED {
         LRESULT(1) /* dont pass event */
     } else {
@@ -104,29 +150,49 @@ fn get_display_regions() -> Vec<RECT> {
     }
 }
 
+fn is_at_dp_boundary(x: i32, y: i32, display: &RECT, pos: Position) -> bool {
+    match pos {
+        Position::Left => display.left == x,
+        Position::Right => display.right == x,
+        Position::Top => display.top == y,
+        Position::Bottom => display.bottom == y,
+    }
+}
+
+fn is_at_boundary(x: i32, y: i32, displays: &[RECT], pos: Position) -> bool {
+    displays.iter().filter(|&d| is_at_dp_boundary(x, y, d, pos)).count() == 1
+}
+
 impl WindowsInputCapture {
     pub(crate) fn new() -> Result<Self> {
         unsafe {
-            let mouse_proc: HOOKPROC = Some(mouse_proc);
-            let kybrd_proc: HOOKPROC = Some(kybrd_proc);
-            let display_info: Vec<RECT> = get_display_regions();
-            log::info!("displays: {display_info:?}");
-            let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
-            let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
-            let mut i = 0;
-            loop {
-                let mut msg = std::mem::zeroed();
-                GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
-                log::info!("msg {i}: {msg:?}");
-                i += 1;
-            }
+            let (tx, rx) = channel(10);
+            EVENT_TX.replace(tx);
+            let msg_thread = thread::spawn(|| {
+                let mouse_proc: HOOKPROC = Some(mouse_proc);
+                let kybrd_proc: HOOKPROC = Some(kybrd_proc);
+                let display_info: Vec<RECT> = get_display_regions();
+                log::info!("displays: {display_info:?}");
+                let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
+                let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
+                loop {
+                    log::info!("MESSAGE THREAD RUNNING!");
+                    let mut msg = std::mem::zeroed();
+                    // mouse / keybrd proc do not actually return a message
+                    GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
+                }
+            });
+            Ok(Self { msg_thread, event_rx: rx })
         }
     }
 }
 
 impl Stream for WindowsInputCapture {
     type Item = io::Result<(ClientHandle, Event)>;
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Pending
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match ready!(self.event_rx.poll_recv(cx)) {
+            None => Poll::Ready(None),
+            Some(e) => Poll::Ready(Some(Ok(e))),
+        }
     }
 }
