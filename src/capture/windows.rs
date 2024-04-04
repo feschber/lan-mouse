@@ -26,7 +26,7 @@ use crate::{
     event::Event,
 };
 use crate::client::Position;
-use crate::event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, PointerEvent};
+use crate::event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, KeyboardEvent, PointerEvent};
 
 pub struct WindowsInputCapture {
     event_rx: Receiver<(ClientHandle, Event)>,
@@ -72,7 +72,8 @@ static mut ENTRY_POINT_Y: i32 = 0;
 unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let msllhookstruct: MSLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam);
-    log::info!("ncode: {ncode}, {msllhookstruct:?}, Entered at: {ENTRY_POINT_X} {ENTRY_POINT_Y}");
+    // log::info!("ncode: {ncode}, {msllhookstruct:?}, Entered at: {ENTRY_POINT_X} {ENTRY_POINT_Y}");
+    let mut propagate_event = !LOCKED;
     let pointer_event = match wparam {
         WPARAM(p) if p == WM_LBUTTONDOWN as usize => PointerEvent::Button {
             time: 0,
@@ -114,10 +115,24 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
             if LOCKED == false {
                 if let Some(pos) = entered_barrier(px, py, x, y, &DISPLAY_INFO.as_ref().unwrap()) {
                     if let Some(client) = CLIENT_FOR_POS.get(&pos) {
+                        propagate_event = true;
                         ACTIVE_CLIENT.replace(*client);
                         LOCKED = true;
-                        ENTRY_POINT_X = x;
-                        ENTRY_POINT_Y = y;
+                        /* windows is weird */
+                        match pos {
+                            Position::Right => {
+                                ENTRY_POINT_X = x - 1;
+                                ENTRY_POINT_Y = y;
+                            }
+                            Position::Bottom => {
+                                ENTRY_POINT_X = x;
+                                ENTRY_POINT_Y = y - 1;
+                            }
+                            _ => {
+                                ENTRY_POINT_X = x;
+                                ENTRY_POINT_Y = y;
+                            }
+                        }
                         loop {
                             /* enter event must not get lost under any circumstances */
                             log::info!("ENTERED @ ({px},{py}) -> ({x},{y})");
@@ -130,7 +145,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
                     }
                 }
             }
-            let (dx, dy) = (x + 1 - ENTRY_POINT_X, y - ENTRY_POINT_Y);
+            let (dx, dy) = (x - ENTRY_POINT_X, y - ENTRY_POINT_Y);
             PointerEvent::Motion {
                 time: 0,
                 relative_x: dx as f64,
@@ -144,7 +159,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         },
         _ => return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam),
     };
-    if LOCKED {
+    if !propagate_event {
         if let Some(client) = ACTIVE_CLIENT {
             let event = Event::Pointer(pointer_event);
             let event = (client, event);
@@ -163,14 +178,38 @@ unsafe extern "system" fn kybrd_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
     let kybrdllhookstruct: KBDLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
     let scancode = kybrdllhookstruct.scanCode;
-    match wparam {
-        WPARAM(p) if p == WM_KEYDOWN as usize => log::info!("KEY DOWN {scancode}"),
-        WPARAM(p) if p == WM_KEYUP as usize => log::info!("KEY UP {scancode}"),
-        WPARAM(p) if p == WM_SYSKEYDOWN as usize => log::info!("SYS KEY DOWN {scancode}"),
-        WPARAM(p) if p == WM_SYSKEYUP as usize => log::info!("SYS KEY UP {scancode}"),
-        _ => {}
+    let key_event = match wparam {
+        WPARAM(p) if p == WM_KEYDOWN as usize => Some(KeyboardEvent::Key {
+            time: 0, key: scancode, state: 1,
+        }),
+        WPARAM(p) if p == WM_KEYUP as usize => Some(KeyboardEvent::Key {
+            time: 0, key: scancode, state: 0,
+        }),
+        WPARAM(p) if p == WM_SYSKEYDOWN as usize => {
+            log::debug!("SYS KEY DOWN {scancode}");
+            None
+        },
+        WPARAM(p) if p == WM_SYSKEYUP as usize => {
+            log::debug!("SYS KEY UP {scancode}");
+            None
+        },
+        _ => None
     };
-    CallNextHookEx(HHOOK::default(), i, wparam, lparam)
+    if LOCKED {
+        if let Some(key_event) = key_event {
+            if let Some(client) = ACTIVE_CLIENT {
+                let event = Event::Keyboard(key_event);
+                let event = (client, event);
+
+                if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
+                    log::warn!("e: {e}");
+                }
+            }
+        }
+        LRESULT(1) /* don't pass event to applications */
+    } else {
+        CallNextHookEx(HHOOK::default(), i, wparam, lparam)
+    }
 }
 
 unsafe extern "system" fn monitor_enum_proc(
