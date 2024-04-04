@@ -60,16 +60,19 @@ impl InputCapture for WindowsInputCapture {
 }
 
 static mut EVENT_BUFFER: Vec<ClientEvent> = Vec::new();
-static mut LOCKED: AtomicBool = AtomicBool::new(false);
+static mut LOCKED: bool = false;
 static mut ACTIVE_CLIENT: Option<ClientHandle> = None;
 static mut CLIENT_FOR_POS: Lazy<HashMap<Position, ClientHandle>> = Lazy::new(|| HashMap::new());
 static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
 static mut DISPLAY_INFO: Option<Vec<RECT>> = None;
 static mut EVENT_THREAD_ID: Option<u32> = None;
+static mut ENTRY_POINT_X: i32 = 0;
+static mut ENTRY_POINT_Y: i32 = 0;
 
-unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let msllhookstruct: MSLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam);
+    log::info!("ncode: {ncode}, {msllhookstruct:?}, Entered at: {ENTRY_POINT_X} {ENTRY_POINT_Y}");
     let pointer_event = match wparam {
         WPARAM(p) if p == WM_LBUTTONDOWN as usize => PointerEvent::Button {
             time: 0,
@@ -106,22 +109,28 @@ unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
             static mut PREV_Y: Option<i32> = None;
             let (x, y) = (msllhookstruct.pt.x, msllhookstruct.pt.y);
             let (px, py) = (PREV_X.unwrap_or(x), PREV_Y.unwrap_or(y));
-            let (dx, dy) = (x - px, y - py);
             PREV_X.replace(x);
             PREV_Y.replace(y);
-            if let Some(pos) = entered_barrier(px, py, x, y, &DISPLAY_INFO.as_ref().unwrap()) {
-                if let Some(client) = CLIENT_FOR_POS.get(&pos) {
-                    ACTIVE_CLIENT.replace(*client);
-                    LOCKED.store(true, Ordering::SeqCst);
-                    loop { /* enter event must not get lost under any circumstances */
-                        match EVENT_TX.as_ref().unwrap().try_send((0, Event::Enter())) {
-                            Err(TrySendError::Full(_)) => continue,
-                            Err(TrySendError::Closed(_)) => panic!("channel closed"),
-                            Ok(e) => break,
+            if LOCKED == false {
+                if let Some(pos) = entered_barrier(px, py, x, y, &DISPLAY_INFO.as_ref().unwrap()) {
+                    if let Some(client) = CLIENT_FOR_POS.get(&pos) {
+                        ACTIVE_CLIENT.replace(*client);
+                        LOCKED = true;
+                        ENTRY_POINT_X = x;
+                        ENTRY_POINT_Y = y;
+                        loop {
+                            /* enter event must not get lost under any circumstances */
+                            log::info!("ENTERED @ ({px},{py}) -> ({x},{y})");
+                            match EVENT_TX.as_ref().unwrap().try_send((0, Event::Enter())) {
+                                Err(TrySendError::Full(_)) => continue,
+                                Err(TrySendError::Closed(_)) => panic!("channel closed"),
+                                Ok(e) => break,
+                            }
                         }
                     }
                 }
             }
+            let (dx, dy) = (x + 1 - ENTRY_POINT_X, y - ENTRY_POINT_Y);
             PointerEvent::Motion {
                 time: 0,
                 relative_x: dx as f64,
@@ -133,12 +142,9 @@ unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
             axis: 0,
             value: msllhookstruct.mouseData as i32 as f64,
         },
-        _ => return CallNextHookEx(HHOOK::default(), i, wparam, lparam),
+        _ => return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam),
     };
-    let locked = LOCKED.load(Ordering::SeqCst);
-    if !locked {
-        CallNextHookEx(HHOOK::default(), i, wparam, lparam)
-    } else {
+    if LOCKED {
         if let Some(client) = ACTIVE_CLIENT {
             let event = Event::Pointer(pointer_event);
             let event = (client, event);
@@ -148,6 +154,8 @@ unsafe extern "system" fn mouse_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
             }
         }
         LRESULT(1) /* don't pass event to applications */
+    } else {
+        CallNextHookEx(HHOOK::default(), ncode, wparam, lparam)
     }
 }
 
@@ -248,7 +256,7 @@ impl WindowsInputCapture {
                     let res = GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
                     // mouse / keybrd proc do not actually return a message
                     if msg.wParam.0 == EventType::Release as usize {
-                        LOCKED.store(false, Ordering::SeqCst);
+                        LOCKED = false;
                     } else if msg.wParam.0 == EventType::ClientEvent as usize {
                         while let Some(event) = EVENT_BUFFER.pop() {
                             match event {
