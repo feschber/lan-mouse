@@ -20,7 +20,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, HHOOK, HOOKPROC,
-    KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP,
+    KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
 };
@@ -35,162 +35,109 @@ use crate::{
 
 pub struct WindowsInputCapture {
     event_rx: Receiver<(ClientHandle, Event)>,
-    msg_thread: std::thread::JoinHandle<()>,
+    msg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 enum EventType {
     ClientEvent = 0,
     Release = 1,
+    Exit = 2,
+}
+
+unsafe fn signal_message_thread(event_type: EventType) {
+    if let Some(event_tid) = get_event_tid() {
+        PostThreadMessageW(event_tid, WM_USER, WPARAM(event_type as usize), LPARAM(0)).unwrap();
+    }
 }
 
 impl InputCapture for WindowsInputCapture {
     fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
         unsafe {
             EVENT_BUFFER.push(event);
-            if let Some(tid) = crate::capture::windows::EVENT_THREAD_ID {
-                PostThreadMessageW(
-                    tid,
-                    WM_USER,
-                    WPARAM(EventType::ClientEvent as usize),
-                    LPARAM(0),
-                )
-                .unwrap();
-            }
+            signal_message_thread(EventType::ClientEvent);
         }
         Ok(())
     }
 
     fn release(&mut self) -> io::Result<()> {
-        unsafe {
-            if let Some(tid) = EVENT_THREAD_ID {
-                PostThreadMessageW(tid, WM_USER, WPARAM(EventType::Release as usize), LPARAM(0))
-                    .unwrap();
-            }
-        }
+        unsafe { signal_message_thread(EventType::Release) };
         Ok(())
     }
 }
 
 static mut EVENT_BUFFER: Vec<ClientEvent> = Vec::new();
-static mut LOCKED: bool = false;
 static mut ACTIVE_CLIENT: Option<ClientHandle> = None;
 static mut CLIENT_FOR_POS: Lazy<HashMap<Position, ClientHandle>> = Lazy::new(HashMap::new);
 static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
 static mut DISPLAY_INFO: Option<Vec<RECT>> = None;
 static mut EVENT_THREAD_ID: Option<u32> = None;
-static mut ENTRY_POINT_X: i32 = 0;
-static mut ENTRY_POINT_Y: i32 = 0;
+unsafe fn set_event_tid(tid: u32) {
+    EVENT_THREAD_ID.replace(tid);
+}
+unsafe fn get_event_tid() -> Option<u32> {
+    EVENT_THREAD_ID
+}
 
-unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let msllhookstruct: MSLLHOOKSTRUCT =
-        *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam);
-    // log::info!("ncode: {ncode}, {msllhookstruct:?}, Entered at: {ENTRY_POINT_X} {ENTRY_POINT_Y}");
-    let mut propagate_event = !LOCKED;
-    let pointer_event = match wparam {
-        WPARAM(p) if p == WM_LBUTTONDOWN as usize => PointerEvent::Button {
+static mut ENTRY_POINT: (i32, i32) = (0, 0);
+
+fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
+    let mouse_low_level: MSLLHOOKSTRUCT =
+        unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
+    match wparam {
+        WPARAM(p) if p == WM_LBUTTONDOWN as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_LEFT,
             state: 1,
-        },
-        WPARAM(p) if p == WM_MBUTTONDOWN as usize => PointerEvent::Button {
+        }),
+        WPARAM(p) if p == WM_MBUTTONDOWN as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_MIDDLE,
             state: 1,
-        },
-        WPARAM(p) if p == WM_RBUTTONDOWN as usize => PointerEvent::Button {
+        }),
+        WPARAM(p) if p == WM_RBUTTONDOWN as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_RIGHT,
             state: 1,
-        },
-        WPARAM(p) if p == WM_LBUTTONUP as usize => PointerEvent::Button {
+        }),
+        WPARAM(p) if p == WM_LBUTTONUP as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_LEFT,
             state: 0,
-        },
-        WPARAM(p) if p == WM_MBUTTONUP as usize => PointerEvent::Button {
+        }),
+        WPARAM(p) if p == WM_MBUTTONUP as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_MIDDLE,
             state: 0,
-        },
-        WPARAM(p) if p == WM_RBUTTONUP as usize => PointerEvent::Button {
+        }),
+        WPARAM(p) if p == WM_RBUTTONUP as usize => Some(PointerEvent::Button {
             time: 0,
             button: BTN_RIGHT,
             state: 0,
-        },
-        WPARAM(p) if p == WM_MOUSEMOVE as usize => {
-            static mut PREV_X: Option<i32> = None;
-            static mut PREV_Y: Option<i32> = None;
-            let (x, y) = (msllhookstruct.pt.x, msllhookstruct.pt.y);
-            let (px, py) = (PREV_X.unwrap_or(x), PREV_Y.unwrap_or(y));
-            PREV_X.replace(x);
-            PREV_Y.replace(y);
-            if !LOCKED {
-                if let Some(pos) = entered_barrier(px, py, x, y, DISPLAY_INFO.as_ref().unwrap()) {
-                    if let Some(client) = CLIENT_FOR_POS.get(&pos) {
-                        propagate_event = true;
-                        ACTIVE_CLIENT.replace(*client);
-                        LOCKED = true;
-                        /* windows is weird */
-                        match pos {
-                            Position::Right => {
-                                ENTRY_POINT_X = x - 1;
-                                ENTRY_POINT_Y = y;
-                            }
-                            Position::Bottom => {
-                                ENTRY_POINT_X = x;
-                                ENTRY_POINT_Y = y - 1;
-                            }
-                            _ => {
-                                ENTRY_POINT_X = x;
-                                ENTRY_POINT_Y = y;
-                            }
-                        }
-                        loop {
-                            /* enter event must not get lost under any circumstances */
-                            log::info!("ENTERED @ ({px},{py}) -> ({x},{y})");
-                            match EVENT_TX.as_ref().unwrap().try_send((0, Event::Enter())) {
-                                Err(TrySendError::Full(_)) => continue,
-                                Err(TrySendError::Closed(_)) => panic!("channel closed"),
-                                Ok(_e) => break,
-                            }
-                        }
-                    }
-                }
-            }
-            let (dx, dy) = (x - ENTRY_POINT_X, y - ENTRY_POINT_Y);
-            PointerEvent::Motion {
+        }),
+        WPARAM(p) if p == WM_MOUSEMOVE as usize => unsafe {
+            let (x, y) = (mouse_low_level.pt.x, mouse_low_level.pt.y);
+            let (ex, ey) = ENTRY_POINT;
+            let (dx, dy) = (x - ex, y - ey);
+            Some(PointerEvent::Motion {
                 time: 0,
                 relative_x: dx as f64,
                 relative_y: dy as f64,
-            }
-        }
-        WPARAM(p) if p == WM_MOUSEWHEEL as usize => PointerEvent::Axis {
+            })
+        },
+        WPARAM(p) if p == WM_MOUSEWHEEL as usize => Some(PointerEvent::Axis {
             time: 0,
             axis: 0,
-            value: msllhookstruct.mouseData as i32 as f64,
-        },
-        _ => return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam),
-    };
-    if !propagate_event {
-        if let Some(client) = ACTIVE_CLIENT {
-            let event = Event::Pointer(pointer_event);
-            let event = (client, event);
-
-            if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
-                log::warn!("e: {e}");
-            }
-        }
-        LRESULT(1) /* don't pass event to applications */
-    } else {
-        CallNextHookEx(HHOOK::default(), ncode, wparam, lparam)
+            value: -(mouse_low_level.mouseData as i32) as f64,
+        }),
+        _ => None,
     }
 }
 
-unsafe extern "system" fn kybrd_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> {
     let kybrdllhookstruct: KBDLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
     let scancode = kybrdllhookstruct.scanCode;
-    let key_event = match wparam {
+    match wparam {
         WPARAM(p) if p == WM_KEYDOWN as usize => Some(KeyboardEvent::Key {
             time: 0,
             key: scancode,
@@ -201,31 +148,138 @@ unsafe extern "system" fn kybrd_proc(i: i32, wparam: WPARAM, lparam: LPARAM) -> 
             key: scancode,
             state: 0,
         }),
-        WPARAM(p) if p == WM_SYSKEYDOWN as usize => {
-            log::debug!("SYS KEY DOWN {scancode}");
-            None
-        }
-        WPARAM(p) if p == WM_SYSKEYUP as usize => {
-            log::debug!("SYS KEY UP {scancode}");
-            None
-        }
+        WPARAM(p) if p == WM_SYSKEYDOWN as usize => Some(KeyboardEvent::Key {
+            time: 0,
+            key: scancode,
+            state: 1,
+        }),
+        WPARAM(p) if p == WM_SYSKEYUP as usize => Some(KeyboardEvent::Key {
+            time: 0,
+            key: scancode,
+            state: 1,
+        }),
         _ => None,
-    };
-    if LOCKED {
-        if let Some(key_event) = key_event {
-            if let Some(client) = ACTIVE_CLIENT {
-                let event = Event::Keyboard(key_event);
-                let event = (client, event);
-
-                if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
-                    log::warn!("e: {e}");
-                }
-            }
-        }
-        LRESULT(1) /* don't pass event to applications */
-    } else {
-        CallNextHookEx(HHOOK::default(), i, wparam, lparam)
     }
+}
+
+///
+/// correct the entry point according to display coordinates
+///
+/// # Arguments
+///
+/// * `entry_point`: coordinates, where the mouse entered the barrier
+/// * `pos`: position of the barrier relative to the display
+///
+/// returns: (i32, i32), the corrected entry point
+///
+fn correct_entry_point(entry_point: (i32, i32), pos: Position) -> (i32, i32) {
+    let (x, y) = entry_point;
+    match pos {
+        Position::Right => (x - 1, y),
+        Position::Bottom => (x, y - 1),
+        _ => (x, y),
+    }
+}
+
+unsafe fn send_blocking(event: Event) {
+    loop {
+        /* enter event must not get lost under any circumstances */
+        match EVENT_TX.as_ref().unwrap().try_send((0, event)) {
+            Err(TrySendError::Full(_)) => continue,
+            Err(TrySendError::Closed(_)) => panic!("channel closed"),
+            Ok(_e) => break,
+        }
+    }
+}
+
+unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
+    if wparam.0 != WM_MOUSEMOVE as usize {
+        return ACTIVE_CLIENT.is_some();
+    }
+    let mouse_low_level: MSLLHOOKSTRUCT =
+        unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
+    static mut PREV_X: Option<i32> = None;
+    static mut PREV_Y: Option<i32> = None;
+    let (x, y) = (mouse_low_level.pt.x, mouse_low_level.pt.y);
+    let (px, py) = (PREV_X.unwrap_or(x), PREV_Y.unwrap_or(y));
+    PREV_X.replace(x);
+    PREV_Y.replace(y);
+
+    /* next event is the first actual event */
+    let ret = ACTIVE_CLIENT.is_some();
+
+    /* client already active, no need to check */
+    if ACTIVE_CLIENT.is_some() {
+        return ret;
+    }
+
+    /* check if a client was activated */
+    let Some(pos) = entered_barrier(px, py, x, y, DISPLAY_INFO.as_ref().unwrap()) else {
+        return ret;
+    };
+
+    /* check if a client is registered for the barrier */
+    let Some(client) = CLIENT_FOR_POS.get(&pos) else {
+        return ret;
+    };
+
+    /* update active client and entry point */
+    ACTIVE_CLIENT.replace(*client);
+    ENTRY_POINT = correct_entry_point((x, y), pos);
+
+    /* notify main thread */
+    log::debug!("ENTERED @ ({px},{py}) -> ({x},{y})");
+    send_blocking(Event::Enter());
+
+    ret
+}
+
+unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let active = check_client_activation(wparam, lparam);
+
+    /* no client was active */
+    if !active {
+        return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam);
+    }
+
+    /* get active client if any */
+    let Some(client) = ACTIVE_CLIENT else {
+        return LRESULT(1);
+    };
+
+    /* convert to lan-mouse event */
+    let Some(pointer_event) = to_mouse_event(wparam, lparam) else {
+        return LRESULT(1);
+    };
+    let event = (client, Event::Pointer(pointer_event));
+
+    /* notify mainthread (drop events if sending too fast) */
+    if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
+        log::warn!("e: {e}");
+    }
+
+    /* don't pass event to applications */
+    LRESULT(1)
+}
+
+unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    /* get active client if any */
+    let Some(client) = ACTIVE_CLIENT else {
+        return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam);
+    };
+
+    /* convert to key event */
+    let Some(key_event) = to_key_event(wparam, lparam) else {
+        return LRESULT(1);
+    };
+    let event = (client, Event::Keyboard(key_event));
+
+    if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
+        log::warn!("e: {e}");
+    }
+
+    /* don't pass event to applications */
+    LRESULT(1)
 }
 
 unsafe extern "system" fn monitor_enum_proc(
@@ -271,10 +325,10 @@ fn is_at_dp_boundary(x: i32, y: i32, display: &RECT, pos: Position) -> bool {
 }
 
 fn is_at_boundary(x: i32, y: i32, displays: &[RECT], pos: Position) -> bool {
-    /* point is at exactly one boundary.
+    /* check if point is at exactly one boundary i.e. at the edge of a display
+     * that does not intersect another display.
      * 0 boundaries means the point is somewhere in the middle
-     * 2 boundaries means point is between two monitors,
-     * which should be ignored */
+     * 2 boundaries means point is between two monitors, which should be ignored */
     displays
         .iter()
         .filter(|&d| is_at_dp_boundary(x, y, d, pos))
@@ -298,51 +352,75 @@ fn entered_barrier(px: i32, py: i32, x: i32, y: i32, displays: &[RECT]) -> Optio
     .find(|&pos| moved_into_boundary(px, py, x, y, displays, pos))
 }
 
+fn get_msg() -> Option<MSG> {
+    unsafe {
+        let mut msg = std::mem::zeroed();
+        let ret = GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
+        match ret.0 {
+            0 => None,
+            x if x > 0 => Some(msg),
+            _ => panic!("error in GetMessageW"),
+        }
+    }
+}
+
+fn message_thread() {
+    unsafe {
+        set_event_tid(GetCurrentThreadId());
+        let mouse_proc: HOOKPROC = Some(mouse_proc);
+        let kybrd_proc: HOOKPROC = Some(kybrd_proc);
+        let display_info: Vec<RECT> = get_display_regions();
+        log::info!("displays: {display_info:?}");
+        DISPLAY_INFO.replace(display_info);
+        let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
+        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
+        loop {
+            // mouse / keybrd proc do not actually return a message
+            match get_msg() {
+                None => break,
+                Some(msg) => match msg.wParam.0 {
+                    x if x == EventType::Exit as usize => break,
+                    x if x == EventType::Release as usize => {
+                        let _ = ACTIVE_CLIENT.take();
+                    }
+                    x if x == EventType::ClientEvent as usize => {
+                        while let Some(event) = EVENT_BUFFER.pop() {
+                            update_clients(event)
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+    }
+}
+
+fn update_clients(client_event: ClientEvent) {
+    match client_event {
+        ClientEvent::Create(handle, pos) => {
+            unsafe { CLIENT_FOR_POS.insert(pos, handle) };
+        }
+        ClientEvent::Destroy(handle) => {
+            for pos in [
+                Position::Left,
+                Position::Right,
+                Position::Top,
+                Position::Bottom,
+            ] {
+                if unsafe { CLIENT_FOR_POS.get(&pos).copied() } == Some(handle) {
+                    unsafe { CLIENT_FOR_POS.remove(&pos) };
+                }
+            }
+        }
+    }
+}
+
 impl WindowsInputCapture {
     pub(crate) fn new() -> Result<Self> {
         unsafe {
             let (tx, rx) = channel(10);
             EVENT_TX.replace(tx);
-            let msg_thread = thread::spawn(|| {
-                EVENT_THREAD_ID.replace(GetCurrentThreadId());
-                let mouse_proc: HOOKPROC = Some(mouse_proc);
-                let kybrd_proc: HOOKPROC = Some(kybrd_proc);
-                let display_info: Vec<RECT> = get_display_regions();
-                log::info!("displays: {display_info:?}");
-                DISPLAY_INFO.replace(display_info);
-                let _ =
-                    SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
-                let _ =
-                    SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
-                loop {
-                    let mut msg = std::mem::zeroed();
-                    let _res = GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
-                    // mouse / keybrd proc do not actually return a message
-                    if msg.wParam.0 == EventType::Release as usize {
-                        LOCKED = false;
-                    } else if msg.wParam.0 == EventType::ClientEvent as usize {
-                        while let Some(event) = EVENT_BUFFER.pop() {
-                            match event {
-                                ClientEvent::Create(handle, pos) => {
-                                    CLIENT_FOR_POS.insert(pos, handle);
-                                }
-                                ClientEvent::Destroy(handle) => {
-                                    for pos in [
-                                        Position::Left,
-                                        Position::Right,
-                                        Position::Top,
-                                        Position::Bottom,
-                                    ] {
-                                        if CLIENT_FOR_POS.get(&pos).copied() == Some(handle) {
-                                            CLIENT_FOR_POS.remove(&pos);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            });
+            let msg_thread = Some(thread::spawn(message_thread));
             Ok(Self {
                 msg_thread,
                 event_rx: rx,
@@ -358,5 +436,12 @@ impl Stream for WindowsInputCapture {
             None => Poll::Ready(None),
             Some(e) => Poll::Ready(Some(Ok(e))),
         }
+    }
+}
+
+impl Drop for WindowsInputCapture {
+    fn drop(&mut self) {
+        unsafe { signal_message_thread(EventType::Exit) };
+        let _ = self.msg_thread.take().unwrap().join();
     }
 }
