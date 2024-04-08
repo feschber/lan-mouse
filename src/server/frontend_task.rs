@@ -242,14 +242,11 @@ pub async fn remove_client(
     frontend: &mut FrontendListener,
     client: ClientHandle,
 ) -> Option<ClientHandle> {
-    let Some((client, active)) = server
+    let (client, active) = server
         .client_manager
         .borrow_mut()
         .remove_client(client)
-        .map(|s| (s.client.handle, s.active))
-    else {
-        return None;
-    };
+        .map(|s| (s.client.handle, s.active))?;
 
     if active {
         let _ = capture_notify_tx
