@@ -443,7 +443,7 @@ fn message_thread() {
                 match msg.wParam.0 {
                     x if x == EventType::Exit as usize => break,
                     x if x == EventType::Release as usize => {
-                        let _ = ACTIVE_CLIENT.take();
+                        ACTIVE_CLIENT.take();
                     }
                     x if x == EventType::ClientEvent as usize => {
                         while let Some(event) = EVENT_BUFFER.pop() {
@@ -466,18 +466,21 @@ fn update_clients(client_event: ClientEvent) {
         ClientEvent::Create(handle, pos) => {
             unsafe { CLIENT_FOR_POS.insert(pos, handle) };
         }
-        ClientEvent::Destroy(handle) => {
+        ClientEvent::Destroy(handle) => unsafe {
             for pos in [
                 Position::Left,
                 Position::Right,
                 Position::Top,
                 Position::Bottom,
             ] {
-                if unsafe { CLIENT_FOR_POS.get(&pos).copied() } == Some(handle) {
-                    unsafe { CLIENT_FOR_POS.remove(&pos) };
+                if ACTIVE_CLIENT == Some(handle) {
+                    ACTIVE_CLIENT.take();
+                }
+                if CLIENT_FOR_POS.get(&pos).copied() == Some(handle) {
+                    CLIENT_FOR_POS.remove(&pos);
                 }
             }
-        }
+        },
     }
 }
 
