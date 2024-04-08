@@ -58,13 +58,13 @@ input capture (to send events *to* other clients) on different operating systems
 > Otherwise input capture will not work.
 
 ## Installation
-### Install with cargo
+### Install via cargo
 ```sh
 cargo install lan-mouse
 ```
 
 ### Download from Releases
-The easiest way to install Lan Mouse is to download precompiled release binaries from the [releases section](https://github.com/feschber/lan-mouse/releases).
+Precompiled release binaries for Windows, MacOS and Linux are available in the [releases section](https://github.com/feschber/lan-mouse/releases).
 
 For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies).
 
@@ -83,7 +83,9 @@ paru -S lan-mouse-bin
 - flake: [README.md](./nix/README.md)
 
 
-### Building from Source
+### Manual Installation
+
+First make sure to [install the necessary dependencies](#installing-dependencies).
 
 Build in release mode:
 ```sh
@@ -138,56 +140,62 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
 
 
 ## Installing Dependencies
-
-#### Macos
+<details>
+    <summary>MacOS</summary>
+#### MacOS
 ```sh
 brew install libadwaita
 ```
+</details>
 
+<details>
+    <summary>Ubuntu and derivatives</summary>
 #### Ubuntu and derivatives
 ```sh
 sudo apt install libadwaita-1-dev libgtk-4-dev libx11-dev libxtst-dev
 ```
+</details>
 
+<details>
+    <summary>Arch and derivatives</summary>
 #### Arch and derivatives
 ```sh
 sudo pacman -S libadwaita gtk libx11 libxtst
 ```
+</details>
 
+<details>
+    <summary>Fedora and derivatives</summary>
 #### Fedora and derivatives
 ```sh
 sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 ```
+</details>
+<details>
+    <summary>Windows</summary>
 
 #### Windows
 > [!NOTE]
 > This is only necessary when building lan-mouse from source. The windows release comes with precompiled gtk dlls.
 
-Follow the instructions at [gtk-rs.org](https://gtk-rs.org/gtk4-rs/stable/latest/book/installation_windows.html)
+- First install [Rust](https://www.rust-lang.org/tools/install).
+
+- Then follow the instructions at [gtk-rs.org](https://gtk-rs.org/gtk4-rs/stable/latest/book/installation_windows.html)
 
 *TLDR:*
 
 Build gtk from source
 
-- The following commands should be run in an admin power shell instance:
+- The following commands should be run in an **admin power shell** instance:
 ```sh
 # install chocolatey
 Set-ExecutionPolicy Bypass -Scope Process -Force; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-# install python 3.11 (Version is important, as 3.12 does not work currently) -> Has been fixed recently
-choco install python --version=3.11.0
-
-# install git
-choco install git
-
-# install msys2
-choco install msys2
-
-# install Visual Studio 2022
-choco install visualstudio2022-workload-vctools
+# install gvsbuild dependencies
+choco install python git msys2 visualstudio2022-workload-vctools
 ```
 
-- The following commands should be run in a regular power shell instance:
+- The following commands should be run in a **regular power shell** instance:
 
 ```sh
 # install gvsbuild with python
@@ -203,11 +211,12 @@ pipx install gvsbuild
 gvsbuild build gtk4 libadwaita librsvg
 ```
 
-Make sure to add the directory `C:\gtk-build\gtk\x64\release\bin`
-[to the `PATH` environment variable]((https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574(v=office.14))). Otherwise the project will fail to build.
+- **Make sure to add the directory** `C:\gtk-build\gtk\x64\release\bin`
+[**to the `PATH` environment variable**]((https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-2010/ee537574(v=office.14))). Otherwise the project will fail to build.
 
 To avoid building GTK from source, it is possible to disable
 the gtk frontend (see conditional compilation below).
+</details>
 
 ## Usage
 ### Gtk Frontend
