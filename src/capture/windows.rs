@@ -4,25 +4,30 @@ use futures::Stream;
 use once_cell::unsync::Lazy;
 
 use std::collections::HashMap;
-use std::ptr::addr_of_mut;
+use std::ptr::{addr_of, addr_of_mut};
 
+use std::default::Default;
 use std::task::ready;
 use std::{io, pin::Pin, thread};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use windows::core::w;
 use windows::Win32::Foundation::{
     BOOL, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, HHOOK, HOOKPROC,
-    KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
+    CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW,
+    RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT,
+    MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN,
+    WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WNDCLASSW,
+    WNDPROC,
 };
 
 use crate::client::Position;
@@ -69,7 +74,6 @@ static mut EVENT_BUFFER: Vec<ClientEvent> = Vec::new();
 static mut ACTIVE_CLIENT: Option<ClientHandle> = None;
 static mut CLIENT_FOR_POS: Lazy<HashMap<Position, ClientHandle>> = Lazy::new(HashMap::new);
 static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
-static mut DISPLAY_INFO: Option<Vec<RECT>> = None;
 static mut EVENT_THREAD_ID: Option<u32> = None;
 unsafe fn set_event_tid(tid: u32) {
     EVENT_THREAD_ID.replace(tid);
@@ -214,7 +218,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     }
 
     /* check if a client was activated */
-    let Some(pos) = entered_barrier(px, py, x, y, DISPLAY_INFO.as_ref().unwrap()) else {
+    let Some(pos) = entered_barrier(px, py, x, y, get_display_regions()) else {
         return ret;
     };
 
@@ -282,6 +286,22 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     LRESULT(1)
 }
 
+unsafe extern "system" fn window_proc(
+    _hwnd: HWND,
+    uint: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> LRESULT {
+    match uint {
+        x if x == WM_DISPLAYCHANGE => {
+            log::debug!("display resolution changed");
+            DISPLAY_RESOLUTION_CHANGED = true;
+        }
+        _ => {}
+    }
+    LRESULT(1)
+}
+
 unsafe extern "system" fn monitor_enum_proc(
     hmon: HMONITOR,
     _hdc: HDC,
@@ -293,7 +313,7 @@ unsafe extern "system" fn monitor_enum_proc(
     TRUE // continue enumeration
 }
 
-fn get_display_regions() -> Vec<RECT> {
+fn enumerate_displays() -> Vec<RECT> {
     unsafe {
         let mut display_rects = vec![];
         let mut monitors: Vec<HMONITOR> = Vec::new();
@@ -313,6 +333,17 @@ fn get_display_regions() -> Vec<RECT> {
         }
         display_rects
     }
+}
+
+static mut DISPLAY_RESOLUTION_CHANGED: bool = true;
+
+unsafe fn get_display_regions() -> &'static Vec<RECT> {
+    static mut DISPLAYS: Vec<RECT> = vec![];
+    if DISPLAY_RESOLUTION_CHANGED {
+        DISPLAYS = enumerate_displays();
+        DISPLAY_RESOLUTION_CHANGED = false;
+    }
+    &*addr_of!(DISPLAYS)
 }
 
 fn is_at_dp_boundary(x: i32, y: i32, display: &RECT, pos: Position) -> bool {
@@ -369,16 +400,47 @@ fn message_thread() {
         set_event_tid(GetCurrentThreadId());
         let mouse_proc: HOOKPROC = Some(mouse_proc);
         let kybrd_proc: HOOKPROC = Some(kybrd_proc);
-        let display_info: Vec<RECT> = get_display_regions();
-        log::info!("displays: {display_info:?}");
-        DISPLAY_INFO.replace(display_info);
+        let window_proc: WNDPROC = Some(window_proc);
+
+        /* register hooks */
         let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
         let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
+
+        let instance = GetModuleHandleW(None).unwrap();
+        let window_class: WNDCLASSW = WNDCLASSW {
+            lpfnWndProc: window_proc,
+            hInstance: instance.into(),
+            lpszClassName: w!("lan-mouse-message-window-class"),
+            ..Default::default()
+        };
+
+        RegisterClassW(&window_class);
+
+        /* window is used ro receive WM_DISPLAYCHANGE messages */
+        let _ = CreateWindowExW(
+            Default::default(),
+            w!("lan-mouse-message-window-class"),
+            w!("lan-mouse-msg-window"),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            HWND::default(),
+            HMENU::default(),
+            instance,
+            None,
+        );
+
+        /* run message loop */
         loop {
             // mouse / keybrd proc do not actually return a message
-            match get_msg() {
-                None => break,
-                Some(msg) => match msg.wParam.0 {
+            let Some(msg) = get_msg() else {
+                break;
+            };
+            if msg.hwnd.0 == 0 {
+                /* messages sent via PostThreadMessage */
+                match msg.wParam.0 {
                     x if x == EventType::Exit as usize => break,
                     x if x == EventType::Release as usize => {
                         let _ = ACTIVE_CLIENT.take();
@@ -389,7 +451,11 @@ fn message_thread() {
                         }
                     }
                     _ => {}
-                },
+                }
+            } else {
+                /* other messages for window_procs */
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
             }
         }
     }
