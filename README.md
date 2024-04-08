@@ -142,7 +142,7 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
 ## Installing Dependencies
 <details>
     <summary>MacOS</summary>
-#### MacOS
+
 ```sh
 brew install libadwaita
 ```
@@ -150,7 +150,7 @@ brew install libadwaita
 
 <details>
     <summary>Ubuntu and derivatives</summary>
-#### Ubuntu and derivatives
+
 ```sh
 sudo apt install libadwaita-1-dev libgtk-4-dev libx11-dev libxtst-dev
 ```
@@ -158,7 +158,7 @@ sudo apt install libadwaita-1-dev libgtk-4-dev libx11-dev libxtst-dev
 
 <details>
     <summary>Arch and derivatives</summary>
-#### Arch and derivatives
+
 ```sh
 sudo pacman -S libadwaita gtk libx11 libxtst
 ```
@@ -166,7 +166,7 @@ sudo pacman -S libadwaita gtk libx11 libxtst
 
 <details>
     <summary>Fedora and derivatives</summary>
-#### Fedora and derivatives
+
 ```sh
 sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 ```
@@ -174,7 +174,6 @@ sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 <details>
     <summary>Windows</summary>
 
-#### Windows
 > [!NOTE]
 > This is only necessary when building lan-mouse from source. The windows release comes with precompiled gtk dlls.
 
