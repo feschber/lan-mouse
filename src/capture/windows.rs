@@ -9,6 +9,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use std::default::Default;
 use std::task::ready;
 use std::{io, pin::Pin, thread};
+use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::w;
@@ -74,12 +75,15 @@ static mut EVENT_BUFFER: Vec<ClientEvent> = Vec::new();
 static mut ACTIVE_CLIENT: Option<ClientHandle> = None;
 static mut CLIENT_FOR_POS: Lazy<HashMap<Position, ClientHandle>> = Lazy::new(HashMap::new);
 static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
-static mut EVENT_THREAD_ID: Option<u32> = None;
+static mut EVENT_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 unsafe fn set_event_tid(tid: u32) {
-    EVENT_THREAD_ID.replace(tid);
+    EVENT_THREAD_ID.store(tid, Ordering::SeqCst);
 }
 unsafe fn get_event_tid() -> Option<u32> {
-    EVENT_THREAD_ID
+    match EVENT_THREAD_ID.load(Ordering::SeqCst) {
+        0 => None,
+        id => Some(id),
+    }
 }
 
 static mut ENTRY_POINT: (i32, i32) = (0, 0);
