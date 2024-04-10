@@ -29,8 +29,8 @@ pub(crate) fn new(
     mut frontend: FrontendListener,
     mut notify_rx: Receiver<FrontendNotify>,
     server: Server,
-    capture_notify: Sender<CaptureEvent>,
-    emulate_notify: Sender<EmulationEvent>,
+    capture: Sender<CaptureEvent>,
+    emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
 ) -> (JoinHandle<Result<()>>, Sender<FrontendEvent>) {
@@ -51,7 +51,7 @@ pub(crate) fn new(
                 }
                 event = event_rx.recv() => {
                     let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
-                    if handle_frontend_event(&server, &capture_notify, &emulate_notify, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
+                    if handle_frontend_event(&server, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
                         break;
                     }
                 }
@@ -106,30 +106,31 @@ async fn handle_frontend_event(
     event: FrontendEvent,
 ) -> bool {
     log::debug!("frontend: {event:?}");
-    let response = match event {
+    match event {
         FrontendEvent::AddClient(hostname, port, pos) => {
-            let handle = add_client(server, resolve_tx, hostname, HashSet::new(), port, pos).await;
-
-            let client = server
-                .client_manager
-                .borrow()
-                .get(handle)
-                .unwrap()
-                .client
-                .clone();
-            Some(FrontendNotify::NotifyClientCreate(client))
+            add_client(
+                server,
+                frontend,
+                resolve_tx,
+                hostname,
+                HashSet::new(),
+                port,
+                pos,
+            )
+            .await;
         }
         FrontendEvent::ActivateClient(handle, active) => {
-            activate_client(server, capture_tx, emulate_tx, handle, active).await;
-            Some(FrontendNotify::NotifyClientActivate(handle, active))
+            if active {
+                activate_client(server, frontend, capture_tx, emulate_tx, handle).await;
+            } else {
+                deactivate_client(server, frontend, capture_tx, emulate_tx, handle).await;
+            }
         }
         FrontendEvent::ChangePort(port) => {
             let _ = port_tx.send(port).await;
-            None
         }
         FrontendEvent::DelClient(handle) => {
-            remove_client(server, capture_tx, emulate_tx, frontend, handle).await;
-            Some(FrontendNotify::NotifyClientDelete(handle))
+            remove_client(server, frontend, capture_tx, emulate_tx, handle).await;
         }
         FrontendEvent::Enumerate() => {
             let clients = server
@@ -138,7 +139,7 @@ async fn handle_frontend_event(
                 .get_client_states()
                 .map(|s| (s.client.clone(), s.active))
                 .collect();
-            Some(FrontendNotify::Enumerate(clients))
+            notify_all(frontend, FrontendNotify::Enumerate(clients)).await;
         }
         FrontendEvent::Shutdown() => {
             log::info!("terminating gracefully...");
@@ -147,40 +148,33 @@ async fn handle_frontend_event(
         FrontendEvent::UpdateClient(handle, hostname, port, pos) => {
             update_client(
                 server,
+                frontend,
                 capture_tx,
                 emulate_tx,
                 resolve_tx,
                 (handle, hostname, port, pos),
             )
             .await;
-
-            let client = server
-                .client_manager
-                .borrow()
-                .get(handle)
-                .unwrap()
-                .client
-                .clone();
-            Some(FrontendNotify::NotifyClientUpdate(client))
         }
     };
-    let Some(response) = response else {
-        return false;
-    };
-    if let Err(e) = frontend.notify_all(response).await {
+    false
+}
+
+async fn notify_all(frontend: &mut FrontendListener, event: FrontendNotify) {
+    if let Err(e) = frontend.notify_all(event).await {
         log::error!("error notifying frontend: {e}");
     }
-    false
 }
 
 pub async fn add_client(
     server: &Server,
+    frontend: &mut FrontendListener,
     resolver_tx: &Sender<DnsRequest>,
     hostname: Option<String>,
     addr: HashSet<IpAddr>,
     port: u16,
     pos: Position,
-) -> ClientHandle {
+) {
     log::info!(
         "adding client [{}]{} @ {:?}",
         pos,
@@ -198,77 +192,105 @@ pub async fn add_client(
     if let Some(hostname) = hostname {
         let _ = resolver_tx.send(DnsRequest { hostname, handle }).await;
     }
-
-    handle
+    let client = server
+        .client_manager
+        .borrow()
+        .get(handle)
+        .unwrap()
+        .client
+        .clone();
+    notify_all(frontend, FrontendNotify::NotifyClientCreate(client)).await;
 }
 
-pub async fn activate_client(
+pub async fn deactivate_client(
     server: &Server,
-    capture_notify_tx: &Sender<CaptureEvent>,
-    emulate_notify_tx: &Sender<EmulationEvent>,
+    frontend: &mut FrontendListener,
+    capture: &Sender<CaptureEvent>,
+    emulate: &Sender<EmulationEvent>,
     client: ClientHandle,
-    active: bool,
 ) {
-    let (client, pos) = match server.client_manager.borrow_mut().get_mut(client) {
+    let (client, _) = match server.client_manager.borrow_mut().get_mut(client) {
         Some(state) => {
-            state.active = active;
+            state.active = false;
             (state.client.handle, state.client.pos)
         }
         None => return,
     };
-    if active {
-        let _ = capture_notify_tx
-            .send(CaptureEvent::ClientEvent(ClientEvent::Create(client, pos)))
-            .await;
-        let _ = emulate_notify_tx
-            .send(EmulationEvent::ClientEvent(ClientEvent::Create(
-                client, pos,
-            )))
-            .await;
-    } else {
-        let _ = capture_notify_tx
-            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(client)))
-            .await;
-        let _ = emulate_notify_tx
-            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(client)))
-            .await;
+
+    let event = ClientEvent::Destroy(client);
+    let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
+    let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
+    let event = FrontendNotify::NotifyClientActivate(client, false);
+    notify_all(frontend, event).await;
+}
+
+pub async fn activate_client(
+    server: &Server,
+    frontend: &mut FrontendListener,
+    capture: &Sender<CaptureEvent>,
+    emulate: &Sender<EmulationEvent>,
+    handle: ClientHandle,
+) {
+    /* deactivate potential other client at this position */
+    let pos = match server.client_manager.borrow().get(handle) {
+        Some(state) => state.client.pos,
+        None => return,
+    };
+
+    let other = server.client_manager.borrow_mut().find_client(pos);
+    if let Some(other) = other {
+        if other != handle {
+            deactivate_client(server, frontend, capture, emulate, other).await;
+        }
     }
+
+    /* activate the client */
+    server
+        .client_manager
+        .borrow_mut()
+        .get_mut(handle)
+        .unwrap()
+        .active = true;
+
+    /* notify emulation, capture and frontends */
+    let event = ClientEvent::Create(handle, pos);
+    let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
+    let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
+    let event = FrontendNotify::NotifyClientActivate(handle, true);
+    notify_all(frontend, event).await;
 }
 
 pub async fn remove_client(
     server: &Server,
-    capture_notify_tx: &Sender<CaptureEvent>,
-    emulate_notify_tx: &Sender<EmulationEvent>,
     frontend: &mut FrontendListener,
+    capture: &Sender<CaptureEvent>,
+    emulate: &Sender<EmulationEvent>,
     client: ClientHandle,
-) -> Option<ClientHandle> {
-    let (client, active) = server
+) {
+    let Some((client, active)) = server
         .client_manager
         .borrow_mut()
         .remove_client(client)
-        .map(|s| (s.client.handle, s.active))?;
+        .map(|s| (s.client.handle, s.active))
+    else {
+        return;
+    };
 
     if active {
-        let _ = capture_notify_tx
-            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(client)))
-            .await;
-        let _ = emulate_notify_tx
-            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(client)))
-            .await;
+        let destroy = ClientEvent::Destroy(client);
+        let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
+        let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
     }
 
-    let notify = FrontendNotify::NotifyClientDelete(client);
-    log::debug!("{notify:?}");
-    if let Err(e) = frontend.notify_all(notify).await {
-        log::error!("error notifying frontend: {e}");
-    }
-    Some(client)
+    let event = FrontendNotify::NotifyClientDelete(client);
+    notify_all(frontend, event).await;
 }
 
 async fn update_client(
     server: &Server,
-    capture_notify_tx: &Sender<CaptureEvent>,
-    emulate_notify_tx: &Sender<EmulationEvent>,
+    frontend: &mut FrontendListener,
+    capture: &Sender<CaptureEvent>,
+    emulate: &Sender<EmulationEvent>,
     resolve_tx: &Sender<DnsRequest>,
     client_update: (ClientHandle, Option<String>, u16, Position),
 ) {
@@ -321,19 +343,20 @@ async fn update_client(
     // update state in event input emulator & input capture
     if changed && active {
         // update state
-        let _ = capture_notify_tx
-            .send(CaptureEvent::ClientEvent(ClientEvent::Destroy(handle)))
-            .await;
-        let _ = emulate_notify_tx
-            .send(EmulationEvent::ClientEvent(ClientEvent::Destroy(handle)))
-            .await;
-        let _ = capture_notify_tx
-            .send(CaptureEvent::ClientEvent(ClientEvent::Create(handle, pos)))
-            .await;
-        let _ = emulate_notify_tx
-            .send(EmulationEvent::ClientEvent(ClientEvent::Create(
-                handle, pos,
-            )))
-            .await;
+        let destroy = ClientEvent::Destroy(handle);
+        let create = ClientEvent::Create(handle, pos);
+        let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
+        let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
+        let _ = capture.send(CaptureEvent::ClientEvent(create)).await;
+        let _ = emulate.send(EmulationEvent::ClientEvent(create)).await;
     }
+
+    let client = server
+        .client_manager
+        .borrow()
+        .get(handle)
+        .unwrap()
+        .client
+        .clone();
+    notify_all(frontend, FrontendNotify::NotifyClientUpdate(client)).await;
 }
