@@ -167,22 +167,25 @@ unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> 
 }
 
 ///
-/// correct the entry point according to display coordinates
+/// clamp point to display bounds
 ///
 /// # Arguments
 ///
-/// * `prev_point`: coordinates, the cursor was before entering, must be WITHIN BOUNDS
-/// * `entry_point`: coordinates, where the mouse entered the barrier
+/// * `prev_point`: coordinates, the cursor was before entering, within bounds of a display
+/// * `entry_point`: point to clamp
 ///
 /// returns: (i32, i32), the corrected entry point
 ///
-fn correct_entry_point(prev_point: (i32, i32), entry_point: (i32, i32)) -> (i32, i32) {
-    let (x, y) = entry_point;
+fn clamp_to_display_bounds(prev_point: (i32, i32), point: (i32, i32)) -> (i32, i32) {
+    /* find display where movement came from */
     let display_regions = unsafe { get_display_regions() };
     let display = display_regions
         .iter()
         .find(|&d| is_within_dp_region(prev_point, d))
         .unwrap();
+
+    /* clamp to bounds (inclusive) */
+    let (x, y) = point;
     let (min_x, max_x) = (display.left, display.right - 1);
     let (min_y, max_y) = (display.top, display.bottom - 1);
     (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
@@ -230,7 +233,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* update active client and entry point */
     ACTIVE_CLIENT.replace(*client);
-    ENTRY_POINT = correct_entry_point(prev_pos, curr_pos);
+    ENTRY_POINT = clamp_to_display_bounds(prev_pos, curr_pos);
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
@@ -380,14 +383,6 @@ fn is_within_dp_boundary(point: (i32, i32), display: &RECT, pos: Position) -> bo
 ///
 /// returns: bool
 ///
-/// # Examples
-///
-/// ```
-/// use windows::Win32::Foundation::RECT;
-/// use lan_mouse::client::Position;
-/// let dp: RECT = RECT { top: 0, bottom: 1080, left: 0, right: 1920};
-/// assert!(in_bounds((10, 10), &[dp], Position::Right));
-/// ```
 fn in_bounds(point: (i32, i32), displays: &[RECT], pos: Position) -> bool {
     displays
         .iter()
