@@ -171,18 +171,21 @@ unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> 
 ///
 /// # Arguments
 ///
+/// * `prev_point`: coordinates, the cursor was before entering, must be WITHIN BOUNDS
 /// * `entry_point`: coordinates, where the mouse entered the barrier
-/// * `pos`: position of the barrier relative to the display
 ///
 /// returns: (i32, i32), the corrected entry point
 ///
-fn correct_entry_point(entry_point: (i32, i32), pos: Position) -> (i32, i32) {
+fn correct_entry_point(prev_point: (i32, i32), entry_point: (i32, i32)) -> (i32, i32) {
     let (x, y) = entry_point;
-    match pos {
-        Position::Right => (x - 1, y),
-        Position::Bottom => (x, y - 1),
-        _ => (x, y),
-    }
+    let display_regions = unsafe { get_display_regions() };
+    let display = display_regions
+        .iter()
+        .find(|&d| is_within_dp_region(prev_point, d))
+        .unwrap();
+    let (min_x, max_x) = (display.left, display.right - 1);
+    let (min_y, max_y) = (display.top, display.bottom - 1);
+    (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
 }
 
 unsafe fn send_blocking(event: Event) {
@@ -202,12 +205,10 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     }
     let mouse_low_level: MSLLHOOKSTRUCT =
         unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
-    static mut PREV_X: Option<i32> = None;
-    static mut PREV_Y: Option<i32> = None;
-    let (x, y) = (mouse_low_level.pt.x, mouse_low_level.pt.y);
-    let (px, py) = (PREV_X.unwrap_or(x), PREV_Y.unwrap_or(y));
-    PREV_X.replace(x);
-    PREV_Y.replace(y);
+    static mut PREV_POS: Option<(i32, i32)> = None;
+    let curr_pos = (mouse_low_level.pt.x, mouse_low_level.pt.y);
+    let prev_pos = PREV_POS.unwrap_or(curr_pos);
+    PREV_POS.replace(curr_pos);
 
     /* next event is the first actual event */
     let ret = ACTIVE_CLIENT.is_some();
@@ -218,7 +219,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     }
 
     /* check if a client was activated */
-    let Some(pos) = entered_barrier(px, py, x, y, get_display_regions()) else {
+    let Some(pos) = entered_barrier(prev_pos, curr_pos, get_display_regions()) else {
         return ret;
     };
 
@@ -229,10 +230,10 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* update active client and entry point */
     ACTIVE_CLIENT.replace(*client);
-    ENTRY_POINT = correct_entry_point((x, y), pos);
+    ENTRY_POINT = correct_entry_point(prev_pos, curr_pos);
 
     /* notify main thread */
-    log::debug!("ENTERED @ ({px},{py}) -> ({x},{y})");
+    log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
     send_blocking(Event::Enter());
 
     ret
@@ -342,37 +343,76 @@ unsafe fn get_display_regions() -> &'static Vec<RECT> {
     if DISPLAY_RESOLUTION_CHANGED {
         DISPLAYS = enumerate_displays();
         DISPLAY_RESOLUTION_CHANGED = false;
+        log::debug!("displays: {DISPLAYS:?}");
     }
     &*addr_of!(DISPLAYS)
 }
 
-fn is_at_dp_boundary(x: i32, y: i32, display: &RECT, pos: Position) -> bool {
+fn is_within_dp_region(point: (i32, i32), display: &RECT) -> bool {
+    [
+        Position::Left,
+        Position::Right,
+        Position::Top,
+        Position::Bottom,
+    ]
+    .iter()
+    .all(|&pos| is_within_dp_boundary(point, display, pos))
+}
+fn is_within_dp_boundary(point: (i32, i32), display: &RECT, pos: Position) -> bool {
+    let (x, y) = point;
     match pos {
-        Position::Left => display.left == x,
-        Position::Right => display.right == x,
-        Position::Top => display.top == y,
-        Position::Bottom => display.bottom == y,
+        Position::Left => display.left <= x,
+        Position::Right => display.right > x,
+        Position::Top => display.top <= y,
+        Position::Bottom => display.bottom > y,
     }
 }
 
-fn is_at_boundary(x: i32, y: i32, displays: &[RECT], pos: Position) -> bool {
-    /* check if point is at exactly one boundary i.e. at the edge of a display
-     * that does not intersect another display.
-     * 0 boundaries means the point is somewhere in the middle
-     * 2 boundaries means point is between two monitors, which should be ignored */
+/// returns whether the given position is within the display bounds with respect to the given
+/// barrier position
+///
+/// # Arguments
+///
+/// * `x`:
+/// * `y`:
+/// * `displays`:
+/// * `pos`:
+///
+/// returns: bool
+///
+/// # Examples
+///
+/// ```
+/// use windows::Win32::Foundation::RECT;
+/// use lan_mouse::client::Position;
+/// let dp: RECT = RECT { top: 0, bottom: 1080, left: 0, right: 1920};
+/// assert!(in_bounds((10, 10), &[dp], Position::Right));
+/// ```
+fn in_bounds(point: (i32, i32), displays: &[RECT], pos: Position) -> bool {
     displays
         .iter()
-        .filter(|&d| is_at_dp_boundary(x, y, d, pos))
-        .count()
-        == 1
+        .any(|d| is_within_dp_boundary(point, d, pos))
 }
 
-fn moved_into_boundary(px: i32, py: i32, x: i32, y: i32, displays: &[RECT], pos: Position) -> bool {
-    /* was not at boundary, but is now */
-    !is_at_boundary(px, py, displays, pos) && is_at_boundary(x, y, displays, pos)
+fn in_display_region(point: (i32, i32), displays: &[RECT]) -> bool {
+    displays.iter().any(|d| is_within_dp_region(point, d))
 }
 
-fn entered_barrier(px: i32, py: i32, x: i32, y: i32, displays: &[RECT]) -> Option<Position> {
+fn moved_across_boundary(
+    prev_pos: (i32, i32),
+    curr_pos: (i32, i32),
+    displays: &[RECT],
+    pos: Position,
+) -> bool {
+    /* was within bounds, but is not anymore */
+    in_display_region(prev_pos, displays) && !in_bounds(curr_pos, displays, pos)
+}
+
+fn entered_barrier(
+    prev_pos: (i32, i32),
+    curr_pos: (i32, i32),
+    displays: &[RECT],
+) -> Option<Position> {
     [
         Position::Left,
         Position::Right,
@@ -380,7 +420,7 @@ fn entered_barrier(px: i32, py: i32, x: i32, y: i32, displays: &[RECT]) -> Optio
         Position::Bottom,
     ]
     .into_iter()
-    .find(|&pos| moved_into_boundary(px, py, x, y, displays, pos))
+    .find(|&pos| moved_across_boundary(prev_pos, curr_pos, displays, pos))
 }
 
 fn get_msg() -> Option<MSG> {
