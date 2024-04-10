@@ -178,6 +178,19 @@ impl ClientManager {
             .map(|p| p as ClientHandle)
     }
 
+    pub fn find_client(&self, pos: Position) -> Option<ClientHandle> {
+        self.clients
+            .iter()
+            .position(|c| {
+                if let Some(c) = c {
+                    c.active && c.client.pos == pos
+                } else {
+                    false
+                }
+            })
+            .map(|p| p as ClientHandle)
+    }
+
     /// remove a client from the list
     pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientState> {
         // remove id from occupied ids
