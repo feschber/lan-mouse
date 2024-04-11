@@ -59,6 +59,14 @@ struct CliArgs {
     /// run only the service as a daemon without the frontend
     #[arg(short, long)]
     daemon: bool,
+
+    /// test input capture
+    #[arg(long)]
+    test_capture: bool,
+
+    /// test input emulation
+    #[arg(long)]
+    test_emulation: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -74,6 +82,8 @@ pub struct Config {
     pub clients: Vec<(TomlClient, Position)>,
     pub daemon: bool,
     pub release_bind: Vec<scancode::Linux>,
+    pub test_capture: bool,
+    pub test_emulation: bool,
 }
 
 pub struct ConfigClient {
@@ -169,6 +179,8 @@ impl Config {
         }
 
         let daemon = args.daemon;
+        let test_capture = args.test_capture;
+        let test_emulation = args.test_emulation;
 
         Ok(Config {
             daemon,
@@ -176,6 +188,8 @@ impl Config {
             clients,
             port,
             release_bind,
+            test_capture,
+            test_emulation,
         })
     }
 

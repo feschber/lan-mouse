@@ -1,3 +1,4 @@
+use crate::scancode;
 use anyhow::{anyhow, Result};
 use std::{
     error::Error,
@@ -101,7 +102,14 @@ impl Display for KeyboardEvent {
                 time: _,
                 key,
                 state,
-            } => write!(f, "key({key}, {state})"),
+            } => {
+                let scan = scancode::Linux::try_from(*key);
+                if let Ok(scan) = scan {
+                    write!(f, "key({scan:?}, {state})")
+                } else {
+                    write!(f, "key({key}, {state})")
+                }
+            }
             KeyboardEvent::Modifiers {
                 mods_depressed,
                 mods_latched,

@@ -25,7 +25,7 @@ pub mod x11;
 /// fallback input capture (does not produce events)
 pub mod dummy;
 
-pub async fn create() -> Box<dyn InputCapture> {
+pub async fn create() -> Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>> {
     #[cfg(target_os = "macos")]
     match macos::MacOSInputCapture::new() {
         Ok(p) => return Box::new(p),

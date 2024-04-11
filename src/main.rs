@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::process::{self, Child, Command};
 
 use env_logger::Env;
-use lan_mouse::{config::Config, frontend, server::Server};
+use lan_mouse::{capture_test, config::Config, emulation_test, frontend, server::Server};
 
 use tokio::task::LocalSet;
 
@@ -31,7 +31,11 @@ pub fn run() -> Result<()> {
     log::debug!("{config:?}");
     log::info!("release bind: {:?}", config.release_bind);
 
-    if config.daemon {
+    if config.test_capture {
+        capture_test::run()?;
+    } else if config.test_emulation {
+        emulation_test::run()?;
+    } else if config.daemon {
         // if daemon is specified we run the service
         run_service(&config)?;
     } else {
