@@ -22,22 +22,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
-use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW,
-    RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT,
-    MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN,
-    WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WNDCLASSW,
-    WNDPROC,
-};
+use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW, RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WNDCLASSW, WNDPROC, LLKHF_EXTENDED};
 
 use crate::client::Position;
 use crate::event::{KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
-use crate::{
-    capture::InputCapture,
-    client::{ClientEvent, ClientHandle},
-    event::Event,
-};
+use crate::{capture::InputCapture, client::{ClientEvent, ClientHandle}, event::Event, scancode};
+use crate::scancode::Linux;
 
 pub struct WindowsInputCapture {
     event_rx: Receiver<(ClientHandle, Event)>,
@@ -144,7 +134,19 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
 unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> {
     let kybrdllhookstruct: KBDLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
-    let scancode = kybrdllhookstruct.scanCode;
+    let mut vk_code = kybrdllhookstruct.vkCode;
+    if kybrdllhookstruct.flags.contains(LLKHF_EXTENDED) {
+        vk_code |= 0xE000;
+    }
+    let Ok(key_code) = scancode::Windows::try_from(vk_code) else {
+        log::warn!("failed to translate scancode: {vk_code}");
+        return None;
+    };
+    let Ok(linux_code): Result<Linux, ()> = key_code.try_into() else {
+        log::warn!("failed to convert scancode: {key_code:?}");
+        return None;
+    };
+    let scancode = linux_code as u32;
     match wparam {
         WPARAM(p) if p == WM_KEYDOWN as usize => Some(KeyboardEvent::Key {
             time: 0,

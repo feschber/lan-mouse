@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
+use num_enum::TryFromPrimitive;
 
 /*
  * https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input
  */
 #[repr(u32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, TryFromPrimitive)]
 pub enum Windows {
     Shutdown = 0xE05E,
     SystemSleep = 0xE05F,
@@ -167,7 +168,7 @@ pub enum Windows {
  * https://github.com/torvalds/linux/blob/master/include/uapi/linux/input-event-codes.h
  */
 #[repr(u32)]
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, Hash, PartialEq, TryFromPrimitive)]
 #[allow(dead_code)]
 pub enum Linux {
     KeyReserved = 0,
@@ -428,18 +429,6 @@ pub enum Linux {
     KeyCount = 249,
 }
 
-impl TryFrom<u32> for Linux {
-    type Error = ();
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value >= Self::KeyCount as u32 {
-            return Err(());
-        }
-        let code: Linux = unsafe { std::mem::transmute(value) };
-        Ok(code)
-    }
-}
-
 impl TryFrom<Linux> for Windows {
     type Error = ();
 
@@ -695,6 +684,164 @@ impl TryFrom<Linux> for Windows {
             Linux::Invalid3 => Err(()),
             Linux::Invalid4 => Err(()),
             Linux::Invalid5 => Err(()),
+        }
+    }
+}
+impl TryFrom<Windows> for Linux {
+    type Error = ();
+
+    fn try_from(value: Windows) -> Result<Self, Self::Error> {
+        match value {
+            Windows::Shutdown => Ok(Self::KeyPower),
+            Windows::SystemSleep => Ok(Self::KeySleep),
+            Windows::SystemWakeUp => Ok(Self::KeyWakeup),
+            Windows::ErrorRollOver => Ok(Self::KeyRo),
+            Windows::KeyA => Ok(Self::KeyA),
+            Windows::KeyB => Ok(Self::KeyB),
+            Windows::KeyC => Ok(Self::KeyC),
+            Windows::KeyD => Ok(Self::KeyD),
+            Windows::KeyE => Ok(Self::KeyE),
+            Windows::KeyF => Ok(Self::KeyF),
+            Windows::KeyG => Ok(Self::KeyG),
+            Windows::KeyH => Ok(Self::KeyH),
+            Windows::KeyI => Ok(Self::KeyI),
+            Windows::KeyJ => Ok(Self::KeyJ),
+            Windows::KeyK => Ok(Self::KeyK),
+            Windows::KeyL => Ok(Self::KeyL),
+            Windows::KeyM => Ok(Self::KeyM),
+            Windows::KeyN => Ok(Self::KeyN),
+            Windows::KeyO => Ok(Self::KeyO),
+            Windows::KeyP => Ok(Self::KeyP),
+            Windows::KeyQ => Ok(Self::KeyQ),
+            Windows::KeyR => Ok(Self::KeyR),
+            Windows::KeyS => Ok(Self::KeyS),
+            Windows::KeyT => Ok(Self::KeyT),
+            Windows::KeyU => Ok(Self::KeyU),
+            Windows::KeyV => Ok(Self::KeyV),
+            Windows::KeyW => Ok(Self::KeyW),
+            Windows::KeyX => Ok(Self::KeyX),
+            Windows::KeyY => Ok(Self::KeyY),
+            Windows::KeyZ => Ok(Self::KeyZ),
+            Windows::Key1 => Ok(Self::Key1),
+            Windows::Key2 => Ok(Self::Key2),
+            Windows::Key3 => Ok(Self::Key3),
+            Windows::Key4 => Ok(Self::Key4),
+            Windows::Key5 => Ok(Self::Key5),
+            Windows::Key6 => Ok(Self::Key6),
+            Windows::Key7 => Ok(Self::Key7),
+            Windows::Key8 => Ok(Self::Key8),
+            Windows::Key9 => Ok(Self::Key9),
+            Windows::Key0 => Ok(Self::Key0),
+            Windows::KeyEnter => Ok(Self::KeyEnter),
+            Windows::KeyEsc => Ok(Self::KeyEsc),
+            Windows::KeyDelete => Ok(Self::KeyDelete),
+            Windows::KeyTab => Ok(Self::KeyTab),
+            Windows::KeySpace => Ok(Self::KeySpace),
+            Windows::KeyMinus => Ok(Self::KeyMinus),
+            Windows::KeyEqual => Ok(Self::KeyEqual),
+            Windows::KeyLeftBrace => Ok(Self::KeyLeftbrace),
+            Windows::KeyRightBrace => Ok(Self::KeyRightbrace),
+            Windows::KeyBackslash => Ok(Self::KeyBackslash),
+            Windows::KeySemiColon => Ok(Self::KeySemicolon),
+            Windows::KeyApostrophe => Ok(Self::KeyApostrophe),
+            Windows::KeyGrave => Ok(Self::KeyGrave),
+            Windows::KeyComma => Ok(Self::KeyComma),
+            Windows::KeyDot => Ok(Self::KeyDot),
+            Windows::KeySlash => Ok(Self::KeySlash),
+            Windows::KeyCapsLock => Ok(Self::KeyCapsLock),
+            Windows::KeyF1 => Ok(Self::KeyF1),
+            Windows::KeyF2 => Ok(Self::KeyF2),
+            Windows::KeyF3 => Ok(Self::KeyF3),
+            Windows::KeyF4 => Ok(Self::KeyF4),
+            Windows::KeyF5 => Ok(Self::KeyF5),
+            Windows::KeyF6 => Ok(Self::KeyF6),
+            Windows::KeyF7 => Ok(Self::KeyF7),
+            Windows::KeyF8 => Ok(Self::KeyF8),
+            Windows::KeyF9 => Ok(Self::KeyF9),
+            Windows::KeyF10 => Ok(Self::KeyF10),
+            Windows::KeyF11 => Ok(Self::KeyF11),
+            Windows::KeyF12 => Ok(Self::KeyF12),
+            Windows::KeyPrintScreen => Ok(Self::KeySysrq),
+            Windows::KeyScrollLock => Ok(Self::KeyScrollLock),
+            Windows::KeyPause => Ok(Self::KeyPause),
+            Windows::KeyInsert => Ok(Self::KeyInsert),
+            Windows::KeyHome => Ok(Self::KeyHome),
+            Windows::KeyPageUp => Ok(Self::KeyPageup),
+            Windows::KeyDeleteForward => Ok(Self::KeyDelete),
+            Windows::KeyEnd => Ok(Self::KeyEnd),
+            Windows::KeyPageDown => Ok(Self::KeyPagedown),
+            Windows::KeyRight => Ok(Self::KeyRight),
+            Windows::KeyLeft => Ok(Self::KeyLeft),
+            Windows::KeyDown => Ok(Self::KeyDown),
+            Windows::KeyUp => Ok(Self::KeyUp),
+            Windows::KeypadNumLock => Ok(Self::KeyNumlock),
+            Windows::KeypadSlash => Ok(Self::KeyKpslash),
+            Windows::KeypadStar => Ok(Self::KeyKpAsterisk),
+            Windows::KeypadDash => Ok(Self::KeyKpMinus),
+            Windows::KeypadPlus => Ok(Self::KeyKpplus),
+            Windows::KeypadEnter => Ok(Self::KeyKpEnter),
+            Windows::Keypad1End => Ok(Self::KeyKp1),
+            Windows::Keypad2DownArrow => Ok(Self::KeyKp2),
+            Windows::Keypad3PageDn => Ok(Self::KeyKp3),
+            Windows::Keypad4LeftArrow => Ok(Self::KeyKp4),
+            Windows::Keypad5 => Ok(Self::KeyKp5),
+            Windows::Keypad6RightArrow => Ok(Self::KeyKp6),
+            Windows::Keypad7Home => Ok(Self::KeyKp7),
+            Windows::Keypad8UpArrow => Ok(Self::KeyKp8),
+            Windows::Keypad9PageUp => Ok(Self::KeyKp9),
+            Windows::Keypad0Insert => Ok(Self::KeyKp0),
+            Windows::KeypadDot => Ok(Self::KeyKpDot),
+            Windows::KeyNonUSSlashBar => Ok(Self::Key102nd),
+            Windows::KeyApplication => Ok(Self::KeyMenu),
+            Windows::KeypadEquals => Ok(Self::KeyKpequal),
+            Windows::KeyF13 => Ok(Self::KeyF13),
+            Windows::KeyF14 => Ok(Self::KeyF14),
+            Windows::KeyF15 => Ok(Self::KeyF15),
+            Windows::KeyF16 => Ok(Self::KeyF16),
+            Windows::KeyF17 => Ok(Self::KeyF17),
+            Windows::KeyF18 => Ok(Self::KeyF18),
+            Windows::KeyF19 => Ok(Self::KeyF19),
+            Windows::KeyF20 => Ok(Self::KeyF20),
+            Windows::KeyF21 => Ok(Self::KeyF21),
+            Windows::KeyF22 => Ok(Self::KeyF22),
+            Windows::KeyF23 => Ok(Self::KeyF23),
+            Windows::KeyF24 => Ok(Self::KeyF24),
+            Windows::KeypadComma => Ok(Self::KeyKpcomma),
+            Windows::KeyInternational1 => Ok(Self::KeyHangeul),
+            Windows::KeyInternational2 => Ok(Self::KeyHanja),
+            Windows::KeyInternational3 => Ok(Self::KeyYen),
+            Windows::KeyInternational4 => Err(()),
+            Windows::KeyInternational5 => Err(()),
+            Windows::KeyLANG1 => Ok(Self::KeyKatakana),
+            Windows::KeyLANG2 => Ok(Self::KeyHiragana),
+            Windows::KeyLANG3 => Ok(Self::KeyHenkan),
+            Windows::KeyLANG4 => Ok(Self::KeyKatakanahiragana),
+            Windows::KeyLeftCtrl => Ok(Self::KeyLeftCtrl),
+            Windows::KeyLeftShift => Ok(Self::KeyLeftShift),
+            Windows::KeyLeftAlt => Ok(Self::KeyLeftAlt),
+            Windows::KeyLeftGUI => Ok(Self::KeyLeftMeta),
+            Windows::KeyRightCtrl => Ok(Self::KeyRightCtrl),
+            Windows::KeyRightShift => Ok(Self::KeyRightShift),
+            Windows::KeyRightAlt => Ok(Self::KeyRightalt),
+            Windows::KeyRightGUI => Ok(Self::KeyRightmeta),
+            Windows::KeyScanNextTrack => Ok(Self::KeyNextsong),
+            Windows::KeyScanPreviousTrack => Ok(Self::KeyPrevioussong),
+            Windows::KeyStop => Ok(Self::KeyStopcd),
+            Windows::KeyPlayPause => Ok(Self::KeyPlaypause),
+            Windows::KeyMute => Ok(Self::KeyMute),
+            Windows::KeyVolumeUp => Ok(Self::KeyVolumeUp),
+            Windows::KeyVolumeDown => Ok(Self::KeyVolumeDown),
+            Windows::ALConsumerControlConfiguration => Err(()),
+            Windows::ALEmailReader => Ok(Self::KeyMail),
+            Windows::ALCalculator => Ok(Self::KeyCalc),
+            Windows::ALLocalMachineBrowser => Ok(Self::KeyFile),
+            Windows::ACSearch => Ok(Self::KeyWww),
+            Windows::ACHome => Ok(Self::KeyHomepage),
+            Windows::ACBack => Ok(Self::KeyBack),
+            Windows::ACForward => Ok(Self::KeyForward),
+            Windows::ACStop => Ok(Self::KeyStop),
+            Windows::ACRefresh => Ok(Self::KeyRefresh),
+            Windows::ACBookmarks => Ok(Self::KeyBookmarks),
         }
     }
 }
