@@ -340,12 +340,15 @@ fn enumerate_displays() -> Vec<RECT> {
     unsafe {
         let mut display_rects = vec![];
         let mut monitors: Vec<HMONITOR> = Vec::new();
-        let _displays = EnumDisplayMonitors(
+        let ret = EnumDisplayMonitors(
             HDC::default(),
             None,
             Some(monitor_enum_proc),
             LPARAM(&mut monitors as *mut Vec<HMONITOR> as isize),
         );
+        if ret != TRUE {
+            panic!("could not enumerate displays");
+        }
         for monitor in monitors {
             let mut monitor_info: MONITORINFO = std::mem::zeroed();
             monitor_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
@@ -468,10 +471,13 @@ fn message_thread() {
             ..Default::default()
         };
 
-        RegisterClassW(&window_class);
+        let ret = RegisterClassW(&window_class);
+        if ret == 0 {
+            panic!("RegisterClassW");
+        }
 
         /* window is used ro receive WM_DISPLAYCHANGE messages */
-        let _ = CreateWindowExW(
+        let ret = CreateWindowExW(
             Default::default(),
             w!("lan-mouse-message-window-class"),
             w!("lan-mouse-msg-window"),
@@ -485,6 +491,9 @@ fn message_thread() {
             instance,
             None,
         );
+        if ret.0 == 0 {
+            panic!("CreateWindowExW");
+        }
 
         /* run message loop */
         loop {
