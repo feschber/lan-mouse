@@ -39,13 +39,13 @@ For an alternative (with slightly different goals) you may check out [Input Leap
 The following table shows support for input emulation (to emulate events received from other clients) and
 input capture (to send events *to* other clients) on different operating systems:
 
-| Backend                   | input emulation          | input capture                        |
+| OS / Desktop Environment  | input emulation          | input capture                        |
 |---------------------------|--------------------------|--------------------------------------|
 | Wayland (wlroots)         | :heavy_check_mark:       | :heavy_check_mark:                   |
 | Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:                   |
-| Wayland (Gnome)           | :heavy_check_mark:       | :heavy_check_mark:                   |
+| Wayland (Gnome)           | :heavy_check_mark:       | :heavy_check_mark: (starting at GNOME 45) |
+| Windows                   | :heavy_check_mark:       | :heavy_check_mark:                   |
 | X11                       | :heavy_check_mark:       | WIP                                  |
-| Windows                   | :heavy_check_mark:       | WIP                                  |
 | MacOS                     | :heavy_check_mark:       | WIP                                  |
 
 > [!Important]
