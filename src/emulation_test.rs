@@ -1,10 +1,10 @@
-use std::f64::consts::PI;
-use std::time::{Duration, Instant};
-use anyhow::Result;
-use tokio::task::LocalSet;
 use crate::client::{ClientEvent, Position};
 use crate::emulate;
 use crate::event::{Event, PointerEvent};
+use anyhow::Result;
+use std::f64::consts::PI;
+use std::time::{Duration, Instant};
+use tokio::task::LocalSet;
 
 pub fn run() -> Result<()> {
     log::info!("running input emulation test");
@@ -21,7 +21,9 @@ const RADIUS: f64 = 100.0;
 
 async fn input_emulation_test() -> Result<()> {
     let mut emulation = emulate::create().await;
-    emulation.notify(ClientEvent::Create(0, Position::Left)).await;
+    emulation
+        .notify(ClientEvent::Create(0, Position::Left))
+        .await;
     let start = Instant::now();
     let mut offset = (0, 0);
     loop {
