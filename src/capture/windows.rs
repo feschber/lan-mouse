@@ -6,11 +6,11 @@ use once_cell::unsync::Lazy;
 use std::collections::HashMap;
 use std::ptr::{addr_of, addr_of_mut};
 
+use futures::executor::block_on;
 use std::default::Default;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::task::ready;
 use std::{io, pin::Pin, thread};
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::w;
 use windows::Win32::Foundation::{
@@ -213,13 +213,10 @@ fn clamp_to_display_bounds(prev_point: (i32, i32), point: (i32, i32)) -> (i32, i
 }
 
 unsafe fn send_blocking(event: Event) {
-    loop {
-        /* enter event must not get lost under any circumstances */
-        match EVENT_TX.as_ref().unwrap().try_send((0, event)) {
-            Err(TrySendError::Full(_)) => continue,
-            Err(TrySendError::Closed(_)) => panic!("channel closed"),
-            Ok(_e) => break,
-        }
+    if let Some(active) = ACTIVE_CLIENT {
+        block_on(async move {
+            let _ = EVENT_TX.as_ref().unwrap().send((active, event)).await;
+        });
     }
 }
 
