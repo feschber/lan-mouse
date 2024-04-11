@@ -9,6 +9,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use futures::executor::block_on;
 use std::default::Default;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc;
 use std::task::ready;
 use std::{io, pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -55,6 +56,8 @@ enum EventType {
 unsafe fn signal_message_thread(event_type: EventType) {
     if let Some(event_tid) = get_event_tid() {
         PostThreadMessageW(event_tid, WM_USER, WPARAM(event_type as usize), LPARAM(0)).unwrap();
+    } else {
+        log::warn!("lost event");
     }
 }
 
@@ -451,9 +454,10 @@ fn get_msg() -> Option<MSG> {
     }
 }
 
-fn message_thread() {
+fn message_thread(ready_tx: mpsc::Sender<()>) {
     unsafe {
         set_event_tid(GetCurrentThreadId());
+        ready_tx.send(()).expect("channel closed");
         let mouse_proc: HOOKPROC = Some(mouse_proc);
         let kybrd_proc: HOOKPROC = Some(kybrd_proc);
         let window_proc: WNDPROC = Some(window_proc);
@@ -551,7 +555,10 @@ impl WindowsInputCapture {
         unsafe {
             let (tx, rx) = channel(10);
             EVENT_TX.replace(tx);
-            let msg_thread = Some(thread::spawn(message_thread));
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let msg_thread = Some(thread::spawn(|| message_thread(ready_tx)));
+            /* wait for thread to set its id */
+            ready_rx.recv().expect("channel closed");
             Ok(Self {
                 msg_thread,
                 event_rx: rx,
