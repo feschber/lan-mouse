@@ -134,38 +134,38 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
 unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> {
     let kybrdllhookstruct: KBDLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
-    let mut vk_code = kybrdllhookstruct.vkCode;
+    let mut scan_code = kybrdllhookstruct.scanCode;
     if kybrdllhookstruct.flags.contains(LLKHF_EXTENDED) {
-        vk_code |= 0xE000;
+        scan_code |= 0xE000;
     }
-    let Ok(key_code) = scancode::Windows::try_from(vk_code) else {
-        log::warn!("failed to translate scancode: {vk_code}");
+    let Ok(win_scan_code) = scancode::Windows::try_from(scan_code) else {
+        log::warn!("failed to translate to windows scancode");
         return None;
     };
-    let Ok(linux_code): Result<Linux, ()> = key_code.try_into() else {
-        log::warn!("failed to convert scancode: {key_code:?}");
+    let Ok(linux_scan_code): Result<Linux, ()> = win_scan_code.try_into() else {
+        log::warn!("failed to translate into linux scancode");
         return None;
     };
-    let scancode = linux_code as u32;
+    let scan_code = linux_scan_code as u32;
     match wparam {
         WPARAM(p) if p == WM_KEYDOWN as usize => Some(KeyboardEvent::Key {
             time: 0,
-            key: scancode,
+            key: scan_code,
             state: 1,
         }),
         WPARAM(p) if p == WM_KEYUP as usize => Some(KeyboardEvent::Key {
             time: 0,
-            key: scancode,
+            key: scan_code,
             state: 0,
         }),
         WPARAM(p) if p == WM_SYSKEYDOWN as usize => Some(KeyboardEvent::Key {
             time: 0,
-            key: scancode,
+            key: scan_code,
             state: 1,
         }),
         WPARAM(p) if p == WM_SYSKEYUP as usize => Some(KeyboardEvent::Key {
             time: 0,
-            key: scancode,
+            key: scan_code,
             state: 1,
         }),
         _ => None,
@@ -288,6 +288,7 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     };
     let event = (client, Event::Keyboard(key_event));
 
+    log::error!("event {event:?}");
     if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
         log::warn!("e: {e}");
     }
