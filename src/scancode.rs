@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use num_enum::TryFromPrimitive;
+use serde::{Deserialize, Serialize};
 
 /*
  * https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input
@@ -734,7 +734,7 @@ impl TryFrom<Windows> for Linux {
             Windows::Key0 => Ok(Self::Key0),
             Windows::KeyEnter => Ok(Self::KeyEnter),
             Windows::KeyEsc => Ok(Self::KeyEsc),
-            Windows::KeyDelete => Ok(Self::KeyDelete),
+            Windows::KeyDelete => Ok(Self::KeyBackspace),
             Windows::KeyTab => Ok(Self::KeyTab),
             Windows::KeySpace => Ok(Self::KeySpace),
             Windows::KeyMinus => Ok(Self::KeyMinus),
