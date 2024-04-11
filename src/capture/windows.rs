@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::ptr::{addr_of, addr_of_mut};
 
 use std::default::Default;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::task::ready;
 use std::{io, pin::Pin, thread};
-use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::w;
@@ -22,12 +22,24 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
-use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW, RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WNDCLASSW, WNDPROC, LLKHF_EXTENDED};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW,
+    RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT,
+    LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
+    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WM_USER, WNDCLASSW, WNDPROC,
+};
 
 use crate::client::Position;
 use crate::event::{KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
-use crate::{capture::InputCapture, client::{ClientEvent, ClientHandle}, event::Event, scancode};
 use crate::scancode::Linux;
+use crate::{
+    capture::InputCapture,
+    client::{ClientEvent, ClientHandle},
+    event::Event,
+    scancode,
+};
 
 pub struct WindowsInputCapture {
     event_rx: Receiver<(ClientHandle, Event)>,
@@ -135,17 +147,20 @@ unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> 
     let kybrdllhookstruct: KBDLLHOOKSTRUCT =
         *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
     let mut scan_code = kybrdllhookstruct.scanCode;
+    log::trace!("scan_code: {scan_code}");
     if kybrdllhookstruct.flags.contains(LLKHF_EXTENDED) {
         scan_code |= 0xE000;
     }
     let Ok(win_scan_code) = scancode::Windows::try_from(scan_code) else {
-        log::warn!("failed to translate to windows scancode");
+        log::warn!("failed to translate to windows scancode: {scan_code}");
         return None;
     };
+    log::trace!("windows_scan: {win_scan_code:?}");
     let Ok(linux_scan_code): Result<Linux, ()> = win_scan_code.try_into() else {
-        log::warn!("failed to translate into linux scancode");
+        log::warn!("failed to translate into linux scancode: {win_scan_code:?}");
         return None;
     };
+    log::trace!("windows_scan: {linux_scan_code:?}");
     let scan_code = linux_scan_code as u32;
     match wparam {
         WPARAM(p) if p == WM_KEYDOWN as usize => Some(KeyboardEvent::Key {
