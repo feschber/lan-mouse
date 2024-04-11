@@ -300,7 +300,6 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     };
     let event = (client, Event::Keyboard(key_event));
 
-    log::error!("event {event:?}");
     if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
         log::warn!("e: {e}");
     }
