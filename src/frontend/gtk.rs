@@ -12,8 +12,7 @@ use crate::frontend::gtk::window::Window;
 
 use adw::Application;
 use gtk::{
-    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt,
-    IconTheme,
+    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, IconTheme,
 };
 use gtk::{gio, glib, prelude::ApplicationExt};
 

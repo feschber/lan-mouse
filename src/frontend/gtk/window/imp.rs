@@ -8,7 +8,8 @@ use std::os::unix::net::UnixStream;
 use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, ToastOverlay};
 use glib::subclass::InitializingObject;
-use gtk::{gio, glib, Button, CompositeTemplate, Entry, ListBox};
+use gtk::glib::clone;
+use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
 
 use crate::config::DEFAULT_PORT;
 
@@ -25,6 +26,8 @@ pub struct Window {
     pub client_placeholder: TemplateChild<ActionRow>,
     #[template_child]
     pub port_entry: TemplateChild<Entry>,
+    #[template_child]
+    pub hostname_label: TemplateChild<Label>,
     #[template_child]
     pub toast_overlay: TemplateChild<ToastOverlay>,
     pub clients: RefCell<Option<gio::ListStore>>,
@@ -62,6 +65,23 @@ impl Window {
     }
 
     #[template_callback]
+    fn handle_copy_hostname(&self, button: &Button) {
+        if let Ok(hostname) = hostname::get() {
+            let prev_icon = button.icon_name().unwrap();
+            let display = gdk::Display::default().unwrap();
+            let clipboard = display.clipboard();
+            clipboard.set_text(hostname.to_str().expect("hostname: invalid utf8"));
+            button.set_icon_name("emblem-ok-symbolic");
+            button.set_css_classes(&["success"]);
+            glib::spawn_future_local(clone!(@weak button => async move {
+                glib::timeout_future_seconds(1).await;
+                button.set_icon_name(&prev_icon);
+                button.set_css_classes(&[]);
+            }));
+        }
+    }
+
+    #[template_callback]
     fn handle_port_changed(&self, _entry: &Entry) {
         self.port_edit_apply.set_visible(true);
         self.port_edit_cancel.set_visible(true);
@@ -95,6 +115,10 @@ impl Window {
 
 impl ObjectImpl for Window {
     fn constructed(&self) {
+        if let Ok(hostname) = hostname::get() {
+            self.hostname_label
+                .set_text(hostname.to_str().expect("hostname: invalid utf8"));
+        }
         self.parent_constructed();
         self.set_port(DEFAULT_PORT);
         let obj = self.obj();

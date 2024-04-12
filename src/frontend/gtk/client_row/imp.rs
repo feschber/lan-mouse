@@ -14,6 +14,8 @@ pub struct ClientRow {
     #[template_child]
     pub enable_switch: TemplateChild<gtk::Switch>,
     #[template_child]
+    pub dns_button: TemplateChild<gtk::Button>,
+    #[template_child]
     pub hostname: TemplateChild<gtk::Entry>,
     #[template_child]
     pub port: TemplateChild<gtk::Entry>,
@@ -74,6 +76,11 @@ impl ClientRow {
         log::debug!("state change -> requesting update");
         self.obj().emit_by_name::<()>("request-update", &[&state]);
         true // dont run default handler
+    }
+
+    #[template_callback]
+    fn handle_request_dns(&self) -> bool {
+        false
     }
 
     #[template_callback]

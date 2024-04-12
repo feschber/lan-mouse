@@ -5,6 +5,6 @@
     <file compressed="true" preprocess="xml-stripblanks">client_row.ui</file>
   </gresource>
   <gresource prefix="/de/feschber/LanMouse/icons">
-	<file compressed="true" preprocess="xml-stripblanks">de.feschber.LanMouse.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks">de.feschber.LanMouse.svg</file>
   </gresource>
 </gresources>
