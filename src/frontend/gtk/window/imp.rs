@@ -67,7 +67,6 @@ impl Window {
     #[template_callback]
     fn handle_copy_hostname(&self, button: &Button) {
         if let Ok(hostname) = hostname::get() {
-            let prev_icon = button.icon_name().unwrap();
             let display = gdk::Display::default().unwrap();
             let clipboard = display.clipboard();
             clipboard.set_text(hostname.to_str().expect("hostname: invalid utf8"));
@@ -75,7 +74,7 @@ impl Window {
             button.set_css_classes(&["success"]);
             glib::spawn_future_local(clone!(@weak button => async move {
                 glib::timeout_future_seconds(1).await;
-                button.set_icon_name(&prev_icon);
+                button.set_icon_name("edit-copy-symbolic");
                 button.set_css_classes(&[]);
             }));
         }
