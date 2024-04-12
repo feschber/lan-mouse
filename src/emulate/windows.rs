@@ -191,7 +191,7 @@ fn scroll(axis: u8, value: f64) {
     let mi = MOUSEINPUT {
         dx: 0,
         dy: 0,
-        mouseData: (-value * 15.0) as i32 as u32,
+        mouseData: -value as i32 as u32,
         dwFlags: event_type,
         time: 0,
         dwExtraInfo: 0,
