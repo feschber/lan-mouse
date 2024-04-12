@@ -8,14 +8,18 @@ use async_trait::async_trait;
 use std::ops::BitOrAssign;
 use std::time::Duration;
 use tokio::task::AbortHandle;
-use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT_0, KEYEVENTF_EXTENDEDKEY};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
     MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
     MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
     MOUSEEVENTF_WHEEL, MOUSEINPUT,
 };
+use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
 
+use crate::event::{BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use crate::{
     client::{ClientEvent, ClientHandle},
     event::Event,
@@ -145,23 +149,32 @@ fn rel_mouse(dx: i32, dy: i32) {
 fn mouse_button(button: u32, state: u32) {
     let dw_flags = match state {
         0 => match button {
-            0x110 => MOUSEEVENTF_LEFTUP,
-            0x111 => MOUSEEVENTF_RIGHTUP,
-            0x112 => MOUSEEVENTF_MIDDLEUP,
+            BTN_LEFT => MOUSEEVENTF_LEFTUP,
+            BTN_RIGHT => MOUSEEVENTF_RIGHTUP,
+            BTN_MIDDLE => MOUSEEVENTF_MIDDLEUP,
+            BTN_BACK => MOUSEEVENTF_XUP,
+            BTN_FORWARD => MOUSEEVENTF_XUP,
             _ => return,
         },
         1 => match button {
-            0x110 => MOUSEEVENTF_LEFTDOWN,
-            0x111 => MOUSEEVENTF_RIGHTDOWN,
-            0x112 => MOUSEEVENTF_MIDDLEDOWN,
+            BTN_LEFT => MOUSEEVENTF_LEFTDOWN,
+            BTN_RIGHT => MOUSEEVENTF_RIGHTDOWN,
+            BTN_MIDDLE => MOUSEEVENTF_MIDDLEDOWN,
+            BTN_BACK => MOUSEEVENTF_XDOWN,
+            BTN_FORWARD => MOUSEEVENTF_XDOWN,
             _ => return,
         },
         _ => return,
     };
+    let mouse_data = match button {
+        BTN_BACK => XBUTTON1 as u32,
+        BTN_FORWARD => XBUTTON2 as u32,
+        _ => 0,
+    };
     let mi = MOUSEINPUT {
         dx: 0,
         dy: 0, // no movement
-        mouseData: 0,
+        mouseData: mouse_data,
         dwFlags: dw_flags,
         time: 0,
         dwExtraInfo: 0,

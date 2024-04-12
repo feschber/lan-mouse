@@ -84,7 +84,21 @@ impl Display for PointerEvent {
                 time: _,
                 button,
                 state,
-            } => write!(f, "button({button}, {state})"),
+            } => {
+                let str = match *button {
+                    BTN_LEFT => Some("left"),
+                    BTN_RIGHT => Some("right"),
+                    BTN_MIDDLE => Some("middle"),
+                    BTN_FORWARD => Some("forward"),
+                    BTN_BACK => Some("back"),
+                    _ => None,
+                };
+                if let Some(button) = str {
+                    write!(f, "button({button}, {state})")
+                } else {
+                    write!(f, "button({button}, {state}")
+                }
+            }
             PointerEvent::Axis {
                 time: _,
                 axis,

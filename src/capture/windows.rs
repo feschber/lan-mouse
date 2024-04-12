@@ -29,11 +29,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
     WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
     WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP, WM_USER, WNDCLASSW, WNDPROC,
+    WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
 
 use crate::client::Position;
-use crate::event::{KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use crate::event::{
+    KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+};
 use crate::scancode::Linux;
 use crate::{
     capture::InputCapture,
@@ -142,7 +144,26 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
             axis: 0,
             value: -(mouse_low_level.mouseData as i32) as f64,
         }),
-        _ => None,
+        WPARAM(p) if p == WM_XBUTTONDOWN as usize || p == WM_XBUTTONUP as usize => {
+            let hb = mouse_low_level.mouseData >> 16;
+            let button = match hb {
+                1 => BTN_BACK,
+                2 => BTN_FORWARD,
+                _ => {
+                    log::warn!("unknown mouse button");
+                    return None;
+                }
+            };
+            Some(PointerEvent::Button {
+                time: 0,
+                button,
+                state: if p == WM_XBUTTONDOWN as usize { 1 } else { 0 },
+            })
+        }
+        w => {
+            log::warn!("unknown mouse event: {w:?}");
+            None
+        }
     }
 }
 

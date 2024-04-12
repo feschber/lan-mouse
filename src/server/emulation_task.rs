@@ -177,7 +177,7 @@ async fn handle_udp_rx(
                     if !ignore_event {
                         // consume event
                         emulate.consume(event, handle).await;
-                        log::trace!("{event:?} => emulate");
+                        log::trace!("{event} => emulate");
                     }
                 }
                 State::AwaitingLeave => {
