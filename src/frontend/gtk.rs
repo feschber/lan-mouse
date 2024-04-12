@@ -12,7 +12,7 @@ use crate::frontend::gtk::window::Window;
 
 use adw::Application;
 use gtk::{
-    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, CssProvider,
+    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt,
     IconTheme,
 };
 use gtk::{gio, glib, prelude::ApplicationExt};
@@ -51,21 +51,10 @@ fn gtk_main() -> glib::ExitCode {
         .build();
 
     app.connect_startup(|_| load_icons());
-    app.connect_startup(|_| load_css());
     app.connect_activate(build_ui);
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
-}
-
-fn load_css() {
-    let provider = CssProvider::new();
-    provider.load_from_resource("de/feschber/LanMouse/style.css");
-    gtk::style_context_add_provider_for_display(
-        &Display::default().expect("Could not connect to a display."),
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
 }
 
 fn load_icons() {

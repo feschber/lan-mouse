@@ -66,6 +66,7 @@
 						<property name="valign">center</property>
 						<property name="halign">center</property>
 						<property name="name">delete-button</property>
+						<style><class name="error"/></style>
 					</object>
 				</child>
 			</object>

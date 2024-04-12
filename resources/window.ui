@@ -84,6 +84,7 @@
 																<property name="valign">center</property>
 																<property name="visible">false</property>
 																<property name="name">port-edit-apply</property>
+																<style><class name="success"/></style>
 															</object>
 														</child>
 														<child>
@@ -93,6 +94,7 @@
 																<property name="valign">center</property>
 																<property name="visible">false</property>
 																<property name="name">port-edit-cancel</property>
+																<style><class name="error"/></style>
 															</object>
 														</child>
 													</object>
