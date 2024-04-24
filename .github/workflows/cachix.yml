@@ -3,8 +3,14 @@ name: Binary Cache
 on: [push, pull_request, workflow_dispatch]
 jobs:
   nix:
+    strategy:
+      matrix:
+       os: 
+        - ubuntu-latest
+        - macos-latest
+        - macos-14
     name: "Build"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }} 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -20,5 +26,15 @@ jobs:
         name: lan-mouse
         authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
 
-    - name: Build lan-mouse
-      run: nix build --print-build-logs
+    - name: Build lan-mouse (x86_64-linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: nix build --print-build-logs --show-trace .#packages.x86_64-linux.lan-mouse
+
+    - name: Build lan-mouse (x86_64-darwin)
+      if: matrix.os == 'macos-latest'
+      run: nix build --print-build-logs --show-trace .#packages.x86_64-darwin.lan-mouse
+
+    - name: Build lan-mouse (aarch64-darwin)
+      if: matrix.os == 'macos-14'
+      run: nix build --print-build-logs --show-trace .#packages.aarch64-darwin.lan-mouse
+

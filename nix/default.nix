@@ -18,6 +18,8 @@ rustPlatform.buildRustPackage {
     gtk4
     libadwaita
     xorg.libXtst
+  ] ++ lib.optionals stdenv.isDarwin [
+    darwin.apple_sdk_11_0.frameworks.CoreGraphics
   ];
 
   src = builtins.path {
