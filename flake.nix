@@ -15,6 +15,8 @@
   }: let
     inherit (nixpkgs) lib;
     genSystems = lib.genAttrs [
+      "aarch64-darwin"
+      "x86_64-darwin"
       "x86_64-linux"
     ];
     pkgsFor = system:
@@ -49,6 +51,8 @@
           gtk4
           libadwaita
           xorg.libXtst
+        ] ++ lib.optionals stdenv.isDarwin [
+          darwin.apple_sdk_11_0.frameworks.CoreGraphics
         ];
 
         RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";
