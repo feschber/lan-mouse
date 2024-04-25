@@ -137,7 +137,7 @@ async fn handle_frontend_event(
                 .client_manager
                 .borrow()
                 .get_client_states()
-                .map(|s| (s.client.clone(), s.active))
+                .map(|(h, s)| (h, s.client.clone(), s.active))
                 .collect();
             notify_all(frontend, FrontendEvent::Enumerate(clients)).await;
         }
@@ -199,7 +199,7 @@ pub async fn add_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendEvent::Created(client)).await;
+    notify_all(frontend, FrontendEvent::Created(handle, client)).await;
 }
 
 pub async fn deactivate_client(
@@ -207,12 +207,12 @@ pub async fn deactivate_client(
     frontend: &mut FrontendListener,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
-    client: ClientHandle,
+    handle: ClientHandle,
 ) {
-    let (client, _) = match server.client_manager.borrow_mut().get_mut(client) {
+    let (client, _) = match server.client_manager.borrow_mut().get_mut(handle) {
         Some(state) => {
             state.active = false;
-            (state.client.handle, state.client.pos)
+            (handle, state.client.pos)
         }
         None => return,
     };
@@ -265,24 +265,24 @@ pub async fn remove_client(
     frontend: &mut FrontendListener,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
-    client: ClientHandle,
+    handle: ClientHandle,
 ) {
-    let Some((client, active)) = server
+    let Some(active) = server
         .client_manager
         .borrow_mut()
-        .remove_client(client)
-        .map(|s| (s.client.handle, s.active))
+        .remove_client(handle)
+        .map(|s| s.active)
     else {
         return;
     };
 
     if active {
-        let destroy = ClientEvent::Destroy(client);
+        let destroy = ClientEvent::Destroy(handle);
         let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
         let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
     }
 
-    let event = FrontendEvent::Deleted(client);
+    let event = FrontendEvent::Deleted(handle);
     notify_all(frontend, event).await;
 }
 
@@ -296,7 +296,7 @@ async fn update_client(
 ) {
     let (handle, hostname, port, pos) = client_update;
     let mut changed = false;
-    let (hostname, handle, active) = {
+    let (hostname, active) = {
         // retrieve state
         let mut client_manager = server.client_manager.borrow_mut();
         let Some(state) = client_manager.get_mut(handle) else {
@@ -325,11 +325,7 @@ async fn update_client(
         }
 
         log::debug!("client updated: {:?}", state);
-        (
-            state.client.hostname.clone(),
-            state.client.handle,
-            state.active,
-        )
+        (state.client.hostname.clone(), state.active)
     };
 
     // resolve dns if something changed
@@ -358,5 +354,5 @@ async fn update_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendEvent::Updated(client)).await;
+    notify_all(frontend, FrontendEvent::Updated(handle, client)).await;
 }

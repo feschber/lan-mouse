@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use slab::Slab;
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
@@ -66,10 +67,6 @@ pub struct Client {
     pub hostname: Option<String>,
     /// fix ips, determined by the user
     pub fix_ips: Vec<IpAddr>,
-    /// unique handle to refer to the client.
-    /// This way any emulation / capture backend does not
-    /// need to know anything about a client other than its handle.
-    pub handle: ClientHandle,
     /// all ip addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
@@ -86,7 +83,7 @@ pub enum ClientEvent {
     Destroy(ClientHandle),
 }
 
-pub type ClientHandle = u32;
+pub type ClientHandle = u64;
 
 #[derive(Debug, Clone)]
 pub struct ClientState {
@@ -105,7 +102,7 @@ pub struct ClientState {
 }
 
 pub struct ClientManager {
-    clients: Vec<Option<ClientState>>, // HashMap likely not beneficial
+    clients: Slab<ClientState>,
 }
 
 impl Default for ClientManager {
@@ -116,7 +113,8 @@ impl Default for ClientManager {
 
 impl ClientManager {
     pub fn new() -> Self {
-        Self { clients: vec![] }
+        let clients = Slab::new();
+        Self { clients }
     }
 
     /// add a new client to this manager
@@ -128,38 +126,24 @@ impl ClientManager {
         pos: Position,
         active: bool,
     ) -> ClientHandle {
-        // get a new client_handle
-        let handle = self.free_id();
-
         // store fix ip addresses
         let fix_ips = ips.iter().cloned().collect();
 
-        // store the client
-        let client = Client {
-            hostname,
-            fix_ips,
-            handle,
-            ips,
-            port,
-            pos,
-        };
-
-        // client was never seen, nor pinged
         let client_state = ClientState {
-            client,
+            client: Client {
+                hostname,
+                fix_ips,
+                ips,
+                port,
+                pos,
+            },
             active,
             active_addr: None,
             alive: false,
             pressed_keys: HashSet::new(),
         };
 
-        if handle as usize >= self.clients.len() {
-            assert_eq!(handle as usize, self.clients.len());
-            self.clients.push(Some(client_state));
-        } else {
-            self.clients[handle as usize] = Some(client_state);
-        }
-        handle
+        self.clients.insert(client_state) as ClientHandle
     }
 
     /// find a client by its address
@@ -168,11 +152,11 @@ impl ClientManager {
         // time this is likely faster than using a HashMap
         self.clients
             .iter()
-            .position(|c| {
-                if let Some(c) = c {
-                    c.active && c.client.ips.contains(&addr.ip())
+            .find_map(|(k, c)| {
+                if c.active && c.client.ips.contains(&addr.ip()) {
+                    Some(k)
                 } else {
-                    false
+                    None
                 }
             })
             .map(|p| p as ClientHandle)
@@ -181,11 +165,11 @@ impl ClientManager {
     pub fn find_client(&self, pos: Position) -> Option<ClientHandle> {
         self.clients
             .iter()
-            .position(|c| {
-                if let Some(c) = c {
-                    c.active && c.client.pos == pos
+            .find_map(|(k, c)| {
+                if c.active && c.client.pos == pos {
+                    Some(k)
                 } else {
-                    false
+                    None
                 }
             })
             .map(|p| p as ClientHandle)
@@ -194,36 +178,26 @@ impl ClientManager {
     /// remove a client from the list
     pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientState> {
         // remove id from occupied ids
-        self.clients.get_mut(client as usize)?.take()
-    }
-
-    /// get a free slot in the client list
-    fn free_id(&mut self) -> ClientHandle {
-        for i in 0..u32::MAX {
-            if self.clients.get(i as usize).is_none()
-                || self.clients.get(i as usize).unwrap().is_none()
-            {
-                return i;
-            }
-        }
-        panic!("Out of client ids");
+        self.clients.try_remove(client as usize)
     }
 
     // returns an immutable reference to the client state corresponding to `client`
     pub fn get(&self, client: ClientHandle) -> Option<&ClientState> {
-        self.clients.get(client as usize)?.as_ref()
+        self.clients.get(client as usize)
     }
 
     /// returns a mutable reference to the client state corresponding to `client`
     pub fn get_mut(&mut self, client: ClientHandle) -> Option<&mut ClientState> {
-        self.clients.get_mut(client as usize)?.as_mut()
+        self.clients.get_mut(client as usize)
     }
 
-    pub fn get_client_states(&self) -> impl Iterator<Item = &ClientState> {
-        self.clients.iter().filter_map(|x| x.as_ref())
+    pub fn get_client_states(&self) -> impl Iterator<Item = (ClientHandle, &ClientState)> {
+        self.clients.iter().map(|(k, v)| (k as ClientHandle, v))
     }
 
-    pub fn get_client_states_mut(&mut self) -> impl Iterator<Item = &mut ClientState> {
-        self.clients.iter_mut().filter_map(|x| x.as_mut())
+    pub fn get_client_states_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (ClientHandle, &mut ClientState)> {
+        self.clients.iter_mut().map(|(k, v)| (k as ClientHandle, v))
     }
 }

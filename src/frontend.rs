@@ -106,15 +106,15 @@ pub enum FrontendEvent {
     /// the given client was activated
     Activated(ClientHandle, bool),
     /// a client was created
-    Created(Client),
+    Created(ClientHandle, Client),
     /// a client was updated
-    Updated(Client),
+    Updated(ClientHandle, Client),
     /// the client was deleted
     Deleted(ClientHandle),
     /// new port, reason of failure (if failed)
     PortChanged(u16, Option<String>),
     /// list of all clients, used for initial state synchronization
-    Enumerate(Vec<(Client, bool)>),
+    Enumerate(Vec<(ClientHandle, Client, bool)>),
     /// an error occured
     Error(String),
 }

@@ -65,7 +65,7 @@ pub fn new(
             .client_manager
             .borrow()
             .get_client_states()
-            .map(|s| s.client.handle)
+            .map(|(h, _)| h)
             .collect::<Vec<_>>();
         for client in clients {
             release_keys(&server, &mut emulate, client).await;

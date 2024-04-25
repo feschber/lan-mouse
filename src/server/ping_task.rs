@@ -34,8 +34,8 @@ pub fn new(
                         // if receiving we care about clients with pressed keys
                         client_manager
                             .get_client_states_mut()
-                            .filter(|s| !s.pressed_keys.is_empty())
-                            .map(|s| s.client.handle)
+                            .filter(|(_, s)| !s.pressed_keys.is_empty())
+                            .map(|(h, _)| h)
                             .collect()
                     } else {
                         // if sending we care about the active client
@@ -64,7 +64,7 @@ pub fn new(
                     };
 
                     // reset alive
-                    for state in client_manager.get_client_states_mut() {
+                    for (_, state) in client_manager.get_client_states_mut() {
                         state.alive = false;
                     }
 
