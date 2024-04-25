@@ -18,7 +18,7 @@ use tokio::{
 
 use crate::{
     client::{ClientEvent, ClientHandle, Position},
-    frontend::{self, FrontendRequest, FrontendListener, FrontendEvent},
+    frontend::{self, FrontendEvent, FrontendListener, FrontendRequest},
 };
 
 use super::{

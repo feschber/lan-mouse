@@ -10,7 +10,7 @@ use crate::{
     client::{ClientHandle, ClientManager},
     config::Config,
     dns,
-    frontend::{FrontendRequest, FrontendListener},
+    frontend::{FrontendListener, FrontendRequest},
     server::capture_task::CaptureEvent,
 };
 

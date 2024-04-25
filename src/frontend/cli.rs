@@ -8,7 +8,7 @@ use std::{
 
 use crate::{client::Position, config::DEFAULT_PORT};
 
-use super::{FrontendRequest, FrontendEvent};
+use super::{FrontendEvent, FrontendRequest};
 
 pub fn run() -> Result<()> {
     let Ok(mut tx) = super::wait_for_service() else {
