@@ -152,7 +152,7 @@ impl Window {
     }
 
     pub fn request_client_create(&self) {
-        let event = FrontendRequest::AddClient(None, DEFAULT_PORT, Position::default());
+        let event = FrontendRequest::Create(None, DEFAULT_PORT, Position::default());
         self.imp().set_port(DEFAULT_PORT);
         self.request(event);
     }
@@ -178,11 +178,11 @@ impl Window {
         let hostname = data.hostname;
         let port = data.port as u16;
 
-        let event = FrontendRequest::UpdateClient(client.handle(), hostname, port, position);
+        let event = FrontendRequest::Update(client.handle(), hostname, port, position);
         log::debug!("requesting update: {event:?}");
         self.request(event);
 
-        let event = FrontendRequest::ActivateClient(client.handle(), active);
+        let event = FrontendRequest::Activate(client.handle(), active);
         log::debug!("requesting activate: {event:?}");
         self.request(event);
     }
@@ -193,7 +193,7 @@ impl Window {
                 .downcast_ref()
                 .expect("Expected object of type `ClientObject`.");
             let handle = client_object.handle();
-            let event = FrontendRequest::DelClient(handle);
+            let event = FrontendRequest::Delete(handle);
             self.request(event);
         }
     }

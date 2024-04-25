@@ -119,22 +119,22 @@ fn build_ui(app: &Application) {
         loop {
             let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
             match notify {
-                FrontendEvent::ClientActivated(handle, active) => {
+                FrontendEvent::Activated(handle, active) => {
                     window.activate_client(handle, active);
                 }
-                FrontendEvent::ClientCreated(client) => {
+                FrontendEvent::Created(client) => {
                     window.new_client(client, false);
                 },
-                FrontendEvent::ClientUpdated(client) => {
+                FrontendEvent::Updated(client) => {
                     window.update_client(client);
                 }
                 FrontendEvent::Error(e) => {
                     window.show_toast(e.as_str());
                 },
-                FrontendEvent::ClientDeleted(client) => {
+                FrontendEvent::Deleted(client) => {
                     window.delete_client(client);
                 }
-                FrontendEvent::EnumerateClients(clients) => {
+                FrontendEvent::Enumerate(clients) => {
                     for (client, active) in clients {
                         if window.client_idx(client.handle).is_some() {
                             window.activate_client(client.handle, active);

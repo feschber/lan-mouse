@@ -107,7 +107,7 @@ async fn handle_frontend_event(
 ) -> bool {
     log::debug!("frontend: {event:?}");
     match event {
-        FrontendRequest::AddClient(hostname, port, pos) => {
+        FrontendRequest::Create(hostname, port, pos) => {
             add_client(
                 server,
                 frontend,
@@ -119,7 +119,7 @@ async fn handle_frontend_event(
             )
             .await;
         }
-        FrontendRequest::ActivateClient(handle, active) => {
+        FrontendRequest::Activate(handle, active) => {
             if active {
                 activate_client(server, frontend, capture_tx, emulate_tx, handle).await;
             } else {
@@ -129,7 +129,7 @@ async fn handle_frontend_event(
         FrontendRequest::ChangePort(port) => {
             let _ = port_tx.send(port).await;
         }
-        FrontendRequest::DelClient(handle) => {
+        FrontendRequest::Delete(handle) => {
             remove_client(server, frontend, capture_tx, emulate_tx, handle).await;
         }
         FrontendRequest::Enumerate() => {
@@ -139,13 +139,13 @@ async fn handle_frontend_event(
                 .get_client_states()
                 .map(|s| (s.client.clone(), s.active))
                 .collect();
-            notify_all(frontend, FrontendEvent::EnumerateClients(clients)).await;
+            notify_all(frontend, FrontendEvent::Enumerate(clients)).await;
         }
-        FrontendRequest::Shutdown() => {
+        FrontendRequest::Terminate() => {
             log::info!("terminating gracefully...");
             return true;
         }
-        FrontendRequest::UpdateClient(handle, hostname, port, pos) => {
+        FrontendRequest::Update(handle, hostname, port, pos) => {
             update_client(
                 server,
                 frontend,
@@ -199,7 +199,7 @@ pub async fn add_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendEvent::ClientCreated(client)).await;
+    notify_all(frontend, FrontendEvent::Created(client)).await;
 }
 
 pub async fn deactivate_client(
@@ -220,7 +220,7 @@ pub async fn deactivate_client(
     let event = ClientEvent::Destroy(client);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendEvent::ClientActivated(client, false);
+    let event = FrontendEvent::Activated(client, false);
     notify_all(frontend, event).await;
 }
 
@@ -256,7 +256,7 @@ pub async fn activate_client(
     let event = ClientEvent::Create(handle, pos);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendEvent::ClientActivated(handle, true);
+    let event = FrontendEvent::Activated(handle, true);
     notify_all(frontend, event).await;
 }
 
@@ -282,7 +282,7 @@ pub async fn remove_client(
         let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
     }
 
-    let event = FrontendEvent::ClientDeleted(client);
+    let event = FrontendEvent::Deleted(client);
     notify_all(frontend, event).await;
 }
 
@@ -358,5 +358,5 @@ async fn update_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendEvent::ClientUpdated(client)).await;
+    notify_all(frontend, FrontendEvent::Updated(client)).await;
 }

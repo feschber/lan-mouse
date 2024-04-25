@@ -86,35 +86,35 @@ pub fn wait_for_service() -> Result<std::net::TcpStream> {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
     /// add a new client
-    AddClient(Option<String>, u16, Position),
+    Create(Option<String>, u16, Position),
     /// activate/deactivate client
-    ActivateClient(ClientHandle, bool),
+    Activate(ClientHandle, bool),
     /// change the listen port (recreate udp listener)
     ChangePort(u16),
     /// remove a client
-    DelClient(ClientHandle),
-    /// request an enumertaion of all clients
+    Delete(ClientHandle),
+    /// request an enumeration of all clients
     Enumerate(),
     /// service shutdown
-    Shutdown(),
+    Terminate(),
     /// update a client (hostname, port, position)
-    UpdateClient(ClientHandle, Option<String>, u16, Position),
+    Update(ClientHandle, Option<String>, u16, Position),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
     /// the given client was activated
-    ClientActivated(ClientHandle, bool),
+    Activated(ClientHandle, bool),
     /// a client was created
-    ClientCreated(Client),
+    Created(Client),
     /// a client was updated
-    ClientUpdated(Client),
+    Updated(Client),
     /// the client was deleted
-    ClientDeleted(ClientHandle),
+    Deleted(ClientHandle),
     /// new port, reason of failure (if failed)
     PortChanged(u16, Option<String>),
     /// list of all clients, used for initial state synchronization
-    EnumerateClients(Vec<(Client, bool)>),
+    Enumerate(Vec<(Client, bool)>),
     /// an error occured
     Error(String),
 }

@@ -38,7 +38,7 @@ pub fn run() -> Result<()> {
                                 if let Err(e) = tx.write(bytes) {
                                     log::error!("error sending message: {e}");
                                 };
-                                if *event == FrontendRequest::Shutdown() {
+                                if *event == FrontendRequest::Terminate() {
                                     return;
                                 }
                             }
@@ -83,34 +83,34 @@ pub fn run() -> Result<()> {
                     Err(e) => break log::error!("{e}"),
                 };
                 match notify {
-                    FrontendEvent::ClientActivated(handle, active) => {
+                    FrontendEvent::Activated(handle, active) => {
                         if active {
                             log::info!("client {handle} activated");
                         } else {
                             log::info!("client {handle} deactivated");
                         }
                     }
-                    FrontendEvent::ClientCreated(client) => {
+                    FrontendEvent::Created(client) => {
                         let handle = client.handle;
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
                         log::info!("new client ({handle}): {hostname}:{port} - {pos}");
                     }
-                    FrontendEvent::ClientUpdated(client) => {
+                    FrontendEvent::Updated(client) => {
                         let handle = client.handle;
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
                         log::info!("client ({handle}) updated: {hostname}:{port} - {pos}");
                     }
-                    FrontendEvent::ClientDeleted(client) => {
+                    FrontendEvent::Deleted(client) => {
                         log::info!("client ({client}) deleted.");
                     }
                     FrontendEvent::Error(e) => {
                         log::warn!("{e}");
                     }
-                    FrontendEvent::EnumerateClients(clients) => {
+                    FrontendEvent::Enumerate(clients) => {
                         for (client, active) in clients.into_iter() {
                             log::info!(
                                 "client ({}) [{}]: active: {}, associated addresses: [{}]",
@@ -155,7 +155,7 @@ fn prompt() {
 
 fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendRequest>> {
     if len == 0 {
-        return Some(vec![FrontendRequest::Shutdown()]);
+        return Some(vec![FrontendRequest::Terminate()]);
     }
     let mut l = s.split_whitespace();
     let cmd = l.next()?;
@@ -170,7 +170,7 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendRequest>> {
             log::info!("setport <port>                                       change port");
             None
         }
-        "exit" => return Some(vec![FrontendRequest::Shutdown()]),
+        "exit" => return Some(vec![FrontendRequest::Terminate()]),
         "list" => return Some(vec![FrontendRequest::Enumerate()]),
         "connect" => Some(parse_connect(l)),
         "disconnect" => Some(parse_disconnect(l)),
@@ -207,7 +207,7 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
         DEFAULT_PORT
     };
     Ok(vec![
-        FrontendRequest::AddClient(Some(host), port, pos),
+        FrontendRequest::Create(Some(host), port, pos),
         FrontendRequest::Enumerate(),
     ])
 }
@@ -215,7 +215,7 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
 fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: disconnect <client_id>")?.parse()?;
     Ok(vec![
-        FrontendRequest::DelClient(client),
+        FrontendRequest::Delete(client),
         FrontendRequest::Enumerate(),
     ])
 }
@@ -223,7 +223,7 @@ fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
 fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: activate <client_id>")?.parse()?;
     Ok(vec![
-        FrontendRequest::ActivateClient(client, true),
+        FrontendRequest::Activate(client, true),
         FrontendRequest::Enumerate(),
     ])
 }
@@ -231,7 +231,7 @@ fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
 fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: deactivate <client_id>")?.parse()?;
     Ok(vec![
-        FrontendRequest::ActivateClient(client, false),
+        FrontendRequest::Activate(client, false),
         FrontendRequest::Enumerate(),
     ])
 }

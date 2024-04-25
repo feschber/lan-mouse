@@ -144,7 +144,7 @@ impl Server {
             .collect::<Vec<_>>();
         for (handle, hostname) in active {
             frontend_tx
-                .send(FrontendRequest::ActivateClient(handle, true))
+                .send(FrontendRequest::Activate(handle, true))
                 .await?;
             if let Some(hostname) = hostname {
                 let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
@@ -178,7 +178,7 @@ impl Server {
 
         let _ = emulate_channel.send(EmulationEvent::Terminate).await;
         let _ = capture_channel.send(CaptureEvent::Terminate).await;
-        let _ = frontend_tx.send(FrontendRequest::Shutdown()).await;
+        let _ = frontend_tx.send(FrontendRequest::Terminate()).await;
 
         if !capture_task.is_finished() {
             if let Err(e) = capture_task.await {
