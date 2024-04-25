@@ -84,7 +84,7 @@ pub fn wait_for_service() -> Result<std::net::TcpStream> {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
-pub enum FrontendEvent {
+pub enum FrontendRequest {
     /// add a new client
     AddClient(Option<String>, u16, Position),
     /// activate/deactivate client
@@ -102,16 +102,21 @@ pub enum FrontendEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FrontendNotify {
-    NotifyClientActivate(ClientHandle, bool),
-    NotifyClientCreate(Client),
-    NotifyClientUpdate(Client),
-    NotifyClientDelete(ClientHandle),
+pub enum FrontendEvent {
+    /// the given client was activated
+    ClientActivated(ClientHandle, bool),
+    /// a client was created
+    ClientCreated(Client),
+    /// a client was updated
+    ClientUpdated(Client),
+    /// the client was deleted
+    ClientDeleted(ClientHandle),
     /// new port, reason of failure (if failed)
-    NotifyPortChange(u16, Option<String>),
-    /// Client State, active
-    Enumerate(Vec<(Client, bool)>),
-    NotifyError(String),
+    PortChanged(u16, Option<String>),
+    /// list of all clients, used for initial state synchronization
+    EnumerateClients(Vec<(Client, bool)>),
+    /// an error occured
+    Error(String),
 }
 
 pub struct FrontendListener {
@@ -217,7 +222,7 @@ impl FrontendListener {
         Ok(rx)
     }
 
-    pub(crate) async fn notify_all(&mut self, notify: FrontendNotify) -> Result<()> {
+    pub(crate) async fn broadcast_event(&mut self, notify: FrontendEvent) -> Result<()> {
         // encode event
         let json = serde_json::to_string(&notify).unwrap();
         let payload = json.as_bytes();
@@ -255,7 +260,7 @@ impl Drop for FrontendListener {
 }
 
 #[cfg(unix)]
-pub async fn read_event(stream: &mut ReadHalf<UnixStream>) -> Result<FrontendEvent> {
+pub async fn wait_for_request(stream: &mut ReadHalf<UnixStream>) -> Result<FrontendRequest> {
     let len = stream.read_u64().await?;
     assert!(len <= 256);
     let mut buf = [0u8; 256];
@@ -264,7 +269,7 @@ pub async fn read_event(stream: &mut ReadHalf<UnixStream>) -> Result<FrontendEve
 }
 
 #[cfg(windows)]
-pub async fn read_event(stream: &mut ReadHalf<TcpStream>) -> Result<FrontendEvent> {
+pub async fn wait_for_request(stream: &mut ReadHalf<TcpStream>) -> Result<FrontendRequest> {
     let len = stream.read_u64().await?;
     let mut buf = [0u8; 256];
     stream.read_exact(&mut buf[..len as usize]).await?;

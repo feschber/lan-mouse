@@ -18,7 +18,7 @@ use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
 
-use super::FrontendNotify;
+use super::FrontendEvent;
 
 pub fn run() -> glib::ExitCode {
     log::debug!("running gtk frontend");
@@ -119,22 +119,22 @@ fn build_ui(app: &Application) {
         loop {
             let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
             match notify {
-                FrontendNotify::NotifyClientActivate(handle, active) => {
+                FrontendEvent::ClientActivated(handle, active) => {
                     window.activate_client(handle, active);
                 }
-                FrontendNotify::NotifyClientCreate(client) => {
+                FrontendEvent::ClientCreated(client) => {
                     window.new_client(client, false);
                 },
-                FrontendNotify::NotifyClientUpdate(client) => {
+                FrontendEvent::ClientUpdated(client) => {
                     window.update_client(client);
                 }
-                FrontendNotify::NotifyError(e) => {
+                FrontendEvent::Error(e) => {
                     window.show_toast(e.as_str());
                 },
-                FrontendNotify::NotifyClientDelete(client) => {
+                FrontendEvent::ClientDeleted(client) => {
                     window.delete_client(client);
                 }
-                FrontendNotify::Enumerate(clients) => {
+                FrontendEvent::EnumerateClients(clients) => {
                     for (client, active) in clients {
                         if window.client_idx(client.handle).is_some() {
                             window.activate_client(client.handle, active);
@@ -144,7 +144,7 @@ fn build_ui(app: &Application) {
                         }
                     }
                 },
-                FrontendNotify::NotifyPortChange(port, msg) => {
+                FrontendEvent::PortChanged(port, msg) => {
                     match msg {
                         None => window.show_toast(format!("port changed: {port}").as_str()),
                         Some(msg) => window.show_toast(msg.as_str()),

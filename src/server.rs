@@ -10,7 +10,7 @@ use crate::{
     client::{ClientHandle, ClientManager},
     config::Config,
     dns,
-    frontend::{FrontendEvent, FrontendListener},
+    frontend::{FrontendRequest, FrontendListener},
     server::capture_task::CaptureEvent,
 };
 
@@ -144,7 +144,7 @@ impl Server {
             .collect::<Vec<_>>();
         for (handle, hostname) in active {
             frontend_tx
-                .send(FrontendEvent::ActivateClient(handle, true))
+                .send(FrontendRequest::ActivateClient(handle, true))
                 .await?;
             if let Some(hostname) = hostname {
                 let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
@@ -178,7 +178,7 @@ impl Server {
 
         let _ = emulate_channel.send(EmulationEvent::Terminate).await;
         let _ = capture_channel.send(CaptureEvent::Terminate).await;
-        let _ = frontend_tx.send(FrontendEvent::Shutdown()).await;
+        let _ = frontend_tx.send(FrontendRequest::Shutdown()).await;
 
         if !capture_task.is_finished() {
             if let Err(e) = capture_task.await {
