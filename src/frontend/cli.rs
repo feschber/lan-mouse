@@ -90,15 +90,13 @@ pub fn run() -> Result<()> {
                             log::info!("client {handle} deactivated");
                         }
                     }
-                    FrontendEvent::Created(client) => {
-                        let handle = client.handle;
+                    FrontendEvent::Created(handle, client) => {
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
                         log::info!("new client ({handle}): {hostname}:{port} - {pos}");
                     }
-                    FrontendEvent::Updated(client) => {
-                        let handle = client.handle;
+                    FrontendEvent::Updated(handle, client) => {
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
@@ -111,10 +109,10 @@ pub fn run() -> Result<()> {
                         log::warn!("{e}");
                     }
                     FrontendEvent::Enumerate(clients) => {
-                        for (client, active) in clients.into_iter() {
+                        for (handle, client, active) in clients.into_iter() {
                             log::info!(
                                 "client ({}) [{}]: active: {}, associated addresses: [{}]",
-                                client.handle,
+                                handle,
                                 client.hostname.as_deref().unwrap_or(""),
                                 if active { "yes" } else { "no" },
                                 client

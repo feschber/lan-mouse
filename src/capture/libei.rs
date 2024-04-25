@@ -46,7 +46,7 @@ enum ProducerEvent {
 pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     libei_task: JoinHandle<Result<()>>,
-    event_rx: tokio::sync::mpsc::Receiver<(u32, Event)>,
+    event_rx: tokio::sync::mpsc::Receiver<(ClientHandle, Event)>,
     notify_tx: tokio::sync::mpsc::Sender<ProducerEvent>,
 }
 
@@ -183,7 +183,7 @@ async fn connect_to_eis(
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
-    event_tx: Sender<(u32, Event)>,
+    event_tx: Sender<(ClientHandle, Event)>,
     current_client: Rc<Cell<Option<ClientHandle>>>,
 ) -> Result<()> {
     loop {
@@ -396,7 +396,7 @@ async fn handle_ei_event(
     ei_event: EiEvent,
     current_client: Option<ClientHandle>,
     context: &ei::Context,
-    event_tx: &Sender<(u32, Event)>,
+    event_tx: &Sender<(ClientHandle, Event)>,
 ) {
     match ei_event {
         EiEvent::SeatAdded(s) => {

@@ -122,11 +122,11 @@ fn build_ui(app: &Application) {
                 FrontendEvent::Activated(handle, active) => {
                     window.activate_client(handle, active);
                 }
-                FrontendEvent::Created(client) => {
-                    window.new_client(client, false);
+                FrontendEvent::Created(handle, client) => {
+                    window.new_client(handle, client, false);
                 },
-                FrontendEvent::Updated(client) => {
-                    window.update_client(client);
+                FrontendEvent::Updated(handle, client) => {
+                    window.update_client(handle, client);
                 }
                 FrontendEvent::Error(e) => {
                     window.show_toast(e.as_str());
@@ -135,12 +135,12 @@ fn build_ui(app: &Application) {
                     window.delete_client(client);
                 }
                 FrontendEvent::Enumerate(clients) => {
-                    for (client, active) in clients {
-                        if window.client_idx(client.handle).is_some() {
-                            window.activate_client(client.handle, active);
-                            window.update_client(client);
+                    for (handle, client, active) in clients {
+                        if window.client_idx(handle).is_some() {
+                            window.activate_client(handle, active);
+                            window.update_client(handle, client);
                         } else {
-                            window.new_client(client, active);
+                            window.new_client(handle, client, active);
                         }
                     }
                 },

@@ -134,9 +134,9 @@ impl Server {
             .client_manager
             .borrow()
             .get_client_states()
-            .filter_map(|s| {
+            .filter_map(|(h, s)| {
                 if s.active {
-                    Some((s.client.handle, s.client.hostname.clone()))
+                    Some((h, s.client.hostname.clone()))
                 } else {
                     None
                 }

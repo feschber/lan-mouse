@@ -10,9 +10,9 @@ glib::wrapper! {
 }
 
 impl ClientObject {
-    pub fn new(client: Client, active: bool) -> Self {
+    pub fn new(handle: ClientHandle, client: Client, active: bool) -> Self {
         Object::builder()
-            .property("handle", client.handle)
+            .property("handle", handle)
             .property("hostname", client.hostname)
             .property("port", client.port as u32)
             .property("position", client.pos.to_string())

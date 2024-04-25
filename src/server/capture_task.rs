@@ -84,8 +84,8 @@ async fn handle_capture_event(
     pressed_keys: &mut HashSet<scancode::Linux>,
     release_bind: &[scancode::Linux],
 ) -> Result<()> {
-    let (c, mut e) = event;
-    log::trace!("({c}) {e:?}");
+    let (handle, mut e) = event;
+    log::trace!("({handle}) {e:?}");
 
     if let Event::Keyboard(KeyboardEvent::Key { key, state, .. }) = e {
         update_pressed_keys(pressed_keys, key, state);
@@ -107,7 +107,7 @@ async fn handle_capture_event(
 
         // get client state for handle
         let mut client_manager = server.client_manager.borrow_mut();
-        let client_state = match client_manager.get_mut(c) {
+        let client_state = match client_manager.get_mut(handle) {
             Some(state) => state,
             None => {
                 // should not happen
@@ -123,10 +123,8 @@ async fn handle_capture_event(
         // we get a leave event
         if let Event::Enter() = e {
             server.state.replace(State::AwaitingLeave);
-            server
-                .active_client
-                .replace(Some(client_state.client.handle));
-            log::trace!("Active client => {}", client_state.client.handle);
+            server.active_client.replace(Some(handle));
+            log::trace!("Active client => {}", handle);
             start_timer = true;
             log::trace!("STATE ===> AwaitingLeave");
             enter = true;

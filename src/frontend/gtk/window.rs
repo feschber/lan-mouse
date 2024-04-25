@@ -87,8 +87,8 @@ impl Window {
         row
     }
 
-    pub fn new_client(&self, client: Client, active: bool) {
-        let client = ClientObject::new(client, active);
+    pub fn new_client(&self, handle: ClientHandle, client: Client, active: bool) {
+        let client = ClientObject::new(handle, client, active);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
     }
@@ -115,9 +115,9 @@ impl Window {
         }
     }
 
-    pub fn update_client(&self, client: Client) {
-        let Some(idx) = self.client_idx(client.handle) else {
-            log::warn!("could not find client with handle {}", client.handle);
+    pub fn update_client(&self, handle: ClientHandle, client: Client) {
+        let Some(idx) = self.client_idx(handle) else {
+            log::warn!("could not find client with handle {}", handle);
             return;
         };
         let client_object = self.clients().item(idx as u32).unwrap();
