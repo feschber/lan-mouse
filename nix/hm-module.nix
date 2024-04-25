@@ -7,6 +7,7 @@ self: {
 with lib; let
   cfg = config.programs.lan-mouse;
   defaultPackage = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  tomlFormat = pkgs.formats.toml {};
 in {
   options.programs.lan-mouse = with types; {
     enable = mkEnableOption "Whether or not to enable lan-mouse.";
@@ -24,6 +25,17 @@ in {
       type = types.bool;
       default = pkgs.stdenv.isLinux;
       description = "Whether to enable to systemd service for lan-mouse.";
+    };
+    settings = lib.mkOption {
+      inherit (tomlFormat) type;
+      default = {};
+      example = builtins.fromTOML (builtins.readFile (self + /config.toml));
+      description = ''
+        Optional configuration written to {file}`$XDG_CONFIG_HOME/lan-mouse/config.toml`.
+
+        See <https://github.com/feschber/lan-mouse/> for
+        available options and documentation.
+      '';
     };
   };
 
@@ -46,5 +58,9 @@ in {
     home.packages = [
       cfg.package
     ];
+
+    xdg.configFile."lan-mouse/config.toml" = lib.mkIf (cfg.settings != {}) {
+      source = tomlFormat.generate "config.toml" cfg.settings;
+    };
   };
 }
