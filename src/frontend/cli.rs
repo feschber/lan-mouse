@@ -8,7 +8,7 @@ use std::{
 
 use crate::{client::Position, config::DEFAULT_PORT};
 
-use super::{FrontendEvent, FrontendNotify};
+use super::{FrontendEvent, FrontendRequest};
 
 pub fn run() -> Result<()> {
     let Ok(mut tx) = super::wait_for_service() else {
@@ -38,7 +38,7 @@ pub fn run() -> Result<()> {
                                 if let Err(e) = tx.write(bytes) {
                                     log::error!("error sending message: {e}");
                                 };
-                                if *event == FrontendEvent::Shutdown() {
+                                if *event == FrontendRequest::Terminate() {
                                     return;
                                 }
                             }
@@ -78,39 +78,39 @@ pub fn run() -> Result<()> {
                     Err(e) => break log::error!("{e}"),
                 };
 
-                let notify: FrontendNotify = match serde_json::from_slice(&buf) {
+                let notify: FrontendEvent = match serde_json::from_slice(&buf) {
                     Ok(n) => n,
                     Err(e) => break log::error!("{e}"),
                 };
                 match notify {
-                    FrontendNotify::NotifyClientActivate(handle, active) => {
+                    FrontendEvent::Activated(handle, active) => {
                         if active {
                             log::info!("client {handle} activated");
                         } else {
                             log::info!("client {handle} deactivated");
                         }
                     }
-                    FrontendNotify::NotifyClientCreate(client) => {
+                    FrontendEvent::Created(client) => {
                         let handle = client.handle;
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
                         log::info!("new client ({handle}): {hostname}:{port} - {pos}");
                     }
-                    FrontendNotify::NotifyClientUpdate(client) => {
+                    FrontendEvent::Updated(client) => {
                         let handle = client.handle;
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
                         log::info!("client ({handle}) updated: {hostname}:{port} - {pos}");
                     }
-                    FrontendNotify::NotifyClientDelete(client) => {
+                    FrontendEvent::Deleted(client) => {
                         log::info!("client ({client}) deleted.");
                     }
-                    FrontendNotify::NotifyError(e) => {
+                    FrontendEvent::Error(e) => {
                         log::warn!("{e}");
                     }
-                    FrontendNotify::Enumerate(clients) => {
+                    FrontendEvent::Enumerate(clients) => {
                         for (client, active) in clients.into_iter() {
                             log::info!(
                                 "client ({}) [{}]: active: {}, associated addresses: [{}]",
@@ -126,7 +126,7 @@ pub fn run() -> Result<()> {
                             );
                         }
                     }
-                    FrontendNotify::NotifyPortChange(port, msg) => match msg {
+                    FrontendEvent::PortChanged(port, msg) => match msg {
                         Some(msg) => log::info!("could not change port: {msg}"),
                         None => log::info!("port changed: {port}"),
                     },
@@ -153,9 +153,9 @@ fn prompt() {
     std::io::stderr().flush().unwrap();
 }
 
-fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
+fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendRequest>> {
     if len == 0 {
-        return Some(vec![FrontendEvent::Shutdown()]);
+        return Some(vec![FrontendRequest::Terminate()]);
     }
     let mut l = s.split_whitespace();
     let cmd = l.next()?;
@@ -170,8 +170,8 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
             log::info!("setport <port>                                       change port");
             None
         }
-        "exit" => return Some(vec![FrontendEvent::Shutdown()]),
-        "list" => return Some(vec![FrontendEvent::Enumerate()]),
+        "exit" => return Some(vec![FrontendRequest::Terminate()]),
+        "list" => return Some(vec![FrontendRequest::Enumerate()]),
         "connect" => Some(parse_connect(l)),
         "disconnect" => Some(parse_disconnect(l)),
         "activate" => Some(parse_activate(l)),
@@ -192,7 +192,7 @@ fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendEvent>> {
     }
 }
 
-fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let usage = "usage: connect <host> left|right|top|bottom [port]";
     let host = l.next().context(usage)?.to_owned();
     let pos = match l.next().context(usage)? {
@@ -207,36 +207,36 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
         DEFAULT_PORT
     };
     Ok(vec![
-        FrontendEvent::AddClient(Some(host), port, pos),
-        FrontendEvent::Enumerate(),
+        FrontendRequest::Create(Some(host), port, pos),
+        FrontendRequest::Enumerate(),
     ])
 }
 
-fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: disconnect <client_id>")?.parse()?;
     Ok(vec![
-        FrontendEvent::DelClient(client),
-        FrontendEvent::Enumerate(),
+        FrontendRequest::Delete(client),
+        FrontendRequest::Enumerate(),
     ])
 }
 
-fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: activate <client_id>")?.parse()?;
     Ok(vec![
-        FrontendEvent::ActivateClient(client, true),
-        FrontendEvent::Enumerate(),
+        FrontendRequest::Activate(client, true),
+        FrontendRequest::Enumerate(),
     ])
 }
 
-fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let client = l.next().context("usage: deactivate <client_id>")?.parse()?;
     Ok(vec![
-        FrontendEvent::ActivateClient(client, false),
-        FrontendEvent::Enumerate(),
+        FrontendRequest::Activate(client, false),
+        FrontendRequest::Enumerate(),
     ])
 }
 
-fn parse_port(mut l: SplitWhitespace) -> Result<Vec<FrontendEvent>> {
+fn parse_port(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
     let port = l.next().context("usage: setport <port>")?.parse()?;
-    Ok(vec![FrontendEvent::ChangePort(port)])
+    Ok(vec![FrontendRequest::ChangePort(port)])
 }

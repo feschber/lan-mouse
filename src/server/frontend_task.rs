@@ -18,7 +18,7 @@ use tokio::{
 
 use crate::{
     client::{ClientEvent, ClientHandle, Position},
-    frontend::{self, FrontendEvent, FrontendListener, FrontendNotify},
+    frontend::{self, FrontendEvent, FrontendListener, FrontendRequest},
 };
 
 use super::{
@@ -27,13 +27,13 @@ use super::{
 
 pub(crate) fn new(
     mut frontend: FrontendListener,
-    mut notify_rx: Receiver<FrontendNotify>,
+    mut notify_rx: Receiver<FrontendEvent>,
     server: Server,
     capture: Sender<CaptureEvent>,
     emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
-) -> (JoinHandle<Result<()>>, Sender<FrontendEvent>) {
+) -> (JoinHandle<Result<()>>, Sender<FrontendRequest>) {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
     let event_tx_clone = event_tx.clone();
     let frontend_task = tokio::task::spawn_local(async move {
@@ -57,7 +57,7 @@ pub(crate) fn new(
                 }
                 notify = notify_rx.recv() => {
                     let notify = notify.ok_or(anyhow!("frontend notify closed"))?;
-                    let _ = frontend.notify_all(notify).await;
+                    let _ = frontend.broadcast_event(notify).await;
                 }
             }
         }
@@ -67,7 +67,7 @@ pub(crate) fn new(
 }
 
 async fn handle_frontend_stream(
-    frontend_tx: &Sender<FrontendEvent>,
+    frontend_tx: &Sender<FrontendRequest>,
     #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
     #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
 ) {
@@ -75,9 +75,9 @@ async fn handle_frontend_stream(
 
     let tx = frontend_tx.clone();
     tokio::task::spawn_local(async move {
-        let _ = tx.send(FrontendEvent::Enumerate()).await;
+        let _ = tx.send(FrontendRequest::Enumerate()).await;
         loop {
-            let event = frontend::read_event(&mut stream).await;
+            let event = frontend::wait_for_request(&mut stream).await;
             match event {
                 Ok(event) => {
                     let _ = tx.send(event).await;
@@ -103,11 +103,11 @@ async fn handle_frontend_event(
     resolve_tx: &Sender<DnsRequest>,
     frontend: &mut FrontendListener,
     port_tx: &Sender<u16>,
-    event: FrontendEvent,
+    event: FrontendRequest,
 ) -> bool {
     log::debug!("frontend: {event:?}");
     match event {
-        FrontendEvent::AddClient(hostname, port, pos) => {
+        FrontendRequest::Create(hostname, port, pos) => {
             add_client(
                 server,
                 frontend,
@@ -119,33 +119,33 @@ async fn handle_frontend_event(
             )
             .await;
         }
-        FrontendEvent::ActivateClient(handle, active) => {
+        FrontendRequest::Activate(handle, active) => {
             if active {
                 activate_client(server, frontend, capture_tx, emulate_tx, handle).await;
             } else {
                 deactivate_client(server, frontend, capture_tx, emulate_tx, handle).await;
             }
         }
-        FrontendEvent::ChangePort(port) => {
+        FrontendRequest::ChangePort(port) => {
             let _ = port_tx.send(port).await;
         }
-        FrontendEvent::DelClient(handle) => {
+        FrontendRequest::Delete(handle) => {
             remove_client(server, frontend, capture_tx, emulate_tx, handle).await;
         }
-        FrontendEvent::Enumerate() => {
+        FrontendRequest::Enumerate() => {
             let clients = server
                 .client_manager
                 .borrow()
                 .get_client_states()
                 .map(|s| (s.client.clone(), s.active))
                 .collect();
-            notify_all(frontend, FrontendNotify::Enumerate(clients)).await;
+            notify_all(frontend, FrontendEvent::Enumerate(clients)).await;
         }
-        FrontendEvent::Shutdown() => {
+        FrontendRequest::Terminate() => {
             log::info!("terminating gracefully...");
             return true;
         }
-        FrontendEvent::UpdateClient(handle, hostname, port, pos) => {
+        FrontendRequest::Update(handle, hostname, port, pos) => {
             update_client(
                 server,
                 frontend,
@@ -160,8 +160,8 @@ async fn handle_frontend_event(
     false
 }
 
-async fn notify_all(frontend: &mut FrontendListener, event: FrontendNotify) {
-    if let Err(e) = frontend.notify_all(event).await {
+async fn notify_all(frontend: &mut FrontendListener, event: FrontendEvent) {
+    if let Err(e) = frontend.broadcast_event(event).await {
         log::error!("error notifying frontend: {e}");
     }
 }
@@ -199,7 +199,7 @@ pub async fn add_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendNotify::NotifyClientCreate(client)).await;
+    notify_all(frontend, FrontendEvent::Created(client)).await;
 }
 
 pub async fn deactivate_client(
@@ -220,7 +220,7 @@ pub async fn deactivate_client(
     let event = ClientEvent::Destroy(client);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendNotify::NotifyClientActivate(client, false);
+    let event = FrontendEvent::Activated(client, false);
     notify_all(frontend, event).await;
 }
 
@@ -256,7 +256,7 @@ pub async fn activate_client(
     let event = ClientEvent::Create(handle, pos);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendNotify::NotifyClientActivate(handle, true);
+    let event = FrontendEvent::Activated(handle, true);
     notify_all(frontend, event).await;
 }
 
@@ -282,7 +282,7 @@ pub async fn remove_client(
         let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
     }
 
-    let event = FrontendNotify::NotifyClientDelete(client);
+    let event = FrontendEvent::Deleted(client);
     notify_all(frontend, event).await;
 }
 
@@ -358,5 +358,5 @@ async fn update_client(
         .unwrap()
         .client
         .clone();
-    notify_all(frontend, FrontendNotify::NotifyClientUpdate(client)).await;
+    notify_all(frontend, FrontendEvent::Updated(client)).await;
 }

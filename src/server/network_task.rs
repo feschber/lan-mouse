@@ -7,13 +7,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{event::Event, frontend::FrontendNotify};
+use crate::{event::Event, frontend::FrontendEvent};
 
 use super::Server;
 
 pub async fn new(
     server: Server,
-    frontend_notify_tx: Sender<FrontendNotify>,
+    frontend_notify_tx: Sender<FrontendEvent>,
 ) -> Result<(
     JoinHandle<()>,
     Sender<(Event, SocketAddr)>,
@@ -55,12 +55,12 @@ pub async fn new(
                         Ok(new_socket) => {
                             socket = new_socket;
                             server.port.replace(port);
-                            let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(port, None)).await;
+                            let _ = frontend_notify_tx.send(FrontendEvent::PortChanged(port, None)).await;
                         }
                         Err(e) => {
                             log::warn!("could not change port: {e}");
                             let port = socket.local_addr().unwrap().port();
-                            let _ = frontend_notify_tx.send(FrontendNotify::NotifyPortChange(
+                            let _ = frontend_notify_tx.send(FrontendEvent::PortChanged(
                                     port,
                                     Some(format!("could not change port: {e}")),
                                 )).await;

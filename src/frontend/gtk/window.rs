@@ -14,7 +14,7 @@ use gtk::{
 use crate::{
     client::{Client, ClientHandle, Position},
     config::DEFAULT_PORT,
-    frontend::{gtk::client_object::ClientObject, FrontendEvent},
+    frontend::{gtk::client_object::ClientObject, FrontendRequest},
 };
 
 use super::client_row::ClientRow;
@@ -152,7 +152,7 @@ impl Window {
     }
 
     pub fn request_client_create(&self) {
-        let event = FrontendEvent::AddClient(None, DEFAULT_PORT, Position::default());
+        let event = FrontendRequest::Create(None, DEFAULT_PORT, Position::default());
         self.imp().set_port(DEFAULT_PORT);
         self.request(event);
     }
@@ -160,9 +160,9 @@ impl Window {
     pub fn request_port_change(&self) {
         let port = self.imp().port_entry.get().text().to_string();
         if let Ok(port) = port.as_str().parse::<u16>() {
-            self.request(FrontendEvent::ChangePort(port));
+            self.request(FrontendRequest::ChangePort(port));
         } else {
-            self.request(FrontendEvent::ChangePort(DEFAULT_PORT));
+            self.request(FrontendRequest::ChangePort(DEFAULT_PORT));
         }
     }
 
@@ -178,11 +178,11 @@ impl Window {
         let hostname = data.hostname;
         let port = data.port as u16;
 
-        let event = FrontendEvent::UpdateClient(client.handle(), hostname, port, position);
+        let event = FrontendRequest::Update(client.handle(), hostname, port, position);
         log::debug!("requesting update: {event:?}");
         self.request(event);
 
-        let event = FrontendEvent::ActivateClient(client.handle(), active);
+        let event = FrontendRequest::Activate(client.handle(), active);
         log::debug!("requesting activate: {event:?}");
         self.request(event);
     }
@@ -193,12 +193,12 @@ impl Window {
                 .downcast_ref()
                 .expect("Expected object of type `ClientObject`.");
             let handle = client_object.handle();
-            let event = FrontendEvent::DelClient(handle);
+            let event = FrontendRequest::Delete(handle);
             self.request(event);
         }
     }
 
-    fn request(&self, event: FrontendEvent) {
+    fn request(&self, event: FrontendRequest) {
         let json = serde_json::to_string(&event).unwrap();
         log::debug!("requesting {json}");
         let mut stream = self.imp().stream.borrow_mut();
