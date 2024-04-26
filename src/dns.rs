@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::{error::Error, net::IpAddr};
 
-use trust_dns_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioAsyncResolver;
 
 pub struct DnsResolver {
     resolver: TokioAsyncResolver,
