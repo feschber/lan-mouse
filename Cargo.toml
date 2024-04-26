@@ -14,7 +14,7 @@ lto = "fat"
 
 [dependencies]
 tempfile = "3.8"
-trust-dns-resolver = "0.23"
+hickory-resolver = "0.24.1"
 memmap = "0.7"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
