@@ -5,7 +5,7 @@ use std::{collections::HashSet, net::SocketAddr};
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 use crate::{
-    capture::InputCapture,
+    capture::{self, InputCapture},
     client::{ClientEvent, ClientHandle},
     event::{Event, KeyboardEvent},
     scancode,
@@ -25,7 +25,6 @@ pub enum CaptureEvent {
 }
 
 pub fn new(
-    mut capture: Box<dyn InputCapture>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
     timer_tx: Sender<()>,
@@ -33,6 +32,7 @@ pub fn new(
 ) -> (JoinHandle<Result<()>>, Sender<CaptureEvent>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let task = tokio::task::spawn_local(async move {
+        let mut capture = capture::create().await;
         let mut pressed_keys = HashSet::new();
         loop {
             tokio::select! {

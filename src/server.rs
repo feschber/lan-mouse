@@ -5,7 +5,6 @@ use std::{
 };
 use tokio::signal;
 
-use crate::{capture, emulate};
 use crate::{
     client::{ClientHandle, ClientManager},
     config::Config,
@@ -78,7 +77,6 @@ impl Server {
                 return anyhow::Ok(());
             }
         };
-        let (emulate, capture) = tokio::join!(emulate::create(), capture::create());
 
         let (timer_tx, timer_rx) = tokio::sync::mpsc::channel(1);
         let (frontend_notify_tx, frontend_notify_rx) = tokio::sync::mpsc::channel(1);
@@ -89,7 +87,6 @@ impl Server {
 
         // input capture
         let (mut capture_task, capture_channel) = capture_task::new(
-            capture,
             self.clone(),
             sender_tx.clone(),
             timer_tx.clone(),
@@ -98,7 +95,6 @@ impl Server {
 
         // input emulation
         let (mut emulation_task, emulate_channel) = emulation_task::new(
-            emulate,
             self.clone(),
             receiver_rx,
             sender_tx.clone(),

@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{
     client::{ClientEvent, ClientHandle},
-    emulate::InputEmulation,
+    emulate::{self, InputEmulation},
     event::{Event, KeyboardEvent},
     scancode,
     server::State,
@@ -27,7 +27,6 @@ pub enum EmulationEvent {
 }
 
 pub fn new(
-    mut emulate: Box<dyn InputEmulation>,
     server: Server,
     mut udp_rx: Receiver<Result<(Event, SocketAddr)>>,
     sender_tx: Sender<(Event, SocketAddr)>,
@@ -36,6 +35,7 @@ pub fn new(
 ) -> (JoinHandle<Result<()>>, Sender<EmulationEvent>) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let emulate_task = tokio::task::spawn_local(async move {
+        let mut emulate = emulate::create().await;
         let mut last_ignored = None;
 
         loop {
