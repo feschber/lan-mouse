@@ -1,7 +1,5 @@
 use std::{
-    collections::HashSet,
-    fmt::Display,
-    net::{IpAddr, SocketAddr},
+    collections::HashSet, error::Error, fmt::Display, net::{IpAddr, SocketAddr}, str::FromStr
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +18,33 @@ pub enum Position {
 impl Default for Position {
     fn default() -> Self {
         Self::Left
+    }
+}
+
+#[derive(Debug)]
+pub struct PositionParseError {
+    string: String,
+}
+
+impl Display for PositionParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not a valid position: {}", self.string)
+    }
+}
+
+impl Error for PositionParseError {}
+
+impl FromStr for Position {
+    type Err = PositionParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "top" => Ok(Self::Top),
+            "botom" => Ok(Self::Bottom),
+            _ => Err(PositionParseError { string: s.into() }),
+        }
     }
 }
 
