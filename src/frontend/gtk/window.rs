@@ -12,7 +12,7 @@ use gtk::{
 };
 
 use crate::{
-    client::{Client, ClientHandle, Position},
+    client::{ClientConfig, ClientHandle, ClientState, Position},
     config::DEFAULT_PORT,
     frontend::{gtk::client_object::ClientObject, FrontendRequest},
 };
@@ -87,8 +87,8 @@ impl Window {
         row
     }
 
-    pub fn new_client(&self, handle: ClientHandle, client: Client, active: bool) {
-        let client = ClientObject::new(handle, client, active);
+    pub fn new_client(&self, handle: ClientHandle, client: ClientConfig, state: ClientState) {
+        let client = ClientObject::new(handle, client, state);
         self.clients().append(&client);
         self.set_placeholder_visible(false);
     }
@@ -115,7 +115,7 @@ impl Window {
         }
     }
 
-    pub fn update_client(&self, handle: ClientHandle, client: Client) {
+    pub fn update_client_config(&self, handle: ClientHandle, client: ClientConfig) {
         let Some(idx) = self.client_idx(handle) else {
             log::warn!("could not find client with handle {}", handle);
             return;
@@ -137,22 +137,23 @@ impl Window {
         }
     }
 
-    pub fn activate_client(&self, handle: ClientHandle, active: bool) {
+    pub fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
         let Some(idx) = self.client_idx(handle) else {
-            log::warn!("could not find client with handle {handle}");
+            log::warn!("could not find client with handle {}", handle);
             return;
         };
         let client_object = self.clients().item(idx as u32).unwrap();
         let client_object: &ClientObject = client_object.downcast_ref().unwrap();
         let data = client_object.get_data();
-        if data.active != active {
-            client_object.set_active(active);
-            log::debug!("set active to {active}");
+
+        if state.active != data.active {
+            client_object.set_active(state.active);
+            log::debug!("set active to {}", state.active);
         }
     }
 
     pub fn request_client_create(&self) {
-        let event = FrontendRequest::Create(None, DEFAULT_PORT, Position::default());
+        let event = FrontendRequest::Create;
         self.imp().set_port(DEFAULT_PORT);
         self.request(event);
     }
@@ -167,24 +168,21 @@ impl Window {
     }
 
     pub fn request_client_update(&self, client: &ClientObject, active: bool) {
+        let handle = client.handle();
         let data = client.get_data();
-        let position = match Position::try_from(data.position.as_str()) {
-            Ok(pos) => pos,
-            _ => {
-                log::error!("invalid position: {}", data.position);
-                return;
-            }
-        };
+        let position = Position::try_from(data.position.as_str()).expect("invalid position");
         let hostname = data.hostname;
         let port = data.port as u16;
 
-        let event = FrontendRequest::Update(client.handle(), hostname, port, position);
-        log::debug!("requesting update: {event:?}");
-        self.request(event);
-
-        let event = FrontendRequest::Activate(client.handle(), active);
-        log::debug!("requesting activate: {event:?}");
-        self.request(event);
+        for event in [
+            FrontendRequest::UpdateHostname(handle, hostname),
+            FrontendRequest::UpdatePosition(handle, position),
+            FrontendRequest::UpdatePort(handle, port),
+            FrontendRequest::Activate(handle, active),
+        ] {
+            log::debug!("requesting: {event:?}");
+            self.request(event);
+        }
     }
 
     pub fn request_client_delete(&self, idx: u32) {

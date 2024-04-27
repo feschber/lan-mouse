@@ -1,12 +1,13 @@
 use log;
 use std::{
     cell::{Cell, RefCell},
+    collections::HashSet,
     rc::Rc,
 };
 use tokio::signal;
 
 use crate::{
-    client::{ClientHandle, ClientManager},
+    client::{ClientConfig, ClientHandle, ClientManager, ClientState},
     config::Config,
     dns,
     frontend::{FrontendListener, FrontendRequest},
@@ -49,13 +50,21 @@ impl Server {
         let state = Rc::new(Cell::new(State::Receiving));
         let port = Rc::new(Cell::new(config.port));
         for config_client in config.get_clients() {
-            client_manager.borrow_mut().add_client(
-                config_client.hostname,
-                config_client.ips,
-                config_client.port,
-                config_client.pos,
-                config_client.active,
-            );
+            let client = ClientConfig {
+                hostname: config_client.hostname,
+                fix_ips: config_client.ips.into_iter().collect(),
+                port: config_client.port,
+                pos: config_client.pos,
+            };
+            let state = ClientState {
+                active: config_client.active,
+                ips: HashSet::from_iter(client.fix_ips.iter().cloned()),
+                ..Default::default()
+            };
+            let mut client_manager = client_manager.borrow_mut();
+            let handle = client_manager.add_client();
+            let c = client_manager.get_mut(handle).expect("invalid handle");
+            *c = (client, state);
         }
         let release_bind = config.release_bind.clone();
         Self {
@@ -130,9 +139,9 @@ impl Server {
             .client_manager
             .borrow()
             .get_client_states()
-            .filter_map(|(h, s)| {
+            .filter_map(|(h, (c, s))| {
                 if s.active {
-                    Some((h, s.client.hostname.clone()))
+                    Some((h, c.hostname.clone()))
                 } else {
                     None
                 }

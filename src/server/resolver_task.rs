@@ -27,12 +27,12 @@ pub fn new(resolver: DnsResolver, server: Server) -> (JoinHandle<()>, Sender<Dns
                     continue;
                 }
             };
-            if let Some(state) = server.client_manager.borrow_mut().get_mut(handle) {
-                let mut addrs = HashSet::from_iter(state.client.fix_ips.iter().cloned());
+            if let Some((c, s)) = server.client_manager.borrow_mut().get_mut(handle) {
+                let mut addrs = HashSet::from_iter(c.fix_ips.iter().cloned());
                 for ip in ips {
                     addrs.insert(ip);
                 }
-                state.client.ips = addrs;
+                s.ips = addrs;
             }
         }
     });

@@ -83,14 +83,14 @@ pub fn run() -> Result<()> {
                     Err(e) => break log::error!("{e}"),
                 };
                 match notify {
-                    FrontendEvent::Activated(handle, active) => {
-                        if active {
+                    FrontendEvent::StateChange(handle, state) => {
+                        if state.active {
                             log::info!("client {handle} activated");
                         } else {
                             log::info!("client {handle} deactivated");
                         }
                     }
-                    FrontendEvent::Created(handle, client) => {
+                    FrontendEvent::Created(handle, client, _state) => {
                         let port = client.port;
                         let pos = client.pos;
                         let hostname = client.hostname.as_deref().unwrap_or("");
@@ -109,13 +109,13 @@ pub fn run() -> Result<()> {
                         log::warn!("{e}");
                     }
                     FrontendEvent::Enumerate(clients) => {
-                        for (handle, client, active) in clients.into_iter() {
+                        for (handle, client, state) in clients.into_iter() {
                             log::info!(
                                 "client ({}) [{}]: active: {}, associated addresses: [{}]",
                                 handle,
                                 client.hostname.as_deref().unwrap_or(""),
-                                if active { "yes" } else { "no" },
-                                client
+                                if state.active { "yes" } else { "no" },
+                                state
                                     .ips
                                     .into_iter()
                                     .map(|a| a.to_string())
@@ -205,7 +205,7 @@ fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
         DEFAULT_PORT
     };
     Ok(vec![
-        FrontendRequest::Create(Some(host), port, pos),
+        // FrontendRequest::Create(Some(host), port, pos),
         FrontendRequest::Enumerate(),
     ])
 }

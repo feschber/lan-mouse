@@ -34,7 +34,7 @@ pub fn new(
                         // if receiving we care about clients with pressed keys
                         client_manager
                             .get_client_states_mut()
-                            .filter(|(_, s)| !s.pressed_keys.is_empty())
+                            .filter(|(_, (_, s))| !s.pressed_keys.is_empty())
                             .map(|(h, _)| h)
                             .collect()
                     } else {
@@ -46,17 +46,15 @@ pub fn new(
                     let ping_addrs: Vec<SocketAddr> = {
                         ping_clients
                             .iter()
-                            .flat_map(|&c| client_manager.get(c))
-                            .flat_map(|state| {
-                                if state.alive && state.active_addr.is_some() {
-                                    vec![state.active_addr.unwrap()]
+                            .flat_map(|&h| client_manager.get(h))
+                            .flat_map(|(c, s)| {
+                                if s.alive && s.active_addr.is_some() {
+                                    vec![s.active_addr.unwrap()]
                                 } else {
-                                    state
-                                        .client
-                                        .ips
+                                    s.ips
                                         .iter()
                                         .cloned()
-                                        .map(|ip| SocketAddr::new(ip, state.client.port))
+                                        .map(|ip| SocketAddr::new(ip, c.port))
                                         .collect()
                                 }
                             })
@@ -64,8 +62,8 @@ pub fn new(
                     };
 
                     // reset alive
-                    for (_, state) in client_manager.get_client_states_mut() {
-                        state.alive = false;
+                    for (_, (_, s)) in client_manager.get_client_states_mut() {
+                        s.alive = false;
                     }
 
                     (ping_clients, ping_addrs)
@@ -102,8 +100,8 @@ pub fn new(
                     let client_manager = server.client_manager.borrow();
                     ping_clients
                         .iter()
-                        .filter_map(|&c| match client_manager.get(c) {
-                            Some(state) if !state.alive => Some(c),
+                        .filter_map(|&h| match client_manager.get(h) {
+                            Some((_, s)) if !s.alive => Some(h),
                             _ => None,
                         })
                         .collect()
@@ -112,9 +110,9 @@ pub fn new(
                 // we may not be receiving anymore but we should respond
                 // to the original state and not the "new" one
                 if receiving {
-                    for c in unresponsive_clients {
+                    for h in unresponsive_clients {
                         log::warn!("device not responding, releasing keys!");
-                        let _ = emulate_notify.send(EmulationEvent::ReleaseKeys(c)).await;
+                        let _ = emulate_notify.send(EmulationEvent::ReleaseKeys(h)).await;
                     }
                 } else {
                     // release pointer if the active client has not responded

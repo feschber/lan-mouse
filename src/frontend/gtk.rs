@@ -119,28 +119,28 @@ fn build_ui(app: &Application) {
         loop {
             let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
             match notify {
-                FrontendEvent::Activated(handle, active) => {
-                    window.activate_client(handle, active);
-                }
-                FrontendEvent::Created(handle, client) => {
-                    window.new_client(handle, client, false);
-                },
-                FrontendEvent::Updated(handle, client) => {
-                    window.update_client(handle, client);
-                }
-                FrontendEvent::Error(e) => {
-                    window.show_toast(e.as_str());
+                FrontendEvent::Created(handle, client, state) => {
+                    window.new_client(handle, client, state);
                 },
                 FrontendEvent::Deleted(client) => {
                     window.delete_client(client);
                 }
+                FrontendEvent::Updated(handle, client) => {
+                    window.update_client_config(handle, client);
+                }
+                FrontendEvent::StateChange(handle, state) => {
+                    window.update_client_state(handle, state);
+                }
+                FrontendEvent::Error(e) => {
+                    window.show_toast(e.as_str());
+                },
                 FrontendEvent::Enumerate(clients) => {
-                    for (handle, client, active) in clients {
+                    for (handle, client, state) in clients {
                         if window.client_idx(handle).is_some() {
-                            window.activate_client(handle, active);
-                            window.update_client(handle, client);
+                            window.update_client_config(handle, client);
+                            window.update_client_state(handle, state);
                         } else {
-                            window.new_client(handle, client, active);
+                            window.new_client(handle, client, state);
                         }
                     }
                 },

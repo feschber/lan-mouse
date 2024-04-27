@@ -108,7 +108,7 @@ async fn handle_udp_rx(
     {
         let mut client_manager = server.client_manager.borrow_mut();
         let client_state = match client_manager.get_mut(handle) {
-            Some(s) => s,
+            Some((_, s)) => s,
             None => {
                 log::error!("unknown handle");
                 return;
@@ -156,13 +156,12 @@ async fn handle_udp_rx(
                     }) = event
                     {
                         let mut client_manager = server.client_manager.borrow_mut();
-                        let client_state =
-                            if let Some(client_state) = client_manager.get_mut(handle) {
-                                client_state
-                            } else {
-                                log::error!("unknown handle");
-                                return;
-                            };
+                        let client_state = if let Some((_, s)) = client_manager.get_mut(handle) {
+                            s
+                        } else {
+                            log::error!("unknown handle");
+                            return;
+                        };
                         if state == 0 {
                             // ignore release event if key not pressed
                             ignore_event = !client_state.pressed_keys.remove(&key);
@@ -213,7 +212,7 @@ async fn release_keys(
         .borrow_mut()
         .get_mut(client)
         .iter_mut()
-        .flat_map(|s| s.pressed_keys.drain())
+        .flat_map(|(_, s)| s.pressed_keys.drain())
         .collect::<Vec<_>>();
 
     for key in keys {
