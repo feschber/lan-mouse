@@ -1,20 +1,31 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, task::LocalSet};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    task::LocalSet,
+};
 
-#[cfg(unix)]
-use tokio::net::unix::{ReadHalf, WriteHalf};
 #[cfg(windows)]
 use tokio::net::tcp::{ReadHalf, WriteHalf};
+#[cfg(unix)]
+use tokio::net::unix::{ReadHalf, WriteHalf};
 
-use std::{fmt::Display, io::{self, Write}, str::{FromStr, SplitWhitespace}};
+use std::{
+    fmt::Display,
+    io::{self, Write},
+    str::{FromStr, SplitWhitespace},
+};
 
-use crate::{client::{ClientHandle, Position}, config::DEFAULT_PORT};
+use crate::{
+    client::{ClientHandle, Position},
+    config::DEFAULT_PORT,
+};
 
 use super::{FrontendEvent, FrontendRequest};
 
 enum CommandType {
     NoCommand,
+    Help,
     Connect,
     Disconnect,
     Activate,
@@ -47,7 +58,8 @@ impl FromStr for CommandType {
             "list" => Ok(Self::List),
             "set-host" => Ok(Self::SetHost),
             "set-port" => Ok(Self::SetPort),
-            _ => Err(InvalidCommand { cmd: s.to_string() })
+            "help" => Ok(Self::Help),
+            _ => Err(InvalidCommand { cmd: s.to_string() }),
         }
     }
 }
@@ -55,6 +67,7 @@ impl FromStr for CommandType {
 #[derive(Debug)]
 enum Command {
     NoCommand,
+    Help,
     Connect(Position, String, Option<u16>),
     Disconnect(ClientHandle),
     Activate(ClientHandle),
@@ -62,6 +75,22 @@ enum Command {
     List,
     SetHost(ClientHandle, String),
     SetPort(ClientHandle, Option<u16>),
+}
+
+impl CommandType {
+    fn usage(&self) -> &'static str {
+        match self {
+            CommandType::Help => "help",
+            CommandType::NoCommand => "",
+            CommandType::Connect => "connect left|right|top|bottom <host> [<port>]",
+            CommandType::Disconnect => "disconnect <id>",
+            CommandType::Activate => "activate <id>",
+            CommandType::Deactivate => "deactivate <id>",
+            CommandType::List => "list",
+            CommandType::SetHost => "set-host <id> <host>",
+            CommandType::SetPort => "set-port <id> <host>",
+        }
+    }
 }
 
 enum CommandParseError {
@@ -72,7 +101,7 @@ enum CommandParseError {
 impl Display for CommandParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Usage(cmd) => write!(f, "usage: "),
+            Self::Usage(cmd) => write!(f, "usage: {}", cmd.usage()),
             Self::Invalid(cmd) => write!(f, "{}", cmd),
         }
     }
@@ -88,6 +117,7 @@ impl FromStr for Command {
             None => Ok(CommandType::NoCommand),
         }?;
         match cmd_type {
+            CommandType::Help => Ok(Command::Help),
             CommandType::NoCommand => Ok(Command::NoCommand),
             CommandType::Connect => parse_connect_cmd(args),
             CommandType::Disconnect => parse_disconnect_cmd(args),
@@ -104,7 +134,7 @@ impl FromStr for Command {
 impl Exec for Command {
     async fn execute(&self, rx: &mut ReadHalf<'_>, tx: &mut WriteHalf<'_>) -> io::Result<()> {
         match self {
-            Command::NoCommand => {},
+            Command::NoCommand => {}
             Command::Connect(pos, host, port) => {
                 let request = FrontendRequest::Create;
                 send_request(tx, request).await?;
@@ -124,14 +154,40 @@ impl Exec for Command {
                         _ => continue,
                     }
                 }
-
-            },
-            Command::Disconnect(_) => todo!(),
-            Command::Activate(_) => todo!(),
-            Command::Deactivate(_) => todo!(),
-            Command::List => todo!(),
-            Command::SetHost(_, _) => todo!(),
-            Command::SetPort(_, _) => todo!(),
+            }
+            Command::Disconnect(id) => send_request(tx, FrontendRequest::Delete(*id)).await?,
+            Command::Activate(id) => send_request(tx, FrontendRequest::Activate(*id, true)).await?,
+            Command::Deactivate(id) => {
+                send_request(tx, FrontendRequest::Activate(*id, false)).await?
+            }
+            Command::List => send_request(tx, FrontendRequest::Enumerate()).await?,
+            Command::SetHost(handle, host) => {
+                send_request(
+                    tx,
+                    FrontendRequest::UpdateHostname(*handle, Some(host.clone())),
+                )
+                .await?
+            }
+            Command::SetPort(handle, port) => {
+                send_request(
+                    tx,
+                    FrontendRequest::UpdatePort(*handle, port.unwrap_or(DEFAULT_PORT)),
+                )
+                .await?
+            }
+            Command::Help => {
+                for cmd_type in [
+                    CommandType::List,
+                    CommandType::Connect,
+                    CommandType::Disconnect,
+                    CommandType::Activate,
+                    CommandType::Deactivate,
+                    CommandType::SetHost,
+                    CommandType::SetPort,
+                ] {
+                    eprintln!("{}", cmd_type.usage());
+                }
+            }
         }
         Ok(())
     }
@@ -229,7 +285,6 @@ pub fn run() -> Result<()> {
                         eprintln!("exit");
                         break;
                     };
-                    log::info!("line: {line:?}");
                     let cmd: Command = match line.parse() {
                         Ok(cmd) => cmd,
                         Err(e) => {
@@ -238,18 +293,14 @@ pub fn run() -> Result<()> {
                         }
                     };
                     cmd.execute(&mut rx, &mut tx).await?;
-                    log::info!("command: {cmd:?}");
                 }
                 event = await_event(&mut rx) => {
                     let event = event?;
                     eprintln!("{event:?}");
                 }
             }
-            eprintln!("asdf");
         }
         anyhow::Ok(())
     }))?;
     Ok(())
-
 }
-

@@ -1,5 +1,9 @@
 use std::{
-    collections::HashSet, error::Error, fmt::Display, net::{IpAddr, SocketAddr}, str::FromStr
+    collections::HashSet,
+    error::Error,
+    fmt::Display,
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
 };
 
 use serde::{Deserialize, Serialize};
