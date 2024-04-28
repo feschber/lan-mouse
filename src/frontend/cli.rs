@@ -7,7 +7,7 @@ use tokio::net::unix::{ReadHalf, WriteHalf};
 #[cfg(windows)]
 use tokio::net::tcp::{ReadHalf, WriteHalf};
 
-use std::{fmt::Display, io, str::{FromStr, SplitWhitespace}};
+use std::{fmt::Display, io::{self, Write}, str::{FromStr, SplitWhitespace}};
 
 use crate::{client::{ClientHandle, Position}, config::DEFAULT_PORT};
 
@@ -52,6 +52,7 @@ impl FromStr for CommandType {
     }
 }
 
+#[derive(Debug)]
 enum Command {
     NoCommand,
     Connect(Position, String, Option<u16>),
@@ -208,6 +209,7 @@ pub fn run() -> Result<()> {
         .enable_time()
         .build()?;
     runtime.block_on(LocalSet::new().run_until(async move {
+        stream.set_nonblocking(true)?;
         #[cfg(unix)]
         let mut stream = tokio::net::UnixStream::from_std(stream)?;
         #[cfg(windows)]
@@ -218,11 +220,16 @@ pub fn run() -> Result<()> {
         let stdin = BufReader::new(stdin);
         let mut stdin = stdin.lines();
         loop {
+            eprint!("lan-mouse > ");
+            std::io::stderr().flush()?;
+
             tokio::select! {
                 line = stdin.next_line() => {
                     let Some(line) = line? else {
+                        eprintln!("exit");
                         break;
                     };
+                    log::info!("line: {line:?}");
                     let cmd: Command = match line.parse() {
                         Ok(cmd) => cmd,
                         Err(e) => {
@@ -231,14 +238,14 @@ pub fn run() -> Result<()> {
                         }
                     };
                     cmd.execute(&mut rx, &mut tx).await?;
+                    log::info!("command: {cmd:?}");
                 }
                 event = await_event(&mut rx) => {
                     let event = event?;
                     eprintln!("{event:?}");
                 }
-
-
             }
+            eprintln!("asdf");
         }
         anyhow::Ok(())
     }))?;
