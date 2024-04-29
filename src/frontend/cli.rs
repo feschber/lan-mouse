@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::{
-    client::{ClientHandle, Position},
+    client::{ClientConfig, ClientHandle, ClientState, Position},
     config::DEFAULT_PORT,
 };
 
@@ -296,11 +296,66 @@ pub fn run() -> Result<()> {
                 }
                 event = await_event(&mut rx) => {
                     let event = event?;
-                    eprintln!("{event:?}");
+                    handle_event(event);
                 }
             }
         }
         anyhow::Ok(())
     }))?;
     Ok(())
+}
+
+fn handle_event(event: FrontendEvent) {
+    match event {
+        FrontendEvent::Created(h, c, s) => {
+            let host = c.hostname.unwrap_or("(no hostname)".into());
+            let port = c.port;
+            let ips = s.ips;
+            eprintln!("new client added: (id: {h})");
+            eprintln!("\thost: {host}");
+            eprintln!("\tport: {port}");
+            eprintln!("\tassociated ips: {ips:?}");
+            eprintln!();
+        },
+        FrontendEvent::Updated(h, c) => {
+            eprintln!("client {h} changed configuration:");
+            print_config(c);
+        },
+        FrontendEvent::StateChange(h, s) => {
+            eprintln!("client {h} changed state:");
+            print_state(s);
+        },
+        FrontendEvent::Deleted(h) => {
+            eprintln!("client {h} was removed");
+        },
+        FrontendEvent::PortChanged(p, e) => {
+            if let Some(e) = e {
+                eprintln!("failed to change port: {e}");
+            } else {
+                eprintln!("changed port to {p}");
+            }
+        },
+        FrontendEvent::Enumerate(clients) => {
+            for (h,c,s) in clients {
+                eprintln!("client {h}:");
+                print_config(c);
+                print_state(s);
+            }
+        },
+        FrontendEvent::Error(e) => {
+            eprintln!("ERROR: {e}");
+        },
+    }
+}
+
+fn print_config(c: ClientConfig) {
+    eprintln!("\tposition: {}", c.pos);
+    eprintln!("\thost: {}", c.hostname.unwrap_or("(no hostname)".into()));
+    eprintln!("\tport: {}", c.port);
+    eprintln!("\tfix ips: {:?}", c.fix_ips);
+}
+
+fn print_state(s: ClientState) {
+    eprintln!("\tactive: {}", s.active);
+    eprintln!("\tassociated ips: {:?}", s.ips);
 }
