@@ -75,12 +75,11 @@ async fn handle_frontend_stream(
 
     let tx = frontend_tx.clone();
     tokio::task::spawn_local(async move {
-        let _ = tx.send(FrontendRequest::Enumerate()).await;
         loop {
-            let event = frontend::wait_for_request(&mut stream).await;
-            match event {
-                Ok(event) => {
-                    let _ = tx.send(event).await;
+            let request = frontend::wait_for_request(&mut stream).await;
+            match request {
+                Ok(request) => {
+                    let _ = tx.send(request).await;
                 }
                 Err(e) => {
                     if let Some(e) = e.downcast_ref::<io::Error>() {

@@ -2,6 +2,12 @@ mod imp;
 
 use std::io::Write;
 
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+
+#[cfg(windows)]
+use std::net::TcpStream;
+
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::{clone, Object};
@@ -27,8 +33,16 @@ glib::wrapper! {
 }
 
 impl Window {
-    pub(crate) fn new(app: &adw::Application) -> Self {
-        Object::builder().property("application", app).build()
+    pub(crate) fn new(
+        app: &adw::Application,
+        #[cfg(unix)]
+        tx: UnixStream,
+        #[cfg(windows)]
+        tx: TcpStream,
+    ) -> Self {
+        let window: Self = Object::builder().property("application", app).build();
+        window.imp().stream.borrow_mut().replace(tx);
+        window
     }
 
     pub fn clients(&self) -> gio::ListStore {
@@ -196,7 +210,7 @@ impl Window {
         }
     }
 
-    fn request(&self, event: FrontendRequest) {
+    pub fn request(&self, event: FrontendRequest) {
         let json = serde_json::to_string(&event).unwrap();
         log::debug!("requesting {json}");
         let mut stream = self.imp().stream.borrow_mut();

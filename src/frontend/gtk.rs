@@ -8,7 +8,7 @@ use std::{
     process, str,
 };
 
-use crate::frontend::gtk::window::Window;
+use crate::frontend::{gtk::window::Window, FrontendRequest};
 
 use adw::Application;
 use gtk::{
@@ -113,8 +113,9 @@ fn build_ui(app: &Application) {
         }
     });
 
-    let window = Window::new(app);
-    window.imp().stream.borrow_mut().replace(tx);
+    let window = Window::new(app, tx);
+    window.request(FrontendRequest::Enumerate());
+
     glib::spawn_future_local(clone!(@weak window => async move {
         loop {
             let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));

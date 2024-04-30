@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     task::LocalSet,
@@ -130,50 +129,105 @@ impl FromStr for Command {
     }
 }
 
-#[async_trait]
-impl Exec for Command {
-    async fn execute(&self, rx: &mut ReadHalf<'_>, tx: &mut WriteHalf<'_>) -> io::Result<()> {
+impl Command {
+    async fn execute(&self, rx: &mut ReadHalf<'_>, tx: &mut WriteHalf<'_>) -> Result<()> {
         match self {
             Command::NoCommand => {}
             Command::Connect(pos, host, port) => {
                 let request = FrontendRequest::Create;
                 send_request(tx, request).await?;
-                loop {
-                    let response = await_event(rx).await;
-                    match response {
-                        Err(_) => break,
-                        Ok(FrontendEvent::Created(h, _, _)) => {
-                            for request in [
-                                FrontendRequest::UpdateHostname(h, Some(host.clone())),
-                                FrontendRequest::UpdatePort(h, port.unwrap_or(DEFAULT_PORT)),
-                                FrontendRequest::UpdatePosition(h, *pos),
-                            ] {
-                                send_request(tx, request).await?;
-                            }
-                        }
+                let handle = loop {
+                    match await_event(rx).await? {
+                        FrontendEvent::Created(h, _, _) => break h,
                         _ => continue,
+                    }
+                };
+                for request in [
+                    FrontendRequest::UpdateHostname(handle, Some(host.clone())),
+                    FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT)),
+                    FrontendRequest::UpdatePosition(handle, *pos),
+                ] {
+                    send_request(tx, request).await?;
+                }
+            }
+            Command::Disconnect(id) => {
+                send_request(tx, FrontendRequest::Delete(*id)).await?;
+                while let Ok(response) = await_event(rx).await {
+                    if let FrontendEvent::Deleted(h) = response {
+                        if h == *id {
+                            eprintln!("removed client {h}");
+                            break;
+                        }
                     }
                 }
             }
-            Command::Disconnect(id) => send_request(tx, FrontendRequest::Delete(*id)).await?,
-            Command::Activate(id) => send_request(tx, FrontendRequest::Activate(*id, true)).await?,
-            Command::Deactivate(id) => {
-                send_request(tx, FrontendRequest::Activate(*id, false)).await?
+            Command::Activate(id) => {
+                send_request(tx, FrontendRequest::Activate(*id, true)).await?;
+                while let Ok(response) = await_event(rx).await {
+                    if let FrontendEvent::StateChange(h, s) = response {
+                        if h == *id {
+                            eprintln!("client {h} {}", if s.active { "activated" } else { "deactivated" });
+                            break;
+                        }
+                    }
+                }
             }
-            Command::List => send_request(tx, FrontendRequest::Enumerate()).await?,
+            Command::Deactivate(id) => {
+                send_request(tx, FrontendRequest::Activate(*id, false)).await?;
+                while let Ok(response) = await_event(rx).await {
+                    if let FrontendEvent::StateChange(h, s) = response {
+                        if h == *id {
+                            eprintln!("client {h} {}", if s.active { "activated" } else { "deactivated" });
+                            break;
+                        }
+                    }
+                }
+            }
+            Command::List => {
+                send_request(tx, FrontendRequest::Enumerate()).await?;
+                while let Ok(response) = await_event(rx).await {
+                    if let FrontendEvent::Enumerate(clients) = response {
+                        for (h,c,s) in clients {
+                            eprint!("client {h}: ");
+                            print_config(c);
+                            print_state(s);
+                            eprintln!();
+                        }
+                        break;
+                    }
+                }
+            }
             Command::SetHost(handle, host) => {
                 send_request(
                     tx,
                     FrontendRequest::UpdateHostname(*handle, Some(host.clone())),
                 )
-                .await?
+                .await?;
+                while let Ok(event) = await_event(rx).await {
+                    if let FrontendEvent::Updated(h, c) = event {
+                        if h == *handle {
+                            eprintln!("changed hostname: {}", c.hostname.unwrap_or("no hostname".into()));
+                            break;
+                        }
+                    }
+                }
             }
             Command::SetPort(handle, port) => {
                 send_request(
                     tx,
                     FrontendRequest::UpdatePort(*handle, port.unwrap_or(DEFAULT_PORT)),
                 )
-                .await?
+                .await?;
+                while let Ok(event) = await_event(rx).await {
+                    if let FrontendEvent::PortChanged(p, e) = event {
+                        if let Some(error) = e {
+                            eprintln!("{error}");
+                        } else {
+                            eprintln!("changed port to {p}");
+                        }
+                        break;
+                    }
+                }
             }
             Command::Help => {
                 for cmd_type in [
@@ -208,11 +262,6 @@ async fn await_event(rx: &mut ReadHalf<'_>) -> Result<FrontendEvent> {
     rx.read_exact(&mut buf).await?;
     let event: FrontendEvent = serde_json::from_slice(&buf)?;
     Ok(event)
-}
-
-#[async_trait]
-trait Exec {
-    async fn execute(&self, rx: &mut ReadHalf<'_>, tx: &mut WriteHalf<'_>) -> io::Result<()>;
 }
 
 fn parse_connect_cmd(mut args: SplitWhitespace<'_>) -> Result<Command, CommandParseError> {
@@ -306,24 +355,23 @@ pub fn run() -> Result<()> {
 }
 
 fn handle_event(event: FrontendEvent) {
+    eprintln!();
     match event {
         FrontendEvent::Created(h, c, s) => {
-            let host = c.hostname.unwrap_or("(no hostname)".into());
-            let port = c.port;
-            let ips = s.ips;
             eprintln!("new client added: (id: {h})");
-            eprintln!("\thost: {host}");
-            eprintln!("\tport: {port}");
-            eprintln!("\tassociated ips: {ips:?}");
+            print_config(c);
+            print_state(s);
             eprintln!();
         },
         FrontendEvent::Updated(h, c) => {
-            eprintln!("client {h} changed configuration:");
+            eprint!("client {h} changed configuration:");
             print_config(c);
+            eprintln!();
         },
         FrontendEvent::StateChange(h, s) => {
-            eprintln!("client {h} changed state:");
+            eprint!("client {h} changed state:");
             print_state(s);
+            eprintln!();
         },
         FrontendEvent::Deleted(h) => {
             eprintln!("client {h} was removed");
@@ -337,9 +385,10 @@ fn handle_event(event: FrontendEvent) {
         },
         FrontendEvent::Enumerate(clients) => {
             for (h,c,s) in clients {
-                eprintln!("client {h}:");
+                eprint!("client {h}: ");
                 print_config(c);
                 print_state(s);
+                eprintln!();
             }
         },
         FrontendEvent::Error(e) => {
@@ -349,13 +398,9 @@ fn handle_event(event: FrontendEvent) {
 }
 
 fn print_config(c: ClientConfig) {
-    eprintln!("\tposition: {}", c.pos);
-    eprintln!("\thost: {}", c.hostname.unwrap_or("(no hostname)".into()));
-    eprintln!("\tport: {}", c.port);
-    eprintln!("\tfix ips: {:?}", c.fix_ips);
+    eprint!("\t[ {}:{} @ {}, fix ips: {:?} ]", c.hostname.unwrap_or("(no hostname)".into()), c.port, c.pos, c.fix_ips);
 }
 
 fn print_state(s: ClientState) {
-    eprintln!("\tactive: {}", s.active);
-    eprintln!("\tassociated ips: {:?}", s.ips);
+    eprint!("\t[ active: {}, ips: {:?}]", s.active, s.ips);
 }
