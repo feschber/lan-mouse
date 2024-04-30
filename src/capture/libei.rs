@@ -119,7 +119,7 @@ async fn update_barriers(
         .set_pointer_barriers(session, &barriers, zones.zone_set())
         .await?;
     let response = response.response()?;
-    log::info!("{response:?}");
+    log::debug!("{response:?}");
     Ok(id_map)
 }
 
@@ -132,7 +132,7 @@ impl<'a> Drop for LibeiInputCapture<'a> {
 async fn create_session<'a>(
     input_capture: &'a InputCapture<'a>,
 ) -> Result<(Session<'a>, BitFlags<Capabilities>)> {
-    log::info!("creating input capture session");
+    log::debug!("creating input capture session");
     let (session, capabilities) = loop {
         match input_capture
             .create_session(
@@ -154,7 +154,7 @@ async fn connect_to_eis(
     input_capture: &InputCapture<'_>,
     session: &Session<'_>,
 ) -> Result<(ei::Context, EiConvertEventStream)> {
-    log::info!("connect_to_eis");
+    log::debug!("connect_to_eis");
     let fd = input_capture.connect_to_eis(session).await?;
 
     // create unix stream from fd
@@ -270,7 +270,7 @@ impl<'a> LibeiInputCapture<'a> {
                 )
                 .await?;
 
-                log::info!("enabling session");
+                log::debug!("enabling session");
                 input_capture.enable(&session).await?;
 
                 loop {
