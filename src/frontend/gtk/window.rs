@@ -35,10 +35,8 @@ glib::wrapper! {
 impl Window {
     pub(crate) fn new(
         app: &adw::Application,
-        #[cfg(unix)]
-        tx: UnixStream,
-        #[cfg(windows)]
-        tx: TcpStream,
+        #[cfg(unix)] tx: UnixStream,
+        #[cfg(windows)] tx: TcpStream,
     ) -> Self {
         let window: Self = Object::builder().property("application", app).build();
         window.imp().stream.borrow_mut().replace(tx);

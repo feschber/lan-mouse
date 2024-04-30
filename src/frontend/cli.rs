@@ -166,7 +166,10 @@ impl Command {
                 while let Ok(response) = await_event(rx).await {
                     if let FrontendEvent::StateChange(h, s) = response {
                         if h == *id {
-                            eprintln!("client {h} {}", if s.active { "activated" } else { "deactivated" });
+                            eprintln!(
+                                "client {h} {}",
+                                if s.active { "activated" } else { "deactivated" }
+                            );
                             break;
                         }
                     }
@@ -177,7 +180,10 @@ impl Command {
                 while let Ok(response) = await_event(rx).await {
                     if let FrontendEvent::StateChange(h, s) = response {
                         if h == *id {
-                            eprintln!("client {h} {}", if s.active { "activated" } else { "deactivated" });
+                            eprintln!(
+                                "client {h} {}",
+                                if s.active { "activated" } else { "deactivated" }
+                            );
                             break;
                         }
                     }
@@ -187,7 +193,7 @@ impl Command {
                 send_request(tx, FrontendRequest::Enumerate()).await?;
                 while let Ok(response) = await_event(rx).await {
                     if let FrontendEvent::Enumerate(clients) = response {
-                        for (h,c,s) in clients {
+                        for (h, c, s) in clients {
                             eprint!("client {h}: ");
                             print_config(c);
                             print_state(s);
@@ -206,7 +212,10 @@ impl Command {
                 while let Ok(event) = await_event(rx).await {
                     if let FrontendEvent::Updated(h, c) = event {
                         if h == *handle {
-                            eprintln!("changed hostname: {}", c.hostname.unwrap_or("no hostname".into()));
+                            eprintln!(
+                                "changed hostname: {}",
+                                c.hostname.unwrap_or("no hostname".into())
+                            );
                             break;
                         }
                     }
@@ -362,43 +371,49 @@ fn handle_event(event: FrontendEvent) {
             print_config(c);
             print_state(s);
             eprintln!();
-        },
+        }
         FrontendEvent::Updated(h, c) => {
             eprint!("client {h} changed configuration:");
             print_config(c);
             eprintln!();
-        },
+        }
         FrontendEvent::StateChange(h, s) => {
             eprint!("client {h} changed state:");
             print_state(s);
             eprintln!();
-        },
+        }
         FrontendEvent::Deleted(h) => {
             eprintln!("client {h} was removed");
-        },
+        }
         FrontendEvent::PortChanged(p, e) => {
             if let Some(e) = e {
                 eprintln!("failed to change port: {e}");
             } else {
                 eprintln!("changed port to {p}");
             }
-        },
+        }
         FrontendEvent::Enumerate(clients) => {
-            for (h,c,s) in clients {
+            for (h, c, s) in clients {
                 eprint!("client {h}: ");
                 print_config(c);
                 print_state(s);
                 eprintln!();
             }
-        },
+        }
         FrontendEvent::Error(e) => {
             eprintln!("ERROR: {e}");
-        },
+        }
     }
 }
 
 fn print_config(c: ClientConfig) {
-    eprint!("\t[ {}:{} @ {}, fix ips: {:?} ]", c.hostname.unwrap_or("(no hostname)".into()), c.port, c.pos, c.fix_ips);
+    eprint!(
+        "\t[ {}:{} @ {}, fix ips: {:?} ]",
+        c.hostname.unwrap_or("(no hostname)".into()),
+        c.port,
+        c.pos,
+        c.fix_ips
+    );
 }
 
 fn print_state(s: ClientState) {
