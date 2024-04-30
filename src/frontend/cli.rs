@@ -65,7 +65,7 @@ impl FromStr for CommandType {
 
 #[derive(Debug)]
 enum Command {
-    NoCommand,
+    None,
     Help,
     Connect(Position, String, Option<u16>),
     Disconnect(ClientHandle),
@@ -112,12 +112,12 @@ impl FromStr for Command {
     fn from_str(cmd: &str) -> Result<Self, Self::Err> {
         let mut args = cmd.split_whitespace();
         let cmd_type: CommandType = match args.next() {
-            Some(c) => c.parse().map_err(|e| CommandParseError::Invalid(e)),
+            Some(c) => c.parse().map_err(CommandParseError::Invalid),
             None => Ok(CommandType::NoCommand),
         }?;
         match cmd_type {
             CommandType::Help => Ok(Command::Help),
-            CommandType::NoCommand => Ok(Command::NoCommand),
+            CommandType::NoCommand => Ok(Command::None),
             CommandType::Connect => parse_connect_cmd(args),
             CommandType::Disconnect => parse_disconnect_cmd(args),
             CommandType::Activate => parse_activate_cmd(args),
@@ -132,7 +132,7 @@ impl FromStr for Command {
 impl Command {
     async fn execute(&self, rx: &mut ReadHalf<'_>, tx: &mut WriteHalf<'_>) -> Result<()> {
         match self {
-            Command::NoCommand => {}
+            Command::None => {}
             Command::Connect(pos, host, port) => {
                 let request = FrontendRequest::Create;
                 send_request(tx, request).await?;
@@ -277,7 +277,7 @@ fn parse_connect_cmd(mut args: SplitWhitespace<'_>) -> Result<Command, CommandPa
     const USAGE: CommandParseError = CommandParseError::Usage(CommandType::Connect);
     let pos = args.next().ok_or(USAGE)?.parse().map_err(|_| USAGE)?;
     let host = args.next().ok_or(USAGE)?.to_string();
-    let port = args.next().map(|p| p.parse().ok()).flatten();
+    let port = args.next().and_then(|p| p.parse().ok());
     Ok(Command::Connect(pos, host, port))
 }
 
@@ -309,7 +309,7 @@ fn parse_set_host(mut args: SplitWhitespace<'_>) -> Result<Command, CommandParse
 fn parse_set_port(mut args: SplitWhitespace<'_>) -> Result<Command, CommandParseError> {
     const USAGE: CommandParseError = CommandParseError::Usage(CommandType::SetPort);
     let id = args.next().ok_or(USAGE)?.parse().map_err(|_| USAGE)?;
-    let port = args.next().map(|p| p.parse().ok()).flatten();
+    let port = args.next().and_then(|p| p.parse().ok());
     Ok(Command::SetPort(id, port))
 }
 
