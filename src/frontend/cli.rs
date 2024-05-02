@@ -209,7 +209,6 @@ impl<'a> Cli<'a> {
     }
 
     fn handle_event(&mut self, event: FrontendEvent) {
-        eprintln!();
         match event {
             FrontendEvent::Created(h, c, s) => {
                 eprint!("client added ({h}): ");
