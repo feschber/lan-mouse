@@ -9,7 +9,7 @@ use tokio::net::tcp::{ReadHalf, WriteHalf};
 #[cfg(unix)]
 use tokio::net::unix::{ReadHalf, WriteHalf};
 
-use std::{collections::HashMap, io::{self, Write}};
+use std::io::{self, Write};
 
 use crate::{
     client::{ClientConfig, ClientHandle, ClientState},
@@ -103,7 +103,9 @@ impl<'a> Cli<'a> {
                 let request = FrontendRequest::Create;
                 self.send_request(request).await?;
                 let handle = loop {
-                    match self.await_event().await? {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    match event {
                         FrontendEvent::Created(h, _, _) => break h,
                         _ => continue,
                     }
@@ -114,84 +116,68 @@ impl<'a> Cli<'a> {
                     FrontendRequest::UpdatePosition(handle, pos),
                 ] {
                     self.send_request(request).await?;
-                    self.await_event().await?;
+                    loop {
+                        let event = self.await_event().await?;
+                        self.handle_event(event.clone());
+                        if let FrontendEvent::Updated(_, _) = event {
+                            break;
+                        }
+                    }
                 }
             }
             Command::Disconnect(id) => {
                 self.send_request(FrontendRequest::Delete(id)).await?;
-                while let Ok(response) = self.await_event().await {
-                    if let FrontendEvent::Deleted(h) = response {
-                        if h == id {
-                            eprintln!("removed client {h}");
-                            break;
-                        }
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Deleted(_) = event {
+                        self.handle_event(event);
+                        break;
                     }
                 }
             }
             Command::Activate(id) => {
                 self.send_request(FrontendRequest::Activate(id, true)).await?;
-                while let Ok(response) = self.await_event().await {
-                    if let FrontendEvent::StateChange(h, s) = response {
-                        if h == id {
-                            eprintln!(
-                                "client {h} {}",
-                                if s.active { "activated" } else { "deactivated" }
-                            );
-                            break;
-                        }
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::StateChange(_, _) = event {
+                        self.handle_event(event);
+                        break;
                     }
                 }
             }
             Command::Deactivate(id) => {
                 self.send_request(FrontendRequest::Activate(id, false)).await?;
-                while let Ok(response) = self.await_event().await {
-                    if let FrontendEvent::StateChange(h, s) = response {
-                        if h == id {
-                            eprintln!(
-                                "client {h} {}",
-                                if s.active { "activated" } else { "deactivated" }
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            Command::List => {
-                self.send_request(FrontendRequest::Enumerate()).await?;
-                while let Ok(response) = self.await_event().await {
-                    if let FrontendEvent::Enumerate(clients) = response {
-                        for (h, c, s) in clients {
-                            eprint!("client {h}: ");
-                            print_config(&c);
-                            eprint!(" ");
-                            print_state(&s);
-                            eprintln!();
-                        }
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::StateChange(_, _) = event {
+                        self.handle_event(event);
                         break;
                     }
                 }
             }
+            Command::List => self.print_clients(),
             Command::SetHost(handle, host) => {
                 let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
                 self.send_request(request).await?;
-                while let Ok(event) = self.await_event().await {
-                    if let FrontendEvent::Updated(h, c) = event {
-                        if h == handle {
-                            eprintln!(
-                                "changed hostname: {}",
-                                c.hostname.unwrap_or("no hostname".into())
-                            );
-                            break;
-                        }
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Updated(_, _) = event {
+                        self.handle_event(event);
+                        break;
                     }
                 }
             }
             Command::SetPort(handle, port) => {
                 let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
                 self.send_request(request).await?;
-                while let Ok(event) = self.await_event().await {
-                    if let FrontendEvent::Updated(h, c) = event {
-                        eprintln!("client {h} changed port: {}", c.port);
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Updated(_, _) = event {
                         break;
                     }
                 }
@@ -272,18 +258,22 @@ impl<'a> Cli<'a> {
                 }
             }
             FrontendEvent::Enumerate(clients) => {
-                for (h, c, s) in clients.iter() {
-                    eprint!("client {h}: ");
-                    print_config(&c);
-                    eprint!(" ");
-                    print_state(&s);
-                    eprintln!();
-                }
                 self.clients = clients;
+                self.print_clients();
             }
             FrontendEvent::Error(e) => {
                 eprintln!("ERROR: {e}");
             }
+        }
+    }
+
+    fn print_clients(&mut self) {
+        for (h, c, s) in self.clients.iter() {
+            eprint!("client {h}: ");
+            print_config(&c);
+            eprint!(" ");
+            print_state(&s);
+            eprintln!();
         }
     }
 
