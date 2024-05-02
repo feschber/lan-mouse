@@ -104,10 +104,15 @@ impl<'a> Cli<'a> {
                 self.send_request(request).await?;
                 let handle = loop {
                     let event = self.await_event().await?;
-                    self.handle_event(event.clone());
                     match event {
-                        FrontendEvent::Created(h, _, _) => break h,
-                        _ => continue,
+                        FrontendEvent::Created(h, c, s) => {
+                            self.clients.push((h, c, s));
+                            break h;
+                        }
+                        _ => {
+                            self.handle_event(event);
+                            continue;
+                        }
                     }
                 };
                 for request in [
@@ -158,7 +163,16 @@ impl<'a> Cli<'a> {
                     }
                 }
             }
-            Command::List => self.print_clients(),
+            Command::List => {
+                self.send_request(FrontendRequest::Enumerate()).await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Enumerate(_) = event {
+                        break;
+                    }
+                }
+            }
             Command::SetHost(handle, host) => {
                 let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
                 self.send_request(request).await?;

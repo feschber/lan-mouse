@@ -46,7 +46,7 @@ impl FromStr for Position {
             "left" => Ok(Self::Left),
             "right" => Ok(Self::Right),
             "top" => Ok(Self::Top),
-            "botom" => Ok(Self::Bottom),
+            "bottom" => Ok(Self::Bottom),
             _ => Err(PositionParseError { string: s.into() }),
         }
     }
