@@ -53,7 +53,11 @@ struct Cli<'a> {
 
 impl<'a> Cli<'a> {
     fn new(rx: ReadHalf<'a>, tx: WriteHalf<'a>) -> Cli<'a> {
-        Self { clients: vec![], rx, tx }
+        Self {
+            clients: vec![],
+            rx,
+            tx,
+        }
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -142,7 +146,8 @@ impl<'a> Cli<'a> {
                 }
             }
             Command::Activate(id) => {
-                self.send_request(FrontendRequest::Activate(id, true)).await?;
+                self.send_request(FrontendRequest::Activate(id, true))
+                    .await?;
                 loop {
                     let event = self.await_event().await?;
                     self.handle_event(event.clone());
@@ -153,7 +158,8 @@ impl<'a> Cli<'a> {
                 }
             }
             Command::Deactivate(id) => {
-                self.send_request(FrontendRequest::Activate(id, false)).await?;
+                self.send_request(FrontendRequest::Activate(id, false))
+                    .await?;
                 loop {
                     let event = self.await_event().await?;
                     self.handle_event(event.clone());
@@ -213,12 +219,18 @@ impl<'a> Cli<'a> {
         Ok(())
     }
 
-    fn find_mut(&mut self, handle: ClientHandle) -> Option<&mut (ClientHandle, ClientConfig, ClientState)> {
-        self.clients.iter_mut().find(|(h,_,_)| *h == handle)
+    fn find_mut(
+        &mut self,
+        handle: ClientHandle,
+    ) -> Option<&mut (ClientHandle, ClientConfig, ClientState)> {
+        self.clients.iter_mut().find(|(h, _, _)| *h == handle)
     }
 
-    fn remove(&mut self, handle: ClientHandle) -> Option<(ClientHandle, ClientConfig, ClientState)> {
-        let idx = self.clients.iter().position(|(h,_,_)| *h == handle);
+    fn remove(
+        &mut self,
+        handle: ClientHandle,
+    ) -> Option<(ClientHandle, ClientConfig, ClientState)> {
+        let idx = self.clients.iter().position(|(h, _, _)| *h == handle);
         idx.map(|i| self.clients.swap_remove(i))
     }
 
@@ -233,11 +245,14 @@ impl<'a> Cli<'a> {
                 self.clients.push((h, c, s));
             }
             FrontendEvent::Updated(h, c) => {
-                if let Some((_,config,_)) = self.find_mut(h) {
+                if let Some((_, config, _)) = self.find_mut(h) {
                     let old_host = config.hostname.clone().unwrap_or("\"\"".into());
                     let new_host = c.hostname.clone().unwrap_or("\"\"".into());
                     if old_host != new_host {
-                        eprintln!("client {h}: hostname updated ({} -> {})", old_host, new_host);
+                        eprintln!(
+                            "client {h}: hostname updated ({} -> {})",
+                            old_host, new_host
+                        );
                     }
                     if config.port != c.port {
                         eprintln!("client {h} changed port: {} -> {}", config.port, c.port);
@@ -249,9 +264,12 @@ impl<'a> Cli<'a> {
                 }
             }
             FrontendEvent::StateChange(h, s) => {
-                if let Some((_,_,state)) = self.find_mut(h) {
+                if let Some((_, _, state)) = self.find_mut(h) {
                     if state.active ^ s.active {
-                        eprintln!("client {h} {}", if s.active { "activated" } else { "deactivated" });
+                        eprintln!(
+                            "client {h} {}",
+                            if s.active { "activated" } else { "deactivated" }
+                        );
                     }
                     *state = s;
                 }
@@ -283,9 +301,9 @@ impl<'a> Cli<'a> {
     fn print_clients(&mut self) {
         for (h, c, s) in self.clients.iter() {
             eprint!("client {h}: ");
-            print_config(&c);
+            print_config(c);
             eprint!(" ");
-            print_state(&s);
+            print_state(s);
             eprintln!();
         }
     }
