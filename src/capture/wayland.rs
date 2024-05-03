@@ -750,14 +750,14 @@ impl Dispatch<WlPointer, ()> for State {
                     }),
                 ));
             }
-            wl_pointer::Event::Axis { time, axis, value } => {
+            wl_pointer::Event::AxisValue120 { axis, value120 } => {
                 let (_, client) = app.focused.as_ref().unwrap();
                 app.pending_events.push_back((
                     *client,
                     Event::Pointer(PointerEvent::Axis {
-                        time,
+                        time: 0,
                         axis: u32::from(axis) as u8,
-                        value,
+                        value: value120 as f64,
                     }),
                 ));
             }
