@@ -17,6 +17,15 @@ impl ClientObject {
             .property("port", client.port as u32)
             .property("position", client.pos.to_string())
             .property("active", state.active)
+            .property(
+                "ips",
+                state
+                    .ips
+                    .iter()
+                    .map(|ip| ip.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .property("resolving", state.resolving)
             .build()
     }
 
@@ -32,4 +41,6 @@ pub struct ClientData {
     pub port: u32,
     pub active: bool,
     pub position: String,
+    pub resolving: bool,
+    pub ips: Vec<String>,
 }

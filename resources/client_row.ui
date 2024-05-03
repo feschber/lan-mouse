@@ -13,12 +13,16 @@
 		</child>
 		<child type="suffix">
 			<object class="GtkButton" id="dns_button">
-				<signal name="activate" handler="handle_request_dns" swapped="true"/>
+				<signal name="clicked" handler="handle_request_dns" swapped="true"/>
 				<!--<property name="icon-name">network-wired-disconnected-symbolic</property>-->
 				<property name="icon-name">network-wired-symbolic</property>
 				<property name="valign">center</property>
 				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">resolve dns</property>
+				<property name="tooltip-text" translatable="yes">resolve host</property>
+			</object>
+		</child>
+		<child type="suffix">
+			<object class="GtkSpinner" id="dns_loading_indicator">
 			</object>
 		</child>
 		<!-- host -->

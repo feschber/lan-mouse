@@ -95,6 +95,8 @@ pub enum FrontendRequest {
     Delete(ClientHandle),
     /// request an enumeration of all clients
     Enumerate(),
+    /// resolve dns
+    ResolveDns(ClientHandle),
     /// service shutdown
     Terminate(),
     /// update hostname

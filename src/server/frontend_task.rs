@@ -151,6 +151,16 @@ async fn handle_frontend_event(
             update_pos(server, handle, capture, emulate, pos).await;
             broadcast_client_update(server, frontend, handle).await;
         }
+        FrontendRequest::ResolveDns(handle) => {
+            let hostname = server
+                .client_manager
+                .borrow()
+                .get(handle)
+                .and_then(|(c, _)| c.hostname.clone());
+            if let Some(hostname) = hostname {
+                let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
+            }
+        }
     };
     false
 }

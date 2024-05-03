@@ -17,6 +17,8 @@ pub struct ClientObject {
     #[property(name = "port", get, set, type = u32, member = port, maximum = u16::MAX as u32)]
     #[property(name = "active", get, set, type = bool, member = active)]
     #[property(name = "position", get, set, type = String, member = position)]
+    #[property(name = "resolving", get, set, type = bool, member = resolving)]
+    #[property(name = "ips", get, set, type = Vec<String>, member = ips)]
     pub data: RefCell<ClientData>,
 }
 

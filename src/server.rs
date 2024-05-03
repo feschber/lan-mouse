@@ -92,7 +92,7 @@ impl Server {
 
         // udp task
         let (mut udp_task, sender_tx, receiver_rx, port_tx) =
-            network_task::new(self.clone(), frontend_notify_tx).await?;
+            network_task::new(self.clone(), frontend_notify_tx.clone()).await?;
 
         // input capture
         let (mut capture_task, capture_channel) = capture_task::new(
@@ -113,7 +113,8 @@ impl Server {
 
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;
-        let (mut resolver_task, resolve_tx) = resolver_task::new(resolver, self.clone());
+        let (mut resolver_task, resolve_tx) =
+            resolver_task::new(resolver, self.clone(), frontend_notify_tx);
 
         // frontend listener
         let (mut frontend_task, frontend_tx) = frontend_task::new(
