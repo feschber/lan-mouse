@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::{cmp::min, io::ErrorKind, str, time::Duration};
+use std::{cmp::min, io::ErrorKind, net::IpAddr, str, time::Duration};
 
 #[cfg(unix)]
 use std::{
@@ -23,7 +23,7 @@ use tokio::net::TcpStream;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    client::{Client, ClientHandle, Position},
+    client::{ClientConfig, ClientHandle, ClientState, Position},
     config::{Config, Frontend},
 };
 
@@ -85,10 +85,10 @@ pub fn wait_for_service() -> Result<std::net::TcpStream> {
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
-    /// add a new client
-    Create(Option<String>, u16, Position),
     /// activate/deactivate client
     Activate(ClientHandle, bool),
+    /// add a new client
+    Create,
     /// change the listen port (recreate udp listener)
     ChangePort(u16),
     /// remove a client
@@ -97,24 +97,30 @@ pub enum FrontendRequest {
     Enumerate(),
     /// service shutdown
     Terminate(),
-    /// update a client (hostname, port, position)
-    Update(ClientHandle, Option<String>, u16, Position),
+    /// update hostname
+    UpdateHostname(ClientHandle, Option<String>),
+    /// update port
+    UpdatePort(ClientHandle, u16),
+    /// update position
+    UpdatePosition(ClientHandle, Position),
+    /// update fix-ips
+    UpdateFixIps(ClientHandle, Vec<IpAddr>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
-    /// the given client was activated
-    Activated(ClientHandle, bool),
     /// a client was created
-    Created(ClientHandle, Client),
+    Created(ClientHandle, ClientConfig, ClientState),
     /// a client was updated
-    Updated(ClientHandle, Client),
+    Updated(ClientHandle, ClientConfig),
+    /// state changed
+    StateChange(ClientHandle, ClientState),
     /// the client was deleted
     Deleted(ClientHandle),
     /// new port, reason of failure (if failed)
     PortChanged(u16, Option<String>),
     /// list of all clients, used for initial state synchronization
-    Enumerate(Vec<(ClientHandle, Client, bool)>),
+    Enumerate(Vec<(ClientHandle, ClientConfig, ClientState)>),
     /// an error occured
     Error(String),
 }
@@ -229,6 +235,7 @@ impl FrontendListener {
         let len = payload.len().to_be_bytes();
         log::debug!("json: {json}, len: {}", payload.len());
 
+        log::debug!("broadcasting event to streams: {:?}", self.tx_streams);
         let mut keep = vec![];
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {

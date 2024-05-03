@@ -1,240 +1,347 @@
-use anyhow::{anyhow, Context, Result};
-
-use std::{
-    io::{ErrorKind, Read, Write},
-    str::SplitWhitespace,
-    thread,
+use anyhow::{anyhow, Result};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    task::LocalSet,
 };
 
-use crate::{client::Position, config::DEFAULT_PORT};
+#[cfg(windows)]
+use tokio::net::tcp::{ReadHalf, WriteHalf};
+#[cfg(unix)]
+use tokio::net::unix::{ReadHalf, WriteHalf};
+
+use std::io::{self, Write};
+
+use crate::{
+    client::{ClientConfig, ClientHandle, ClientState},
+    config::DEFAULT_PORT,
+};
+
+use self::command::{Command, CommandType};
 
 use super::{FrontendEvent, FrontendRequest};
 
+mod command;
+
 pub fn run() -> Result<()> {
-    let Ok(mut tx) = super::wait_for_service() else {
+    let Ok(stream) = super::wait_for_service() else {
         return Err(anyhow!("Could not connect to lan-mouse-socket"));
     };
 
-    let mut rx = tx.try_clone()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    runtime.block_on(LocalSet::new().run_until(async move {
+        stream.set_nonblocking(true)?;
+        #[cfg(unix)]
+        let mut stream = tokio::net::UnixStream::from_std(stream)?;
+        #[cfg(windows)]
+        let mut stream = tokio::net::TcpStream::from_std(stream)?;
+        let (rx, tx) = stream.split();
 
-    let reader = thread::Builder::new()
-        .name("cli-frontend".to_string())
-        .spawn(move || {
-            // all further prompts
-            prompt();
-            loop {
-                let mut buf = String::new();
-                match std::io::stdin().read_line(&mut buf) {
-                    Ok(0) => return,
-                    Ok(len) => {
-                        if let Some(events) = parse_cmd(buf, len) {
-                            for event in events.iter() {
-                                let json = serde_json::to_string(&event).unwrap();
-                                let bytes = json.as_bytes();
-                                let len = bytes.len().to_be_bytes();
-                                if let Err(e) = tx.write(&len) {
-                                    log::error!("error sending message: {e}");
-                                };
-                                if let Err(e) = tx.write(bytes) {
-                                    log::error!("error sending message: {e}");
-                                };
-                                if *event == FrontendRequest::Terminate() {
-                                    return;
-                                }
-                            }
-                            // prompt is printed after the server response is received
-                        } else {
-                            prompt();
-                        }
-                    }
-                    Err(e) => {
-                        if e.kind() != ErrorKind::UnexpectedEof {
-                            log::error!("error reading from stdin: {e}");
-                        }
-                        return;
-                    }
-                }
-            }
-        })?;
-
-    let _ = thread::Builder::new()
-        .name("cli-frontend-notify".to_string())
-        .spawn(move || {
-            loop {
-                // read len
-                let mut len = [0u8; 8];
-                match rx.read_exact(&mut len) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
-                    Err(e) => break log::error!("{e}"),
-                };
-                let len = usize::from_be_bytes(len);
-
-                // read payload
-                let mut buf: Vec<u8> = vec![0u8; len];
-                match rx.read_exact(&mut buf[..len]) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
-                    Err(e) => break log::error!("{e}"),
-                };
-
-                let notify: FrontendEvent = match serde_json::from_slice(&buf) {
-                    Ok(n) => n,
-                    Err(e) => break log::error!("{e}"),
-                };
-                match notify {
-                    FrontendEvent::Activated(handle, active) => {
-                        if active {
-                            log::info!("client {handle} activated");
-                        } else {
-                            log::info!("client {handle} deactivated");
-                        }
-                    }
-                    FrontendEvent::Created(handle, client) => {
-                        let port = client.port;
-                        let pos = client.pos;
-                        let hostname = client.hostname.as_deref().unwrap_or("");
-                        log::info!("new client ({handle}): {hostname}:{port} - {pos}");
-                    }
-                    FrontendEvent::Updated(handle, client) => {
-                        let port = client.port;
-                        let pos = client.pos;
-                        let hostname = client.hostname.as_deref().unwrap_or("");
-                        log::info!("client ({handle}) updated: {hostname}:{port} - {pos}");
-                    }
-                    FrontendEvent::Deleted(client) => {
-                        log::info!("client ({client}) deleted.");
-                    }
-                    FrontendEvent::Error(e) => {
-                        log::warn!("{e}");
-                    }
-                    FrontendEvent::Enumerate(clients) => {
-                        for (handle, client, active) in clients.into_iter() {
-                            log::info!(
-                                "client ({}) [{}]: active: {}, associated addresses: [{}]",
-                                handle,
-                                client.hostname.as_deref().unwrap_or(""),
-                                if active { "yes" } else { "no" },
-                                client
-                                    .ips
-                                    .into_iter()
-                                    .map(|a| a.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(", ")
-                            );
-                        }
-                    }
-                    FrontendEvent::PortChanged(port, msg) => match msg {
-                        Some(msg) => log::info!("could not change port: {msg}"),
-                        None => log::info!("port changed: {port}"),
-                    },
-                }
-                prompt();
-            }
-        })?;
-    match reader.join() {
-        Ok(_) => {}
-        Err(e) => {
-            let msg = match (e.downcast_ref::<&str>(), e.downcast_ref::<String>()) {
-                (Some(&s), _) => s,
-                (_, Some(s)) => s,
-                _ => "no panic info",
-            };
-            log::error!("reader thread paniced: {msg}");
-        }
-    }
+        let mut cli = Cli::new(rx, tx);
+        cli.run().await
+    }))?;
     Ok(())
 }
 
-fn prompt() {
+struct Cli<'a> {
+    clients: Vec<(ClientHandle, ClientConfig, ClientState)>,
+    rx: ReadHalf<'a>,
+    tx: WriteHalf<'a>,
+}
+
+impl<'a> Cli<'a> {
+    fn new(rx: ReadHalf<'a>, tx: WriteHalf<'a>) -> Cli<'a> {
+        Self {
+            clients: vec![],
+            rx,
+            tx,
+        }
+    }
+
+    async fn run(&mut self) -> Result<()> {
+        let stdin = tokio::io::stdin();
+        let stdin = BufReader::new(stdin);
+        let mut stdin = stdin.lines();
+
+        /* initial state sync */
+        let request = FrontendRequest::Enumerate();
+        self.send_request(request).await?;
+
+        self.clients = loop {
+            let event = self.await_event().await?;
+            if let FrontendEvent::Enumerate(clients) = event {
+                break clients;
+            }
+        };
+
+        loop {
+            prompt()?;
+            tokio::select! {
+                line = stdin.next_line() => {
+                    let Some(line) = line? else {
+                        break Ok(());
+                    };
+                    let cmd: Command = match line.parse() {
+                        Ok(cmd) => cmd,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            continue;
+                        }
+                    };
+                    self.execute(cmd).await?;
+                }
+                event = self.await_event() => {
+                    let event = event?;
+                    self.handle_event(event);
+                }
+            }
+        }
+    }
+
+    async fn execute(&mut self, cmd: Command) -> Result<()> {
+        match cmd {
+            Command::None => {}
+            Command::Connect(pos, host, port) => {
+                let request = FrontendRequest::Create;
+                self.send_request(request).await?;
+                let handle = loop {
+                    let event = self.await_event().await?;
+                    match event {
+                        FrontendEvent::Created(h, c, s) => {
+                            self.clients.push((h, c, s));
+                            break h;
+                        }
+                        _ => {
+                            self.handle_event(event);
+                            continue;
+                        }
+                    }
+                };
+                for request in [
+                    FrontendRequest::UpdateHostname(handle, Some(host.clone())),
+                    FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT)),
+                    FrontendRequest::UpdatePosition(handle, pos),
+                ] {
+                    self.send_request(request).await?;
+                    loop {
+                        let event = self.await_event().await?;
+                        self.handle_event(event.clone());
+                        if let FrontendEvent::Updated(_, _) = event {
+                            break;
+                        }
+                    }
+                }
+            }
+            Command::Disconnect(id) => {
+                self.send_request(FrontendRequest::Delete(id)).await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Deleted(_) = event {
+                        self.handle_event(event);
+                        break;
+                    }
+                }
+            }
+            Command::Activate(id) => {
+                self.send_request(FrontendRequest::Activate(id, true))
+                    .await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::StateChange(_, _) = event {
+                        self.handle_event(event);
+                        break;
+                    }
+                }
+            }
+            Command::Deactivate(id) => {
+                self.send_request(FrontendRequest::Activate(id, false))
+                    .await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::StateChange(_, _) = event {
+                        self.handle_event(event);
+                        break;
+                    }
+                }
+            }
+            Command::List => {
+                self.send_request(FrontendRequest::Enumerate()).await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Enumerate(_) = event {
+                        break;
+                    }
+                }
+            }
+            Command::SetHost(handle, host) => {
+                let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
+                self.send_request(request).await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Updated(_, _) = event {
+                        self.handle_event(event);
+                        break;
+                    }
+                }
+            }
+            Command::SetPort(handle, port) => {
+                let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
+                self.send_request(request).await?;
+                loop {
+                    let event = self.await_event().await?;
+                    self.handle_event(event.clone());
+                    if let FrontendEvent::Updated(_, _) = event {
+                        break;
+                    }
+                }
+            }
+            Command::Help => {
+                for cmd_type in [
+                    CommandType::List,
+                    CommandType::Connect,
+                    CommandType::Disconnect,
+                    CommandType::Activate,
+                    CommandType::Deactivate,
+                    CommandType::SetHost,
+                    CommandType::SetPort,
+                ] {
+                    eprintln!("{}", cmd_type.usage());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn find_mut(
+        &mut self,
+        handle: ClientHandle,
+    ) -> Option<&mut (ClientHandle, ClientConfig, ClientState)> {
+        self.clients.iter_mut().find(|(h, _, _)| *h == handle)
+    }
+
+    fn remove(
+        &mut self,
+        handle: ClientHandle,
+    ) -> Option<(ClientHandle, ClientConfig, ClientState)> {
+        let idx = self.clients.iter().position(|(h, _, _)| *h == handle);
+        idx.map(|i| self.clients.swap_remove(i))
+    }
+
+    fn handle_event(&mut self, event: FrontendEvent) {
+        match event {
+            FrontendEvent::Created(h, c, s) => {
+                eprint!("client added ({h}): ");
+                print_config(&c);
+                eprint!(" ");
+                print_state(&s);
+                eprintln!();
+                self.clients.push((h, c, s));
+            }
+            FrontendEvent::Updated(h, c) => {
+                if let Some((_, config, _)) = self.find_mut(h) {
+                    let old_host = config.hostname.clone().unwrap_or("\"\"".into());
+                    let new_host = c.hostname.clone().unwrap_or("\"\"".into());
+                    if old_host != new_host {
+                        eprintln!(
+                            "client {h}: hostname updated ({} -> {})",
+                            old_host, new_host
+                        );
+                    }
+                    if config.port != c.port {
+                        eprintln!("client {h} changed port: {} -> {}", config.port, c.port);
+                    }
+                    if config.fix_ips != c.fix_ips {
+                        eprintln!("client {h} ips updated: {:?}", c.fix_ips)
+                    }
+                    *config = c;
+                }
+            }
+            FrontendEvent::StateChange(h, s) => {
+                if let Some((_, _, state)) = self.find_mut(h) {
+                    if state.active ^ s.active {
+                        eprintln!(
+                            "client {h} {}",
+                            if s.active { "activated" } else { "deactivated" }
+                        );
+                    }
+                    *state = s;
+                }
+            }
+            FrontendEvent::Deleted(h) => {
+                if let Some((h, c, _)) = self.remove(h) {
+                    eprint!("client {h} removed (");
+                    print_config(&c);
+                    eprintln!(")");
+                }
+            }
+            FrontendEvent::PortChanged(p, e) => {
+                if let Some(e) = e {
+                    eprintln!("failed to change port: {e}");
+                } else {
+                    eprintln!("changed port to {p}");
+                }
+            }
+            FrontendEvent::Enumerate(clients) => {
+                self.clients = clients;
+                self.print_clients();
+            }
+            FrontendEvent::Error(e) => {
+                eprintln!("ERROR: {e}");
+            }
+        }
+    }
+
+    fn print_clients(&mut self) {
+        for (h, c, s) in self.clients.iter() {
+            eprint!("client {h}: ");
+            print_config(c);
+            eprint!(" ");
+            print_state(s);
+            eprintln!();
+        }
+    }
+
+    async fn send_request(&mut self, request: FrontendRequest) -> io::Result<()> {
+        let json = serde_json::to_string(&request).unwrap();
+        let bytes = json.as_bytes();
+        let len = bytes.len();
+        self.tx.write_u64(len as u64).await?;
+        self.tx.write_all(bytes).await?;
+        Ok(())
+    }
+
+    async fn await_event(&mut self) -> Result<FrontendEvent> {
+        let len = self.rx.read_u64().await?;
+        let mut buf = vec![0u8; len as usize];
+        self.rx.read_exact(&mut buf).await?;
+        let event: FrontendEvent = serde_json::from_slice(&buf)?;
+        Ok(event)
+    }
+}
+
+fn prompt() -> io::Result<()> {
     eprint!("lan-mouse > ");
-    std::io::stderr().flush().unwrap();
+    std::io::stderr().flush()?;
+    Ok(())
 }
 
-fn parse_cmd(s: String, len: usize) -> Option<Vec<FrontendRequest>> {
-    if len == 0 {
-        return Some(vec![FrontendRequest::Terminate()]);
-    }
-    let mut l = s.split_whitespace();
-    let cmd = l.next()?;
-    let res = match cmd {
-        "help" => {
-            log::info!("list                                                 list clients");
-            log::info!("connect <host> left|right|top|bottom [port]          add a new client");
-            log::info!("disconnect <client>                                  remove a client");
-            log::info!("activate <client>                                    activate a client");
-            log::info!("deactivate <client>                                  deactivate a client");
-            log::info!("exit                                                 exit lan-mouse");
-            log::info!("setport <port>                                       change port");
-            None
-        }
-        "exit" => return Some(vec![FrontendRequest::Terminate()]),
-        "list" => return Some(vec![FrontendRequest::Enumerate()]),
-        "connect" => Some(parse_connect(l)),
-        "disconnect" => Some(parse_disconnect(l)),
-        "activate" => Some(parse_activate(l)),
-        "deactivate" => Some(parse_deactivate(l)),
-        "setport" => Some(parse_port(l)),
-        _ => {
-            log::error!("unknown command: {s}");
-            None
-        }
-    };
-    match res {
-        Some(Ok(e)) => Some(e),
-        Some(Err(e)) => {
-            log::warn!("{e}");
-            None
-        }
-        _ => None,
-    }
+fn print_config(c: &ClientConfig) {
+    eprint!(
+        "{}:{} ({}), ips: {:?}",
+        c.hostname.clone().unwrap_or("(no hostname)".into()),
+        c.port,
+        c.pos,
+        c.fix_ips
+    );
 }
 
-fn parse_connect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
-    let usage = "usage: connect <host> left|right|top|bottom [port]";
-    let host = l.next().context(usage)?.to_owned();
-    let pos = match l.next().context(usage)? {
-        "right" => Position::Right,
-        "top" => Position::Top,
-        "bottom" => Position::Bottom,
-        _ => Position::Left,
-    };
-    let port = if let Some(p) = l.next() {
-        p.parse()?
-    } else {
-        DEFAULT_PORT
-    };
-    Ok(vec![
-        FrontendRequest::Create(Some(host), port, pos),
-        FrontendRequest::Enumerate(),
-    ])
-}
-
-fn parse_disconnect(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
-    let client = l.next().context("usage: disconnect <client_id>")?.parse()?;
-    Ok(vec![
-        FrontendRequest::Delete(client),
-        FrontendRequest::Enumerate(),
-    ])
-}
-
-fn parse_activate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
-    let client = l.next().context("usage: activate <client_id>")?.parse()?;
-    Ok(vec![
-        FrontendRequest::Activate(client, true),
-        FrontendRequest::Enumerate(),
-    ])
-}
-
-fn parse_deactivate(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
-    let client = l.next().context("usage: deactivate <client_id>")?.parse()?;
-    Ok(vec![
-        FrontendRequest::Activate(client, false),
-        FrontendRequest::Enumerate(),
-    ])
-}
-
-fn parse_port(mut l: SplitWhitespace) -> Result<Vec<FrontendRequest>> {
-    let port = l.next().context("usage: setport <port>")?.parse()?;
-    Ok(vec![FrontendRequest::ChangePort(port)])
+fn print_state(s: &ClientState) {
+    eprint!("active: {}, dns: {:?}", s.active, s.ips);
 }

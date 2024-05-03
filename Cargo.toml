@@ -22,7 +22,7 @@ anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.11.3"
 serde_json = "1.0.107"
-tokio = {version = "1.32.0", features = ["io-util", "macros", "net", "rt", "sync", "signal"] }
+tokio = {version = "1.32.0", features = ["io-util", "io-std", "macros", "net", "rt", "sync", "signal"] }
 async-trait = "0.1.73"
 futures-core = "0.3.28"
 futures = "0.3.28"

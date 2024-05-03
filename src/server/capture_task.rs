@@ -108,7 +108,7 @@ async fn handle_capture_event(
         // get client state for handle
         let mut client_manager = server.client_manager.borrow_mut();
         let client_state = match client_manager.get_mut(handle) {
-            Some(state) => state,
+            Some((_, s)) => s,
             None => {
                 // should not happen
                 log::warn!("unknown client!");

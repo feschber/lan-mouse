@@ -1,11 +1,15 @@
 use std::{
     collections::HashSet,
+    error::Error,
     fmt::Display,
     net::{IpAddr, SocketAddr},
+    str::FromStr,
 };
 
 use serde::{Deserialize, Serialize};
 use slab::Slab;
+
+use crate::config::DEFAULT_PORT;
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
@@ -18,6 +22,33 @@ pub enum Position {
 impl Default for Position {
     fn default() -> Self {
         Self::Left
+    }
+}
+
+#[derive(Debug)]
+pub struct PositionParseError {
+    string: String,
+}
+
+impl Display for PositionParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not a valid position: {}", self.string)
+    }
+}
+
+impl Error for PositionParseError {}
+
+impl FromStr for Position {
+    type Err = PositionParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "left" => Ok(Self::Left),
+            "right" => Ok(Self::Right),
+            "top" => Ok(Self::Top),
+            "bottom" => Ok(Self::Bottom),
+            _ => Err(PositionParseError { string: s.into() }),
+        }
     }
 }
 
@@ -62,19 +93,26 @@ impl TryFrom<&str> for Position {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Client {
+pub struct ClientConfig {
     /// hostname of this client
     pub hostname: Option<String>,
     /// fix ips, determined by the user
     pub fix_ips: Vec<IpAddr>,
-    /// all ip addresses associated with a particular client
-    /// e.g. Laptops usually have at least an ethernet and a wifi port
-    /// which have different ip addresses
-    pub ips: HashSet<IpAddr>,
     /// both active_addr and addrs can be None / empty so port needs to be stored seperately
     pub port: u16,
     /// position of a client on screen
     pub pos: Position,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_PORT,
+            hostname: Default::default(),
+            fix_ips: Default::default(),
+            pos: Default::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,10 +123,8 @@ pub enum ClientEvent {
 
 pub type ClientHandle = u64;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientState {
-    /// information about the client
-    pub client: Client,
     /// events should be sent to and received from the client
     pub active: bool,
     /// `active` address of the client, used to send data to.
@@ -97,12 +133,16 @@ pub struct ClientState {
     pub active_addr: Option<SocketAddr>,
     /// tracks whether or not the client is responding to pings
     pub alive: bool,
+    /// all ip addresses associated with a particular client
+    /// e.g. Laptops usually have at least an ethernet and a wifi port
+    /// which have different ip addresses
+    pub ips: HashSet<IpAddr>,
     /// keys currently pressed by this client
     pub pressed_keys: HashSet<u32>,
 }
 
 pub struct ClientManager {
-    clients: Slab<ClientState>,
+    clients: Slab<(ClientConfig, ClientState)>,
 }
 
 impl Default for ClientManager {
@@ -118,32 +158,10 @@ impl ClientManager {
     }
 
     /// add a new client to this manager
-    pub fn add_client(
-        &mut self,
-        hostname: Option<String>,
-        ips: HashSet<IpAddr>,
-        port: u16,
-        pos: Position,
-        active: bool,
-    ) -> ClientHandle {
-        // store fix ip addresses
-        let fix_ips = ips.iter().cloned().collect();
-
-        let client_state = ClientState {
-            client: Client {
-                hostname,
-                fix_ips,
-                ips,
-                port,
-                pos,
-            },
-            active,
-            active_addr: None,
-            alive: false,
-            pressed_keys: HashSet::new(),
-        };
-
-        self.clients.insert(client_state) as ClientHandle
+    pub fn add_client(&mut self) -> ClientHandle {
+        let client_config = Default::default();
+        let client_state = Default::default();
+        self.clients.insert((client_config, client_state)) as ClientHandle
     }
 
     /// find a client by its address
@@ -152,8 +170,8 @@ impl ClientManager {
         // time this is likely faster than using a HashMap
         self.clients
             .iter()
-            .find_map(|(k, c)| {
-                if c.active && c.client.ips.contains(&addr.ip()) {
+            .find_map(|(k, (_, s))| {
+                if s.active && s.ips.contains(&addr.ip()) {
                     Some(k)
                 } else {
                     None
@@ -165,8 +183,8 @@ impl ClientManager {
     pub fn find_client(&self, pos: Position) -> Option<ClientHandle> {
         self.clients
             .iter()
-            .find_map(|(k, c)| {
-                if c.active && c.client.pos == pos {
+            .find_map(|(k, (c, s))| {
+                if s.active && c.pos == pos {
                     Some(k)
                 } else {
                     None
@@ -176,28 +194,30 @@ impl ClientManager {
     }
 
     /// remove a client from the list
-    pub fn remove_client(&mut self, client: ClientHandle) -> Option<ClientState> {
+    pub fn remove_client(&mut self, client: ClientHandle) -> Option<(ClientConfig, ClientState)> {
         // remove id from occupied ids
         self.clients.try_remove(client as usize)
     }
 
     // returns an immutable reference to the client state corresponding to `client`
-    pub fn get(&self, client: ClientHandle) -> Option<&ClientState> {
-        self.clients.get(client as usize)
+    pub fn get(&self, handle: ClientHandle) -> Option<&(ClientConfig, ClientState)> {
+        self.clients.get(handle as usize)
     }
 
     /// returns a mutable reference to the client state corresponding to `client`
-    pub fn get_mut(&mut self, client: ClientHandle) -> Option<&mut ClientState> {
-        self.clients.get_mut(client as usize)
+    pub fn get_mut(&mut self, handle: ClientHandle) -> Option<&mut (ClientConfig, ClientState)> {
+        self.clients.get_mut(handle as usize)
     }
 
-    pub fn get_client_states(&self) -> impl Iterator<Item = (ClientHandle, &ClientState)> {
+    pub fn get_client_states(
+        &self,
+    ) -> impl Iterator<Item = (ClientHandle, &(ClientConfig, ClientState))> {
         self.clients.iter().map(|(k, v)| (k as ClientHandle, v))
     }
 
     pub fn get_client_states_mut(
         &mut self,
-    ) -> impl Iterator<Item = (ClientHandle, &mut ClientState)> {
+    ) -> impl Iterator<Item = (ClientHandle, &mut (ClientConfig, ClientState))> {
         self.clients.iter_mut().map(|(k, v)| (k as ClientHandle, v))
     }
 }
