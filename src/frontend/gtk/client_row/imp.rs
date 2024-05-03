@@ -25,6 +25,8 @@ pub struct ClientRow {
     pub delete_row: TemplateChild<ActionRow>,
     #[template_child]
     pub delete_button: TemplateChild<gtk::Button>,
+    #[template_child]
+    pub dns_loading_indicator: TemplateChild<gtk::Spinner>,
     pub bindings: RefCell<Vec<Binding>>,
 }
 
@@ -60,6 +62,7 @@ impl ObjectImpl for ClientRow {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
         SIGNALS.get_or_init(|| {
             vec![
+                Signal::builder("request-dns").build(),
                 Signal::builder("request-update")
                     .param_types([bool::static_type()])
                     .build(),
@@ -79,8 +82,8 @@ impl ClientRow {
     }
 
     #[template_callback]
-    fn handle_request_dns(&self) -> bool {
-        false
+    fn handle_request_dns(&self, _: Button) {
+        self.obj().emit_by_name::<()>("request-dns", &[]);
     }
 
     #[template_callback]

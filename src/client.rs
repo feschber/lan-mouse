@@ -139,6 +139,8 @@ pub struct ClientState {
     pub ips: HashSet<IpAddr>,
     /// keys currently pressed by this client
     pub pressed_keys: HashSet<u32>,
+    /// dns resolving in progress
+    pub resolving: bool,
 }
 
 pub struct ClientManager {

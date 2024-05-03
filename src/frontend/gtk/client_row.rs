@@ -109,6 +109,27 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        let resolve_binding = client_object
+            .bind_property(
+                "resolving",
+                &self.imp().dns_loading_indicator.get(),
+                "spinning",
+            )
+            .sync_create()
+            .build();
+
+        let ip_binding = client_object
+            .bind_property("ips", &self.imp().dns_button.get(), "tooltip-text")
+            .transform_to(|_, ips: Vec<String>| {
+                if ips.is_empty() {
+                    Some("no ip addresses associated with this client".into())
+                } else {
+                    Some(ips.join("\n"))
+                }
+            })
+            .sync_create()
+            .build();
+
         bindings.push(active_binding);
         bindings.push(switch_position_binding);
         bindings.push(hostname_binding);
@@ -116,6 +137,8 @@ impl ClientRow {
         bindings.push(port_binding);
         bindings.push(subtitle_binding);
         bindings.push(position_binding);
+        bindings.push(resolve_binding);
+        bindings.push(ip_binding);
     }
 
     pub fn unbind(&self) {

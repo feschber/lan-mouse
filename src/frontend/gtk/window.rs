@@ -14,7 +14,7 @@ use glib::{clone, Object};
 use gtk::{
     gio,
     glib::{self, closure_local},
-    NoSelection,
+    ListBox, NoSelection,
 };
 
 use crate::{
@@ -67,11 +67,22 @@ impl Window {
                         return;
                     };
                     let client = client.downcast_ref::<ClientObject>().unwrap();
-                    window.request_client_update(client, active);
+                    window.request_client_update(client);
+                    window.request_client_activate(client, active)
                 }));
                 row.connect_closure("request-delete", false, closure_local!(@strong window => move |row: ClientRow| {
                     let index = row.index() as u32;
                     window.request_client_delete(index);
+                }));
+                row.connect_closure("request-dns", false, closure_local!(@strong window => move
+                |row: ClientRow| {
+                    let index = row.index() as u32;
+                    let Some(client) = window.clients().item(index) else {
+                        return;
+                    };
+                    let client = client.downcast_ref::<ClientObject>().unwrap();
+                    window.request_client_update(client);
+                    window.request_dns(index);
                 }));
                 row.upcast()
             })
@@ -100,9 +111,10 @@ impl Window {
     }
 
     pub fn new_client(&self, handle: ClientHandle, client: ClientConfig, state: ClientState) {
-        let client = ClientObject::new(handle, client, state);
+        let client = ClientObject::new(handle, client, state.clone());
         self.clients().append(&client);
         self.set_placeholder_visible(false);
+        self.update_dns_state(handle, !state.ips.is_empty());
     }
 
     pub fn client_idx(&self, handle: ClientHandle) -> Option<usize> {
@@ -162,6 +174,42 @@ impl Window {
             client_object.set_active(state.active);
             log::debug!("set active to {}", state.active);
         }
+
+        if state.resolving != data.resolving {
+            client_object.set_resolving(state.resolving);
+            log::debug!("resolving {}: {}", data.handle, state.active);
+        }
+
+        self.update_dns_state(handle, !state.ips.is_empty());
+        let ips = state
+            .ips
+            .into_iter()
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>();
+        client_object.set_ips(ips);
+    }
+
+    pub fn update_dns_state(&self, handle: ClientHandle, resolved: bool) {
+        let Some(idx) = self.client_idx(handle) else {
+            log::warn!("could not find client with handle {}", handle);
+            return;
+        };
+        let list_box: ListBox = self.imp().client_list.get();
+        let row = list_box.row_at_index(idx as i32).unwrap();
+        let client_row: ClientRow = row.downcast().expect("expected ClientRow Object");
+        if resolved {
+            client_row.imp().dns_button.set_css_classes(&["success"])
+        } else {
+            client_row.imp().dns_button.set_css_classes(&["warning"])
+        }
+    }
+
+    pub fn request_dns(&self, idx: u32) {
+        let client_object = self.clients().item(idx).unwrap();
+        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
+        let data = client_object.get_data();
+        let event = FrontendRequest::ResolveDns(data.handle);
+        self.request(event);
     }
 
     pub fn request_client_create(&self) {
@@ -179,7 +227,7 @@ impl Window {
         }
     }
 
-    pub fn request_client_update(&self, client: &ClientObject, active: bool) {
+    pub fn request_client_update(&self, client: &ClientObject) {
         let handle = client.handle();
         let data = client.get_data();
         let position = Position::try_from(data.position.as_str()).expect("invalid position");
@@ -190,11 +238,18 @@ impl Window {
             FrontendRequest::UpdateHostname(handle, hostname),
             FrontendRequest::UpdatePosition(handle, position),
             FrontendRequest::UpdatePort(handle, port),
-            FrontendRequest::Activate(handle, active),
         ] {
             log::debug!("requesting: {event:?}");
             self.request(event);
         }
+    }
+
+    pub fn request_client_activate(&self, client: &ClientObject, active: bool) {
+        let handle = client.handle();
+
+        let event = FrontendRequest::Activate(handle, active);
+        log::debug!("requesting: {event:?}");
+        self.request(event);
     }
 
     pub fn request_client_delete(&self, idx: u32) {
