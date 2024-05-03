@@ -157,8 +157,8 @@ impl InputEmulation for LibeiEmulation {
                     }
                     if let Some((d, s)) = self.scroll.as_mut() {
                         match axis {
-                            0 => s.scroll(0., value as f32),
-                            _ => s.scroll(value as f32, 0.),
+                            0 => s.scroll_discrete(0, value as i32),
+                            _ => s.scroll_discrete(value as i32, 0),
                         }
                         d.frame(self.serial, now);
                     }
