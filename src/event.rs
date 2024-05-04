@@ -29,6 +29,10 @@ pub enum PointerEvent {
         axis: u8,
         value: f64,
     },
+    AxisDiscrete120 {
+        axis: u8,
+        value: i32,
+    },
     Frame {},
 }
 
@@ -104,6 +108,9 @@ impl Display for PointerEvent {
                 axis,
                 value,
             } => write!(f, "scroll({axis}, {value})"),
+            PointerEvent::AxisDiscrete120 { axis, value } => {
+                write!(f, "scroll-120 ({axis}, {value})")
+            }
             PointerEvent::Frame {} => write!(f, "frame()"),
         }
     }
@@ -171,6 +178,7 @@ impl PointerEvent {
             Self::Motion { .. } => PointerEventType::Motion,
             Self::Button { .. } => PointerEventType::Button,
             Self::Axis { .. } => PointerEventType::Axis,
+            Self::AxisDiscrete120 { .. } => PointerEventType::AxisDiscrete120,
             Self::Frame { .. } => PointerEventType::Frame,
         }
     }
@@ -189,6 +197,7 @@ enum PointerEventType {
     Motion,
     Button,
     Axis,
+    AxisDiscrete120,
     Frame,
 }
 enum KeyboardEventType {
@@ -213,6 +222,7 @@ impl TryFrom<u8> for PointerEventType {
             x if x == Self::Motion as u8 => Ok(Self::Motion),
             x if x == Self::Button as u8 => Ok(Self::Button),
             x if x == Self::Axis as u8 => Ok(Self::Axis),
+            x if x == Self::AxisDiscrete120 as u8 => Ok(Self::AxisDiscrete120),
             x if x == Self::Frame as u8 => Ok(Self::Frame),
             _ => Err(anyhow!(ProtocolError {
                 msg: format!("invalid pointer event type {}", value),
@@ -312,6 +322,11 @@ impl From<&PointerEvent> for Vec<u8> {
                 let axis = axis.to_be_bytes();
                 let value = value.to_be_bytes();
                 [&time[..], &axis[..], &value[..]].concat()
+            }
+            PointerEvent::AxisDiscrete120 { axis, value } => {
+                let axis = axis.to_be_bytes();
+                let value = value.to_be_bytes();
+                [&axis[..], &value[..]].concat()
             }
             PointerEvent::Frame {} => {
                 vec![]
@@ -420,6 +435,25 @@ impl TryFrom<Vec<u8>> for PointerEvent {
                             }
                         };
                         Ok(Self::Axis { time, axis, value })
+                    }
+                    PointerEventType::AxisDiscrete120 => {
+                        let axis = match data.get(2) {
+                            Some(d) => *d,
+                            None => {
+                                return Err(anyhow!(ProtocolError {
+                                    msg: "Expected 1 Byte at index 2".into(),
+                                }));
+                            }
+                        };
+                        let value = match data.get(3..7) {
+                            Some(d) => i32::from_be_bytes(d.try_into()?),
+                            None => {
+                                return Err(anyhow!(ProtocolError {
+                                    msg: "Expected 4 Bytes at index 3".into(),
+                                }));
+                            }
+                        };
+                        Ok(Self::AxisDiscrete120 { axis, value })
                     }
                     PointerEventType::Frame => Ok(Self::Frame {}),
                 }

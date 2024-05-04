@@ -94,8 +94,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                             log::warn!("{e}");
                         }
                     }
-                    PointerEvent::Axis {
-                        time: _,
+                    PointerEvent::AxisDiscrete120 {
                         axis,
                         value,
                     } => {
@@ -103,10 +102,26 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                             0 => Axis::Vertical,
                             _ => Axis::Horizontal,
                         };
-                        // TODO smooth scrolling
                         if let Err(e) = self
                             .proxy
-                            .notify_pointer_axis_discrete(&self.session, axis, value as i32)
+                            .notify_pointer_axis_discrete(&self.session, axis, value)
+                            .await
+                        {
+                            log::warn!("{e}");
+                        }
+                    }
+                    PointerEvent::Axis { time: _, axis, value } => {
+                        let axis = match axis {
+                            0 => Axis::Vertical,
+                            _ => Axis::Horizontal,
+                        };
+                        let (dx, dy) = match axis {
+                            Axis::Vertical => (0., value),
+                            Axis::Horizontal => (value, 0.),
+                        };
+                        if let Err(e) = self
+                            .proxy
+                            .notify_pointer_axis(&self.session, dx, dy, true)
                             .await
                         {
                             log::warn!("{e}");

@@ -59,7 +59,8 @@ impl InputEmulation for WindowsEmulation {
                     time: _,
                     axis,
                     value,
-                } => scroll(axis, value),
+                } => scroll(axis, value as i32),
+                PointerEvent::AxisDiscrete120 { axis, value } => scroll(axis, value),
                 PointerEvent::Frame {} => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
@@ -182,7 +183,7 @@ fn mouse_button(button: u32, state: u32) {
     send_mouse_input(mi);
 }
 
-fn scroll(axis: u8, value: f64) {
+fn scroll(axis: u8, value: i32) {
     let event_type = match axis {
         0 => MOUSEEVENTF_WHEEL,
         1 => MOUSEEVENTF_HWHEEL,
@@ -191,7 +192,7 @@ fn scroll(axis: u8, value: f64) {
     let mi = MOUSEINPUT {
         dx: 0,
         dy: 0,
-        mouseData: -value as i32 as u32,
+        mouseData: -value as u32,
         dwFlags: event_type,
         time: 0,
         dwExtraInfo: 0,
