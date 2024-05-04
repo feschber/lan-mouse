@@ -220,7 +220,7 @@ impl InputEmulation for MacOSEmulation {
                     axis,
                     value,
                 } => {
-                    let value = value as i32 / 10; // FIXME: high precision scroll events
+                    let value = value as i32;
                     let (count, wheel1, wheel2, wheel3) = match axis {
                         0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                         1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -231,7 +231,32 @@ impl InputEmulation for MacOSEmulation {
                     };
                     let event = match CGEvent::new_scroll_event(
                         self.event_source.clone(),
-                        ScrollEventUnit::LINE,
+                        ScrollEventUnit::PIXEL,
+                        count,
+                        wheel1,
+                        wheel2,
+                        wheel3,
+                    ) {
+                        Ok(e) => e,
+                        Err(()) => {
+                            log::warn!("scroll event creation failed!");
+                            return;
+                        }
+                    };
+                    event.post(CGEventTapLocation::HID);
+                }
+                PointerEvent::AxisDiscrete120 { axis, value } => {
+                    let (count, wheel1, wheel2, wheel3) = match axis {
+                        0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                        1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
+                        _ => {
+                            log::warn!("invalid scroll event: {axis}, {value}");
+                            return;
+                        }
+                    };
+                    let event = match CGEvent::new_scroll_event(
+                        self.event_source.clone(),
+                        ScrollEventUnit::PIXEL,
                         count,
                         wheel1,
                         wheel2,

@@ -125,6 +125,9 @@ impl InputEmulation for X11Emulation {
                 } => {
                     self.emulate_scroll(axis, value);
                 }
+                PointerEvent::AxisDiscrete120 { axis, value } => {
+                    self.emulate_scroll(axis, value as f64);
+                }
                 PointerEvent::Frame {} => {}
             },
             Event::Keyboard(KeyboardEvent::Key {
