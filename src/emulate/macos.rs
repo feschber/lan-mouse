@@ -245,10 +245,7 @@ impl InputEmulation for MacOSEmulation {
                     };
                     event.post(CGEventTapLocation::HID);
                 }
-                PointerEvent::AxisDiscrete120 {
-                    axis,
-                    value,
-                } => {
+                PointerEvent::AxisDiscrete120 { axis, value } => {
                     let (count, wheel1, wheel2, wheel3) = match axis {
                         0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                         1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
