@@ -466,15 +466,38 @@ async fn handle_ei_event(
                     .unwrap();
             }
         }
-        EiEvent::ScrollDelta(_) => {}
+        EiEvent::ScrollDelta(delta) => {
+            if let Some(handle) = current_client {
+                let mut events = vec![];
+                if delta.dy != 0. {
+                    events.push(PointerEvent::Axis {
+                        time: 0,
+                        axis: 0,
+                        value: delta.dy as f64,
+                    });
+                }
+                if delta.dx != 0. {
+                    events.push(PointerEvent::Axis {
+                        time: 0,
+                        axis: 1,
+                        value: delta.dx as f64,
+                    });
+                }
+                for event in events {
+                    event_tx
+                        .send((handle, Event::Pointer(event)))
+                        .await
+                        .unwrap();
+                }
+            }
+        }
         EiEvent::ScrollStop(_) => {}
         EiEvent::ScrollCancel(_) => {}
         EiEvent::ScrollDiscrete(scroll) => {
             if scroll.discrete_dy != 0 {
-                let event = PointerEvent::Axis {
-                    time: 0,
+                let event = PointerEvent::AxisDiscrete120 {
                     axis: 0,
-                    value: scroll.discrete_dy as f64,
+                    value: scroll.discrete_dy,
                 };
                 if let Some(current_client) = current_client {
                     event_tx
@@ -484,10 +507,9 @@ async fn handle_ei_event(
                 }
             }
             if scroll.discrete_dx != 0 {
-                let event = PointerEvent::Axis {
-                    time: 0,
+                let event = PointerEvent::AxisDiscrete120 {
                     axis: 1,
-                    value: scroll.discrete_dx as f64,
+                    value: scroll.discrete_dx,
                 };
                 if let Some(current_client) = current_client {
                     event_tx
