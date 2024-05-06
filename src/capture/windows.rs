@@ -14,7 +14,7 @@ use std::task::ready;
 use std::{io, pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
     DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
@@ -43,6 +43,7 @@ use crate::{
     event::Event,
     scancode,
 };
+use crate::display_util::{DirectedLine, Display, Point};
 
 pub struct WindowsInputCapture {
     event_rx: Receiver<(ClientHandle, Event)>,
@@ -93,7 +94,7 @@ unsafe fn get_event_tid() -> Option<u32> {
     }
 }
 
-static mut ENTRY_POINT: (i32, i32) = (0, 0);
+static mut ENTRY_POINT: Point<i32> = Point { x: 0, y: 0 };
 
 fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
     let mouse_low_level: MSLLHOOKSTRUCT =
@@ -130,13 +131,12 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
             state: 0,
         }),
         WPARAM(p) if p == WM_MOUSEMOVE as usize => unsafe {
-            let (x, y) = (mouse_low_level.pt.x, mouse_low_level.pt.y);
-            let (ex, ey) = ENTRY_POINT;
-            let (dx, dy) = (x - ex, y - ey);
+            let current = Point { x: mouse_low_level.pt.x, y: mouse_low_level.pt.y };
+            let diff = current - ENTRY_POINT;
             Some(PointerEvent::Motion {
                 time: 0,
-                relative_x: dx as f64,
-                relative_y: dy as f64,
+                relative_x: diff.x as f64,
+                relative_y: diff.y as f64,
             })
         },
         WPARAM(p) if p == WM_MOUSEWHEEL as usize => Some(PointerEvent::AxisDiscrete120 {
@@ -210,31 +210,6 @@ unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> 
     }
 }
 
-///
-/// clamp point to display bounds
-///
-/// # Arguments
-///
-/// * `prev_point`: coordinates, the cursor was before entering, within bounds of a display
-/// * `entry_point`: point to clamp
-///
-/// returns: (i32, i32), the corrected entry point
-///
-fn clamp_to_display_bounds(prev_point: (i32, i32), point: (i32, i32)) -> (i32, i32) {
-    /* find display where movement came from */
-    let display_regions = unsafe { get_display_regions() };
-    let display = display_regions
-        .iter()
-        .find(|&d| is_within_dp_region(prev_point, d))
-        .unwrap();
-
-    /* clamp to bounds (inclusive) */
-    let (x, y) = point;
-    let (min_x, max_x) = (display.left, display.right - 1);
-    let (min_y, max_y) = (display.top, display.bottom - 1);
-    (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
-}
-
 unsafe fn send_blocking(event: Event) {
     if let Some(active) = ACTIVE_CLIENT {
         block_on(async move {
@@ -249,8 +224,9 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     }
     let mouse_low_level: MSLLHOOKSTRUCT =
         unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
-    static mut PREV_POS: Option<(i32, i32)> = None;
-    let curr_pos = (mouse_low_level.pt.x, mouse_low_level.pt.y);
+    static mut PREV_POS: Option<Point<i32>> = None;
+    let curr_pos = Point { x: mouse_low_level.pt.x, y: mouse_low_level.pt.y};
+    log::warn!("POSITION: {curr_pos:?} - display: {:?}", curr_pos.display_in_bounds(get_display_regions()));
     let prev_pos = PREV_POS.unwrap_or(curr_pos);
     PREV_POS.replace(curr_pos);
 
@@ -263,7 +239,8 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     }
 
     /* check if a client was activated */
-    let Some(pos) = entered_barrier(prev_pos, curr_pos, get_display_regions()) else {
+    let line = DirectedLine { start: prev_pos, end: curr_pos };
+    let Some((display, pos)) = line.crossed_display_bounds(get_display_regions()) else {
         return ret;
     };
 
@@ -274,7 +251,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* update active client and entry point */
     ACTIVE_CLIENT.replace(*client);
-    ENTRY_POINT = clamp_to_display_bounds(prev_pos, curr_pos);
+    ENTRY_POINT = curr_pos.clamp_to_display(&display);
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
@@ -347,7 +324,7 @@ unsafe extern "system" fn window_proc(
     LRESULT(1)
 }
 
-fn enumerate_displays() -> Vec<RECT> {
+fn enumerate_displays() -> Vec<Display<i32>> {
     unsafe {
         let mut display_rects = vec![];
         let mut devices = vec![];
@@ -379,11 +356,11 @@ fn enumerate_displays() -> Vec<RECT> {
             let (x, y) = (pos.x, pos.y);
             let (width, height) = (dev_mode.dmPelsWidth, dev_mode.dmPelsHeight);
 
-            display_rects.push(RECT {
+            display_rects.push(Display {
                 left: x,
-                right: x + width as i32,
+                right: x + width as i32 - 1,
                 top: y,
-                bottom: y + height as i32,
+                bottom: y + height as i32 - 1,
             });
         }
         display_rects
@@ -392,81 +369,14 @@ fn enumerate_displays() -> Vec<RECT> {
 
 static mut DISPLAY_RESOLUTION_CHANGED: bool = true;
 
-unsafe fn get_display_regions() -> &'static Vec<RECT> {
-    static mut DISPLAYS: Vec<RECT> = vec![];
+unsafe fn get_display_regions() -> &'static Vec<Display<i32>> {
+    static mut DISPLAYS: Vec<Display<i32>> = vec![];
     if DISPLAY_RESOLUTION_CHANGED {
         DISPLAYS = enumerate_displays();
         DISPLAY_RESOLUTION_CHANGED = false;
         log::debug!("displays: {DISPLAYS:?}");
     }
     &*addr_of!(DISPLAYS)
-}
-
-fn is_within_dp_region(point: (i32, i32), display: &RECT) -> bool {
-    [
-        Position::Left,
-        Position::Right,
-        Position::Top,
-        Position::Bottom,
-    ]
-    .iter()
-    .all(|&pos| is_within_dp_boundary(point, display, pos))
-}
-fn is_within_dp_boundary(point: (i32, i32), display: &RECT, pos: Position) -> bool {
-    let (x, y) = point;
-    match pos {
-        Position::Left => display.left <= x,
-        Position::Right => display.right > x,
-        Position::Top => display.top <= y,
-        Position::Bottom => display.bottom > y,
-    }
-}
-
-/// returns whether the given position is within the display bounds with respect to the given
-/// barrier position
-///
-/// # Arguments
-///
-/// * `x`:
-/// * `y`:
-/// * `displays`:
-/// * `pos`:
-///
-/// returns: bool
-///
-fn in_bounds(point: (i32, i32), displays: &[RECT], pos: Position) -> bool {
-    displays
-        .iter()
-        .any(|d| is_within_dp_boundary(point, d, pos))
-}
-
-fn in_display_region(point: (i32, i32), displays: &[RECT]) -> bool {
-    displays.iter().any(|d| is_within_dp_region(point, d))
-}
-
-fn moved_across_boundary(
-    prev_pos: (i32, i32),
-    curr_pos: (i32, i32),
-    displays: &[RECT],
-    pos: Position,
-) -> bool {
-    /* was within bounds, but is not anymore */
-    in_display_region(prev_pos, displays) && !in_bounds(curr_pos, displays, pos)
-}
-
-fn entered_barrier(
-    prev_pos: (i32, i32),
-    curr_pos: (i32, i32),
-    displays: &[RECT],
-) -> Option<Position> {
-    [
-        Position::Left,
-        Position::Right,
-        Position::Top,
-        Position::Bottom,
-    ]
-    .into_iter()
-    .find(|&pos| moved_across_boundary(prev_pos, curr_pos, displays, pos))
 }
 
 fn get_msg() -> Option<MSG> {

@@ -11,3 +11,4 @@ pub mod capture_test;
 pub mod emulation_test;
 pub mod frontend;
 pub mod scancode;
+pub mod display_util;
