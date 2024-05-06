@@ -13,23 +13,23 @@ use std::sync::mpsc;
 use std::task::ready;
 use std::{io, pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use windows::core::w;
-use windows::Win32::Foundation::{
-    BOOL, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, TRUE, WPARAM,
-};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+    EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
+    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW,
-    RegisterClassW, SetWindowsHookExW, TranslateMessage, HHOOK, HMENU, HOOKPROC, KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
-    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
+    RegisterClassW, SetWindowsHookExW, TranslateMessage, EDD_GET_DEVICE_INTERFACE_NAME, HHOOK,
+    HMENU, HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
+    WNDPROC,
 };
 
 use crate::client::Position;
@@ -347,37 +347,44 @@ unsafe extern "system" fn window_proc(
     LRESULT(1)
 }
 
-unsafe extern "system" fn monitor_enum_proc(
-    hmon: HMONITOR,
-    _hdc: HDC,
-    _lprect: *mut RECT,
-    lparam: LPARAM,
-) -> BOOL {
-    let monitors = lparam.0 as *mut Vec<HMONITOR>;
-    (*monitors).push(hmon);
-    TRUE // continue enumeration
-}
-
 fn enumerate_displays() -> Vec<RECT> {
     unsafe {
         let mut display_rects = vec![];
-        let mut monitors: Vec<HMONITOR> = Vec::new();
-        let ret = EnumDisplayMonitors(
-            HDC::default(),
-            None,
-            Some(monitor_enum_proc),
-            LPARAM(&mut monitors as *mut Vec<HMONITOR> as isize),
-        );
-        if ret != TRUE {
-            panic!("could not enumerate displays");
-        }
-        for monitor in monitors {
-            let mut monitor_info: MONITORINFO = std::mem::zeroed();
-            monitor_info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            if GetMonitorInfoW(monitor, &mut monitor_info) == FALSE {
-                panic!();
+        let mut devices = vec![];
+        for i in 0.. {
+            let mut device: DISPLAY_DEVICEW = std::mem::zeroed();
+            device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+            let ret = EnumDisplayDevicesW(None, i, &mut device, EDD_GET_DEVICE_INTERFACE_NAME);
+            if ret == FALSE {
+                break;
             }
-            display_rects.push(monitor_info.rcMonitor);
+            if device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP != 0 {
+                log::info!("{:?}", device.DeviceName);
+                devices.push(device.DeviceName);
+            }
+        }
+        for device in devices {
+            let mut dev_mode: DEVMODEW = std::mem::zeroed();
+            dev_mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+            let ret = EnumDisplaySettingsW(
+                PCWSTR::from_raw(&device as *const _),
+                ENUM_CURRENT_SETTINGS,
+                &mut dev_mode,
+            );
+            if ret == FALSE {
+                log::warn!("no display mode");
+            }
+
+            let pos = dev_mode.Anonymous1.Anonymous2.dmPosition;
+            let (x, y) = (pos.x, pos.y);
+            let (width, height) = (dev_mode.dmPelsWidth, dev_mode.dmPelsHeight);
+
+            display_rects.push(RECT {
+                left: x,
+                right: x + width as i32,
+                top: y,
+                bottom: y + height as i32,
+            });
         }
         display_rects
     }
