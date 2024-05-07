@@ -67,8 +67,8 @@ impl Window {
                         return;
                     };
                     let client = client.downcast_ref::<ClientObject>().unwrap();
+                    window.request_client_activate(client, active);
                     window.request_client_update(client);
-                    window.request_client_activate(client, active)
                 }));
                 row.connect_closure("request-delete", false, closure_local!(@strong window => move |row: ClientRow| {
                     let index = row.index() as u32;
@@ -177,7 +177,7 @@ impl Window {
 
         if state.resolving != data.resolving {
             client_object.set_resolving(state.resolving);
-            log::debug!("resolving {}: {}", data.handle, state.active);
+            log::debug!("resolving {}: {}", data.handle, state.resolving);
         }
 
         self.update_dns_state(handle, !state.ips.is_empty());
