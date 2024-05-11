@@ -35,7 +35,7 @@ pub fn new(
                 Ok(ips) => ips,
                 Err(e) => {
                     log::warn!("could not resolve host '{host}': {e}");
-                    continue;
+                    vec![]
                 }
             };
 
@@ -59,14 +59,10 @@ async fn notify_state_change(
     server: &mut Server,
     handle: ClientHandle,
 ) {
-    let state = server
-        .client_manager
-        .borrow_mut()
-        .get_mut(handle)
-        .map(|(_, s)| s.clone());
-    if let Some(state) = state {
+    let state = server.client_manager.borrow_mut().get_mut(handle).cloned();
+    if let Some((config, state)) = state {
         let _ = frontend
-            .send(FrontendEvent::StateChange(handle, state))
+            .send(FrontendEvent::State(handle, config, state))
             .await;
     }
 }

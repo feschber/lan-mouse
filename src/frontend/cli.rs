@@ -100,6 +100,18 @@ impl<'a> Cli<'a> {
         }
     }
 
+    async fn update_client(&mut self, handle: ClientHandle) -> Result<()> {
+        self.send_request(FrontendRequest::GetState(handle)).await?;
+        loop {
+            let event = self.await_event().await?;
+            self.handle_event(event.clone());
+            if let FrontendEvent::State(_, _, _) | FrontendEvent::NoSuchClient(_) = event {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     async fn execute(&mut self, cmd: Command) -> Result<()> {
         match cmd {
             Command::None => {}
@@ -125,14 +137,8 @@ impl<'a> Cli<'a> {
                     FrontendRequest::UpdatePosition(handle, pos),
                 ] {
                     self.send_request(request).await?;
-                    loop {
-                        let event = self.await_event().await?;
-                        self.handle_event(event.clone());
-                        if let FrontendEvent::Updated(_, _) = event {
-                            break;
-                        }
-                    }
                 }
+                self.update_client(handle).await?;
             }
             Command::Disconnect(id) => {
                 self.send_request(FrontendRequest::Delete(id)).await?;
@@ -148,26 +154,12 @@ impl<'a> Cli<'a> {
             Command::Activate(id) => {
                 self.send_request(FrontendRequest::Activate(id, true))
                     .await?;
-                loop {
-                    let event = self.await_event().await?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::StateChange(_, _) = event {
-                        self.handle_event(event);
-                        break;
-                    }
-                }
+                self.update_client(id).await?;
             }
             Command::Deactivate(id) => {
                 self.send_request(FrontendRequest::Activate(id, false))
                     .await?;
-                loop {
-                    let event = self.await_event().await?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::StateChange(_, _) = event {
-                        self.handle_event(event);
-                        break;
-                    }
-                }
+                self.update_client(id).await?;
             }
             Command::List => {
                 self.send_request(FrontendRequest::Enumerate()).await?;
@@ -182,25 +174,12 @@ impl<'a> Cli<'a> {
             Command::SetHost(handle, host) => {
                 let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
                 self.send_request(request).await?;
-                loop {
-                    let event = self.await_event().await?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::Updated(_, _) = event {
-                        self.handle_event(event);
-                        break;
-                    }
-                }
+                self.update_client(handle).await?;
             }
             Command::SetPort(handle, port) => {
                 let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
                 self.send_request(request).await?;
-                loop {
-                    let event = self.await_event().await?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::Updated(_, _) = event {
-                        break;
-                    }
-                }
+                self.update_client(handle).await?;
             }
             Command::Help => {
                 for cmd_type in [
@@ -244,8 +223,11 @@ impl<'a> Cli<'a> {
                 eprintln!();
                 self.clients.push((h, c, s));
             }
-            FrontendEvent::Updated(h, c) => {
-                if let Some((_, config, _)) = self.find_mut(h) {
+            FrontendEvent::NoSuchClient(h) => {
+                eprintln!("no such client: {h}");
+            }
+            FrontendEvent::State(h, c, s) => {
+                if let Some((_, config, state)) = self.find_mut(h) {
                     let old_host = config.hostname.clone().unwrap_or("\"\"".into());
                     let new_host = c.hostname.clone().unwrap_or("\"\"".into());
                     if old_host != new_host {
@@ -261,10 +243,6 @@ impl<'a> Cli<'a> {
                         eprintln!("client {h} ips updated: {:?}", c.fix_ips)
                     }
                     *config = c;
-                }
-            }
-            FrontendEvent::StateChange(h, s) => {
-                if let Some((_, _, state)) = self.find_mut(h) {
                     if state.active ^ s.active {
                         eprintln!(
                             "client {h} {}",
