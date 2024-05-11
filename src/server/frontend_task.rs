@@ -111,16 +111,17 @@ async fn handle_frontend_event(
         }
         FrontendRequest::Activate(handle, active) => {
             if active {
-                activate_client(server, frontend, capture, emulate, handle).await;
+                activate_client(server, capture, emulate, handle).await;
             } else {
-                deactivate_client(server, frontend, capture, emulate, handle).await;
+                deactivate_client(server, capture, emulate, handle).await;
             }
         }
         FrontendRequest::ChangePort(port) => {
             let _ = port_tx.send(port).await;
         }
         FrontendRequest::Delete(handle) => {
-            remove_client(server, frontend, capture, emulate, handle).await;
+            remove_client(server, capture, emulate, handle).await;
+            broadcast(frontend, FrontendEvent::Deleted(handle)).await;
         }
         FrontendRequest::Enumerate() => {
             let clients = server
@@ -131,25 +132,24 @@ async fn handle_frontend_event(
                 .collect();
             broadcast(frontend, FrontendEvent::Enumerate(clients)).await;
         }
+        FrontendRequest::GetState(handle) => {
+            broadcast_client(server, frontend, handle).await;
+        }
         FrontendRequest::Terminate() => {
             log::info!("terminating gracefully...");
             return true;
         }
         FrontendRequest::UpdateFixIps(handle, fix_ips) => {
             update_fix_ips(server, resolve_tx, handle, fix_ips).await;
-            broadcast_client_update(server, frontend, handle).await;
         }
         FrontendRequest::UpdateHostname(handle, hostname) => {
             update_hostname(server, resolve_tx, handle, hostname).await;
-            broadcast_client_update(server, frontend, handle).await;
         }
         FrontendRequest::UpdatePort(handle, port) => {
             update_port(server, handle, port).await;
-            broadcast_client_update(server, frontend, handle).await;
         }
         FrontendRequest::UpdatePosition(handle, pos) => {
             update_pos(server, handle, capture, emulate, pos).await;
-            broadcast_client_update(server, frontend, handle).await;
         }
         FrontendRequest::ResolveDns(handle) => {
             let hostname = server
@@ -181,15 +181,13 @@ pub async fn add_client(server: &Server, frontend: &mut FrontendListener) {
 
 pub async fn deactivate_client(
     server: &Server,
-    frontend: &mut FrontendListener,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
     handle: ClientHandle,
 ) {
-    let state = match server.client_manager.borrow_mut().get_mut(handle) {
+    match server.client_manager.borrow_mut().get_mut(handle) {
         Some((_, s)) => {
             s.active = false;
-            s.clone()
         }
         None => return,
     };
@@ -197,13 +195,10 @@ pub async fn deactivate_client(
     let event = ClientEvent::Destroy(handle);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendEvent::StateChange(handle, state);
-    broadcast(frontend, event).await;
 }
 
 pub async fn activate_client(
     server: &Server,
-    frontend: &mut FrontendListener,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
     handle: ClientHandle,
@@ -217,14 +212,13 @@ pub async fn activate_client(
     let other = server.client_manager.borrow_mut().find_client(pos);
     if let Some(other) = other {
         if other != handle {
-            deactivate_client(server, frontend, capture, emulate, other).await;
+            deactivate_client(server, capture, emulate, other).await;
         }
     }
 
     /* activate the client */
-    let state = if let Some((_, s)) = server.client_manager.borrow_mut().get_mut(handle) {
+    if let Some((_, s)) = server.client_manager.borrow_mut().get_mut(handle) {
         s.active = true;
-        s.clone()
     } else {
         return;
     };
@@ -233,13 +227,10 @@ pub async fn activate_client(
     let event = ClientEvent::Create(handle, pos);
     let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
     let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
-    let event = FrontendEvent::StateChange(handle, state);
-    broadcast(frontend, event).await;
 }
 
 pub async fn remove_client(
     server: &Server,
-    frontend: &mut FrontendListener,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
     handle: ClientHandle,
@@ -258,9 +249,6 @@ pub async fn remove_client(
         let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
         let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
     }
-
-    let event = FrontendEvent::Deleted(handle);
-    broadcast(frontend, event).await;
 }
 
 async fn update_fix_ips(
@@ -356,11 +344,11 @@ async fn update_pos(
     }
 }
 
-async fn broadcast_client_update(
-    server: &Server,
-    frontend: &mut FrontendListener,
-    handle: ClientHandle,
-) {
-    let (client, _) = server.client_manager.borrow().get(handle).unwrap().clone();
-    broadcast(frontend, FrontendEvent::Updated(handle, client)).await;
+async fn broadcast_client(server: &Server, frontend: &mut FrontendListener, handle: ClientHandle) {
+    let client = server.client_manager.borrow().get(handle).cloned();
+    if let Some((config, state)) = client {
+        broadcast(frontend, FrontendEvent::State(handle, config, state)).await;
+    } else {
+        broadcast(frontend, FrontendEvent::NoSuchClient(handle)).await;
+    }
 }

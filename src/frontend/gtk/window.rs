@@ -51,6 +51,10 @@ impl Window {
             .expect("Could not get clients")
     }
 
+    fn client_by_idx(&self, idx: u32) -> Option<ClientObject> {
+        self.clients().item(idx).map(|o| o.downcast().unwrap())
+    }
+
     fn setup_clients(&self) {
         let model = gio::ListStore::new::<ClientObject>();
         self.imp().clients.replace(Some(model));
@@ -62,27 +66,24 @@ impl Window {
                 let client_object = obj.downcast_ref().expect("Expected object of type `ClientObject`.");
                 let row = window.create_client_row(client_object);
                 row.connect_closure("request-update", false, closure_local!(@strong window => move |row: ClientRow, active: bool| {
-                    let index = row.index() as u32;
-                    let Some(client) = window.clients().item(index) else {
-                        return;
-                    };
-                    let client = client.downcast_ref::<ClientObject>().unwrap();
-                    window.request_client_activate(client, active);
-                    window.request_client_update(client);
+                    if let Some(client) = window.client_by_idx(row.index() as u32) {
+                        window.request_client_activate(&client, active);
+                        window.request_client_update(&client);
+                        window.request_client_state(&client);
+                    }
                 }));
                 row.connect_closure("request-delete", false, closure_local!(@strong window => move |row: ClientRow| {
-                    let index = row.index() as u32;
-                    window.request_client_delete(index);
+                    if let Some(client) = window.client_by_idx(row.index() as u32) {
+                        window.request_client_delete(&client);
+                    }
                 }));
                 row.connect_closure("request-dns", false, closure_local!(@strong window => move
                 |row: ClientRow| {
-                    let index = row.index() as u32;
-                    let Some(client) = window.clients().item(index) else {
-                        return;
-                    };
-                    let client = client.downcast_ref::<ClientObject>().unwrap();
-                    window.request_client_update(client);
-                    window.request_dns(index);
+                    if let Some(client) = window.client_by_idx(row.index() as u32) {
+                        window.request_client_update(&client);
+                        window.request_dns(&client);
+                        window.request_client_state(&client);
+                    }
                 }));
                 row.upcast()
             })
@@ -204,20 +205,6 @@ impl Window {
         }
     }
 
-    pub fn request_dns(&self, idx: u32) {
-        let client_object = self.clients().item(idx).unwrap();
-        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
-        let data = client_object.get_data();
-        let event = FrontendRequest::ResolveDns(data.handle);
-        self.request(event);
-    }
-
-    pub fn request_client_create(&self) {
-        let event = FrontendRequest::Create;
-        self.imp().set_port(DEFAULT_PORT);
-        self.request(event);
-    }
-
     pub fn request_port_change(&self) {
         let port = self.imp().port_entry.get().text().to_string();
         if let Ok(port) = port.as_str().parse::<u16>() {
@@ -225,6 +212,23 @@ impl Window {
         } else {
             self.request(FrontendRequest::ChangePort(DEFAULT_PORT));
         }
+    }
+
+    pub fn request_client_state(&self, client: &ClientObject) {
+        let handle = client.handle();
+        let event = FrontendRequest::GetState(handle);
+        self.request(event);
+    }
+
+    pub fn request_client_create(&self) {
+        let event = FrontendRequest::Create;
+        self.request(event);
+    }
+
+    pub fn request_dns(&self, client: &ClientObject) {
+        let data = client.get_data();
+        let event = FrontendRequest::ResolveDns(data.handle);
+        self.request(event);
     }
 
     pub fn request_client_update(&self, client: &ClientObject) {
@@ -239,33 +243,25 @@ impl Window {
             FrontendRequest::UpdatePosition(handle, position),
             FrontendRequest::UpdatePort(handle, port),
         ] {
-            log::debug!("requesting: {event:?}");
             self.request(event);
         }
     }
 
     pub fn request_client_activate(&self, client: &ClientObject, active: bool) {
         let handle = client.handle();
-
         let event = FrontendRequest::Activate(handle, active);
-        log::debug!("requesting: {event:?}");
         self.request(event);
     }
 
-    pub fn request_client_delete(&self, idx: u32) {
-        if let Some(obj) = self.clients().item(idx) {
-            let client_object: &ClientObject = obj
-                .downcast_ref()
-                .expect("Expected object of type `ClientObject`.");
-            let handle = client_object.handle();
-            let event = FrontendRequest::Delete(handle);
-            self.request(event);
-        }
+    pub fn request_client_delete(&self, client: &ClientObject) {
+        let handle = client.handle();
+        let event = FrontendRequest::Delete(handle);
+        self.request(event);
     }
 
     pub fn request(&self, event: FrontendRequest) {
         let json = serde_json::to_string(&event).unwrap();
-        log::debug!("requesting {json}");
+        log::debug!("requesting: {json}");
         let mut stream = self.imp().stream.borrow_mut();
         let stream = stream.as_mut().unwrap();
         let bytes = json.as_bytes();

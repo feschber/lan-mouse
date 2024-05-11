@@ -126,12 +126,11 @@ fn build_ui(app: &Application) {
                 FrontendEvent::Deleted(client) => {
                     window.delete_client(client);
                 }
-                FrontendEvent::Updated(handle, client) => {
-                    window.update_client_config(handle, client);
-                }
-                FrontendEvent::StateChange(handle, state) => {
+                FrontendEvent::State(handle, config, state) => {
+                    window.update_client_config(handle, config);
                     window.update_client_state(handle, state);
                 }
+                FrontendEvent::NoSuchClient(_) => { }
                 FrontendEvent::Error(e) => {
                     window.show_toast(e.as_str());
                 },

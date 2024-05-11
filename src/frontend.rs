@@ -107,16 +107,18 @@ pub enum FrontendRequest {
     UpdatePosition(ClientHandle, Position),
     /// update fix-ips
     UpdateFixIps(ClientHandle, Vec<IpAddr>),
+    /// request the state of the given client
+    GetState(ClientHandle),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
     /// a client was created
     Created(ClientHandle, ClientConfig, ClientState),
-    /// a client was updated
-    Updated(ClientHandle, ClientConfig),
+    /// no such client
+    NoSuchClient(ClientHandle),
     /// state changed
-    StateChange(ClientHandle, ClientState),
+    State(ClientHandle, ClientConfig, ClientState),
     /// the client was deleted
     Deleted(ClientHandle),
     /// new port, reason of failure (if failed)
@@ -235,9 +237,7 @@ impl FrontendListener {
         let json = serde_json::to_string(&notify).unwrap();
         let payload = json.as_bytes();
         let len = payload.len().to_be_bytes();
-        log::debug!("json: {json}, len: {}", payload.len());
-
-        log::debug!("broadcasting event to streams: {:?}", self.tx_streams);
+        log::debug!("broadcasting event to streams: {json}");
         let mut keep = vec![];
         // TODO do simultaneously
         for tx in self.tx_streams.iter_mut() {
