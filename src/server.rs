@@ -55,6 +55,7 @@ impl Server {
                 fix_ips: config_client.ips.into_iter().collect(),
                 port: config_client.port,
                 pos: config_client.pos,
+                cmd: config_client.enter_hook,
             };
             let state = ClientState {
                 active: config_client.active,

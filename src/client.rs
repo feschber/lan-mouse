@@ -102,6 +102,8 @@ pub struct ClientConfig {
     pub port: u16,
     /// position of a client on screen
     pub pos: Position,
+    /// enter hook
+    pub cmd: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -111,6 +113,7 @@ impl Default for ClientConfig {
             hostname: Default::default(),
             fix_ips: Default::default(),
             pos: Default::default(),
+            cmd: None,
         }
     }
 }

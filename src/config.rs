@@ -31,6 +31,7 @@ pub struct TomlClient {
     pub ips: Option<Vec<IpAddr>>,
     pub port: Option<u16>,
     pub activate_on_startup: Option<bool>,
+    pub enter_hook: Option<String>,
 }
 
 impl ConfigToml {
@@ -92,6 +93,7 @@ pub struct ConfigClient {
     pub port: u16,
     pub pos: Position,
     pub active: bool,
+    pub enter_hook: Option<String>,
 }
 
 const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
@@ -208,12 +210,14 @@ impl Config {
                     None => c.host_name.clone(),
                 };
                 let active = c.activate_on_startup.unwrap_or(false);
+                let enter_hook = c.enter_hook.clone();
                 ConfigClient {
                     ips,
                     hostname,
                     port,
                     pos: *pos,
                     active,
+                    enter_hook,
                 }
             })
             .collect()

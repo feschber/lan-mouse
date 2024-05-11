@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use std::{collections::HashSet, net::SocketAddr};
 
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
 
 use crate::{
     capture::{self, InputCapture},
@@ -140,6 +140,9 @@ async fn handle_capture_event(
     if start_timer {
         let _ = timer_tx.try_send(());
     }
+    if enter {
+        spawn_hook_command(server, handle);
+    }
     if let Some(addr) = addr {
         if enter {
             let _ = sender_tx.send((Event::Enter(), addr)).await;
@@ -147,4 +150,35 @@ async fn handle_capture_event(
         let _ = sender_tx.send((e, addr)).await;
     }
     Ok(())
+}
+
+fn spawn_hook_command(server: &Server, handle: ClientHandle) {
+    let Some(cmd) = server
+        .client_manager
+        .borrow()
+        .get(handle)
+        .and_then(|(c, _)| c.cmd.clone())
+    else {
+        return;
+    };
+    tokio::task::spawn_local(async move {
+        log::info!("spawning command!");
+        let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("could not execute cmd: {e}");
+                return;
+            }
+        };
+        match child.wait().await {
+            Ok(s) => {
+                if s.success() {
+                    log::info!("{cmd} exited successfully");
+                } else {
+                    log::warn!("{cmd} exited with {s}");
+                }
+            }
+            Err(e) => log::warn!("{cmd}: {e}"),
+        }
+    });
 }
