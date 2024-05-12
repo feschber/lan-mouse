@@ -182,7 +182,7 @@ impl VirtualInput {
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
-                        self.pointer.axis(0, axis, (value / 15) as f64);
+                        self.pointer.axis_discrete(0, axis, value as f64 / 6., value / 120);
                         self.pointer.frame();
                     }
                     PointerEvent::Frame {} => self.pointer.frame(),
