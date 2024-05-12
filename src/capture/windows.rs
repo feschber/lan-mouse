@@ -141,7 +141,7 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
         },
         WPARAM(p) if p == WM_MOUSEWHEEL as usize => Some(PointerEvent::AxisDiscrete120 {
             axis: 0,
-            value: -(mouse_low_level.mouseData as i32),
+            value: -((mouse_low_level.mouseData >> 16) as i32),
         }),
         WPARAM(p) if p == WM_XBUTTONDOWN as usize || p == WM_XBUTTONUP as usize => {
             let hb = mouse_low_level.mouseData >> 16;
