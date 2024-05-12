@@ -55,6 +55,7 @@
           xorg.libXtst
         ] ++ lib.optionals stdenv.isDarwin [
           darwin.apple_sdk_11_0.frameworks.CoreGraphics
+          darwin.apple_sdk_11_0.frameworks.ApplicationServices
         ];
 
         RUST_SRC_PATH = "${rust}/lib/rustlib/src/rust/library";

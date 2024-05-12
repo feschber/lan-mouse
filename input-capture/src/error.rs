@@ -22,6 +22,9 @@ use ashpd::desktop::ResponseError;
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::{EiConvertEventStreamError, HandshakeError};
 
+#[cfg(target_os = "macos")]
+use core_graphics::base::CGError;
+
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 #[error("error in libei stream: {inner:?}")]
@@ -56,6 +59,18 @@ pub enum CaptureError {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("libei disconnected - reason: `{0}`")]
     Disconnected(String),
+    #[cfg(target_os = "macos")]
+    #[error("failed to warp mouse cursor: `{0}`")]
+    WarpCursor(CGError),
+    #[cfg(target_os = "macos")]
+    #[error("reset_mouse_position called without a connected client")]
+    ResetMouseWithoutClient,
+    #[cfg(target_os = "macos")]
+    #[error("core-graphics error: {0}")]
+    CoreGraphics(CGError),
+    #[cfg(target_os = "macos")]
+    #[error("unable to map key event: {0}")]
+    KeyMapError(i64),
 }
 
 #[derive(Debug, Error)]
@@ -71,12 +86,12 @@ pub enum CaptureCreationError {
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     #[error("error creating x11 capture backend: `{0}`")]
     X11(#[from] X11InputCaptureCreationError),
-    #[cfg(target_os = "macos")]
-    #[error("error creating macos capture backend: `{0}`")]
-    Macos(#[from] MacOSInputCaptureCreationError),
     #[cfg(windows)]
     #[error("error creating windows capture backend")]
     Windows,
+    #[cfg(target_os = "macos")]
+    #[error("error creating macos capture backend")]
+    MacOS(#[from] MacosCaptureCreationError),
 }
 
 impl CaptureCreationError {
@@ -144,7 +159,9 @@ pub enum X11InputCaptureCreationError {
 
 #[cfg(target_os = "macos")]
 #[derive(Debug, Error)]
-pub enum MacOSInputCaptureCreationError {
-    #[error("MacOS input capture is not yet implemented :(")]
-    NotImplemented,
+pub enum MacosCaptureCreationError {
+    #[error("event source creation failed!")]
+    EventSourceCreation,
+    #[error("failed to set CG Cursor property")]
+    CGCursorProperty,
 }
