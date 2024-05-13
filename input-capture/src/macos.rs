@@ -51,14 +51,14 @@ enum ProducerEvent {
 }
 
 impl InputCaptureState {
-    fn new() -> Self {
+    fn new() -> Result<Self> {
         let mut res = Self {
             client_for_pos: Lazy::new(HashMap::new),
             current_client: None,
             bounds: Bounds::default(),
         };
-        res.update_bounds();
-        res
+        res.update_bounds()?;
+        Ok(res)
     }
 
     fn crossed(&mut self, event: &CGEvent) -> Option<(CaptureHandle, Position)> {
@@ -80,33 +80,19 @@ impl InputCaptureState {
     }
 
     // Get the max bounds of all displays
-    fn update_bounds(&mut self) -> &mut Self {
-        let max_displays = 10;
-        let mut active_displays = vec![0; max_displays];
-        let mut display_count = 0;
-        let mut max_bounds = (0f64, 0f64, 0f64, 0f64);
-        unsafe {
-            core_graphics::display::CGGetActiveDisplayList(
-                max_displays as u32,
-                &mut active_displays[0],
-                &mut display_count,
-            );
-            (0..display_count as usize).for_each(|i| {
-                let bounds = core_graphics::display::CGDisplayBounds(active_displays[i]);
-                max_bounds.0 = max_bounds.0.min(bounds.origin.x);
-                max_bounds.1 = max_bounds.1.max(bounds.origin.x + bounds.size.width);
-                max_bounds.2 = max_bounds.2.min(bounds.origin.y);
-                max_bounds.3 = max_bounds.3.max(bounds.origin.y + bounds.size.height);
-            });
-        }
-        self.bounds.xmin = max_bounds.0;
-        self.bounds.xmax = max_bounds.1;
-        self.bounds.ymin = max_bounds.2;
-        self.bounds.ymax = max_bounds.3;
+    fn update_bounds(&mut self) -> Result<()> {
+        let active_ids =
+            CGDisplay::active_displays().map_err(|e| anyhow!("Failed to get display ids {e}"))?;
+        active_ids.iter().for_each(|d| {
+            let bounds = CGDisplay::new(*d).bounds();
+            self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
+            self.bounds.xmax = self.bounds.xmax.max(bounds.origin.x + bounds.size.width);
+            self.bounds.ymin = self.bounds.ymin.min(bounds.origin.y);
+            self.bounds.ymax = self.bounds.ymax.max(bounds.origin.y + bounds.size.height);
+        });
 
-        log::debug!("Updated bounds: {0:?}", self.bounds);
-
-        self
+        log::debug!("Updated displays bounds: {0:?}", self.bounds);
+        Ok(())
     }
 
     // We can't disable mouse movement when in a client so we need to reset the cursor position
@@ -393,7 +379,7 @@ pub struct MacOSInputCapture {
 
 impl MacOSInputCapture {
     pub async fn new() -> Result<Self, MacosCaptureCreationError> {
-        let state = Arc::new(Mutex::new(InputCaptureState::new()));
+        let state = Arc::new(Mutex::new(InputCaptureState::new()?));
         let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
         let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
         let (tap_exit_tx, mut tap_exit_rx) = tokio::sync::oneshot::channel();
