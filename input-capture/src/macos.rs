@@ -9,7 +9,7 @@ use core_foundation::string::{kCFStringEncodingUTF8, CFStringCreateWithCString, 
 use core_graphics::base::{kCGErrorSuccess, CGError};
 use core_graphics::display::{CGDisplay, CGPoint};
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, EventField,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -90,13 +90,13 @@ impl InputCaptureState {
                 &mut active_displays[0],
                 &mut display_count,
             );
-            for i in 0..display_count as usize {
+            (0..display_count as usize).for_each(|i| {
                 let bounds = core_graphics::display::CGDisplayBounds(active_displays[i]);
                 max_bounds.0 = max_bounds.0.min(bounds.origin.x);
                 max_bounds.1 = max_bounds.1.max(bounds.origin.x + bounds.size.width);
                 max_bounds.2 = max_bounds.2.min(bounds.origin.y);
                 max_bounds.3 = max_bounds.3.max(bounds.origin.y + bounds.size.height);
-            }
+            });
         }
         self.bounds.xmin = max_bounds.0;
         self.bounds.xmax = max_bounds.1;
@@ -146,12 +146,12 @@ impl InputCaptureState {
                 .map_err(|e| CaptureError::WarpCursor(e));
         }
 
-        return Err(CaptureError::ResetMouseWithoutClient);
+        Err(CaptureError::ResetMouseWithoutClient)
     }
 
     async fn handle_producer_event(&mut self, producer_event: ProducerEvent) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
-        let updated = match producer_event {
+        match producer_event {
             ProducerEvent::Release => {
                 if self.current_client.is_some() {
                     CGDisplay::show_cursor(&CGDisplay::main()).map_err(|e| CaptureError::CoreGraphics(e))?;
@@ -186,11 +186,9 @@ impl InputCaptureState {
                 }
             }
         };
-        Ok(updated)
+        Ok(())
     }
 }
-
-pub static mut LAST_FLAGS: CGEventFlags = CGEventFlags::CGEventFlagNull;
 
 fn get_events(ev_type: &CGEventType, ev: &CGEvent, result: &mut Vec<CaptureEvent>) -> Result<(), CaptureError> {
     fn map_pointer_event(ev: &CGEvent) -> PointerEvent {
