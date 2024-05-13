@@ -71,6 +71,9 @@ pub enum CaptureError {
     #[cfg(target_os = "macos")]
     #[error("unable to map key event: {0}")]
     KeyMapError(i64),
+    #[cfg(target_os = "macos")]
+    #[error("Event tap disabled")]
+    EventTapDisabled,
 }
 
 #[derive(Debug, Error)]
