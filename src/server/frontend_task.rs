@@ -107,7 +107,8 @@ async fn handle_frontend_event(
     log::debug!("frontend: {event:?}");
     match event {
         FrontendRequest::Create => {
-            add_client(server, frontend).await;
+            let handle = add_client(server, frontend).await;
+            resolve_dns(server, resolve_tx, handle).await;
         }
         FrontendRequest::Activate(handle, active) => {
             if active {
@@ -140,10 +141,12 @@ async fn handle_frontend_event(
             return true;
         }
         FrontendRequest::UpdateFixIps(handle, fix_ips) => {
-            update_fix_ips(server, resolve_tx, handle, fix_ips).await;
+            update_fix_ips(server, handle, fix_ips).await;
+            resolve_dns(server, resolve_tx, handle).await;
         }
         FrontendRequest::UpdateHostname(handle, hostname) => {
             update_hostname(server, resolve_tx, handle, hostname).await;
+            resolve_dns(server, resolve_tx, handle).await;
         }
         FrontendRequest::UpdatePort(handle, port) => {
             update_port(server, handle, port).await;
@@ -152,17 +155,26 @@ async fn handle_frontend_event(
             update_pos(server, handle, capture, emulate, pos).await;
         }
         FrontendRequest::ResolveDns(handle) => {
-            let hostname = server
-                .client_manager
-                .borrow()
-                .get(handle)
-                .and_then(|(c, _)| c.hostname.clone());
-            if let Some(hostname) = hostname {
-                let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
-            }
+            resolve_dns(server, resolve_tx, handle).await;
         }
     };
     false
+}
+
+async fn resolve_dns(server: &Server, resolve_tx: &Sender<DnsRequest>, handle: ClientHandle) {
+    let hostname = server
+        .client_manager
+        .borrow()
+        .get(handle)
+        .and_then(|(c, _)| c.hostname.clone());
+    if let Some(hostname) = hostname {
+        let _ = resolve_tx
+            .send(DnsRequest {
+                hostname: hostname.clone(),
+                handle,
+            })
+            .await;
+    }
 }
 
 async fn broadcast(frontend: &mut FrontendListener, event: FrontendEvent) {
@@ -171,12 +183,13 @@ async fn broadcast(frontend: &mut FrontendListener, event: FrontendEvent) {
     }
 }
 
-pub async fn add_client(server: &Server, frontend: &mut FrontendListener) {
+pub async fn add_client(server: &Server, frontend: &mut FrontendListener) -> ClientHandle {
     let handle = server.client_manager.borrow_mut().add_client();
     log::info!("added client {handle}");
 
     let (c, s) = server.client_manager.borrow().get(handle).unwrap().clone();
     broadcast(frontend, FrontendEvent::Created(handle, c, s)).await;
+    handle
 }
 
 pub async fn deactivate_client(
@@ -251,25 +264,13 @@ pub async fn remove_client(
     }
 }
 
-async fn update_fix_ips(
-    server: &Server,
-    resolve_tx: &Sender<DnsRequest>,
-    handle: ClientHandle,
-    fix_ips: Vec<IpAddr>,
-) {
-    let hostname = {
-        let mut client_manager = server.client_manager.borrow_mut();
-        let Some((c, _)) = client_manager.get_mut(handle) else {
-            return;
-        };
-
-        c.fix_ips = fix_ips;
-        c.hostname.clone()
+async fn update_fix_ips(server: &Server, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
+    let mut client_manager = server.client_manager.borrow_mut();
+    let Some((c, _)) = client_manager.get_mut(handle) else {
+        return;
     };
 
-    if let Some(hostname) = hostname {
-        let _ = resolve_tx.send(DnsRequest { hostname, handle }).await;
-    }
+    c.fix_ips = fix_ips;
 }
 
 async fn update_hostname(
