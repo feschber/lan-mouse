@@ -104,8 +104,8 @@ impl InputCaptureState {
             let location = event.location();
             let edge_offset = 1.0;
 
-            // After the cursor is warped the next event will carry the delta from the warp
-            // so only half the delta is needed to move the cursor
+            // After the cursor is warped no event is produced but the next event
+            // will carry the delta from the warp so only half the delta is needed to move the cursor
             let delta_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y) / 2.0;
             let delta_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X) / 2.0;
 
@@ -301,7 +301,7 @@ fn get_events(ev_type: &CGEventType, ev: &CGEvent, result: &mut Vec<CaptureEvent
     Ok(())
 }
 
-fn event_tap_tread(
+fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
     event_tx: Sender<(CaptureHandle, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
@@ -402,7 +402,11 @@ fn event_tap_tread(
 }
 
 pub struct MacOSInputCapture {
+<<<<<<< HEAD:input-capture/src/macos.rs
     event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
+=======
+    event_rx: Receiver<(ClientHandle, Event)>,
+>>>>>>> c569ddd (fix issues):src/capture/macos.rs
     notify_tx: Sender<ProducerEvent>,
 }
 
@@ -421,7 +425,7 @@ impl MacOSInputCapture {
         let event_tap_thread_state = state.clone();
         let event_tap_notify = notify_tx.clone();
         thread::spawn(move || {
-            event_tap_tread(
+            event_tap_thread(
                 event_tap_thread_state,
                 event_tx,
                 event_tap_notify,
@@ -524,10 +528,15 @@ extern "C" {
     );
 }
 
+<<<<<<< HEAD:input-capture/src/macos.rs
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
     // When we warp the cursor using CGWarpMouseCursorPosition local events are suppressed for a short time
+=======
+unsafe fn configure_cf_settings() -> Result<()> {
+    // When we warp the cursor using CGDisplay::warp_mouse_cursor_position local events are suppressed for a short time
+>>>>>>> c569ddd (fix issues):src/capture/macos.rs
     // this leeds to the cursor not flowing when crossing back from a clinet, set this to to 0 stops the warp
-    // from working, set a low value by trail and error, 0.05s seems good. 0.25s is the default
+    // from working, set a low value by trial and error, 0.05s seems good. 0.25s is the default
     let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| MacosCaptureCreationError::EventSourceCreation)?;
     CGEventSourceSetLocalEventsSuppressionInterval(event_source, 0.05);
