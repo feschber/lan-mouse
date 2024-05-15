@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use super::{error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle, Position};
 use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use bitflags::bitflags;
 use core_foundation::base::{kCFAllocatorDefault, CFRelease};
 use core_foundation::date::CFTimeInterval;
 use core_foundation::number::{kCFBooleanTrue, CFBooleanRef};
@@ -9,7 +10,7 @@ use core_foundation::string::{kCFStringEncodingUTF8, CFStringCreateWithCString, 
 use core_graphics::base::{kCGErrorSuccess, CGError};
 use core_graphics::display::{CGDisplay, CGPoint};
 use core_graphics::event::{
-    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, EventField,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -51,7 +52,7 @@ enum ProducerEvent {
 }
 
 impl InputCaptureState {
-    fn new() -> Result<Self> {
+    fn new() -> Result<Self, MacosCaptureCreationError> {
         let mut res = Self {
             client_for_pos: Lazy::new(HashMap::new),
             current_client: None,
@@ -80,9 +81,9 @@ impl InputCaptureState {
     }
 
     // Get the max bounds of all displays
-    fn update_bounds(&mut self) -> Result<()> {
+    fn update_bounds(&mut self) -> Result<(), MacosCaptureCreationError> {
         let active_ids =
-            CGDisplay::active_displays().map_err(|e| anyhow!("Failed to get display ids {e}"))?;
+            CGDisplay::active_displays().map_err(|e| MacosCaptureCreationError::ActiveDisplays(e))?;
         active_ids.iter().for_each(|d| {
             let bounds = CGDisplay::new(*d).bounds();
             self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
@@ -213,7 +214,35 @@ fn get_events(ev_type: &CGEventType, ev: &CGEvent, result: &mut Vec<CaptureEvent
             })));
         }
         CGEventType::FlagsChanged => {
-            todo!();
+            let mut mods = XMods::empty();
+            let mut mods_locked = XMods::empty();
+            let cg_flags = ev.get_flags();
+
+            if cg_flags.contains(CGEventFlags::CGEventFlagShift) {
+                mods |= XMods::ShiftMask;
+            }
+            if cg_flags.contains(CGEventFlags::CGEventFlagControl) {
+                mods |= XMods::ControlMask;
+            }
+            if cg_flags.contains(CGEventFlags::CGEventFlagAlternate) {
+                mods |= XMods::Mod1Mask;
+            }
+            if cg_flags.contains(CGEventFlags::CGEventFlagCommand) {
+                mods |= XMods::Mod4Mask;
+            }
+            if cg_flags.contains(CGEventFlags::CGEventFlagAlphaShift) {
+                mods |= XMods::LockMask;
+                mods_locked |= XMods::LockMask;
+            }
+
+            let modifier_event = KeyboardEvent::Modifiers {
+                depressed: mods.bits(),
+                latched: 0,
+                locked: mods_locked.bits(),
+                group: 0,
+            };
+
+            result.push(CaptureEvent::Input(Event::Keyboard(modifier_event)));
         }
         CGEventType::MouseMoved => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
         CGEventType::LeftMouseDragged => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
@@ -522,4 +551,20 @@ unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
     }
     CFRelease(cf_key as *const c_void);
     Ok(())
+}
+
+// From X11/X.h
+bitflags! {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    struct XMods: u32 {
+        const ShiftMask = (1<<0);
+        const LockMask = (1<<1);
+        const ControlMask = (1<<2);
+        const Mod1Mask = (1<<3);
+        const Mod2Mask = (1<<4);
+        const Mod3Mask = (1<<5);
+        const Mod4Mask = (1<<6);
+        const Mod5Mask = (1<<7);
+    }
 }

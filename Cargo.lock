@@ -1196,6 +1196,7 @@ version = "0.2.0"
 dependencies = [
  "ashpd",
  "async-trait",
+ "bitflags 2.6.0",
  "core-foundation",
  "core-foundation-sys",
  "core-graphics",

@@ -167,4 +167,7 @@ pub enum MacosCaptureCreationError {
     EventSourceCreation,
     #[error("failed to set CG Cursor property")]
     CGCursorProperty,
+    #[cfg(target_os = "macos")]
+    #[error("failed to get display ids: {0}")]
+    ActiveDisplays(CGError),
 }
