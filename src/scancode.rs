@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 /*
  * https://learn.microsoft.com/en-us/windows/win32/inputdev/about-keyboard-input
+ * https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/translate.pdf
+ * https://kbd-project.org/docs/scancodes/scancodes-1.html
  */
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, TryFromPrimitive)]
@@ -120,15 +122,15 @@ pub enum Windows {
     KeyF21 = 0x006C,
     KeyF22 = 0x006D,
     KeyF23 = 0x006E,
-    KeyF24 = 0x0076,
+    KeyF24 = 0x0076, // KeyLANG5
     KeypadComma = 0x007E,
     KeyInternational1 = 0x0073,
     KeyInternational2 = 0x0070,
-    KeyInternational3 = 0x007D,
+    KeyInternational3 = 0x007D, // typo in doc -> its Int'l 3 not Int'l 2
     #[allow(dead_code)]
-    KeyInternational4 = 0x0079, // FIXME unused
+    KeyInternational4 = 0x0079,
     #[allow(dead_code)]
-    KeyInternational5 = 0x007B, // FIXME unused
+    KeyInternational5 = 0x007B,
     // KeyInternational6 = 0x005C,
     KeyLANG1 = 0x0072,
     KeyLANG2 = 0x0071,
@@ -293,7 +295,7 @@ pub enum Linux {
     KeyPause = 119,
     KeyScale = 120, /* AL Compiz Scale (Expose) */
     KeyKpcomma = 121,
-    KeyHangeul = 122,
+    KeyHanguel = 122,
     // KEY_HANGUEL = KeyHangeul,
     KeyHanja = 123,
     KeyYen = 124,
@@ -518,16 +520,16 @@ impl TryFrom<Linux> for Windows {
             Linux::KeyKp3 => Ok(Self::Keypad3PageDn),
             Linux::KeyKp0 => Ok(Self::Keypad0Insert),
             Linux::KeyKpDot => Ok(Self::KeypadDot),
-            Linux::KeyZenkakuhankaku => Ok(Self::KeyLANG1), // TODO unsure
-            Linux::Key102nd => Ok(Self::KeyNonUSSlashBar),  // TODO unsure
+            Linux::KeyZenkakuhankaku => Ok(Self::KeyF24), // KeyLANG5
+            Linux::Key102nd => Ok(Self::KeyNonUSSlashBar), // TODO unsure
             Linux::KeyF11 => Ok(Self::KeyF11),
             Linux::KeyF12 => Ok(Self::KeyF12),
-            Linux::KeyRo => Ok(Self::ErrorRollOver), // TODO unsure
-            Linux::KeyKatakana => Ok(Self::KeyLANG1), // TODO unsure
-            Linux::KeyHiragana => Ok(Self::KeyLANG2), // TODO unsure
-            Linux::KeyHenkan => Ok(Self::KeyLANG3),  // TODO unsure
-            Linux::KeyKatakanahiragana => Ok(Self::KeyLANG4), // TODO unsure
-            Linux::KeyMuhenkan => Ok(Self::KeyLANG4), // TODO unsure
+            Linux::KeyRo => Ok(Self::KeyInternational1),
+            Linux::KeyKatakana => Ok(Self::KeyLANG3),
+            Linux::KeyHiragana => Ok(Self::KeyLANG4),
+            Linux::KeyHenkan => Ok(Self::KeyInternational4),
+            Linux::KeyKatakanahiragana => Ok(Self::KeyInternational2),
+            Linux::KeyMuhenkan => Ok(Self::KeyInternational5),
             Linux::KeyKpJpComma => Ok(Self::KeypadComma),
             Linux::KeyKpEnter => Ok(Self::KeypadEnter),
             Linux::KeyRightCtrl => Ok(Self::KeyRightCtrl),
@@ -555,9 +557,9 @@ impl TryFrom<Linux> for Windows {
             Linux::KeyPause => Ok(Self::KeyPause),
             Linux::KeyScale => Err(()), // TODO
             Linux::KeyKpcomma => Ok(Self::KeypadComma),
-            Linux::KeyHangeul => Ok(Self::KeyInternational1), // TODO unsure
-            Linux::KeyHanja => Ok(Self::KeyInternational2),   // TODO unsure
-            Linux::KeyYen => Ok(Self::KeyInternational3),     // TODO unsure
+            Linux::KeyHanguel => Ok(Self::KeyLANG1), // FIXME should be 00F2?
+            Linux::KeyHanja => Ok(Self::KeyLANG2),   // FIXME should be 00F1?
+            Linux::KeyYen => Ok(Self::KeyInternational3),
             Linux::KeyLeftMeta => Ok(Self::KeyLeftGUI),
             Linux::KeyRightmeta => Ok(Self::KeyRightGUI),
             Linux::KeyCompose => Ok(Self::KeyApplication),
@@ -807,7 +809,7 @@ impl TryFrom<Windows> for Linux {
             Windows::KeyF23 => Ok(Self::KeyF23),
             Windows::KeyF24 => Ok(Self::KeyF24),
             Windows::KeypadComma => Ok(Self::KeyKpcomma),
-            Windows::KeyInternational1 => Ok(Self::KeyHangeul),
+            Windows::KeyInternational1 => Ok(Self::KeyHanguel),
             Windows::KeyInternational2 => Ok(Self::KeyHanja),
             Windows::KeyInternational3 => Ok(Self::KeyYen),
             Windows::KeyInternational4 => Err(()),
