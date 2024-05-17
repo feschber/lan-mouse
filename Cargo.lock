@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "ashpd",
