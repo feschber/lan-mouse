@@ -2,10 +2,14 @@
   rustPlatform,
   lib,
   pkgs,
-}:
+}: let
+  cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
+  pname = cargoToml.package.name;
+  version = cargoToml.package.version;
+in
 rustPlatform.buildRustPackage {
-  pname = "lan-mouse";
-  version = "0.7.0";
+  pname = pname;
+  version = version;
 
   nativeBuildInputs = with pkgs; [
     pkg-config
@@ -23,7 +27,7 @@ rustPlatform.buildRustPackage {
   ];
 
   src = builtins.path {
-    name = "lan-mouse";
+    name = pname;
     path = lib.cleanSource ../.;
   };
 
@@ -38,7 +42,7 @@ rustPlatform.buildRustPackage {
       Lan Mouse is a mouse and keyboard sharing software similar to universal-control on Apple devices. It allows for using multiple pcs with a single set of mouse and keyboard. This is also known as a Software KVM switch.
       The primary target is Wayland on Linux but Windows and MacOS and Linux on Xorg have partial support as well (see below for more details).
     '';
-    mainProgram = "lan-mouse";
+    mainProgram = pname;
     platforms = platforms.all;
   };
 }
