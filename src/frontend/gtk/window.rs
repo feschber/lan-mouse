@@ -10,6 +10,7 @@ use std::net::TcpStream;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use endi::{Endian, WriteBytes};
 use glib::{clone, Object};
 use gtk::{
     gio,
@@ -265,8 +266,7 @@ impl Window {
         let mut stream = self.imp().stream.borrow_mut();
         let stream = stream.as_mut().unwrap();
         let bytes = json.as_bytes();
-        let len = bytes.len().to_be_bytes();
-        if let Err(e) = stream.write(&len) {
+        if let Err(e) = stream.write_u64(Endian::Big, bytes.len() as u64) {
             log::error!("error sending message: {e}");
         };
         if let Err(e) = stream.write(bytes) {

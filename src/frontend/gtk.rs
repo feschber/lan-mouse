@@ -11,6 +11,7 @@ use std::{
 use crate::frontend::{gtk::window::Window, FrontendRequest};
 
 use adw::Application;
+use endi::{Endian, ReadBytes};
 use gtk::{
     gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, IconTheme,
 };
@@ -85,16 +86,14 @@ fn build_ui(app: &Application) {
     gio::spawn_blocking(move || {
         match loop {
             // read length
-            let mut len = [0u8; 8];
-            match rx.read_exact(&mut len) {
-                Ok(_) => (),
+            let len = match rx.read_u64(Endian::Big) {
+                Ok(l) => l,
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
                 Err(e) => break Err(e),
             };
-            let len = usize::from_be_bytes(len);
 
             // read payload
-            let mut buf = vec![0u8; len];
+            let mut buf = vec![0u8; len as usize];
             match rx.read_exact(&mut buf) {
                 Ok(_) => (),
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
