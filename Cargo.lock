@@ -1292,6 +1292,7 @@ dependencies = [
  "async-trait",
  "clap",
  "core-graphics",
+ "endi",
  "env_logger",
  "futures",
  "futures-core",

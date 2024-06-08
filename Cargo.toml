@@ -35,6 +35,7 @@ once_cell = "1.19.0"
 num_enum = "0.7.2"
 hostname = "0.4.0"
 slab = "0.4.9"
+endi = "1.1.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
