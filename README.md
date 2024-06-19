@@ -69,7 +69,15 @@ Precompiled release binaries for Windows, MacOS and Linux are available in the [
 For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies).
 
 ### Arch Linux
-Lan Mouse is available on the AUR:
+
+Lan Mouse can be installed from the [official repositories](https://archlinux.org/packages/extra/x86_64/lan-mouse/):
+
+```sh
+pacman -S lan-mouse
+```
+
+It is also available on the AUR:
+
 ```sh
 # git version (includes latest changes)
 paru -S lan-mouse-git
