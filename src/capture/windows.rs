@@ -96,8 +96,7 @@ unsafe fn get_event_tid() -> Option<u32> {
 static mut ENTRY_POINT: (i32, i32) = (0, 0);
 
 fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
-    let mouse_low_level: MSLLHOOKSTRUCT =
-        unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
+    let mouse_low_level: MSLLHOOKSTRUCT = unsafe { *(lparam.0 as *const MSLLHOOKSTRUCT) };
     match wparam {
         WPARAM(p) if p == WM_LBUTTONDOWN as usize => Some(PointerEvent::Button {
             time: 0,
@@ -167,8 +166,7 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
 }
 
 unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> {
-    let kybrdllhookstruct: KBDLLHOOKSTRUCT =
-        *std::mem::transmute::<LPARAM, *const KBDLLHOOKSTRUCT>(lparam);
+    let kybrdllhookstruct: KBDLLHOOKSTRUCT = *(lparam.0 as *const KBDLLHOOKSTRUCT);
     let mut scan_code = kybrdllhookstruct.scanCode;
     log::trace!("scan_code: {scan_code}");
     if kybrdllhookstruct.flags.contains(LLKHF_EXTENDED) {
@@ -247,8 +245,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     if wparam.0 != WM_MOUSEMOVE as usize {
         return ACTIVE_CLIENT.is_some();
     }
-    let mouse_low_level: MSLLHOOKSTRUCT =
-        unsafe { *std::mem::transmute::<LPARAM, *const MSLLHOOKSTRUCT>(lparam) };
+    let mouse_low_level: MSLLHOOKSTRUCT = *(lparam.0 as *const MSLLHOOKSTRUCT);
     static mut PREV_POS: Option<(i32, i32)> = None;
     let curr_pos = (mouse_low_level.pt.x, mouse_low_level.pt.y);
     let prev_pos = PREV_POS.unwrap_or(curr_pos);
