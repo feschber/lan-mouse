@@ -27,7 +27,7 @@ pub mod dummy;
 
 pub async fn create() -> Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>> {
     #[cfg(target_os = "macos")]
-    match macos::MacOSInputCapture::new() {
+    match macos::MacOSInputCapture::new().await {
         Ok(p) => return Box::new(p),
         Err(e) => log::info!("macos input capture not available: {e}"),
     }
