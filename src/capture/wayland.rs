@@ -146,8 +146,8 @@ impl Window {
         let g = &state.g;
 
         let (width, height) = match pos {
-            Position::Left | Position::Right => (1, size.1 as u32),
-            Position::Top | Position::Bottom => (size.0 as u32, 1),
+            Position::Left | Position::Right => (2, size.1 as u32),
+            Position::Top | Position::Bottom => (size.0 as u32, 2),
         };
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
