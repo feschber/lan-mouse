@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
@@ -15,6 +15,7 @@ pub const DEFAULT_PORT: u16 = 4242;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
+    pub capture_backend: Option<CaptureBackend>,
     pub port: Option<u16>,
     pub frontend: Option<String>,
     pub release_bind: Option<Vec<scancode::Linux>>,
@@ -26,6 +27,7 @@ pub struct ConfigToml {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct TomlClient {
+    pub capture_backend: Option<CaptureBackend>,
     pub hostname: Option<String>,
     pub host_name: Option<String>,
     pub ips: Option<Vec<IpAddr>>,
@@ -68,7 +70,33 @@ struct CliArgs {
     /// test input emulation
     #[arg(long)]
     test_emulation: bool,
+
+    /// capture backend override
+    #[arg(long)]
+    capture_backend: Option<CaptureBackend>,
+
+    /// emulation backend override
+    #[arg(long)]
+    emulation_backend: Option<EmulationBackend>,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+pub enum CaptureBackend {
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    InputCapturePortal,
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    LayerShell,
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    X11,
+    #[cfg(windows)]
+    Windows,
+    #[cfg(target_os = "macos")]
+    MacOs,
+    Dummy,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum EmulationBackend {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Frontend {
@@ -78,6 +106,7 @@ pub enum Frontend {
 
 #[derive(Debug)]
 pub struct Config {
+    pub capture_backend: Option<CaptureBackend>,
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(TomlClient, Position)>,
@@ -163,6 +192,11 @@ impl Config {
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()));
 
+        let capture_backend = match args.capture_backend {
+            Some(b) => Some(b),
+            None => config_toml.as_ref().and_then(|c| c.capture_backend),
+        };
+
         let mut clients: Vec<(TomlClient, Position)> = vec![];
 
         if let Some(config_toml) = config_toml {
@@ -185,6 +219,7 @@ impl Config {
         let test_emulation = args.test_emulation;
 
         Ok(Config {
+            capture_backend,
             daemon,
             frontend,
             clients,

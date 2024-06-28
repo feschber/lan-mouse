@@ -71,7 +71,7 @@ fn run_service(config: &Config) -> Result<()> {
         log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
 
         let server = Server::new(config);
-        server.run().await?;
+        server.run(config.capture_backend).await?;
 
         log::debug!("service exiting");
         anyhow::Ok(())

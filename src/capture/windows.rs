@@ -575,7 +575,7 @@ fn update_clients(client_event: ClientEvent) {
 }
 
 impl WindowsInputCapture {
-    pub(crate) fn new() -> Result<Self> {
+    pub(crate) fn new() -> Self {
         unsafe {
             let (tx, rx) = channel(10);
             EVENT_TX.replace(tx);
@@ -583,10 +583,10 @@ impl WindowsInputCapture {
             let msg_thread = Some(thread::spawn(|| message_thread(ready_tx)));
             /* wait for thread to set its id */
             ready_rx.recv().expect("channel closed");
-            Ok(Self {
+            Self {
                 msg_thread,
                 event_rx: rx,
-            })
+            }
         }
     }
 }

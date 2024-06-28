@@ -36,6 +36,8 @@ use crate::{
     event::{Event, KeyboardEvent, PointerEvent},
 };
 
+use super::error::LibeiCaptureCreationError;
+
 #[derive(Debug)]
 enum ProducerEvent {
     Release,
@@ -131,7 +133,7 @@ impl<'a> Drop for LibeiInputCapture<'a> {
 
 async fn create_session<'a>(
     input_capture: &'a InputCapture<'a>,
-) -> Result<(Session<'a>, BitFlags<Capabilities>)> {
+) -> std::result::Result<(Session<'a>, BitFlags<Capabilities>), ashpd::Error> {
     log::debug!("creating input capture session");
     let (session, capabilities) = loop {
         match input_capture
@@ -213,7 +215,7 @@ async fn wait_for_active_client(
 }
 
 impl<'a> LibeiInputCapture<'a> {
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> std::result::Result<Self, LibeiCaptureCreationError> {
         let input_capture = Box::pin(InputCapture::new().await?);
         let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture<'static>;
         let mut first_session = Some(create_session(unsafe { &*input_capture_ptr }).await?);

@@ -1,5 +1,7 @@
 # example configuration
 
+# capture_backend = "LayerShell"
+
 # release bind
 release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 

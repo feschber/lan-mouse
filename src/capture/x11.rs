@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use std::io;
 use std::task::Poll;
 
@@ -9,11 +8,13 @@ use crate::event::Event;
 
 use crate::client::{ClientEvent, ClientHandle};
 
+use super::error::X11InputCaptureCreationError;
+
 pub struct X11InputCapture {}
 
 impl X11InputCapture {
-    pub fn new() -> Result<Self> {
-        Err(anyhow!("not implemented"))
+    pub fn new() -> std::result::Result<Self, X11InputCaptureCreationError> {
+        Err(X11InputCaptureCreationError::NotImplemented)
     }
 }
 
