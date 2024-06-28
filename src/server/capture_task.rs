@@ -5,8 +5,9 @@ use std::{collections::HashSet, net::SocketAddr};
 use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
 
 use crate::{
-    capture::{self, InputCapture},
+    capture::{self, error::CaptureCreationError, InputCapture},
     client::{ClientEvent, ClientHandle},
+    config::CaptureBackend,
     event::{Event, KeyboardEvent},
     scancode,
     server::State,
@@ -25,14 +26,15 @@ pub enum CaptureEvent {
 }
 
 pub fn new(
+    backend: Option<CaptureBackend>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
     timer_tx: Sender<()>,
     release_bind: Vec<scancode::Linux>,
-) -> (JoinHandle<Result<()>>, Sender<CaptureEvent>) {
+) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let task = tokio::task::spawn_local(async move {
-        let mut capture = capture::create().await;
+        let mut capture = capture::create(backend).await?;
         let mut pressed_keys = HashSet::new();
         loop {
             tokio::select! {
@@ -62,7 +64,7 @@ pub fn new(
         }
         anyhow::Ok(())
     });
-    (task, tx)
+    Ok((task, tx))
 }
 
 fn update_pressed_keys(pressed_keys: &mut HashSet<scancode::Linux>, key: u32, state: u8) {

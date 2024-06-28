@@ -8,7 +8,7 @@ use tokio::signal;
 
 use crate::{
     client::{ClientConfig, ClientHandle, ClientManager, ClientState},
-    config::Config,
+    config::{CaptureBackend, Config},
     dns,
     frontend::{FrontendListener, FrontendRequest},
     server::capture_task::CaptureEvent,
@@ -77,7 +77,7 @@ impl Server {
         }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, backend: Option<CaptureBackend>) -> anyhow::Result<()> {
         // create frontend communication adapter
         let frontend = match FrontendListener::new().await {
             Some(f) => f?,
@@ -97,11 +97,12 @@ impl Server {
 
         // input capture
         let (mut capture_task, capture_channel) = capture_task::new(
+            backend,
             self.clone(),
             sender_tx.clone(),
             timer_tx.clone(),
             self.release_bind.clone(),
-        );
+        )?;
 
         // input emulation
         let (mut emulation_task, emulate_channel) = emulation_task::new(

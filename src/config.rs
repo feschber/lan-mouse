@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
@@ -68,7 +68,33 @@ struct CliArgs {
     /// test input emulation
     #[arg(long)]
     test_emulation: bool,
+
+    /// capture backend override
+    #[arg(long)]
+    capture_backend: Option<CaptureBackend>,
+
+    /// emulation backend override
+    #[arg(long)]
+    emulation_backend: Option<EmulationBackend>,
 }
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CaptureBackend {
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    InputCapturePortal,
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    LayerShell,
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    X11,
+    #[cfg(windows)]
+    Windows,
+    #[cfg(target_os = "macos")]
+    MacOs,
+    Dummy,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum EmulationBackend {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Frontend {
@@ -78,6 +104,7 @@ pub enum Frontend {
 
 #[derive(Debug)]
 pub struct Config {
+    pub capture_backend: Option<CaptureBackend>,
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(TomlClient, Position)>,
@@ -183,8 +210,10 @@ impl Config {
         let daemon = args.daemon;
         let test_capture = args.test_capture;
         let test_emulation = args.test_emulation;
+        let capture_backend = args.capture_backend;
 
         Ok(Config {
+            capture_backend,
             daemon,
             frontend,
             clients,

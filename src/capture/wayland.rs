@@ -1,9 +1,8 @@
 use crate::{
-    capture::InputCapture,
+    capture::{error::WaylandBindError, InputCapture},
     client::{ClientEvent, ClientHandle, Position},
 };
 
-use anyhow::{anyhow, Result};
 use futures_core::Stream;
 use memmap::MmapOptions;
 use std::{
@@ -67,6 +66,8 @@ use wayland_client::{
 use tempfile;
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
+
+use super::error::LayerShellCaptureCreationError;
 
 struct Globals {
     compositor: wl_compositor::WlCompositor,
@@ -258,64 +259,37 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 }
 
 impl WaylandInputCapture {
-    pub fn new() -> Result<Self> {
-        let conn = match Connection::connect_to_env() {
-            Ok(c) => c,
-            Err(e) => return Err(anyhow!("could not connect to wayland compositor: {e:?}")),
-        };
-
-        let (g, mut queue) = match registry_queue_init::<State>(&conn) {
-            Ok(q) => q,
-            Err(e) => return Err(anyhow!("failed to initialize wl_registry: {e:?}")),
-        };
+    pub fn new() -> std::result::Result<Self, LayerShellCaptureCreationError> {
+        let conn = Connection::connect_to_env()?;
+        let (g, mut queue) = registry_queue_init::<State>(&conn)?;
 
         let qh = queue.handle();
 
-        let compositor: wl_compositor::WlCompositor = match g.bind(&qh, 4..=5, ()) {
-            Ok(compositor) => compositor,
-            Err(_) => return Err(anyhow!("wl_compositor >= v4 not supported")),
-        };
+        let compositor: wl_compositor::WlCompositor = g
+            .bind(&qh, 4..=5, ())
+            .map_err(|e| WaylandBindError::new(e, "wl_compositor 4..=5"))?;
+        let xdg_output_manager: ZxdgOutputManagerV1 = g
+            .bind(&qh, 1..=3, ())
+            .map_err(|e| WaylandBindError::new(e, "xdg_output_manager 1..=3"))?;
+        let shm: wl_shm::WlShm = g
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "wl_shm"))?;
+        let layer_shell: ZwlrLayerShellV1 = g
+            .bind(&qh, 3..=4, ())
+            .map_err(|e| WaylandBindError::new(e, "wlr_layer_shell 3..=4"))?;
+        let seat: wl_seat::WlSeat = g
+            .bind(&qh, 7..=8, ())
+            .map_err(|e| WaylandBindError::new(e, "wl_seat 7..=8"))?;
 
-        let xdg_output_manager: ZxdgOutputManagerV1 = match g.bind(&qh, 1..=3, ()) {
-            Ok(xdg_output_manager) => xdg_output_manager,
-            Err(_) => return Err(anyhow!("xdg_output not supported!")),
-        };
-
-        let shm: wl_shm::WlShm = match g.bind(&qh, 1..=1, ()) {
-            Ok(wl_shm) => wl_shm,
-            Err(_) => return Err(anyhow!("wl_shm v1 not supported")),
-        };
-
-        let layer_shell: ZwlrLayerShellV1 = match g.bind(&qh, 3..=4, ()) {
-            Ok(layer_shell) => layer_shell,
-            Err(_) => return Err(anyhow!("zwlr_layer_shell_v1 >= v3 not supported - required to display a surface at the edge of the screen")),
-        };
-
-        let seat: wl_seat::WlSeat = match g.bind(&qh, 7..=8, ()) {
-            Ok(wl_seat) => wl_seat,
-            Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
-        };
-
-        let pointer_constraints: ZwpPointerConstraintsV1 = match g.bind(&qh, 1..=1, ()) {
-            Ok(pointer_constraints) => pointer_constraints,
-            Err(_) => return Err(anyhow!("zwp_pointer_constraints_v1 not supported")),
-        };
-
-        let relative_pointer_manager: ZwpRelativePointerManagerV1 = match g.bind(&qh, 1..=1, ()) {
-            Ok(relative_pointer_manager) => relative_pointer_manager,
-            Err(_) => return Err(anyhow!("zwp_relative_pointer_manager_v1 not supported")),
-        };
-
-        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 =
-            match g.bind(&qh, 1..=1, ()) {
-                Ok(shortcut_inhibit_manager) => shortcut_inhibit_manager,
-                Err(_) => {
-                    return Err(anyhow!(
-                        "zwp_keyboard_shortcuts_inhibit_manager_v1 not supported"
-                    ))
-                }
-            };
-
+        let pointer_constraints: ZwpPointerConstraintsV1 = g
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "zwp_pointer_constraints_v1"))?;
+        let relative_pointer_manager: ZwpRelativePointerManagerV1 = g
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "zwp_relative_pointer_manager_v1"))?;
+        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = g
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "zwp_keyboard_shortcuts_inhibit_manager_v1"))?;
         let outputs = vec![];
 
         let g = Globals {

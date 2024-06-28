@@ -1,5 +1,6 @@
 use crate::capture;
 use crate::client::{ClientEvent, Position};
+use crate::config::Config;
 use crate::event::{Event, KeyboardEvent};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
@@ -12,12 +13,14 @@ pub fn run() -> Result<()> {
         .enable_time()
         .build()?;
 
-    runtime.block_on(LocalSet::new().run_until(input_capture_test()))
+    let config = Config::new()?;
+
+    runtime.block_on(LocalSet::new().run_until(input_capture_test(config)))
 }
 
-async fn input_capture_test() -> Result<()> {
+async fn input_capture_test(config: Config) -> Result<()> {
     log::info!("creating input capture");
-    let mut input_capture = capture::create().await;
+    let mut input_capture = capture::create(config.capture_backend).await?;
     log::info!("creating clients");
     input_capture.notify(ClientEvent::Create(0, Position::Left))?;
     input_capture.notify(ClientEvent::Create(1, Position::Right))?;
