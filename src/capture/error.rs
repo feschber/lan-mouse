@@ -1,4 +1,5 @@
 use thiserror::Error;
+use std::fmt::Display;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use wayland_client::{
@@ -6,6 +7,8 @@ use wayland_client::{
     globals::{BindError, GlobalError},
     ConnectError, DispatchError,
 };
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+use std::io;
 
 #[derive(Debug, Error)]
 pub enum CaptureCreationError {
@@ -17,20 +20,20 @@ pub enum CaptureCreationError {
     X11(#[from] X11InputCaptureCreationError),
 }
 
-// impl Display for CaptureCreationError {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let reason = match self {
-//             CaptureCreationError::Libei(reason) => {
-//                 format!("error creating portal backend: {reason}")
-//             }
-//             CaptureCreationError::LayerShell(reason) => {
-//                 format!("error creating layer-shell backend: {reason}")
-//             }
-//             CaptureCreationError::X11(e) => format!("{e}"),
-//         };
-//         write!(f, "could not create input capture: {reason}")
-//     }
-// }
+impl Display for CaptureCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self {
+            CaptureCreationError::Libei(reason) => {
+                format!("error creating portal backend: {reason}")
+            }
+            CaptureCreationError::LayerShell(reason) => {
+                format!("error creating layer-shell backend: {reason}")
+            }
+            CaptureCreationError::X11(e) => format!("{e}"),
+        };
+        write!(f, "could not create input capture: {reason}")
+    }
+}
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
