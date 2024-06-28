@@ -37,7 +37,9 @@ pub async fn create(
     if let Some(backend) = backend {
         return match backend {
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-            CaptureBackend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
+            CaptureBackend::InputCapturePortal => {
+                Ok(Box::new(libei::LibeiInputCapture::new().await?))
+            }
             #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
             CaptureBackend::LayerShell => Ok(Box::new(wayland::WaylandInputCapture::new()?)),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]

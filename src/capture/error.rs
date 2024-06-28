@@ -1,14 +1,14 @@
-use thiserror::Error;
 use std::fmt::Display;
+use thiserror::Error;
 
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+use std::io;
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use wayland_client::{
     backend::WaylandError,
     globals::{BindError, GlobalError},
     ConnectError, DispatchError,
 };
-#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-use std::io;
 
 #[derive(Debug, Error)]
 pub enum CaptureCreationError {
