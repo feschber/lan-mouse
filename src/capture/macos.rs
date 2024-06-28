@@ -2,7 +2,6 @@ use crate::capture::error::MacOSInputCaptureCreationError;
 use crate::capture::InputCapture;
 use crate::client::{ClientEvent, ClientHandle};
 use crate::event::Event;
-use anyhow::Result;
 use futures_core::Stream;
 use std::task::{Context, Poll};
 use std::{io, pin::Pin};
