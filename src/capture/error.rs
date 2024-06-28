@@ -18,18 +18,29 @@ pub enum CaptureCreationError {
     LayerShell(#[from] LayerShellCaptureCreationError),
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11(#[from] X11InputCaptureCreationError),
+    #[cfg(target_os = "macos")]
+    Macos(#[from] MacOSInputCaptureCreationError),
+    #[cfg(windows)]
+    Windows,
 }
 
 impl Display for CaptureCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self {
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             CaptureCreationError::Libei(reason) => {
                 format!("error creating portal backend: {reason}")
             }
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
             CaptureCreationError::LayerShell(reason) => {
                 format!("error creating layer-shell backend: {reason}")
             }
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             CaptureCreationError::X11(e) => format!("{e}"),
+            #[cfg(target_os = "macos")]
+            CaptureCreationError::Macos(e) => format!("{e}"),
+            #[cfg(windows)]
+            CaptureCreationError::Windows => String::from(""),
         };
         write!(f, "could not create input capture: {reason}")
     }
@@ -113,5 +124,17 @@ pub enum X11InputCaptureCreationError {
 impl Display for X11InputCaptureCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "X11 input capture is not yet implemented :(")
+    }
+}
+#[cfg(target_os = "macos")]
+#[derive(Debug, Error)]
+pub enum MacOSInputCaptureCreationError {
+    NotImplemented,
+}
+
+#[cfg(target_os = "macos")]
+impl Display for MacOSInputCaptureCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "macos input capture is not yet implemented :(")
     }
 }
