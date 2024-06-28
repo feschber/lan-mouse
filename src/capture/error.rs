@@ -1,6 +1,6 @@
-use std::{fmt::Display, io};
-
 use thiserror::Error;
+
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use wayland_client::{
     backend::WaylandError,
     globals::{BindError, GlobalError},
@@ -11,25 +11,26 @@ use wayland_client::{
 pub enum CaptureCreationError {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     Libei(#[from] LibeiCaptureCreationError),
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
     LayerShell(#[from] LayerShellCaptureCreationError),
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11(#[from] X11InputCaptureCreationError),
 }
 
-impl Display for CaptureCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let reason = match self {
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-            CaptureCreationError::Libei(reason) => {
-                format!("error creating portal backend: {reason}")
-            }
-            CaptureCreationError::LayerShell(reason) => {
-                format!("error creating layer-shell backend: {reason}")
-            }
-            CaptureCreationError::X11(e) => format!("{e}"),
-        };
-        write!(f, "could not create input capture: {reason}")
-    }
-}
+// impl Display for CaptureCreationError {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         let reason = match self {
+//             CaptureCreationError::Libei(reason) => {
+//                 format!("error creating portal backend: {reason}")
+//             }
+//             CaptureCreationError::LayerShell(reason) => {
+//                 format!("error creating layer-shell backend: {reason}")
+//             }
+//             CaptureCreationError::X11(e) => format!("{e}"),
+//         };
+//         write!(f, "could not create input capture: {reason}")
+//     }
+// }
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
@@ -46,17 +47,20 @@ impl Display for LibeiCaptureCreationError {
     }
 }
 
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub struct WaylandBindError {
     inner: BindError,
     protocol: &'static str,
 }
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 impl WaylandBindError {
     pub(crate) fn new(inner: BindError, protocol: &'static str) -> Self {
         Self { inner, protocol }
     }
 }
 
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 impl Display for WaylandBindError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -96,11 +100,13 @@ impl Display for LayerShellCaptureCreationError {
     }
 }
 
+#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum X11InputCaptureCreationError {
     NotImplemented,
 }
 
+#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 impl Display for X11InputCaptureCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "X11 input capture is not yet implemented :(")

@@ -3,10 +3,6 @@ use std::io;
 use futures_core::Stream;
 
 use crate::{
-    capture::{
-        dummy::DummyInputCapture, libei::LibeiInputCapture, wayland::WaylandInputCapture,
-        x11::X11InputCapture,
-    },
     client::{ClientEvent, ClientHandle},
     config::CaptureBackend,
     event::Event,
@@ -34,22 +30,23 @@ pub mod x11;
 /// fallback input capture (does not produce events)
 pub mod dummy;
 
+#[allow(unreachable_code)]
 pub async fn create(
     backend: Option<CaptureBackend>,
 ) -> Result<Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>>, CaptureCreationError> {
     if let Some(backend) = backend {
         return match backend {
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-            CaptureBackend::InputCapturePortal => Ok(Box::new(LibeiInputCapture::new().await?)),
+            CaptureBackend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
             #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-            CaptureBackend::LayerShell => Ok(Box::new(WaylandInputCapture::new()?)),
+            CaptureBackend::LayerShell => Ok(Box::new(wayland::WaylandInputCapture::new()?)),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-            CaptureBackend::X11 => Ok(Box::new(X11InputCapture::new()?)),
+            CaptureBackend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
             #[cfg(windows)]
-            CaptureBackend::Windows => Box::new(WindowsInputCapture::new()?),
+            CaptureBackend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
             #[cfg(target_os = "macos")]
             CaptureBackend::MacOs => Box::new(MacOSInputCapture::new()?),
-            CaptureBackend::Dummy => Ok(Box::new(DummyInputCapture::new())),
+            CaptureBackend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
         };
     }
 
@@ -60,10 +57,7 @@ pub async fn create(
     }
 
     #[cfg(windows)]
-    match windows::WindowsInputCapture::new() {
-        Ok(p) => return Ok(Box::new(p)),
-        Err(e) => log::info!("windows input capture not available: {e}"),
-    }
+    return Ok(Box::new(windows::WindowsInputCapture::new()));
 
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     match libei::LibeiInputCapture::new().await {
