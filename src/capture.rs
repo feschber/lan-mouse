@@ -47,7 +47,7 @@ pub async fn create(
             #[cfg(windows)]
             CaptureBackend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
             #[cfg(target_os = "macos")]
-            CaptureBackend::MacOs => Box::new(macos::MacOSInputCapture::new()?),
+            CaptureBackend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new()?)),
             CaptureBackend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
         };
     }
