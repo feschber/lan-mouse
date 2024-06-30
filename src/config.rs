@@ -16,8 +16,9 @@ pub const DEFAULT_PORT: u16 = 4242;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
     pub capture_backend: Option<CaptureBackend>,
+    pub emulation_backend: Option<EmulationBackend>,
     pub port: Option<u16>,
-    pub frontend: Option<String>,
+    pub frontend: Option<Frontend>,
     pub release_bind: Option<Vec<scancode::Linux>>,
     pub left: Option<TomlClient>,
     pub right: Option<TomlClient>,
@@ -53,7 +54,7 @@ struct CliArgs {
 
     /// the frontend to use [cli | gtk]
     #[arg(short, long)]
-    frontend: Option<String>,
+    frontend: Option<Frontend>,
 
     /// non-default config file location
     #[arg(short, long)]
@@ -95,18 +96,41 @@ pub enum CaptureBackend {
     Dummy,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum EmulationBackend {}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+pub enum EmulationBackend {
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    Libei,
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    Wlroots,
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    X11,
+    #[cfg(windows)]
+    Windows,
+    #[cfg(target_os = "macos")]
+    MacOs,
+    Dummy,
+}
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize, ValueEnum)]
 pub enum Frontend {
     Gtk,
     Cli,
 }
 
+impl Default for Frontend {
+    fn default() -> Self {
+        if cfg!(feature = "gtk") {
+            Self::Gtk
+        } else {
+            Self::Cli
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Config {
     pub capture_backend: Option<CaptureBackend>,
+    pub emulation_backend: Option<EmulationBackend>,
     pub frontend: Frontend,
     pub port: u16,
     pub clients: Vec<(TomlClient, Position)>,
@@ -158,33 +182,14 @@ impl Config {
             Ok(c) => Some(c),
         };
 
-        let frontend = match args.frontend {
-            None => match &config_toml {
-                Some(c) => c.frontend.clone(),
-                None => None,
-            },
-            frontend => frontend,
-        };
+        let frontend_arg = args.frontend;
+        let frontend_cfg = config_toml.as_ref().and_then(|c| c.frontend);
+        let frontend = frontend_arg.or(frontend_cfg).unwrap_or_default();
 
-        let frontend = match frontend {
-            #[cfg(feature = "gtk")]
-            None => Frontend::Gtk,
-            #[cfg(not(feature = "gtk"))]
-            None => Frontend::Cli,
-            Some(s) => match s.as_str() {
-                "cli" => Frontend::Cli,
-                "gtk" => Frontend::Gtk,
-                _ => Frontend::Cli,
-            },
-        };
-
-        let port = match args.port {
-            Some(port) => port,
-            None => match &config_toml {
-                Some(c) => c.port.unwrap_or(DEFAULT_PORT),
-                None => DEFAULT_PORT,
-            },
-        };
+        let port = args
+            .port
+            .or(config_toml.as_ref().and_then(|c| c.port))
+            .unwrap_or(DEFAULT_PORT);
 
         log::debug!("{config_toml:?}");
         let release_bind = config_toml
@@ -192,10 +197,13 @@ impl Config {
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()));
 
-        let capture_backend = match args.capture_backend {
-            Some(b) => Some(b),
-            None => config_toml.as_ref().and_then(|c| c.capture_backend),
-        };
+        let capture_backend = args
+            .capture_backend
+            .or(config_toml.as_ref().and_then(|c| c.capture_backend));
+
+        let emulation_backend = args
+            .emulation_backend
+            .or(config_toml.as_ref().and_then(|c| c.emulation_backend));
 
         let mut clients: Vec<(TomlClient, Position)> = vec![];
 
@@ -220,6 +228,7 @@ impl Config {
 
         Ok(Config {
             capture_backend,
+            emulation_backend,
             daemon,
             frontend,
             clients,

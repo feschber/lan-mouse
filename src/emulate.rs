@@ -27,6 +27,7 @@ pub mod macos;
 
 /// fallback input emulation (logs events)
 pub mod dummy;
+pub mod error;
 
 #[async_trait]
 pub trait InputEmulation: Send {
@@ -41,7 +42,7 @@ pub trait InputEmulation: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create() -> Box<dyn InputEmulation> {
+pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation> {
     #[cfg(windows)]
     match windows::WindowsEmulation::new() {
         Ok(c) => return Box::new(c),

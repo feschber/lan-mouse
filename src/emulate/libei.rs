@@ -4,7 +4,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, Result};
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
