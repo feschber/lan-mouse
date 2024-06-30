@@ -72,7 +72,7 @@ pub fn new(
         emulate.destroy().await;
         anyhow::Ok(())
     });
-    (emulate_task, tx)
+    Ok((emulate_task, tx))
 }
 
 async fn handle_udp_rx(

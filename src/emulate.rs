@@ -2,10 +2,11 @@ use async_trait::async_trait;
 use std::future;
 
 use crate::{
-    client::{ClientEvent, ClientHandle},
-    event::Event,
+    client::{ClientEvent, ClientHandle}, config::EmulationBackend, event::Event
 };
 use anyhow::Result;
+
+use self::error::EmulationCreationError;
 
 #[cfg(windows)]
 pub mod windows;
@@ -42,10 +43,10 @@ pub trait InputEmulation: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation> {
+pub async fn create(backend: Option<EmulationBackend>) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
     #[cfg(windows)]
     match windows::WindowsEmulation::new() {
-        Ok(c) => return Box::new(c),
+        Ok(c) => return Ok(Box::new(c)),
         Err(e) => log::warn!("windows input emulation unavailable: {e}"),
     }
 
@@ -53,7 +54,7 @@ pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation
     match macos::MacOSEmulation::new() {
         Ok(c) => {
             log::info!("using macos input emulation");
-            return Box::new(c);
+            return Ok(Box::new(c));
         }
         Err(e) => log::error!("macos input emulatino not available: {e}"),
     }
@@ -62,7 +63,7 @@ pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation
     match wlroots::WlrootsEmulation::new() {
         Ok(c) => {
             log::info!("using wlroots input emulation");
-            return Box::new(c);
+            return Ok(Box::new(c));
         }
         Err(e) => log::info!("wayland backend not available: {e}"),
     }
@@ -71,7 +72,7 @@ pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation
     match libei::LibeiEmulation::new().await {
         Ok(c) => {
             log::info!("using libei input emulation");
-            return Box::new(c);
+            return Ok(Box::new(c));
         }
         Err(e) => log::info!("libei not available: {e}"),
     }
@@ -80,7 +81,7 @@ pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation
     match xdg_desktop_portal::DesktopPortalEmulation::new().await {
         Ok(c) => {
             log::info!("using xdg-remote-desktop-portal input emulation");
-            return Box::new(c);
+            return Ok(Box::new(c));
         }
         Err(e) => log::info!("remote desktop portal not available: {e}"),
     }
@@ -89,11 +90,11 @@ pub async fn create(backend: Option<EmulationBackend>) -> Box<dyn InputEmulation
     match x11::X11Emulation::new() {
         Ok(c) => {
             log::info!("using x11 input emulation");
-            return Box::new(c);
+            return Ok(Box::new(c));
         }
         Err(e) => log::info!("x11 input emulation not available: {e}"),
     }
 
     log::error!("falling back to dummy input emulation");
-    Box::new(dummy::DummyEmulation::new())
+    Ok(Box::new(dummy::DummyEmulation::new()))
 }
