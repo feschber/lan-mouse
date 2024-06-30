@@ -68,7 +68,7 @@ fn run_service(config: &Config) -> Result<()> {
     // run async event loop
     runtime.block_on(LocalSet::new().run_until(async {
         // run main loop
-        log::info!("Press Ctrl+Alt+Shift+Super to release the mouse");
+        log::info!("Press {:?} to release the mouse", config.release_bind);
 
         let server = Server::new(config);
         server.run(config.capture_backend).await?;
