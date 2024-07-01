@@ -1,5 +1,5 @@
 use crate::client::{ClientEvent, ClientHandle};
-use crate::emulate::InputEmulation;
+use crate::emulate::{error::WlrootsEmulationCreationError, InputEmulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
@@ -7,7 +7,6 @@ use std::os::fd::{AsFd, OwnedFd};
 use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
 
-use anyhow::{anyhow, Result};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
@@ -30,6 +29,8 @@ use wayland_client::{
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
+use super::error::WaylandBindError;
+
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,
     input_for_client: HashMap<ClientHandle, VirtualInput>,
@@ -47,18 +48,21 @@ pub(crate) struct WlrootsEmulation {
 }
 
 impl WlrootsEmulation {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, WlrootsEmulationCreationError> {
         let conn = Connection::connect_to_env()?;
         let (globals, queue) = registry_queue_init::<State>(&conn)?;
         let qh = queue.handle();
 
-        let seat: wl_seat::WlSeat = match globals.bind(&qh, 7..=8, ()) {
-            Ok(wl_seat) => wl_seat,
-            Err(_) => return Err(anyhow!("wl_seat >= v7 not supported")),
-        };
+        let seat: wl_seat::WlSeat = globals
+            .bind(&qh, 7..=8, ())
+            .map_err(|e| WaylandBindError::new(e, "wl_seat 7..=8"))?;
 
-        let vpm: VpManager = globals.bind(&qh, 1..=1, ())?;
-        let vkm: VkManager = globals.bind(&qh, 1..=1, ())?;
+        let vpm: VpManager = globals
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "wlr-virtual-pointer-unstable-v1"))?;
+        let vkm: VkManager = globals
+            .bind(&qh, 1..=1, ())
+            .map_err(|e| WaylandBindError::new(e, "virtual-keyboard-unstable-v1"))?;
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
 
@@ -75,7 +79,7 @@ impl WlrootsEmulation {
             queue,
         };
         while emulate.state.keymap.is_none() {
-            emulate.queue.blocking_dispatch(&mut emulate.state).unwrap();
+            emulate.queue.blocking_dispatch(&mut emulate.state)?;
         }
         // let fd = unsafe { &File::from_raw_fd(emulate.state.keymap.unwrap().1.as_raw_fd()) };
         // let mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };

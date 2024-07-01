@@ -8,7 +8,8 @@ use tokio::{
 
 use crate::{
     client::{ClientEvent, ClientHandle},
-    emulate::{self, InputEmulation},
+    config::EmulationBackend,
+    emulate::{self, error::EmulationCreationError, InputEmulation},
     event::{Event, KeyboardEvent},
     scancode,
     server::State,
@@ -27,15 +28,16 @@ pub enum EmulationEvent {
 }
 
 pub fn new(
+    backend: Option<EmulationBackend>,
     server: Server,
     mut udp_rx: Receiver<Result<(Event, SocketAddr)>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
     timer_tx: Sender<()>,
-) -> (JoinHandle<Result<()>>, Sender<EmulationEvent>) {
+) -> Result<(JoinHandle<Result<()>>, Sender<EmulationEvent>), EmulationCreationError> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let emulate_task = tokio::task::spawn_local(async move {
-        let mut emulate = emulate::create().await;
+        let mut emulate = emulate::create(backend).await?;
         let mut last_ignored = None;
 
         loop {
@@ -75,7 +77,7 @@ pub fn new(
         emulate.destroy().await;
         anyhow::Ok(())
     });
-    (emulate_task, tx)
+    Ok((emulate_task, tx))
 }
 
 async fn handle_udp_rx(

@@ -1,10 +1,11 @@
+use anyhow::{anyhow, Result};
 use std::{
     collections::HashMap,
+    io,
     os::{fd::OwnedFd, unix::net::UnixStream},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{anyhow, Result};
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
@@ -26,6 +27,8 @@ use crate::{
     emulate::InputEmulation,
     event::Event,
 };
+
+use super::error::LibeiEmulationCreationError;
 
 pub struct LibeiEmulation {
     handshake: bool,
@@ -77,14 +80,14 @@ async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
 }
 
 impl LibeiEmulation {
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self, LibeiEmulationCreationError> {
         // fd is owned by the message, so we need to dup it
         let eifd = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         // let stream = UnixStream::connect("/run/user/1000/eis-0")?;
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
-        context.flush()?;
+        context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         let events = EiEventStream::new(context.clone())?;
         Ok(Self {
             handshake: false,

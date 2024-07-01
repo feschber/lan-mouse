@@ -3,9 +3,12 @@ use std::future;
 
 use crate::{
     client::{ClientEvent, ClientHandle},
+    config::EmulationBackend,
     event::Event,
 };
 use anyhow::Result;
+
+use self::error::EmulationCreationError;
 
 #[cfg(windows)]
 pub mod windows;
@@ -27,6 +30,7 @@ pub mod macos;
 
 /// fallback input emulation (logs events)
 pub mod dummy;
+pub mod error;
 
 #[async_trait]
 pub trait InputEmulation: Send {
@@ -41,58 +45,60 @@ pub trait InputEmulation: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create() -> Box<dyn InputEmulation> {
-    #[cfg(windows)]
-    match windows::WindowsEmulation::new() {
-        Ok(c) => return Box::new(c),
-        Err(e) => log::warn!("windows input emulation unavailable: {e}"),
+pub async fn create_backend(
+    backend: EmulationBackend,
+) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
+    match backend {
+        #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+        EmulationBackend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
+        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+        EmulationBackend::Libei => Ok(Box::new(libei::LibeiEmulation::new().await?)),
+        #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+        EmulationBackend::X11 => Ok(Box::new(x11::X11Emulation::new()?)),
+        #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+        EmulationBackend::Xdp => Ok(Box::new(
+            xdg_desktop_portal::DesktopPortalEmulation::new().await?,
+        )),
+        #[cfg(windows)]
+        EmulationBackend::Windows => Ok(Box::new(windows::WindowsEmulation::new()?)),
+        #[cfg(target_os = "macos")]
+        EmulationBackend::MacOs => Ok(Box::new(macos::MacOSEmulation::new()?)),
+        EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
     }
+}
 
-    #[cfg(target_os = "macos")]
-    match macos::MacOSEmulation::new() {
-        Ok(c) => {
-            log::info!("using macos input emulation");
-            return Box::new(c);
+pub async fn create(
+    backend: Option<EmulationBackend>,
+) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
+    if let Some(backend) = backend {
+        let b = create_backend(backend).await;
+        if b.is_ok() {
+            log::info!("using emulation backend: {backend}");
         }
-        Err(e) => log::error!("macos input emulatino not available: {e}"),
+        return b;
     }
 
-    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-    match wlroots::WlrootsEmulation::new() {
-        Ok(c) => {
-            log::info!("using wlroots input emulation");
-            return Box::new(c);
+    for backend in [
+        #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+        EmulationBackend::Wlroots,
+        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+        EmulationBackend::Libei,
+        #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+        EmulationBackend::X11,
+        #[cfg(windows)]
+        EmulationBackend::Windows,
+        #[cfg(target_os = "macos")]
+        EmulationBackend::MacOs,
+        EmulationBackend::Dummy,
+    ] {
+        match create_backend(backend).await {
+            Ok(b) => {
+                log::info!("using emulation backend: {backend}");
+                return Ok(b);
+            }
+            Err(e) => log::warn!("{e}"),
         }
-        Err(e) => log::info!("wayland backend not available: {e}"),
     }
 
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    match libei::LibeiEmulation::new().await {
-        Ok(c) => {
-            log::info!("using libei input emulation");
-            return Box::new(c);
-        }
-        Err(e) => log::info!("libei not available: {e}"),
-    }
-
-    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
-    match xdg_desktop_portal::DesktopPortalEmulation::new().await {
-        Ok(c) => {
-            log::info!("using xdg-remote-desktop-portal input emulation");
-            return Box::new(c);
-        }
-        Err(e) => log::info!("remote desktop portal not available: {e}"),
-    }
-
-    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-    match x11::X11Emulation::new() {
-        Ok(c) => {
-            log::info!("using x11 input emulation");
-            return Box::new(c);
-        }
-        Err(e) => log::info!("x11 input emulation not available: {e}"),
-    }
-
-    log::error!("falling back to dummy input emulation");
-    Box::new(dummy::DummyEmulation::new())
+    Err(EmulationCreationError::NoAvailableBackend)
 }

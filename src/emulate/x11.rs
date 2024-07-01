@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::ptr;
 use x11::{
@@ -14,6 +13,8 @@ use crate::{
     },
 };
 
+use super::error::X11EmulationCreationError;
+
 pub struct X11Emulation {
     display: *mut xlib::Display,
 }
@@ -21,11 +22,11 @@ pub struct X11Emulation {
 unsafe impl Send for X11Emulation {}
 
 impl X11Emulation {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, X11EmulationCreationError> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
                 d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
-                    Err(anyhow!("could not open display"))
+                    Err(X11EmulationCreationError::OpenDisplay)
                 }
                 display => Ok(display),
             }

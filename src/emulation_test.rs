@@ -1,4 +1,5 @@
 use crate::client::{ClientEvent, Position};
+use crate::config::Config;
 use crate::emulate;
 use crate::event::{Event, PointerEvent};
 use anyhow::Result;
@@ -13,14 +14,16 @@ pub fn run() -> Result<()> {
         .enable_time()
         .build()?;
 
-    runtime.block_on(LocalSet::new().run_until(input_emulation_test()))
+    let config = Config::new()?;
+
+    runtime.block_on(LocalSet::new().run_until(input_emulation_test(config)))
 }
 
 const FREQUENCY_HZ: f64 = 1.0;
 const RADIUS: f64 = 100.0;
 
-async fn input_emulation_test() -> Result<()> {
-    let mut emulation = emulate::create().await;
+async fn input_emulation_test(config: Config) -> Result<()> {
+    let mut emulation = emulate::create(config.emulation_backend).await?;
     emulation
         .notify(ClientEvent::Create(0, Position::Left))
         .await;

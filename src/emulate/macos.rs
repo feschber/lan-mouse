@@ -1,7 +1,6 @@
 use crate::client::{ClientEvent, ClientHandle};
 use crate::emulate::InputEmulation;
 use crate::event::{Event, KeyboardEvent, PointerEvent};
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
@@ -12,6 +11,8 @@ use keycode::{KeyMap, KeyMapping};
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
 use tokio::task::AbortHandle;
+
+use super::error::MacOSEmulationCreationError;
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
@@ -53,11 +54,9 @@ impl IndexMut<CGMouseButton> for ButtonState {
 unsafe impl Send for MacOSEmulation {}
 
 impl MacOSEmulation {
-    pub fn new() -> Result<Self> {
-        let event_source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
-            Ok(e) => e,
-            Err(_) => return Err(anyhow!("event source creation failed!")),
-        };
+    pub fn new() -> Result<Self, MacOSEmulationCreationError> {
+        let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+            .map_err(|_| MacOSEmulationCreationError::EventSourceCreation)?;
         let button_state = ButtonState {
             left: false,
             right: false,
