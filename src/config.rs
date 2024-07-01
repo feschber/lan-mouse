@@ -3,6 +3,7 @@ use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
+use std::fmt::Display;
 use std::net::IpAddr;
 use std::{error::Error, fs};
 use toml;
@@ -96,12 +97,32 @@ pub enum CaptureBackend {
     Dummy,
 }
 
+impl Display for CaptureBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            CaptureBackend::InputCapturePortal => write!(f, "input-capture-portal"),
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            CaptureBackend::LayerShell => write!(f, "layer-shell"),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            CaptureBackend::X11 => write!(f, "X11"),
+            #[cfg(windows)]
+            CaptureBackend::Windows => write!(f, "windows"),
+            #[cfg(target_os = "macos")]
+            CaptureBackend::MacOs => write!(f, "MacOS"),
+            CaptureBackend::Dummy => write!(f, "dummy"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum EmulationBackend {
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    Libei,
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
     Wlroots,
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    Libei,
+    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    Xdp,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11,
     #[cfg(windows)]
@@ -109,6 +130,26 @@ pub enum EmulationBackend {
     #[cfg(target_os = "macos")]
     MacOs,
     Dummy,
+}
+
+impl Display for EmulationBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            EmulationBackend::Wlroots => write!(f, "wlroots"),
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            EmulationBackend::Libei => write!(f, "libei"),
+            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            EmulationBackend::Xdp => write!(f, "xdg-desktop-portal"),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            EmulationBackend::X11 => write!(f, "X11"),
+            #[cfg(windows)]
+            EmulationBackend::Windows => write!(f, "windows"),
+            #[cfg(target_os = "macos")]
+            EmulationBackend::MacOs => write!(f, "macos"),
+            EmulationBackend::Dummy => write!(f, "dummy"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize, ValueEnum)]

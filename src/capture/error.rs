@@ -12,6 +12,7 @@ use wayland_client::{
 
 #[derive(Debug, Error)]
 pub enum CaptureCreationError {
+    NoAvailableBackend,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     Libei(#[from] LibeiCaptureCreationError),
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -40,7 +41,8 @@ impl Display for CaptureCreationError {
             #[cfg(target_os = "macos")]
             CaptureCreationError::Macos(e) => format!("{e}"),
             #[cfg(windows)]
-            CaptureCreationError::Windows => String::from(""),
+            CaptureCreationError::Windows => format!(""),
+            CaptureCreationError::NoAvailableBackend => format!("no available backend"),
         };
         write!(f, "could not create input capture: {reason}")
     }

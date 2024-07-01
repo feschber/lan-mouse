@@ -1,6 +1,7 @@
-use std::{fmt::Display, io};
+use std::fmt::Display;
 
 use thiserror::Error;
+#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use wayland_client::{
     backend::WaylandError,
     globals::{BindError, GlobalError},
@@ -17,15 +18,21 @@ pub enum EmulationCreationError {
     Xdp(#[from] XdpEmulationCreationError),
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11(#[from] X11EmulationCreationError),
+    NoAvailableBackend,
 }
 
 impl Display for EmulationCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self {
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
             EmulationCreationError::Wlroots(e) => format!("wlroots backend: {e}"),
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             EmulationCreationError::Libei(e) => format!("libei backend: {e}"),
+            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
             EmulationCreationError::Xdp(e) => format!("desktop portal backend: {e}"),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
+            EmulationCreationError::NoAvailableBackend => format!("no backend available"),
         };
         write!(f, "could not create input emulation backend: {reason}")
     }
@@ -39,7 +46,7 @@ pub enum WlrootsEmulationCreationError {
     Wayland(#[from] WaylandError),
     Bind(#[from] WaylandBindError),
     Dispatch(#[from] DispatchError),
-    Io(#[from] io::Error),
+    Io(#[from] std::io::Error),
 }
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -88,7 +95,7 @@ impl Display for WlrootsEmulationCreationError {
 #[derive(Debug, Error)]
 pub enum LibeiEmulationCreationError {
     Ashpd(#[from] ashpd::Error),
-    Io(#[from] io::Error),
+    Io(#[from] std::io::Error),
 }
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
@@ -103,7 +110,18 @@ impl Display for LibeiEmulationCreationError {
 
 #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
 #[derive(Debug, Error)]
-pub enum XdpEmulationCreationError {}
+pub enum XdpEmulationCreationError {
+    Ashpd(#[from] ashpd::Error),
+}
+
+#[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+impl Display for XdpEmulationCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            XdpEmulationCreationError::Ashpd(e) => write!(f, "portal error: {e}"),
+        }
+    }
+}
 
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 #[derive(Debug, Error)]

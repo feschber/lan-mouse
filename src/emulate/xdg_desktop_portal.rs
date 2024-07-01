@@ -17,13 +17,15 @@ use crate::{
     },
 };
 
+use super::error::XdpEmulationCreationError;
+
 pub struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
     session: Session<'a>,
 }
 
 impl<'a> DesktopPortalEmulation<'a> {
-    pub async fn new() -> Result<DesktopPortalEmulation<'a>> {
+    pub async fn new() -> Result<DesktopPortalEmulation<'a>, XdpEmulationCreationError> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
 
