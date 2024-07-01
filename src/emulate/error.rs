@@ -20,6 +20,8 @@ pub enum EmulationCreationError {
     X11(#[from] X11EmulationCreationError),
     #[cfg(target_os = "macos")]
     MacOs(#[from] MacOSEmulationCreationError),
+    #[cfg(windows)]
+    Windows(#[from] WindowsEmulationCreationError),
     NoAvailableBackend,
 }
 
@@ -36,6 +38,8 @@ impl Display for EmulationCreationError {
             EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
             #[cfg(target_os = "macos")]
             EmulationCreationError::MacOs(e) => format!("macos backend: {e}"),
+            #[cfg(windows)]
+            EmulationCreationError::Windows(e) => format!("windows backend: {e}"),
             EmulationCreationError::NoAvailableBackend => "no backend available".to_string(),
         };
         write!(f, "could not create input emulation backend: {reason}")
@@ -158,3 +162,7 @@ impl Display for MacOSEmulationCreationError {
         }
     }
 }
+
+#[cfg(windows)]
+#[derive(Debug, Error)]
+pub enum WindowsEmulationCreationError {}

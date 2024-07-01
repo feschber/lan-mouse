@@ -1,9 +1,9 @@
+use super::error::WindowsEmulationCreationError;
 use crate::{
     emulate::InputEmulation,
     event::{KeyboardEvent, PointerEvent},
     scancode,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use std::ops::BitOrAssign;
 use std::time::Duration;
@@ -33,7 +33,7 @@ pub struct WindowsEmulation {
 }
 
 impl WindowsEmulation {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, WindowsEmulationCreationError> {
         Ok(Self { repeat_task: None })
     }
 }
