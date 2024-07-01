@@ -18,6 +18,8 @@ pub enum EmulationCreationError {
     Xdp(#[from] XdpEmulationCreationError),
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11(#[from] X11EmulationCreationError),
+    #[cfg(target_os = "macos")]
+    MacOs(#[from] MacOSEmulationCreationError),
     NoAvailableBackend,
 }
 
@@ -32,6 +34,8 @@ impl Display for EmulationCreationError {
             EmulationCreationError::Xdp(e) => format!("desktop portal backend: {e}"),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
+            #[cfg(target_os = "macos")]
+            EmulationCreationError::MacOs(e) => format!("macos backend: {e}"),
             EmulationCreationError::NoAvailableBackend => format!("no backend available"),
         };
         write!(f, "could not create input emulation backend: {reason}")
@@ -134,6 +138,21 @@ impl Display for X11EmulationCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             X11EmulationCreationError::OpenDisplay => write!(f, "could not open display!"),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Error)]
+pub enum MacOSEmulationCreationError {
+    EventSourceCreation,
+}
+
+#[cfg(target_os = "macos")]
+impl Display for MacOSEmulationCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MacOSEmulationCreationError::EventSourceCreation => write!(f, "could not create event source"),
         }
     }
 }
