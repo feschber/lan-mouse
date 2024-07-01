@@ -50,8 +50,15 @@ pub async fn create(
 ) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
     if let Some(backend) = backend {
         return match backend {
+            #[cfg(windows)]
+            EmulationBackend::Windows => Ok(Box::new(windows::WindowsEmulation::new()?)),
+            #[cfg(target_os = "macos")]
+            EmulationBackend::MacOs => Ok(Box::new(windows::MacOSEmulation::new()?)),
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             EmulationBackend::Libei => Ok(Box::new(libei::LibeiEmulation::new().await?)),
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
             EmulationBackend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             EmulationBackend::X11 => Ok(Box::new(x11::X11Emulation::new()?)),
             EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
         };
