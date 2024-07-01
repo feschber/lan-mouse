@@ -62,7 +62,7 @@ pub async fn create_backend(
         #[cfg(windows)]
         EmulationBackend::Windows => Ok(Box::new(windows::WindowsEmulation::new()?)),
         #[cfg(target_os = "macos")]
-        EmulationBackend::MacOs => Ok(Box::new(windows::MacOSEmulation::new()?)),
+        EmulationBackend::MacOs => Ok(Box::new(macos::MacOSEmulation::new()?)),
         EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
     };
 }
