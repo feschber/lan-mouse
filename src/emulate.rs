@@ -88,7 +88,7 @@ pub async fn create(
         #[cfg(windows)]
         EmulationBackend::Windows,
         #[cfg(target_os = "macos")]
-        EmulationBackend::MacOS,
+        EmulationBackend::MacOs,
         EmulationBackend::Dummy,
     ] {
         match create_backend(backend).await {
