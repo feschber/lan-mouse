@@ -1,5 +1,5 @@
 use crate::client::{ClientEvent, ClientHandle};
-use crate::emulate::{InputEmulation, error::WlrootsEmulationCreationError};
+use crate::emulate::{error::WlrootsEmulationCreationError, InputEmulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
@@ -53,12 +53,15 @@ impl WlrootsEmulation {
         let (globals, queue) = registry_queue_init::<State>(&conn)?;
         let qh = queue.handle();
 
-        let seat: wl_seat::WlSeat = globals.bind(&qh, 7..=8, ())
+        let seat: wl_seat::WlSeat = globals
+            .bind(&qh, 7..=8, ())
             .map_err(|e| WaylandBindError::new(e, "wl_seat 7..=8"))?;
 
-        let vpm: VpManager = globals.bind(&qh, 1..=1, ())
+        let vpm: VpManager = globals
+            .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "wlr-virtual-pointer-unstable-v1"))?;
-        let vkm: VkManager = globals.bind(&qh, 1..=1, ())
+        let vkm: VkManager = globals
+            .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "virtual-keyboard-unstable-v1"))?;
 
         let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();

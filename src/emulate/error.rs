@@ -1,8 +1,11 @@
 use std::{fmt::Display, io};
 
 use thiserror::Error;
-use wayland_client::{backend::WaylandError, globals::{BindError, GlobalError}, ConnectError, DispatchError};
-
+use wayland_client::{
+    backend::WaylandError,
+    globals::{BindError, GlobalError},
+    ConnectError, DispatchError,
+};
 
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {
@@ -20,9 +23,9 @@ impl Display for EmulationCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reason = match self {
             EmulationCreationError::Wlroots(e) => format!("wlroots backend: {e}"),
-            EmulationCreationError::Libei(e) => todo!("libei backend: {e}"),
-            EmulationCreationError::Xdp(e) => todo!("desktop portal backend: {e}"),
-            EmulationCreationError::X11(e) => todo!("x11 backend: {e}"),
+            EmulationCreationError::Libei(e) => format!("libei backend: {e}"),
+            EmulationCreationError::Xdp(e) => format!("desktop portal backend: {e}"),
+            EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
         };
         write!(f, "could not create input emulation backend: {reason}")
     }
@@ -51,7 +54,6 @@ impl WaylandBindError {
         Self { inner, protocol }
     }
 }
-
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 impl Display for WaylandBindError {
@@ -84,15 +86,36 @@ impl Display for WlrootsEmulationCreationError {
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
-pub enum LibeiEmulationCreationError {}
+pub enum LibeiEmulationCreationError {
+    Ashpd(#[from] ashpd::Error),
+    Io(#[from] io::Error),
+}
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+impl Display for LibeiEmulationCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LibeiEmulationCreationError::Ashpd(e) => write!(f, "xdg-desktop-portal: {e}"),
+            LibeiEmulationCreationError::Io(e) => write!(f, "io error: {e}"),
+        }
+    }
+}
 
 #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum XdpEmulationCreationError {}
 
-
-
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 #[derive(Debug, Error)]
-pub enum X11EmulationCreationError {}
+pub enum X11EmulationCreationError {
+    OpenDisplay,
+}
+
+#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+impl Display for X11EmulationCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            X11EmulationCreationError::OpenDisplay => write!(f, "could not open display!"),
+        }
+    }
+}

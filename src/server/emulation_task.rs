@@ -7,7 +7,12 @@ use tokio::{
 };
 
 use crate::{
-    client::{ClientEvent, ClientHandle}, config::EmulationBackend, emulate::{self, error::EmulationCreationError, InputEmulation}, event::{Event, KeyboardEvent}, scancode, server::State
+    client::{ClientEvent, ClientHandle},
+    config::EmulationBackend,
+    emulate::{self, error::EmulationCreationError, InputEmulation},
+    event::{Event, KeyboardEvent},
+    scancode,
+    server::State,
 };
 
 use super::{CaptureEvent, Server};

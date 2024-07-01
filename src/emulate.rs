@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use std::future;
 
 use crate::{
-    client::{ClientEvent, ClientHandle}, config::EmulationBackend, event::Event
+    client::{ClientEvent, ClientHandle},
+    config::EmulationBackend,
+    event::Event,
 };
 use anyhow::Result;
 
@@ -43,7 +45,18 @@ pub trait InputEmulation: Send {
     async fn destroy(&mut self);
 }
 
-pub async fn create(backend: Option<EmulationBackend>) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
+pub async fn create(
+    backend: Option<EmulationBackend>,
+) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
+    if let Some(backend) = backend {
+        return match backend {
+            EmulationBackend::Libei => Ok(Box::new(libei::LibeiEmulation::new().await?)),
+            EmulationBackend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
+            EmulationBackend::X11 => Ok(Box::new(x11::X11Emulation::new()?)),
+            EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
+        };
+    }
+
     #[cfg(windows)]
     match windows::WindowsEmulation::new() {
         Ok(c) => return Ok(Box::new(c)),

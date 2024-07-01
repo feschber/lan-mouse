@@ -71,7 +71,9 @@ fn run_service(config: &Config) -> Result<()> {
         log::info!("Press {:?} to release the mouse", config.release_bind);
 
         let server = Server::new(config);
-        server.run(config.capture_backend, config.emulation_backend).await?;
+        server
+            .run(config.capture_backend, config.emulation_backend)
+            .await?;
 
         log::debug!("service exiting");
         anyhow::Ok(())
