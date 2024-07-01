@@ -41,7 +41,7 @@ impl Display for CaptureCreationError {
             #[cfg(target_os = "macos")]
             CaptureCreationError::Macos(e) => format!("{e}"),
             #[cfg(windows)]
-            CaptureCreationError::Windows => format!(""),
+            CaptureCreationError::Windows => String::new(""),
             CaptureCreationError::NoAvailableBackend => "no available backend".to_string(),
         };
         write!(f, "could not create input capture: {reason}")
