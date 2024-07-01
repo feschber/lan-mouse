@@ -33,7 +33,7 @@ pub mod dummy;
 pub async fn create_backend(
     backend: CaptureBackend,
 ) -> Result<Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>>, CaptureCreationError> {
-    return match backend {
+    match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         CaptureBackend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -45,7 +45,7 @@ pub async fn create_backend(
         #[cfg(target_os = "macos")]
         CaptureBackend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new()?)),
         CaptureBackend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
-    };
+    }
 }
 
 pub async fn create(

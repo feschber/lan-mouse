@@ -36,7 +36,7 @@ impl Display for EmulationCreationError {
             EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
             #[cfg(target_os = "macos")]
             EmulationCreationError::MacOs(e) => format!("macos backend: {e}"),
-            EmulationCreationError::NoAvailableBackend => format!("no backend available"),
+            EmulationCreationError::NoAvailableBackend => "no backend available".to_string(),
         };
         write!(f, "could not create input emulation backend: {reason}")
     }

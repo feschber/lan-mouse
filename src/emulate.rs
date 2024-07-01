@@ -48,7 +48,7 @@ pub trait InputEmulation: Send {
 pub async fn create_backend(
     backend: EmulationBackend,
 ) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
-    return match backend {
+    match backend {
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
         EmulationBackend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
@@ -64,7 +64,7 @@ pub async fn create_backend(
         #[cfg(target_os = "macos")]
         EmulationBackend::MacOs => Ok(Box::new(macos::MacOSEmulation::new()?)),
         EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
-    };
+    }
 }
 
 pub async fn create(
