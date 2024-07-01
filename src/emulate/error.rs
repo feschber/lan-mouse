@@ -152,7 +152,9 @@ pub enum MacOSEmulationCreationError {
 impl Display for MacOSEmulationCreationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MacOSEmulationCreationError::EventSourceCreation => write!(f, "could not create event source"),
+            MacOSEmulationCreationError::EventSourceCreation => {
+                write!(f, "could not create event source")
+            }
         }
     }
 }
