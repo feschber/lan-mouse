@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 
 use futures_core::Stream;
 
-use crate::event::Event;
+use input_event::Event;
 
 use super::{CaptureHandle, InputCapture, Position};
 

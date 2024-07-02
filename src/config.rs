@@ -9,8 +9,11 @@ use std::{error::Error, fs};
 use toml;
 
 use crate::client::Position;
-use crate::scancode;
-use crate::scancode::Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift};
+
+use input_event::scancode::{
+    self,
+    Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift},
+};
 
 pub const DEFAULT_PORT: u16 = 4242;
 
@@ -115,6 +118,24 @@ impl Display for CaptureBackend {
     }
 }
 
+impl From<CaptureBackend> for input_capture::Backend {
+    fn from(backend: CaptureBackend) -> Self {
+        match backend {
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            CaptureBackend::InputCapturePortal => Self::InputCapturePortal,
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            CaptureBackend::LayerShell => Self::LayerShell,
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            CaptureBackend::X11 => Self::X11,
+            #[cfg(windows)]
+            CaptureBackend::Windows => Self::Windows,
+            #[cfg(target_os = "macos")]
+            CaptureBackend::MacOs => Self::MacOs,
+            CaptureBackend::Dummy => Self::Dummy,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum EmulationBackend {
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -130,6 +151,26 @@ pub enum EmulationBackend {
     #[cfg(target_os = "macos")]
     MacOs,
     Dummy,
+}
+
+impl From<EmulationBackend> for input_emulation::Backend {
+    fn from(backend: EmulationBackend) -> Self {
+        match backend {
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            EmulationBackend::Wlroots => Self::Wlroots,
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            EmulationBackend::Libei => Self::Libei,
+            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            EmulationBackend::Xdp => Self::Xdp,
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            EmulationBackend::X11 => Self::X11,
+            #[cfg(windows)]
+            EmulationBackend::Windows => Self::Windows,
+            #[cfg(target_os = "macos")]
+            EmulationBackend::MacOs => Self::MacOs,
+            EmulationBackend::Dummy => Self::Dummy,
+        }
+    }
 }
 
 impl Display for EmulationBackend {

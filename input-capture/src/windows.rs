@@ -32,10 +32,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WNDPROC,
 };
 
-use crate::event::{
-    KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+use input_event::{
+    scancode::{self, Linux},
+    Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
-use crate::{event::Event, scancode, scancode::Linux};
 
 use super::{CaptureHandle, InputCapture, Position};
 

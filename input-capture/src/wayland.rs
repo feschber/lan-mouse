@@ -60,7 +60,7 @@ use wayland_client::{
 
 use tempfile;
 
-use crate::event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},

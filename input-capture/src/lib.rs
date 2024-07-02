@@ -2,7 +2,7 @@ use std::{fmt::Display, io};
 
 use futures_core::Stream;
 
-use crate::{config::CaptureBackend, event::Event};
+use input_event::Event;
 
 use self::error::CaptureCreationError;
 
@@ -59,6 +59,7 @@ impl Display for Position {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     InputCapturePortal,
@@ -73,6 +74,24 @@ pub enum Backend {
     Dummy,
 }
 
+impl Display for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            Backend::InputCapturePortal => write!(f, "input-capture-portal"),
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            Backend::LayerShell => write!(f, "layer-shell"),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            Backend::X11 => write!(f, "X11"),
+            #[cfg(windows)]
+            Backend::Windows => write!(f, "windows"),
+            #[cfg(target_os = "macos")]
+            Backend::MacOs => write!(f, "MacOS"),
+            Backend::Dummy => write!(f, "dummy"),
+        }
+    }
+}
+
 pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpin {
     /// create a new client with the given id
     fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
@@ -85,26 +104,26 @@ pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpi
 }
 
 pub async fn create_backend(
-    backend: CaptureBackend,
+    backend: Backend,
 ) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
 {
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-        CaptureBackend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
+        Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        CaptureBackend::LayerShell => Ok(Box::new(wayland::WaylandInputCapture::new()?)),
+        Backend::LayerShell => Ok(Box::new(wayland::WaylandInputCapture::new()?)),
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-        CaptureBackend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
+        Backend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
         #[cfg(windows)]
-        CaptureBackend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
+        Backend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
         #[cfg(target_os = "macos")]
-        CaptureBackend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new()?)),
-        CaptureBackend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
+        Backend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new()?)),
+        Backend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
     }
 }
 
 pub async fn create(
-    backend: Option<CaptureBackend>,
+    backend: Option<Backend>,
 ) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
 {
     if let Some(backend) = backend {
@@ -117,16 +136,16 @@ pub async fn create(
 
     for backend in [
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-        CaptureBackend::InputCapturePortal,
+        Backend::InputCapturePortal,
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        CaptureBackend::LayerShell,
+        Backend::LayerShell,
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-        CaptureBackend::X11,
+        Backend::X11,
         #[cfg(windows)]
-        CaptureBackend::Windows,
+        Backend::Windows,
         #[cfg(target_os = "macos")]
-        CaptureBackend::MacOs,
-        CaptureBackend::Dummy,
+        Backend::MacOs,
+        Backend::Dummy,
     ] {
         match create_backend(backend).await {
             Ok(b) => {

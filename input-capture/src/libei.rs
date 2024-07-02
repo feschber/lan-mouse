@@ -30,7 +30,7 @@ use tokio::{
 use futures_core::Stream;
 use once_cell::sync::Lazy;
 
-use crate::event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use super::{
     error::LibeiCaptureCreationError, CaptureHandle, InputCapture as LanMouseInputCapture, Position,

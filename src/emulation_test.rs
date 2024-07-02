@@ -1,7 +1,6 @@
 use crate::config::Config;
-use crate::emulate;
-use crate::event::{Event, PointerEvent};
 use anyhow::Result;
+use input_event::{Event, PointerEvent};
 use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 use tokio::task::LocalSet;
@@ -22,7 +21,8 @@ const FREQUENCY_HZ: f64 = 1.0;
 const RADIUS: f64 = 100.0;
 
 async fn input_emulation_test(config: Config) -> Result<()> {
-    let mut emulation = emulate::create(config.emulation_backend).await?;
+    let backend = config.emulation_backend.map(|b| b.into());
+    let mut emulation = input_emulation::create(backend).await?;
     emulation.create(0).await;
     let start = Instant::now();
     let mut offset = (0, 0);

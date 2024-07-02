@@ -1,5 +1,5 @@
-use crate::event::Event;
 use async_trait::async_trait;
+use input_event::Event;
 
 use super::{EmulationHandle, InputEmulation};
 

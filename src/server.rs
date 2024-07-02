@@ -40,7 +40,7 @@ pub struct Server {
     client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
     state: Rc<Cell<State>>,
-    release_bind: Vec<crate::scancode::Linux>,
+    release_bind: Vec<input_event::scancode::Linux>,
 }
 
 impl Server {

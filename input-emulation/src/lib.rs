@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use std::future;
+use std::{fmt::Display, future};
 
-use crate::{config::EmulationBackend, event::Event};
+use input_event::Event;
+
 use anyhow::Result;
 
 use self::error::EmulationCreationError;
@@ -30,6 +31,43 @@ pub mod error;
 
 pub type EmulationHandle = u64;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Backend {
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    Wlroots,
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    Libei,
+    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    Xdp,
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    X11,
+    #[cfg(windows)]
+    Windows,
+    #[cfg(target_os = "macos")]
+    MacOs,
+    Dummy,
+}
+
+impl Display for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            Backend::Wlroots => write!(f, "wlroots"),
+            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            Backend::Libei => write!(f, "libei"),
+            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            Backend::Xdp => write!(f, "xdg-desktop-portal"),
+            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            Backend::X11 => write!(f, "X11"),
+            #[cfg(windows)]
+            Backend::Windows => write!(f, "windows"),
+            #[cfg(target_os = "macos")]
+            Backend::MacOs => write!(f, "macos"),
+            Backend::Dummy => write!(f, "dummy"),
+        }
+    }
+}
+
 #[async_trait]
 pub trait InputEmulation: Send {
     async fn consume(&mut self, event: Event, handle: EmulationHandle);
@@ -43,29 +81,29 @@ pub trait InputEmulation: Send {
 }
 
 pub async fn create_backend(
-    backend: EmulationBackend,
+    backend: Backend,
 ) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
     match backend {
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        EmulationBackend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
+        Backend::Wlroots => Ok(Box::new(wlroots::WlrootsEmulation::new()?)),
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-        EmulationBackend::Libei => Ok(Box::new(libei::LibeiEmulation::new().await?)),
+        Backend::Libei => Ok(Box::new(libei::LibeiEmulation::new().await?)),
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-        EmulationBackend::X11 => Ok(Box::new(x11::X11Emulation::new()?)),
+        Backend::X11 => Ok(Box::new(x11::X11Emulation::new()?)),
         #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
-        EmulationBackend::Xdp => Ok(Box::new(
+        Backend::Xdp => Ok(Box::new(
             xdg_desktop_portal::DesktopPortalEmulation::new().await?,
         )),
         #[cfg(windows)]
-        EmulationBackend::Windows => Ok(Box::new(windows::WindowsEmulation::new()?)),
+        Backend::Windows => Ok(Box::new(windows::WindowsEmulation::new()?)),
         #[cfg(target_os = "macos")]
-        EmulationBackend::MacOs => Ok(Box::new(macos::MacOSEmulation::new()?)),
-        EmulationBackend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
+        Backend::MacOs => Ok(Box::new(macos::MacOSEmulation::new()?)),
+        Backend::Dummy => Ok(Box::new(dummy::DummyEmulation::new())),
     }
 }
 
 pub async fn create(
-    backend: Option<EmulationBackend>,
+    backend: Option<Backend>,
 ) -> Result<Box<dyn InputEmulation>, EmulationCreationError> {
     if let Some(backend) = backend {
         let b = create_backend(backend).await;
@@ -77,16 +115,16 @@ pub async fn create(
 
     for backend in [
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        EmulationBackend::Wlroots,
+        Backend::Wlroots,
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-        EmulationBackend::Libei,
+        Backend::Libei,
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-        EmulationBackend::X11,
+        Backend::X11,
         #[cfg(windows)]
-        EmulationBackend::Windows,
+        Backend::Windows,
         #[cfg(target_os = "macos")]
-        EmulationBackend::MacOs,
-        EmulationBackend::Dummy,
+        Backend::MacOs,
+        Backend::Dummy,
     ] {
         match create_backend(backend).await {
             Ok(b) => {
