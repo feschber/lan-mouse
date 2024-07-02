@@ -11,4 +11,4 @@ anyhow = "1.0.86"
 futures-core = "0.3.30"
 log = "0.4.22"
 num_enum = "0.7.2"
-serde = "1.0.203"
+serde = { version = "1.0", features = ["derive"] }
