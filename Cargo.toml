@@ -18,9 +18,9 @@ strip = true
 lto = "fat"
 
 [dependencies]
-input-emulation = { path = "input-emulation" }
 input-event = { path = "input-event" }
-input-capture = { path = "input-capture" }
+input-emulation = { path = "input-emulation", default-features = false }
+input-capture = { path = "input-capture", default-features = false }
 
 hickory-resolver = "0.24.1"
 toml = "0.8"
