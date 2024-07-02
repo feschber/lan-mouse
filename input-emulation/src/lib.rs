@@ -118,6 +118,8 @@ pub async fn create(
         Backend::Wlroots,
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::Libei,
+        #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+        Backend::Xdp,
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
         Backend::X11,
         #[cfg(windows)]
