@@ -1,0 +1,47 @@
+[package]
+name = "input-emulation"
+description = "cross-platform input emulation library used by lan-mouse"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ferdinandschober/lan-mouse"
+
+[dependencies]
+anyhow = "1.0.86"
+async-trait = "0.1.80"
+futures = "0.3.28"
+log = "0.4.22"
+input-event = { path = "../input-event" }
+thiserror = "1.0.61"
+tokio = { version = "1.32.0", features = ["io-util", "io-std", "macros", "net", "process", "rt", "sync", "signal"] }
+
+[target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
+wayland-client = { version="0.31.1", optional = true }
+wayland-protocols = { version="0.31.0", features=["client", "staging", "unstable"], optional = true }
+wayland-protocols-wlr = { version="0.2.0", features=["client"], optional = true }
+wayland-protocols-misc = { version="0.2.0", features=["client"], optional = true }
+x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
+ashpd = { version = "0.8", default-features = false, features = ["tokio"], optional = true }
+reis = { version = "0.2", features = [ "tokio" ], optional = true }
+
+[target.'cfg(target_os="macos")'.dependencies]
+core-graphics = { version = "0.23", features = ["highsierra"] }
+keycode = "0.4.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = {  version = "0.54.0", features = [
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Graphics",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[features]
+default = ["wayland", "x11", "xdg_desktop_portal", "libei"]
+wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc" ]
+x11 = ["dep:x11"]
+xdg_desktop_portal = ["dep:ashpd"]
+libei = ["dep:reis", "dep:ashpd"]

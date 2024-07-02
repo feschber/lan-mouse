@@ -1,9 +1,7 @@
 use super::error::WindowsEmulationCreationError;
-use crate::{
-    event::{
-        Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
-    },
-    scancode,
+use input_event::{
+    scancode, Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE,
+    BTN_RIGHT,
 };
 
 use async_trait::async_trait;

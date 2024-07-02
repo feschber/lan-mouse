@@ -1,4 +1,4 @@
-use crate::emulate::{error::WlrootsEmulationCreationError, InputEmulation};
+use super::{error::WlrootsEmulationCreationError, InputEmulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
@@ -26,7 +26,7 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
-use crate::event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use super::error::WaylandBindError;
 use super::EmulationHandle;

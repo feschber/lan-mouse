@@ -76,9 +76,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.81"
+version = "1.0.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0952808a6c2afd1aa8947271f3a60f1a6763c7b912d210184c5149b5cf147247"
+checksum = "b3d1d046238990b9cf5bcde22a3fb3584ee5cf65fb2765f454ed428c7a0063da"
 
 [[package]]
 name = "arraydeque"
@@ -231,9 +231,9 @@ checksum = "fbb36e985947064623dbd357f727af08ffd077f93d696782f3c56365fa2e2799"
 
 [[package]]
 name = "async-trait"
-version = "0.1.78"
+version = "0.1.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "461abc97219de0eaaf81fe3ef974a540158f3d079c2ab200f891f1a2ef201e85"
+checksum = "c6fa2087f2753a7da8cc1c0dbfcf89579dd57458e36769de5ac750b4671737ca"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1235,6 +1235,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "input-capture"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "core-graphics",
+ "futures",
+ "futures-core",
+ "input-event",
+ "log",
+ "memmap",
+ "once_cell",
+ "reis",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "windows 0.54.0",
+ "x11",
+]
+
+[[package]]
+name = "input-emulation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "async-trait",
+ "core-graphics",
+ "futures",
+ "input-event",
+ "keycode",
+ "log",
+ "reis",
+ "thiserror",
+ "tokio",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "windows 0.54.0",
+ "x11",
+]
+
+[[package]]
+name = "input-event"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-core",
+ "log",
+ "num_enum",
+ "serde",
+]
+
+[[package]]
 name = "ipconfig"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1287,11 +1346,9 @@ name = "lan-mouse"
 version = "0.8.0"
 dependencies = [
  "anyhow",
- "ashpd",
  "async-channel",
  "async-trait",
  "clap",
- "core-graphics",
  "endi",
  "env_logger",
  "futures",
@@ -1300,27 +1357,20 @@ dependencies = [
  "gtk4",
  "hickory-resolver",
  "hostname 0.4.0",
- "keycode",
+ "input-capture",
+ "input-emulation",
+ "input-event",
  "libadwaita",
  "libc",
  "log",
- "memmap",
  "num_enum",
  "once_cell",
- "reis",
  "serde",
  "serde_json",
  "slab",
- "tempfile",
  "thiserror",
  "tokio",
  "toml",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-misc",
- "wayland-protocols-wlr",
- "windows 0.54.0",
- "x11",
 ]
 
 [[package]]
@@ -1395,9 +1445,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.21"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
+checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "lru-cache"
@@ -1851,18 +1901,18 @@ checksum = "92d43fe69e652f3df9bdc2b85b2854a0825b86e4fb76bc44d945137d053639ca"
 
 [[package]]
 name = "serde"
-version = "1.0.197"
+version = "1.0.203"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fb1c873e1b9b056a4dc4c0c198b24c3ffa059243875552b2bd0933b1aee4ce2"
+checksum = "7253ab4de971e72fb7be983802300c30b5a7f0c2e56fab8abfc6a214307c0094"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.197"
+version = "1.0.203"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7eb0b34b42edc17f6b7cac84a52a1c5f0e1bb2227e997ca9011ea3dd34e8610b"
+checksum = "500cbc0ebeb6f46627f50f3f5811ccf6bf00643be300b4c3eabc0ef55dc5b5ba"
 dependencies = [
  "proc-macro2",
  "quote",

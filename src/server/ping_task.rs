@@ -5,7 +5,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{client::ClientHandle, event::Event};
+use input_event::Event;
+
+use crate::client::ClientHandle;
 
 use super::{capture_task::CaptureEvent, emulation_task::EmulationEvent, Server, State};
 

@@ -1,8 +1,8 @@
-use crate::capture::{self, Position};
 use crate::config::Config;
-use crate::event::{Event, KeyboardEvent};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
+use input_capture::{self, Position};
+use input_event::{Event, KeyboardEvent};
 use tokio::task::LocalSet;
 
 pub fn run() -> Result<()> {
@@ -19,7 +19,8 @@ pub fn run() -> Result<()> {
 
 async fn input_capture_test(config: Config) -> Result<()> {
     log::info!("creating input capture");
-    let mut input_capture = capture::create(config.capture_backend).await?;
+    let backend = config.capture_backend.map(|b| b.into());
+    let mut input_capture = input_capture::create(backend).await?;
     log::info!("creating clients");
     input_capture.create(0, Position::Left)?;
     input_capture.create(1, Position::Right)?;

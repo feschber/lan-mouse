@@ -1,9 +1,10 @@
-use crate::scancode;
 use anyhow::{anyhow, Result};
 use std::{
     error::Error,
     fmt::{self, Display},
 };
+
+pub mod scancode;
 
 // FIXME
 pub const BTN_LEFT: u32 = 0x110;

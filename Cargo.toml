@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    "input-capture",
+    "input-emulation",
+    "input-event",
+]
+
 [package]
 name = "lan-mouse"
 description = "Software KVM Switch / mouse & keyboard sharing software for Local Area Networks"
@@ -6,16 +13,16 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/ferdinandschober/lan-mouse"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [profile.release]
 strip = true
 lto = "fat"
 
 [dependencies]
-tempfile = "3.8"
+input-emulation = { path = "input-emulation" }
+input-event = { path = "input-event" }
+input-capture = { path = "input-capture" }
+
 hickory-resolver = "0.24.1"
-memmap = "0.7"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0.71"
@@ -24,13 +31,12 @@ env_logger = "0.11.3"
 serde_json = "1.0.107"
 tokio = {version = "1.32.0", features = ["io-util", "io-std", "macros", "net", "process", "rt", "sync", "signal"] }
 async-trait = "0.1.73"
-futures-core = "0.3.28"
 futures = "0.3.28"
+futures-core = "0.3.28"
 clap = { version="4.4.11", features = ["derive"] }
 gtk = { package = "gtk4", version = "0.8.1", features = ["v4_2"], optional = true }
 adw = { package = "libadwaita", version = "0.6.0", features = ["v1_1"], optional = true }
 async-channel = { version = "2.1.1", optional = true }
-keycode = "0.4.0"
 once_cell = "1.19.0"
 num_enum = "0.7.2"
 hostname = "0.4.0"
@@ -41,36 +47,13 @@ thiserror = "1.0.61"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
-[target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
-wayland-client = { version="0.31.1", optional = true }
-wayland-protocols = { version="0.31.0", features=["client", "staging", "unstable"], optional = true }
-wayland-protocols-wlr = { version="0.2.0", features=["client"], optional = true }
-wayland-protocols-misc = { version="0.2.0", features=["client"], optional = true }
-x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-ashpd = { version = "0.8", default-features = false, features = ["tokio"], optional = true }
-reis = { version = "0.2", features = [ "tokio" ], optional = true }
-
-[target.'cfg(target_os="macos")'.dependencies]
-core-graphics = { version = "0.23", features = ["highsierra"] }
-
-[target.'cfg(windows)'.dependencies]
-windows = {  version = "0.54.0", features = [
-    "Win32_System_LibraryLoader",
-    "Win32_System_Threading",
-    "Win32_Foundation",
-    "Win32_Graphics",
-    "Win32_Graphics_Gdi",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
 [build-dependencies]
 glib-build-tools = { version = "0.19.0", optional = true }
 
 [features]
-default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
-wayland = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-protocols-misc" ]
-x11 = ["dep:x11"]
-xdg_desktop_portal = ["dep:ashpd"]
-libei = ["dep:reis", "dep:ashpd"]
+default = [ "wayland", "x11", "xdg_desktop_portal", "libei", "gtk" ]
+wayland = [ "input-capture/wayland", "input-emulation/wayland" ]
+x11 = [ "input-capture/x11", "input-emulation/x11" ]
+xdg_desktop_portal = [ "input-emulation/xdg_desktop_portal" ]
+libei = [ "input-capture/libei", "input-emulation/libei" ]
 gtk = ["dep:gtk", "dep:adw", "dep:async-channel", "dep:glib-build-tools"]

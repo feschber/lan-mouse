@@ -9,7 +9,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use slab::Slab;
 
-use crate::{capture, config::DEFAULT_PORT};
+use crate::config::DEFAULT_PORT;
+use input_capture;
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
@@ -25,13 +26,13 @@ impl Default for Position {
     }
 }
 
-impl From<Position> for capture::Position {
-    fn from(position: Position) -> capture::Position {
+impl From<Position> for input_capture::Position {
+    fn from(position: Position) -> input_capture::Position {
         match position {
-            Position::Left => capture::Position::Left,
-            Position::Right => capture::Position::Right,
-            Position::Top => capture::Position::Top,
-            Position::Bottom => capture::Position::Bottom,
+            Position::Left => input_capture::Position::Left,
+            Position::Right => input_capture::Position::Right,
+            Position::Top => input_capture::Position::Top,
+            Position::Bottom => input_capture::Position::Bottom,
         }
     }
 }

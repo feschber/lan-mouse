@@ -4,14 +4,11 @@ use std::{collections::HashSet, net::SocketAddr};
 
 use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
 
-use crate::{
-    capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position},
-    client::ClientHandle,
-    config::CaptureBackend,
-    event::{Event, KeyboardEvent},
-    scancode,
-    server::State,
-};
+use input_capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position};
+
+use input_event::{scancode, Event, KeyboardEvent};
+
+use crate::{client::ClientHandle, config::CaptureBackend, server::State};
 
 use super::Server;
 
@@ -35,8 +32,9 @@ pub fn new(
     release_bind: Vec<scancode::Linux>,
 ) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    let backend = backend.map(|b| b.into());
     let task = tokio::task::spawn_local(async move {
-        let mut capture = capture::create(backend).await?;
+        let mut capture = input_capture::create(backend).await?;
         let mut pressed_keys = HashSet::new();
         loop {
             tokio::select! {

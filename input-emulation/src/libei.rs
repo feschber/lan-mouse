@@ -22,7 +22,7 @@ use reis::{
     PendingRequestResult,
 };
 
-use crate::event::Event;
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use super::{error::LibeiEmulationCreationError, EmulationHandle, InputEmulation};
 
@@ -114,7 +114,7 @@ impl InputEmulation for LibeiEmulation {
             .as_micros() as u64;
         match event {
             Event::Pointer(p) => match p {
-                crate::event::PointerEvent::Motion {
+                PointerEvent::Motion {
                     time: _,
                     relative_x,
                     relative_y,
@@ -127,7 +127,7 @@ impl InputEmulation for LibeiEmulation {
                         d.frame(self.serial, now);
                     }
                 }
-                crate::event::PointerEvent::Button {
+                PointerEvent::Button {
                     time: _,
                     button,
                     state,
@@ -146,7 +146,7 @@ impl InputEmulation for LibeiEmulation {
                         d.frame(self.serial, now);
                     }
                 }
-                crate::event::PointerEvent::Axis {
+                PointerEvent::Axis {
                     time: _,
                     axis,
                     value,
@@ -162,7 +162,7 @@ impl InputEmulation for LibeiEmulation {
                         d.frame(self.serial, now);
                     }
                 }
-                crate::event::PointerEvent::AxisDiscrete120 { axis, value } => {
+                PointerEvent::AxisDiscrete120 { axis, value } => {
                     if !self.has_scroll {
                         return;
                     }
@@ -174,10 +174,10 @@ impl InputEmulation for LibeiEmulation {
                         d.frame(self.serial, now);
                     }
                 }
-                crate::event::PointerEvent::Frame {} => {}
+                PointerEvent::Frame {} => {}
             },
             Event::Keyboard(k) => match k {
-                crate::event::KeyboardEvent::Key {
+                KeyboardEvent::Key {
                     time: _,
                     key,
                     state,
@@ -196,7 +196,7 @@ impl InputEmulation for LibeiEmulation {
                         d.frame(self.serial, now);
                     }
                 }
-                crate::event::KeyboardEvent::Modifiers { .. } => {}
+                KeyboardEvent::Modifiers { .. } => {}
             },
             _ => {}
         }

@@ -5,7 +5,7 @@ use x11::{
     xtest,
 };
 
-use crate::event::{
+use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 

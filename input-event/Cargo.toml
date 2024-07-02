@@ -1,0 +1,14 @@
+[package]
+name = "input-event"
+description = "cross-platform input-event types for input-capture / input-emulation"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ferdinandschober/lan-mouse"
+
+[dependencies]
+anyhow = "1.0.86"
+futures-core = "0.3.30"
+log = "0.4.22"
+num_enum = "0.7.2"
+serde = "1.0.203"

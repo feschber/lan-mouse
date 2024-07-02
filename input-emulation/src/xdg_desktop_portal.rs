@@ -8,7 +8,7 @@ use ashpd::{
 };
 use async_trait::async_trait;
 
-use crate::event::{
+use input_event::{
     Event::{Keyboard, Pointer},
     KeyboardEvent, PointerEvent,
 };
@@ -59,7 +59,7 @@ impl<'a> DesktopPortalEmulation<'a> {
 
 #[async_trait]
 impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
-    async fn consume(&mut self, event: crate::event::Event, _client: crate::client::ClientHandle) {
+    async fn consume(&mut self, event: input_event::Event, _client: EmulationHandle) {
         match event {
             Pointer(p) => match p {
                 PointerEvent::Motion {

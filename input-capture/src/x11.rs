@@ -4,7 +4,7 @@ use std::task::Poll;
 use futures_core::Stream;
 
 use super::InputCapture;
-use crate::event::Event;
+use input_event::Event;
 
 use super::error::X11InputCaptureCreationError;
 use super::{CaptureHandle, Position};

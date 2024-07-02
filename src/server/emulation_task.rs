@@ -6,14 +6,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{
-    client::ClientHandle,
-    config::EmulationBackend,
-    emulate::{self, error::EmulationCreationError, EmulationHandle, InputEmulation},
-    event::{Event, KeyboardEvent},
-    scancode,
-    server::State,
-};
+use crate::{client::ClientHandle, config::EmulationBackend, server::State};
+use input_emulation::{self, error::EmulationCreationError, EmulationHandle, InputEmulation};
+use input_event::{Event, KeyboardEvent};
 
 use super::{CaptureEvent, Server};
 
@@ -39,7 +34,8 @@ pub fn new(
 ) -> Result<(JoinHandle<Result<()>>, Sender<EmulationEvent>), EmulationCreationError> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let emulate_task = tokio::task::spawn_local(async move {
-        let mut emulate = emulate::create(backend).await?;
+        let backend = backend.map(|b| b.into());
+        let mut emulate = input_emulation::create(backend).await?;
         let mut last_ignored = None;
 
         loop {
@@ -225,7 +221,7 @@ async fn release_keys(
             state: 0,
         });
         emulate.consume(event, client).await;
-        if let Ok(key) = scancode::Linux::try_from(key) {
+        if let Ok(key) = input_event::scancode::Linux::try_from(key) {
             log::warn!("releasing stuck key: {key:?}");
         }
     }

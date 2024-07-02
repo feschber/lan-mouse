@@ -1,11 +1,11 @@
 use super::{EmulationHandle, InputEmulation};
-use crate::event::{Event, KeyboardEvent, PointerEvent};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
     CGEvent, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 use keycode::{KeyMap, KeyMapping};
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
@@ -172,22 +172,22 @@ impl InputEmulation for MacOSEmulation {
                     state,
                 } => {
                     let (event_type, mouse_button) = match (button, state) {
-                        (b, 1) if b == crate::event::BTN_LEFT => {
+                        (b, 1) if b == input_event::BTN_LEFT => {
                             (CGEventType::LeftMouseDown, CGMouseButton::Left)
                         }
-                        (b, 0) if b == crate::event::BTN_LEFT => {
+                        (b, 0) if b == input_event::BTN_LEFT => {
                             (CGEventType::LeftMouseUp, CGMouseButton::Left)
                         }
-                        (b, 1) if b == crate::event::BTN_RIGHT => {
+                        (b, 1) if b == input_event::BTN_RIGHT => {
                             (CGEventType::RightMouseDown, CGMouseButton::Right)
                         }
-                        (b, 0) if b == crate::event::BTN_RIGHT => {
+                        (b, 0) if b == input_event::BTN_RIGHT => {
                             (CGEventType::RightMouseUp, CGMouseButton::Right)
                         }
-                        (b, 1) if b == crate::event::BTN_MIDDLE => {
+                        (b, 1) if b == input_event::BTN_MIDDLE => {
                             (CGEventType::OtherMouseDown, CGMouseButton::Center)
                         }
-                        (b, 0) if b == crate::event::BTN_MIDDLE => {
+                        (b, 0) if b == input_event::BTN_MIDDLE => {
                             (CGEventType::OtherMouseUp, CGMouseButton::Center)
                         }
                         _ => {

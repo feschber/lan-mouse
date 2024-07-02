@@ -7,7 +7,8 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{event::Event, frontend::FrontendEvent};
+use crate::frontend::FrontendEvent;
+use input_event::Event;
 
 use super::Server;
 
