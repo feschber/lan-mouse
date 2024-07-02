@@ -1,8 +1,3 @@
-use crate::{
-    capture::{error::WaylandBindError, InputCapture},
-    client::{ClientEvent, ClientHandle, Position},
-};
-
 use futures_core::Stream;
 use memmap::MmapOptions;
 use std::{
@@ -67,7 +62,10 @@ use tempfile;
 
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
-use super::error::LayerShellCaptureCreationError;
+use super::{
+    error::{LayerShellCaptureCreationError, WaylandBindError},
+    CaptureHandle, InputCapture, Position,
+};
 
 struct Globals {
     compositor: wl_compositor::WlCompositor,
@@ -104,13 +102,13 @@ struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
-    client_for_window: Vec<(Rc<Window>, ClientHandle)>,
-    focused: Option<(Rc<Window>, ClientHandle)>,
+    client_for_window: Vec<(Rc<Window>, CaptureHandle)>,
+    focused: Option<(Rc<Window>, CaptureHandle)>,
     g: Globals,
     wayland_fd: OwnedFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
-    pending_events: VecDeque<(ClientHandle, Event)>,
+    pending_events: VecDeque<(CaptureHandle, Event)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
     scroll_discrete_pending: bool,
 }
@@ -369,11 +367,11 @@ impl WaylandInputCapture {
         Ok(WaylandInputCapture(inner))
     }
 
-    fn add_client(&mut self, handle: ClientHandle, pos: Position) {
+    fn add_client(&mut self, handle: CaptureHandle, pos: Position) {
         self.0.get_mut().state.add_client(handle, pos);
     }
 
-    fn delete_client(&mut self, handle: ClientHandle) {
+    fn delete_client(&mut self, handle: CaptureHandle) {
         let inner = self.0.get_mut();
         // remove all windows corresponding to this client
         while let Some(i) = inner
@@ -471,7 +469,7 @@ impl State {
         }
     }
 
-    fn add_client(&mut self, client: ClientHandle, pos: Position) {
+    fn add_client(&mut self, client: CaptureHandle, pos: Position) {
         let outputs = get_output_configuration(self, pos);
 
         log::debug!("outputs: {outputs:?}");
@@ -564,15 +562,13 @@ impl Inner {
 }
 
 impl InputCapture for WaylandInputCapture {
-    fn notify(&mut self, client_event: ClientEvent) -> io::Result<()> {
-        match client_event {
-            ClientEvent::Create(handle, pos) => {
-                self.add_client(handle, pos);
-            }
-            ClientEvent::Destroy(handle) => {
-                self.delete_client(handle);
-            }
-        }
+    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+        self.add_client(handle, pos);
+        let inner = self.0.get_mut();
+        inner.flush_events()
+    }
+    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+        self.delete_client(handle);
         let inner = self.0.get_mut();
         inner.flush_events()
     }
@@ -586,7 +582,7 @@ impl InputCapture for WaylandInputCapture {
 }
 
 impl Stream for WaylandInputCapture {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {

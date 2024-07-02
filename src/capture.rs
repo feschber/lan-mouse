@@ -1,12 +1,8 @@
-use std::io;
+use std::{fmt::Display, io};
 
 use futures_core::Stream;
 
-use crate::{
-    client::{ClientEvent, ClientHandle},
-    config::CaptureBackend,
-    event::Event,
-};
+use crate::{config::CaptureBackend, event::Event};
 
 use self::error::CaptureCreationError;
 
@@ -30,9 +26,68 @@ pub mod x11;
 /// fallback input capture (does not produce events)
 pub mod dummy;
 
+pub type CaptureHandle = u64;
+
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum Position {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Position {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Position::Left => Self::Right,
+            Position::Right => Self::Left,
+            Position::Top => Self::Bottom,
+            Position::Bottom => Self::Top,
+        }
+    }
+}
+
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pos = match self {
+            Position::Left => "left",
+            Position::Right => "right",
+            Position::Top => "top",
+            Position::Bottom => "bottom",
+        };
+        write!(f, "{}", pos)
+    }
+}
+
+pub enum Backend {
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    InputCapturePortal,
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    LayerShell,
+    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    X11,
+    #[cfg(windows)]
+    Windows,
+    #[cfg(target_os = "macos")]
+    MacOs,
+    Dummy,
+}
+
+pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpin {
+    /// create a new client with the given id
+    fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
+
+    /// destroy the client with the given id, if it exists
+    fn destroy(&mut self, id: CaptureHandle) -> io::Result<()>;
+
+    /// release mouse
+    fn release(&mut self) -> io::Result<()>;
+}
+
 pub async fn create_backend(
     backend: CaptureBackend,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>>, CaptureCreationError> {
+) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
+{
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         CaptureBackend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
@@ -50,7 +105,8 @@ pub async fn create_backend(
 
 pub async fn create(
     backend: Option<CaptureBackend>,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(ClientHandle, Event)>>>, CaptureCreationError> {
+) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
+{
     if let Some(backend) = backend {
         let b = create_backend(backend).await;
         if b.is_ok() {
@@ -81,12 +137,4 @@ pub async fn create(
         }
     }
     Err(CaptureCreationError::NoAvailableBackend)
-}
-
-pub trait InputCapture: Stream<Item = io::Result<(ClientHandle, Event)>> + Unpin {
-    /// notify input capture of configuration changes
-    fn notify(&mut self, event: ClientEvent) -> io::Result<()>;
-
-    /// release mouse
-    fn release(&mut self) -> io::Result<()>;
 }

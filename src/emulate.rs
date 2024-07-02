@@ -1,11 +1,7 @@
 use async_trait::async_trait;
 use std::future;
 
-use crate::{
-    client::{ClientEvent, ClientHandle},
-    config::EmulationBackend,
-    event::Event,
-};
+use crate::{config::EmulationBackend, event::Event};
 use anyhow::Result;
 
 use self::error::EmulationCreationError;
@@ -32,17 +28,18 @@ pub mod macos;
 pub mod dummy;
 pub mod error;
 
+pub type EmulationHandle = u64;
+
 #[async_trait]
 pub trait InputEmulation: Send {
-    async fn consume(&mut self, event: Event, client_handle: ClientHandle);
-    async fn notify(&mut self, client_event: ClientEvent);
+    async fn consume(&mut self, event: Event, handle: EmulationHandle);
+    async fn create(&mut self, handle: EmulationHandle);
+    async fn destroy(&mut self, handle: EmulationHandle);
     /// this function is waited on continuously and can be used to handle events
     async fn dispatch(&mut self) -> Result<()> {
         let _: () = future::pending().await;
         Ok(())
     }
-
-    async fn destroy(&mut self);
 }
 
 pub async fn create_backend(

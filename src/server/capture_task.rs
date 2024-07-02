@@ -5,8 +5,8 @@ use std::{collections::HashSet, net::SocketAddr};
 use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
 
 use crate::{
-    capture::{self, error::CaptureCreationError, InputCapture},
-    client::{ClientEvent, ClientHandle},
+    capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position},
+    client::ClientHandle,
     config::CaptureBackend,
     event::{Event, KeyboardEvent},
     scancode,
@@ -19,8 +19,10 @@ use super::Server;
 pub enum CaptureEvent {
     /// capture must release the mouse
     Release,
-    /// capture is notified of a change in client states
-    ClientEvent(ClientEvent),
+    /// add a capture client
+    Create(CaptureHandle, Position),
+    /// destory a capture client
+    Destroy(CaptureHandle),
     /// termination signal
     Terminate,
 }
@@ -52,9 +54,9 @@ pub fn new(
                             CaptureEvent::Release => {
                                 capture.release()?;
                                 server.state.replace(State::Receiving);
-
                             }
-                            CaptureEvent::ClientEvent(e) => capture.notify(e)?,
+                            CaptureEvent::Create(h, p) => capture.create(h, p)?,
+                            CaptureEvent::Destroy(h) => capture.destroy(h)?,
                             CaptureEvent::Terminate => break,
                         },
                         None => break,
@@ -82,7 +84,7 @@ async fn handle_capture_event(
     capture: &mut Box<dyn InputCapture>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     timer_tx: &Sender<()>,
-    event: (ClientHandle, Event),
+    event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
     release_bind: &[scancode::Linux],
 ) -> Result<()> {

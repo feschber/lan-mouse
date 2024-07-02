@@ -1,4 +1,3 @@
-use crate::client::{ClientEvent, ClientHandle};
 use crate::emulate::{error::WlrootsEmulationCreationError, InputEmulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -30,10 +29,11 @@ use wayland_client::{
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 
 use super::error::WaylandBindError;
+use super::EmulationHandle;
 
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,
-    input_for_client: HashMap<ClientHandle, VirtualInput>,
+    input_for_client: HashMap<EmulationHandle, VirtualInput>,
     seat: wl_seat::WlSeat,
     qh: QueueHandle<Self>,
     vpm: VpManager,
@@ -64,7 +64,7 @@ impl WlrootsEmulation {
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "virtual-keyboard-unstable-v1"))?;
 
-        let input_for_client: HashMap<ClientHandle, VirtualInput> = HashMap::new();
+        let input_for_client: HashMap<EmulationHandle, VirtualInput> = HashMap::new();
 
         let mut emulate = WlrootsEmulation {
             last_flush_failed: false,
@@ -89,7 +89,7 @@ impl WlrootsEmulation {
 }
 
 impl State {
-    fn add_client(&mut self, client: ClientHandle) {
+    fn add_client(&mut self, client: EmulationHandle) {
         let pointer: Vp = self.vpm.create_virtual_pointer(None, &self.qh, ());
         let keyboard: Vk = self.vkm.create_virtual_keyboard(&self.seat, &self.qh, ());
 
@@ -104,12 +104,19 @@ impl State {
 
         self.input_for_client.insert(client, vinput);
     }
+
+    fn destroy_client(&mut self, handle: EmulationHandle) {
+        if let Some(input) = self.input_for_client.remove(&handle) {
+            input.pointer.destroy();
+            input.keyboard.destroy();
+        }
+    }
 }
 
 #[async_trait]
 impl InputEmulation for WlrootsEmulation {
-    async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
-        if let Some(virtual_input) = self.state.input_for_client.get(&client_handle) {
+    async fn consume(&mut self, event: Event, handle: EmulationHandle) {
+        if let Some(virtual_input) = self.state.input_for_client.get(&handle) {
             if self.last_flush_failed {
                 if let Err(WaylandError::Io(e)) = self.queue.flush() {
                     if e.kind() == io::ErrorKind::WouldBlock {
@@ -118,9 +125,7 @@ impl InputEmulation for WlrootsEmulation {
                          * will overwhelm the output buffer and leave the
                          * wayland connection in a broken state
                          */
-                        log::warn!(
-                            "can't keep up, discarding event: ({client_handle}) - {event:?}"
-                        );
+                        log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
                         return;
                     }
                 }
@@ -144,16 +149,18 @@ impl InputEmulation for WlrootsEmulation {
         }
     }
 
-    async fn notify(&mut self, client_event: ClientEvent) {
-        if let ClientEvent::Create(client, _) = client_event {
-            self.state.add_client(client);
-            if let Err(e) = self.queue.flush() {
-                log::error!("{}", e);
-            }
+    async fn create(&mut self, handle: EmulationHandle) {
+        self.state.add_client(handle);
+        if let Err(e) = self.queue.flush() {
+            log::error!("{}", e);
         }
     }
-
-    async fn destroy(&mut self) {}
+    async fn destroy(&mut self, handle: EmulationHandle) {
+        self.state.destroy_client(handle);
+        if let Err(e) = self.queue.flush() {
+            log::error!("{}", e);
+        }
+    }
 }
 
 struct VirtualInput {

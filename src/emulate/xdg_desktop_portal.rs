@@ -8,20 +8,16 @@ use ashpd::{
 };
 use async_trait::async_trait;
 
-use crate::{
-    client::ClientEvent,
-    emulate::InputEmulation,
-    event::{
-        Event::{Keyboard, Pointer},
-        KeyboardEvent, PointerEvent,
-    },
+use crate::event::{
+    Event::{Keyboard, Pointer},
+    KeyboardEvent, PointerEvent,
 };
 
-use super::error::XdpEmulationCreationError;
+use super::{error::XdpEmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
-    session: Session<'a>,
+    session: Option<Session<'a>>,
 }
 
 impl<'a> DesktopPortalEmulation<'a> {
@@ -55,6 +51,7 @@ impl<'a> DesktopPortalEmulation<'a> {
         };
 
         log::debug!("started session");
+        let session = Some(session);
 
         Ok(Self { proxy, session })
     }
@@ -72,7 +69,11 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                 } => {
                     if let Err(e) = self
                         .proxy
-                        .notify_pointer_motion(&self.session, relative_x, relative_y)
+                        .notify_pointer_motion(
+                            self.session.as_ref().expect("no session"),
+                            relative_x,
+                            relative_y,
+                        )
                         .await
                     {
                         log::warn!("{e}");
@@ -89,7 +90,11 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                     };
                     if let Err(e) = self
                         .proxy
-                        .notify_pointer_button(&self.session, button as i32, state)
+                        .notify_pointer_button(
+                            self.session.as_ref().expect("no session"),
+                            button as i32,
+                            state,
+                        )
                         .await
                     {
                         log::warn!("{e}");
@@ -102,7 +107,11 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                     };
                     if let Err(e) = self
                         .proxy
-                        .notify_pointer_axis_discrete(&self.session, axis, value)
+                        .notify_pointer_axis_discrete(
+                            self.session.as_ref().expect("no session"),
+                            axis,
+                            value,
+                        )
                         .await
                     {
                         log::warn!("{e}");
@@ -123,7 +132,12 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                     };
                     if let Err(e) = self
                         .proxy
-                        .notify_pointer_axis(&self.session, dx, dy, true)
+                        .notify_pointer_axis(
+                            self.session.as_ref().expect("no session"),
+                            dx,
+                            dy,
+                            true,
+                        )
                         .await
                     {
                         log::warn!("{e}");
@@ -144,7 +158,11 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         };
                         if let Err(e) = self
                             .proxy
-                            .notify_keyboard_keycode(&self.session, key as i32, state)
+                            .notify_keyboard_keycode(
+                                self.session.as_ref().expect("no session"),
+                                key as i32,
+                                state,
+                            )
                             .await
                         {
                             log::warn!("{e}");
@@ -159,12 +177,20 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
         }
     }
 
-    async fn notify(&mut self, _client: ClientEvent) {}
+    async fn create(&mut self, _client: EmulationHandle) {}
+    async fn destroy(&mut self, _client: EmulationHandle) {}
+}
 
-    async fn destroy(&mut self) {
-        log::debug!("closing remote desktop session");
-        if let Err(e) = self.session.close().await {
-            log::error!("failed to close remote desktop session: {e}");
-        }
+impl<'a> Drop for DesktopPortalEmulation<'a> {
+    fn drop(&mut self) {
+        let session = self.session.take().expect("no session");
+        tokio::runtime::Handle::try_current()
+            .expect("no runtime")
+            .block_on(async move {
+                log::debug!("closing remote desktop session");
+                if let Err(e) = session.close().await {
+                    log::error!("failed to close remote desktop session: {e}");
+                }
+            });
     }
 }

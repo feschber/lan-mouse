@@ -5,15 +5,11 @@ use x11::{
     xtest,
 };
 
-use crate::{
-    client::ClientHandle,
-    emulate::InputEmulation,
-    event::{
-        Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
-    },
+use crate::event::{
+    Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::error::X11EmulationCreationError;
+use super::{error::X11EmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct X11Emulation {
     display: *mut xlib::Display,
@@ -102,7 +98,7 @@ impl Drop for X11Emulation {
 
 #[async_trait]
 impl InputEmulation for X11Emulation {
-    async fn consume(&mut self, event: Event, _: ClientHandle) {
+    async fn consume(&mut self, event: Event, _: EmulationHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -145,9 +141,11 @@ impl InputEmulation for X11Emulation {
         }
     }
 
-    async fn notify(&mut self, _: crate::client::ClientEvent) {
+    async fn create(&mut self, _: EmulationHandle) {
         // for our purposes it does not matter what client sent the event
     }
 
-    async fn destroy(&mut self) {}
+    async fn destroy(&mut self, _: EmulationHandle) {
+        // for our purposes it does not matter what client sent the event
+    }
 }

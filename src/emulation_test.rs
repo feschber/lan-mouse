@@ -1,4 +1,3 @@
-use crate::client::{ClientEvent, Position};
 use crate::config::Config;
 use crate::emulate;
 use crate::event::{Event, PointerEvent};
@@ -24,9 +23,7 @@ const RADIUS: f64 = 100.0;
 
 async fn input_emulation_test(config: Config) -> Result<()> {
     let mut emulation = emulate::create(config.emulation_backend).await?;
-    emulation
-        .notify(ClientEvent::Create(0, Position::Left))
-        .await;
+    emulation.create(0).await;
     let start = Instant::now();
     let mut offset = (0, 0);
     loop {

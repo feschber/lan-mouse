@@ -3,12 +3,11 @@ use std::task::Poll;
 
 use futures_core::Stream;
 
-use crate::capture::InputCapture;
+use super::InputCapture;
 use crate::event::Event;
 
-use crate::client::{ClientEvent, ClientHandle};
-
 use super::error::X11InputCaptureCreationError;
+use super::{CaptureHandle, Position};
 
 pub struct X11InputCapture {}
 
@@ -19,7 +18,11 @@ impl X11InputCapture {
 }
 
 impl InputCapture for X11InputCapture {
-    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+    fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 
@@ -29,7 +32,7 @@ impl InputCapture for X11InputCapture {
 }
 
 impl Stream for X11InputCapture {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
