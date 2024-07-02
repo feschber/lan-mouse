@@ -369,7 +369,6 @@ fn enumerate_displays() -> Vec<RECT> {
                 break;
             }
             if device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP != 0 {
-                log::info!("{:?}", device.DeviceName);
                 devices.push(device.DeviceName);
             }
         }
@@ -552,7 +551,7 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
                         let requests = {
                             let mut res = vec![];
                             let mut requests = REQUEST_BUFFER.lock().unwrap();
-                            while let Some(request) = requests.pop() {
+                            for request in requests.drain(..) {
                                 res.push(request);
                             }
                             res
