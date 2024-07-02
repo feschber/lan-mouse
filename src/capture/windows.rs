@@ -9,7 +9,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use futures::executor::block_on;
 use std::default::Default;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::task::ready;
 use std::{io, pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -32,25 +32,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WNDPROC,
 };
 
-use crate::client::Position;
 use crate::event::{
     KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
-use crate::scancode::Linux;
-use crate::{
-    capture::InputCapture,
-    client::{ClientEvent, ClientHandle},
-    event::Event,
-    scancode,
-};
+use crate::{event::Event, scancode, scancode::Linux};
+
+use super::{CaptureHandle, InputCapture, Position};
+
+enum Request {
+    Create(CaptureHandle, Position),
+    Destroy(CaptureHandle),
+}
 
 pub struct WindowsInputCapture {
-    event_rx: Receiver<(ClientHandle, Event)>,
+    event_rx: Receiver<(CaptureHandle, Event)>,
     msg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 enum EventType {
-    ClientEvent = 0,
+    Request = 0,
     Release = 1,
     Exit = 2,
 }
@@ -59,15 +59,28 @@ unsafe fn signal_message_thread(event_type: EventType) {
     if let Some(event_tid) = get_event_tid() {
         PostThreadMessageW(event_tid, WM_USER, WPARAM(event_type as usize), LPARAM(0)).unwrap();
     } else {
-        log::warn!("lost event");
+        panic!();
     }
 }
 
 impl InputCapture for WindowsInputCapture {
-    fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
+    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
         unsafe {
-            EVENT_BUFFER.push(event);
-            signal_message_thread(EventType::ClientEvent);
+            {
+                let mut requests = REQUEST_BUFFER.lock().unwrap();
+                requests.push(Request::Create(handle, pos));
+            }
+            signal_message_thread(EventType::Request);
+        }
+        Ok(())
+    }
+    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+        unsafe {
+            {
+                let mut requests = REQUEST_BUFFER.lock().unwrap();
+                requests.push(Request::Destroy(handle));
+            }
+            signal_message_thread(EventType::Request);
         }
         Ok(())
     }
@@ -78,10 +91,10 @@ impl InputCapture for WindowsInputCapture {
     }
 }
 
-static mut EVENT_BUFFER: Vec<ClientEvent> = Vec::new();
-static mut ACTIVE_CLIENT: Option<ClientHandle> = None;
-static mut CLIENT_FOR_POS: Lazy<HashMap<Position, ClientHandle>> = Lazy::new(HashMap::new);
-static mut EVENT_TX: Option<Sender<(ClientHandle, Event)>> = None;
+static mut REQUEST_BUFFER: Mutex<Vec<Request>> = Mutex::new(Vec::new());
+static mut ACTIVE_CLIENT: Option<CaptureHandle> = None;
+static mut CLIENT_FOR_POS: Lazy<HashMap<Position, CaptureHandle>> = Lazy::new(HashMap::new);
+static mut EVENT_TX: Option<Sender<(CaptureHandle, Event)>> = None;
 static mut EVENT_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 unsafe fn set_event_tid(tid: u32) {
     EVENT_THREAD_ID.store(tid, Ordering::SeqCst);
@@ -535,9 +548,18 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
                     x if x == EventType::Release as usize => {
                         ACTIVE_CLIENT.take();
                     }
-                    x if x == EventType::ClientEvent as usize => {
-                        while let Some(event) = EVENT_BUFFER.pop() {
-                            update_clients(event)
+                    x if x == EventType::Request as usize => {
+                        let requests = {
+                            let mut res = vec![];
+                            let mut requests = REQUEST_BUFFER.lock().unwrap();
+                            while let Some(request) = requests.pop() {
+                                res.push(request);
+                            }
+                            res
+                        };
+
+                        for request in requests {
+                            update_clients(request)
                         }
                     }
                     _ => {}
@@ -551,12 +573,12 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
     }
 }
 
-fn update_clients(client_event: ClientEvent) {
-    match client_event {
-        ClientEvent::Create(handle, pos) => {
+fn update_clients(request: Request) {
+    match request {
+        Request::Create(handle, pos) => {
             unsafe { CLIENT_FOR_POS.insert(pos, handle) };
         }
-        ClientEvent::Destroy(handle) => unsafe {
+        Request::Destroy(handle) => unsafe {
             for pos in [
                 Position::Left,
                 Position::Right,
@@ -592,7 +614,7 @@ impl WindowsInputCapture {
 }
 
 impl Stream for WindowsInputCapture {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),

@@ -1,9 +1,11 @@
 use super::error::WindowsEmulationCreationError;
 use crate::{
-    emulate::InputEmulation,
-    event::{KeyboardEvent, PointerEvent},
+    event::{
+        Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+    },
     scancode,
 };
+
 use async_trait::async_trait;
 use std::ops::BitOrAssign;
 use std::time::Duration;
@@ -19,11 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
 
-use crate::event::{BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
-use crate::{
-    client::{ClientEvent, ClientHandle},
-    event::Event,
-};
+use super::{EmulationHandle, InputEmulation};
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
@@ -40,7 +38,7 @@ impl WindowsEmulation {
 
 #[async_trait]
 impl InputEmulation for WindowsEmulation {
-    async fn consume(&mut self, event: Event, _: ClientHandle) {
+    async fn consume(&mut self, event: Event, _: EmulationHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -83,11 +81,9 @@ impl InputEmulation for WindowsEmulation {
         }
     }
 
-    async fn notify(&mut self, _: ClientEvent) {
-        // nothing to do
-    }
+    async fn create(&mut self, _handle: EmulationHandle) {}
 
-    async fn destroy(&mut self) {}
+    async fn destroy(&mut self, _handle: EmulationHandle) {}
 }
 
 impl WindowsEmulation {

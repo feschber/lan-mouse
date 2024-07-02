@@ -30,25 +30,24 @@ use tokio::{
 use futures_core::Stream;
 use once_cell::sync::Lazy;
 
-use crate::{
-    capture::InputCapture as LanMouseInputCapture,
-    client::{ClientEvent, ClientHandle, Position},
-    event::{Event, KeyboardEvent, PointerEvent},
-};
+use crate::event::{Event, KeyboardEvent, PointerEvent};
 
-use super::error::LibeiCaptureCreationError;
+use super::{
+    error::LibeiCaptureCreationError, CaptureHandle, InputCapture as LanMouseInputCapture, Position,
+};
 
 #[derive(Debug)]
 enum ProducerEvent {
     Release,
-    ClientEvent(ClientEvent),
+    Create(CaptureHandle, Position),
+    Destroy(CaptureHandle),
 }
 
 #[allow(dead_code)]
 pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     libei_task: JoinHandle<Result<()>>,
-    event_rx: tokio::sync::mpsc::Receiver<(ClientHandle, Event)>,
+    event_rx: tokio::sync::mpsc::Receiver<(CaptureHandle, Event)>,
     notify_tx: tokio::sync::mpsc::Sender<ProducerEvent>,
 }
 
@@ -81,9 +80,9 @@ fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
 
 fn select_barriers(
     zones: &Zones,
-    clients: &Vec<(ClientHandle, Position)>,
+    clients: &Vec<(CaptureHandle, Position)>,
     next_barrier_id: &mut u32,
-) -> (Vec<Barrier>, HashMap<BarrierID, ClientHandle>) {
+) -> (Vec<Barrier>, HashMap<BarrierID, CaptureHandle>) {
     let mut client_for_barrier = HashMap::new();
     let mut barriers: Vec<Barrier> = vec![];
 
@@ -107,9 +106,9 @@ fn select_barriers(
 async fn update_barriers(
     input_capture: &InputCapture<'_>,
     session: &Session<'_>,
-    active_clients: &Vec<(ClientHandle, Position)>,
+    active_clients: &Vec<(CaptureHandle, Position)>,
     next_barrier_id: &mut u32,
-) -> Result<HashMap<BarrierID, ClientHandle>> {
+) -> Result<HashMap<BarrierID, CaptureHandle>> {
     let zones = input_capture.zones(session).await?.response()?;
     log::debug!("zones: {zones:?}");
 
@@ -185,8 +184,8 @@ async fn connect_to_eis(
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
-    event_tx: Sender<(ClientHandle, Event)>,
-    current_client: Rc<Cell<Option<ClientHandle>>>,
+    event_tx: Sender<(CaptureHandle, Event)>,
+    current_client: Rc<Cell<Option<CaptureHandle>>>,
 ) -> Result<()> {
     loop {
         let ei_event = match ei_event_stream.next().await {
@@ -202,12 +201,12 @@ async fn libei_event_handler(
 
 async fn wait_for_active_client(
     notify_rx: &mut Receiver<ProducerEvent>,
-    active_clients: &mut Vec<(ClientHandle, Position)>,
+    active_clients: &mut Vec<(CaptureHandle, Position)>,
 ) -> Result<()> {
     // wait for a client update
     while let Some(producer_event) = notify_rx.recv().await {
-        if let ProducerEvent::ClientEvent(c) = producer_event {
-            handle_producer_event(ProducerEvent::ClientEvent(c), active_clients)?;
+        if let ProducerEvent::Create(c, p) = producer_event {
+            handle_producer_event(ProducerEvent::Create(c, p), active_clients)?;
             break;
         }
     }
@@ -226,7 +225,7 @@ impl<'a> LibeiInputCapture<'a> {
             /* safety: libei_task does not outlive Self */
             let input_capture = unsafe { &*input_capture_ptr };
 
-            let mut active_clients: Vec<(ClientHandle, Position)> = vec![];
+            let mut active_clients: Vec<(CaptureHandle, Position)> = vec![];
             let mut next_barrier_id = 1u32;
 
             /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
@@ -349,8 +348,8 @@ async fn release_capture(
     input_capture: &InputCapture<'_>,
     session: &Session<'_>,
     activated: Activated,
-    current_client: ClientHandle,
-    active_clients: &[(ClientHandle, Position)],
+    current_client: CaptureHandle,
+    active_clients: &[(CaptureHandle, Position)],
 ) -> Result<()> {
     log::debug!("releasing input capture {}", activated.activation_id());
     let (x, y) = activated.cursor_position();
@@ -377,16 +376,16 @@ async fn release_capture(
 
 fn handle_producer_event(
     producer_event: ProducerEvent,
-    active_clients: &mut Vec<(ClientHandle, Position)>,
+    active_clients: &mut Vec<(CaptureHandle, Position)>,
 ) -> Result<bool> {
     log::debug!("handling event: {producer_event:?}");
     let updated = match producer_event {
         ProducerEvent::Release => false,
-        ProducerEvent::ClientEvent(ClientEvent::Create(c, p)) => {
+        ProducerEvent::Create(c, p) => {
             active_clients.push((c, p));
             true
         }
-        ProducerEvent::ClientEvent(ClientEvent::Destroy(c)) => {
+        ProducerEvent::Destroy(c) => {
             active_clients.retain(|(h, _)| *h != c);
             true
         }
@@ -396,9 +395,9 @@ fn handle_producer_event(
 
 async fn handle_ei_event(
     ei_event: EiEvent,
-    current_client: Option<ClientHandle>,
+    current_client: Option<CaptureHandle>,
     context: &ei::Context,
-    event_tx: &Sender<(ClientHandle, Event)>,
+    event_tx: &Sender<(CaptureHandle, Event)>,
 ) {
     match ei_event {
         EiEvent::SeatAdded(s) => {
@@ -547,12 +546,18 @@ async fn handle_ei_event(
 }
 
 impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
-    fn notify(&mut self, event: ClientEvent) -> io::Result<()> {
+    fn create(&mut self, handle: super::CaptureHandle, pos: super::Position) -> io::Result<()> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            log::debug!("notifying {event:?}");
-            let _ = notify_tx.send(ProducerEvent::ClientEvent(event)).await;
-            log::debug!("done !");
+            let _ = notify_tx.send(ProducerEvent::Create(handle, pos)).await;
+        });
+        Ok(())
+    }
+
+    fn destroy(&mut self, handle: super::CaptureHandle) -> io::Result<()> {
+        let notify_tx = self.notify_tx.clone();
+        tokio::task::spawn_local(async move {
+            let _ = notify_tx.send(ProducerEvent::Destroy(handle)).await;
         });
         Ok(())
     }
@@ -560,7 +565,6 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     fn release(&mut self) -> io::Result<()> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            log::debug!("notifying Release");
             let _ = notify_tx.send(ProducerEvent::Release).await;
         });
         Ok(())
@@ -568,7 +572,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
 }
 
 impl<'a> Stream for LibeiInputCapture<'a> {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {

@@ -1,5 +1,4 @@
-use crate::client::{ClientEvent, ClientHandle};
-use crate::emulate::InputEmulation;
+use super::{EmulationHandle, InputEmulation};
 use crate::event::{Event, KeyboardEvent, PointerEvent};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
@@ -108,7 +107,7 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8) {
 
 #[async_trait]
 impl InputEmulation for MacOSEmulation {
-    async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
+    async fn consume(&mut self, event: Event, _handle: EmulationHandle) {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -297,7 +296,7 @@ impl InputEmulation for MacOSEmulation {
         }
     }
 
-    async fn notify(&mut self, _client_event: ClientEvent) {}
+    async fn create(&mut self, _handle: EmulationHandle) {}
 
-    async fn destroy(&mut self) {}
+    async fn destroy(&mut self, _handle: EmulationHandle) {}
 }

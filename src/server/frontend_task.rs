@@ -17,7 +17,7 @@ use tokio::{
 };
 
 use crate::{
-    client::{ClientEvent, ClientHandle, Position},
+    client::{ClientHandle, Position},
     frontend::{self, FrontendEvent, FrontendListener, FrontendRequest},
 };
 
@@ -205,9 +205,8 @@ pub async fn deactivate_client(
         None => return,
     };
 
-    let event = ClientEvent::Destroy(handle);
-    let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
-    let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
+    let _ = capture.send(CaptureEvent::Destroy(handle)).await;
+    let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
 }
 
 pub async fn activate_client(
@@ -237,9 +236,8 @@ pub async fn activate_client(
     };
 
     /* notify emulation, capture and frontends */
-    let event = ClientEvent::Create(handle, pos);
-    let _ = capture.send(CaptureEvent::ClientEvent(event)).await;
-    let _ = emulate.send(EmulationEvent::ClientEvent(event)).await;
+    let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
+    let _ = emulate.send(EmulationEvent::Create(handle)).await;
 }
 
 pub async fn remove_client(
@@ -258,9 +256,8 @@ pub async fn remove_client(
     };
 
     if active {
-        let destroy = ClientEvent::Destroy(handle);
-        let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
-        let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
+        let _ = capture.send(CaptureEvent::Destroy(handle)).await;
+        let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
     }
 }
 
@@ -335,13 +332,11 @@ async fn update_pos(
     // update state in event input emulator & input capture
     if changed {
         if active {
-            let destroy = ClientEvent::Destroy(handle);
-            let _ = capture.send(CaptureEvent::ClientEvent(destroy)).await;
-            let _ = emulate.send(EmulationEvent::ClientEvent(destroy)).await;
+            let _ = capture.send(CaptureEvent::Destroy(handle)).await;
+            let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
         }
-        let create = ClientEvent::Create(handle, pos);
-        let _ = capture.send(CaptureEvent::ClientEvent(create)).await;
-        let _ = emulate.send(EmulationEvent::ClientEvent(create)).await;
+        let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
+        let _ = emulate.send(EmulationEvent::Create(handle)).await;
     }
 }
 

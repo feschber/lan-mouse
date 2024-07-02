@@ -22,13 +22,9 @@ use reis::{
     PendingRequestResult,
 };
 
-use crate::{
-    client::{ClientEvent, ClientHandle},
-    emulate::InputEmulation,
-    event::Event,
-};
+use crate::event::Event;
 
-use super::error::LibeiEmulationCreationError;
+use super::{error::LibeiEmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct LibeiEmulation {
     handshake: bool,
@@ -111,7 +107,7 @@ impl LibeiEmulation {
 
 #[async_trait]
 impl InputEmulation for LibeiEmulation {
-    async fn consume(&mut self, event: Event, _client_handle: ClientHandle) {
+    async fn consume(&mut self, event: Event, _client_handle: EmulationHandle) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -396,7 +392,6 @@ impl InputEmulation for LibeiEmulation {
         Ok(())
     }
 
-    async fn notify(&mut self, _client_event: ClientEvent) {}
-
-    async fn destroy(&mut self) {}
+    async fn create(&mut self, _: EmulationHandle) {}
+    async fn destroy(&mut self, _: EmulationHandle) {}
 }

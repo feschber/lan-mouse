@@ -1,9 +1,7 @@
-use crate::{
-    client::{ClientEvent, ClientHandle},
-    emulate::InputEmulation,
-    event::Event,
-};
+use crate::event::Event;
 use async_trait::async_trait;
+
+use super::{EmulationHandle, InputEmulation};
 
 #[derive(Default)]
 pub struct DummyEmulation;
@@ -16,11 +14,9 @@ impl DummyEmulation {
 
 #[async_trait]
 impl InputEmulation for DummyEmulation {
-    async fn consume(&mut self, event: Event, client_handle: ClientHandle) {
+    async fn consume(&mut self, event: Event, client_handle: EmulationHandle) {
         log::info!("received event: ({client_handle}) {event}");
     }
-    async fn notify(&mut self, client_event: ClientEvent) {
-        log::info!("{client_event:?}");
-    }
-    async fn destroy(&mut self) {}
+    async fn create(&mut self, _: EmulationHandle) {}
+    async fn destroy(&mut self, _: EmulationHandle) {}
 }

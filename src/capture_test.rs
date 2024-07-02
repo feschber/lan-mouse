@@ -1,5 +1,4 @@
-use crate::capture;
-use crate::client::{ClientEvent, Position};
+use crate::capture::{self, Position};
 use crate::config::Config;
 use crate::event::{Event, KeyboardEvent};
 use anyhow::{anyhow, Result};
@@ -22,10 +21,10 @@ async fn input_capture_test(config: Config) -> Result<()> {
     log::info!("creating input capture");
     let mut input_capture = capture::create(config.capture_backend).await?;
     log::info!("creating clients");
-    input_capture.notify(ClientEvent::Create(0, Position::Left))?;
-    input_capture.notify(ClientEvent::Create(1, Position::Right))?;
-    input_capture.notify(ClientEvent::Create(2, Position::Top))?;
-    input_capture.notify(ClientEvent::Create(3, Position::Bottom))?;
+    input_capture.create(0, Position::Left)?;
+    input_capture.create(1, Position::Right)?;
+    input_capture.create(2, Position::Top)?;
+    input_capture.create(3, Position::Bottom)?;
     loop {
         let (client, event) = input_capture
             .next()

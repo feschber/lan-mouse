@@ -7,9 +7,9 @@ use tokio::{
 };
 
 use crate::{
-    client::{ClientEvent, ClientHandle},
+    client::ClientHandle,
     config::EmulationBackend,
-    emulate::{self, error::EmulationCreationError, InputEmulation},
+    emulate::{self, error::EmulationCreationError, EmulationHandle, InputEmulation},
     event::{Event, KeyboardEvent},
     scancode,
     server::State,
@@ -19,8 +19,10 @@ use super::{CaptureEvent, Server};
 
 #[derive(Clone, Debug)]
 pub enum EmulationEvent {
-    /// input emulation is notified of a change in client states
-    ClientEvent(ClientEvent),
+    /// create a new client
+    Create(EmulationHandle),
+    /// destroy a client
+    Destroy(EmulationHandle),
     /// input emulation must release keys for client
     ReleaseKeys(ClientHandle),
     /// termination signal
@@ -49,7 +51,8 @@ pub fn new(
                 emulate_event = rx.recv() => {
                     match emulate_event {
                         Some(e) => match e {
-                            EmulationEvent::ClientEvent(e) => emulate.notify(e).await,
+                            EmulationEvent::Create(h) => emulate.create(h).await,
+                            EmulationEvent::Destroy(h) => emulate.destroy(h).await,
                             EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulate, c).await,
                             EmulationEvent::Terminate => break,
                         },
@@ -73,8 +76,6 @@ pub fn new(
             release_keys(&server, &mut emulate, client).await;
         }
 
-        // destroy emulator
-        emulate.destroy().await;
         anyhow::Ok(())
     });
     Ok((emulate_task, tx))

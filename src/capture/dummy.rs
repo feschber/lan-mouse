@@ -4,10 +4,9 @@ use std::task::{Context, Poll};
 
 use futures_core::Stream;
 
-use crate::capture::InputCapture;
 use crate::event::Event;
 
-use crate::client::{ClientEvent, ClientHandle};
+use super::{CaptureHandle, InputCapture, Position};
 
 pub struct DummyInputCapture {}
 
@@ -24,7 +23,11 @@ impl Default for DummyInputCapture {
 }
 
 impl InputCapture for DummyInputCapture {
-    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+    fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn destroy(&mut self, _handle: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 
@@ -34,7 +37,7 @@ impl InputCapture for DummyInputCapture {
 }
 
 impl Stream for DummyInputCapture {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending

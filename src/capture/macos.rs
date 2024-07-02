@@ -1,6 +1,5 @@
 use crate::capture::error::MacOSInputCaptureCreationError;
-use crate::capture::InputCapture;
-use crate::client::{ClientEvent, ClientHandle};
+use crate::capture::{CaptureHandle, InputCapture, Position};
 use crate::event::Event;
 use futures_core::Stream;
 use std::task::{Context, Poll};
@@ -15,7 +14,7 @@ impl MacOSInputCapture {
 }
 
 impl Stream for MacOSInputCapture {
-    type Item = io::Result<(ClientHandle, Event)>;
+    type Item = io::Result<(CaptureHandle, Event)>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending
@@ -23,7 +22,11 @@ impl Stream for MacOSInputCapture {
 }
 
 impl InputCapture for MacOSInputCapture {
-    fn notify(&mut self, _event: ClientEvent) -> io::Result<()> {
+    fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 

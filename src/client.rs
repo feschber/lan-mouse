@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use slab::Slab;
 
-use crate::config::DEFAULT_PORT;
+use crate::{capture, config::DEFAULT_PORT};
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
@@ -22,6 +22,17 @@ pub enum Position {
 impl Default for Position {
     fn default() -> Self {
         Self::Left
+    }
+}
+
+impl From<Position> for capture::Position {
+    fn from(position: Position) -> capture::Position {
+        match position {
+            Position::Left => capture::Position::Left,
+            Position::Right => capture::Position::Right,
+            Position::Top => capture::Position::Top,
+            Position::Bottom => capture::Position::Bottom,
+        }
     }
 }
 
@@ -48,17 +59,6 @@ impl FromStr for Position {
             "top" => Ok(Self::Top),
             "bottom" => Ok(Self::Bottom),
             _ => Err(PositionParseError { string: s.into() }),
-        }
-    }
-}
-
-impl Position {
-    pub fn opposite(&self) -> Self {
-        match self {
-            Position::Left => Self::Right,
-            Position::Right => Self::Left,
-            Position::Top => Self::Bottom,
-            Position::Bottom => Self::Top,
         }
     }
 }
@@ -116,12 +116,6 @@ impl Default for ClientConfig {
             cmd: None,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum ClientEvent {
-    Create(ClientHandle, Position),
-    Destroy(ClientHandle),
 }
 
 pub type ClientHandle = u64;
