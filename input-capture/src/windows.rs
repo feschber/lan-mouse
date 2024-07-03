@@ -565,7 +565,7 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
                 }
             } else {
                 /* other messages for window_procs */
-                TranslateMessage(&msg);
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }
