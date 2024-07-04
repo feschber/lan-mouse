@@ -4,10 +4,12 @@ use ashpd::{
         remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
         ResponseError, Session,
     },
+    zbus::AsyncDrop,
     WindowIdentifier,
 };
 use async_trait::async_trait;
 
+use futures::FutureExt;
 use input_event::{
     Event::{Keyboard, Pointer},
     KeyboardEvent, PointerEvent,
@@ -19,7 +21,7 @@ use super::{error::XdpEmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
-    session: Option<Session<'a>>,
+    session: Session<'a>,
 }
 
 impl<'a> DesktopPortalEmulation<'a> {
@@ -53,7 +55,7 @@ impl<'a> DesktopPortalEmulation<'a> {
         };
 
         log::debug!("started session");
-        let session = Some(session);
+        let session = session;
 
         Ok(Self { proxy, session })
     }
@@ -74,11 +76,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                     relative_y,
                 } => {
                     self.proxy
-                        .notify_pointer_motion(
-                            self.session.as_ref().expect("no session"),
-                            relative_x,
-                            relative_y,
-                        )
+                        .notify_pointer_motion(&self.session, relative_x, relative_y)
                         .await?;
                 }
                 PointerEvent::Button {
@@ -91,11 +89,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         _ => KeyState::Pressed,
                     };
                     self.proxy
-                        .notify_pointer_button(
-                            self.session.as_ref().expect("no session"),
-                            button as i32,
-                            state,
-                        )
+                        .notify_pointer_button(&self.session, button as i32, state)
                         .await?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
@@ -104,11 +98,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         _ => Axis::Horizontal,
                     };
                     self.proxy
-                        .notify_pointer_axis_discrete(
-                            self.session.as_ref().expect("no session"),
-                            axis,
-                            value,
-                        )
+                        .notify_pointer_axis_discrete(&self.session, axis, value)
                         .await?;
                 }
                 PointerEvent::Axis {
@@ -125,12 +115,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         Axis::Horizontal => (value, 0.),
                     };
                     self.proxy
-                        .notify_pointer_axis(
-                            self.session.as_ref().expect("no session"),
-                            dx,
-                            dy,
-                            true,
-                        )
+                        .notify_pointer_axis(&self.session, dx, dy, true)
                         .await?;
                 }
                 PointerEvent::Frame {} => {}
@@ -147,11 +132,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                             _ => KeyState::Pressed,
                         };
                         self.proxy
-                            .notify_keyboard_keycode(
-                                self.session.as_ref().expect("no session"),
-                                key as i32,
-                                state,
-                            )
+                            .notify_keyboard_keycode(&self.session, key as i32, state)
                             .await?;
                     }
                     KeyboardEvent::Modifiers { .. } => {
@@ -168,16 +149,21 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
     async fn destroy(&mut self, _client: EmulationHandle) {}
 }
 
-impl<'a> Drop for DesktopPortalEmulation<'a> {
-    fn drop(&mut self) {
-        let session = self.session.take().expect("no session");
-        tokio::runtime::Handle::try_current()
-            .expect("no runtime")
-            .block_on(async move {
-                log::debug!("closing remote desktop session");
-                if let Err(e) = session.close().await {
-                    log::error!("failed to close remote desktop session: {e}");
-                }
-            });
+impl<'a> AsyncDrop for DesktopPortalEmulation<'a> {
+    #[doc = r" Perform the async cleanup."]
+    #[must_use]
+    #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
+    fn async_drop<'async_trait>(
+        self,
+    ) -> ::core::pin::Pin<
+        Box<dyn ::core::future::Future<Output = ()> + ::core::marker::Send + 'async_trait>,
+    >
+    where
+        Self: 'async_trait,
+    {
+        async move {
+            let _ = self.session.close().await;
+        }
+        .boxed()
     }
 }
