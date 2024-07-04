@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::{fmt::Display, future};
+use std::fmt::Display;
 
 use input_event::Event;
 
@@ -73,11 +73,6 @@ pub trait InputEmulation: Send {
     async fn consume(&mut self, event: Event, handle: EmulationHandle);
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
-    /// this function is waited on continuously and can be used to handle events
-    async fn dispatch(&mut self) -> Result<()> {
-        let _: () = future::pending().await;
-        Ok(())
-    }
 }
 
 pub async fn create_backend(

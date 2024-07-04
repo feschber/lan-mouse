@@ -8,6 +8,9 @@ use wayland_client::{
     ConnectError, DispatchError,
 };
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+use reis::tokio::HandshakeError;
+
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -104,6 +107,7 @@ impl Display for WlrootsEmulationCreationError {
 pub enum LibeiEmulationCreationError {
     Ashpd(#[from] ashpd::Error),
     Io(#[from] std::io::Error),
+    Handshake(#[from] HandshakeError),
 }
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
@@ -112,6 +116,7 @@ impl Display for LibeiEmulationCreationError {
         match self {
             LibeiEmulationCreationError::Ashpd(e) => write!(f, "xdg-desktop-portal: {e}"),
             LibeiEmulationCreationError::Io(e) => write!(f, "io error: {e}"),
+            LibeiEmulationCreationError::Handshake(e) => write!(f, "error in libei handshake: {e}"),
         }
     }
 }
