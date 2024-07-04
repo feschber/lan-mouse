@@ -1,4 +1,4 @@
-use super::error::WindowsEmulationCreationError;
+use super::error::{EmulationError, WindowsEmulationCreationError};
 use input_event::{
     scancode, Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE,
     BTN_RIGHT,
@@ -36,7 +36,7 @@ impl WindowsEmulation {
 
 #[async_trait]
 impl InputEmulation for WindowsEmulation {
-    async fn consume(&mut self, event: Event, _: EmulationHandle) {
+    async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -77,6 +77,8 @@ impl InputEmulation for WindowsEmulation {
             },
             _ => {}
         }
+        // FIXME
+        Ok(())
     }
 
     async fn create(&mut self, _handle: EmulationHandle) {}

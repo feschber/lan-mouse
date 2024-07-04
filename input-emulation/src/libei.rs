@@ -33,6 +33,8 @@ use reis::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
+use crate::error::EmulationError;
+
 use super::{error::LibeiEmulationCreationError, EmulationHandle, InputEmulation};
 
 static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
@@ -136,7 +138,11 @@ impl Drop for LibeiEmulation {
 
 #[async_trait]
 impl InputEmulation for LibeiEmulation {
-    async fn consume(&mut self, event: Event, _handle: EmulationHandle) {
+    async fn consume(
+        &mut self,
+        event: Event,
+        _handle: EmulationHandle,
+    ) -> Result<(), EmulationError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -219,7 +225,10 @@ impl InputEmulation for LibeiEmulation {
             },
             _ => {}
         }
-        self.context.flush().unwrap();
+        self.context
+            .flush()
+            .map_err(|e| io::Error::new(e.kind(), e))?;
+        Ok(())
     }
 
     async fn create(&mut self, _: EmulationHandle) {}
@@ -262,9 +271,7 @@ async fn ei_event_handler(
                 log::debug!("device added: {device_type:?}");
                 e.device().device();
                 let device = e.device();
-                log::info!("GOT A DEVICE: {device:?}");
                 if let Some(pointer) = e.device().interface::<Pointer>() {
-                    log::info!("GOT POINTER");
                     devices
                         .pointer
                         .write()
@@ -272,7 +279,6 @@ async fn ei_event_handler(
                         .replace((device.device().clone(), pointer));
                 }
                 if let Some(keyboard) = e.device().interface::<Keyboard>() {
-                    log::info!("GOT KEYBOARD");
                     devices
                         .keyboard
                         .write()
@@ -280,7 +286,6 @@ async fn ei_event_handler(
                         .replace((device.device().clone(), keyboard));
                 }
                 if let Some(scroll) = e.device().interface::<Scroll>() {
-                    log::info!("GOT SCROLL");
                     devices
                         .scroll
                         .write()
@@ -288,7 +293,6 @@ async fn ei_event_handler(
                         .replace((device.device().clone(), scroll));
                 }
                 if let Some(button) = e.device().interface::<Button>() {
-                    log::info!("GOT BUTTON");
                     devices
                         .button
                         .write()

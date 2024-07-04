@@ -1,3 +1,5 @@
+use crate::error::EmulationError;
+
 use super::{error::WlrootsEmulationCreationError, InputEmulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -115,38 +117,40 @@ impl State {
 
 #[async_trait]
 impl InputEmulation for WlrootsEmulation {
-    async fn consume(&mut self, event: Event, handle: EmulationHandle) {
+    async fn consume(
+        &mut self,
+        event: Event,
+        handle: EmulationHandle,
+    ) -> Result<(), EmulationError> {
         if let Some(virtual_input) = self.state.input_for_client.get(&handle) {
             if self.last_flush_failed {
-                if let Err(WaylandError::Io(e)) = self.queue.flush() {
-                    if e.kind() == io::ErrorKind::WouldBlock {
+                match self.queue.flush() {
+                    Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                         /*
                          * outgoing buffer is full - sending more events
                          * will overwhelm the output buffer and leave the
                          * wayland connection in a broken state
                          */
                         log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
-                        return;
+                        return Ok(());
                     }
+                    _ => {}
                 }
             }
-            virtual_input.consume_event(event).unwrap();
+            virtual_input
+                .consume_event(event)
+                .unwrap_or_else(|_| panic!("failed to convert event: {event:?}"));
             match self.queue.flush() {
                 Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                     self.last_flush_failed = true;
-                    log::warn!("can't keep up, retrying ...");
+                    log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
                 }
-                Err(WaylandError::Io(e)) => {
-                    log::error!("{e}")
-                }
-                Err(WaylandError::Protocol(e)) => {
-                    panic!("wayland protocol violation: {e}")
-                }
-                Ok(()) => {
-                    self.last_flush_failed = false;
-                }
+                Err(WaylandError::Protocol(e)) => panic!("wayland protocol violation: {e}"),
+                Ok(()) => self.last_flush_failed = false,
+                Err(e) => Err(e)?,
             }
         }
+        Ok(())
     }
 
     async fn create(&mut self, handle: EmulationHandle) {

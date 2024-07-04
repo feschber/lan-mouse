@@ -1,4 +1,4 @@
-use super::{EmulationHandle, InputEmulation};
+use super::{error::EmulationError, EmulationHandle, InputEmulation};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
@@ -107,7 +107,11 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8) {
 
 #[async_trait]
 impl InputEmulation for MacOSEmulation {
-    async fn consume(&mut self, event: Event, _handle: EmulationHandle) {
+    async fn consume(
+        &mut self,
+        event: Event,
+        _handle: EmulationHandle,
+    ) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -129,7 +133,7 @@ impl InputEmulation for MacOSEmulation {
                         Some(l) => l,
                         None => {
                             log::warn!("could not get mouse location!");
-                            return;
+                            return Ok(());
                         }
                     };
 
@@ -153,7 +157,7 @@ impl InputEmulation for MacOSEmulation {
                         Ok(e) => e,
                         Err(_) => {
                             log::warn!("mouse event creation failed!");
-                            return;
+                            return Ok(());
                         }
                     };
                     event.set_integer_value_field(
@@ -192,7 +196,7 @@ impl InputEmulation for MacOSEmulation {
                         }
                         _ => {
                             log::warn!("invalid button event: {button},{state}");
-                            return;
+                            return Ok(());
                         }
                     };
                     // store button state
@@ -208,7 +212,7 @@ impl InputEmulation for MacOSEmulation {
                         Ok(e) => e,
                         Err(()) => {
                             log::warn!("mouse event creation failed!");
-                            return;
+                            return Ok(());
                         }
                     };
                     event.post(CGEventTapLocation::HID);
@@ -224,7 +228,7 @@ impl InputEmulation for MacOSEmulation {
                         1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                         _ => {
                             log::warn!("invalid scroll event: {axis}, {value}");
-                            return;
+                            return Ok(());
                         }
                     };
                     let event = match CGEvent::new_scroll_event(
@@ -238,7 +242,7 @@ impl InputEmulation for MacOSEmulation {
                         Ok(e) => e,
                         Err(()) => {
                             log::warn!("scroll event creation failed!");
-                            return;
+                            return Ok(());
                         }
                     };
                     event.post(CGEventTapLocation::HID);
@@ -249,7 +253,7 @@ impl InputEmulation for MacOSEmulation {
                         1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                         _ => {
                             log::warn!("invalid scroll event: {axis}, {value}");
-                            return;
+                            return Ok(());
                         }
                     };
                     let event = match CGEvent::new_scroll_event(
@@ -263,7 +267,7 @@ impl InputEmulation for MacOSEmulation {
                         Ok(e) => e,
                         Err(()) => {
                             log::warn!("scroll event creation failed!");
-                            return;
+                            return Ok(());
                         }
                     };
                     event.post(CGEventTapLocation::HID);
@@ -280,7 +284,7 @@ impl InputEmulation for MacOSEmulation {
                         Ok(k) => k.mac as CGKeyCode,
                         Err(_) => {
                             log::warn!("unable to map key event");
-                            return;
+                            return Ok(());
                         }
                     };
                     match state {
@@ -294,6 +298,8 @@ impl InputEmulation for MacOSEmulation {
             },
             _ => (),
         }
+        // FIXME
+        Ok(())
     }
 
     async fn create(&mut self, _handle: EmulationHandle) {}

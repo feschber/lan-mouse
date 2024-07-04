@@ -9,6 +9,8 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
+use crate::error::EmulationError;
+
 use super::{error::X11EmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct X11Emulation {
@@ -98,7 +100,7 @@ impl Drop for X11Emulation {
 
 #[async_trait]
 impl InputEmulation for X11Emulation {
-    async fn consume(&mut self, event: Event, _: EmulationHandle) {
+    async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion {
@@ -139,6 +141,8 @@ impl InputEmulation for X11Emulation {
         unsafe {
             xlib::XFlush(self.display);
         }
+        // FIXME
+        Ok(())
     }
 
     async fn create(&mut self, _: EmulationHandle) {
