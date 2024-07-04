@@ -1226,6 +1226,7 @@ dependencies = [
  "input-event",
  "keycode",
  "log",
+ "once_cell",
  "reis",
  "thiserror",
  "tokio",

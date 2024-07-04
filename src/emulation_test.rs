@@ -27,22 +27,27 @@ async fn input_emulation_test(config: Config) -> Result<()> {
     let start = Instant::now();
     let mut offset = (0, 0);
     loop {
-        tokio::select! {
-            _ = emulation.dispatch() => {}
-            _ = tokio::time::sleep(Duration::from_millis(1)) => {
-                let elapsed = start.elapsed();
-                let elapsed_sec_f64 = elapsed.as_secs_f64();
-                let second_fraction = elapsed_sec_f64 - elapsed_sec_f64 as u64 as f64;
-                let radians = second_fraction * 2. * PI * FREQUENCY_HZ;
-                let new_offset_f = (radians.cos() * RADIUS * 2., (radians * 2.).sin() * RADIUS);
-                let new_offset = (new_offset_f.0 as i32, new_offset_f.1 as i32);
-                if new_offset != offset {
-                    let relative_motion = (new_offset.0 - offset.0, new_offset.1 - offset.1);
-                    offset = new_offset;
-                    let (relative_x, relative_y) = (relative_motion.0 as f64, relative_motion.1 as f64);
-                    emulation.consume(Event::Pointer(PointerEvent::Motion {time: 0, relative_x, relative_y }), 0).await;
-                }
-            }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let elapsed = start.elapsed();
+        let elapsed_sec_f64 = elapsed.as_secs_f64();
+        let second_fraction = elapsed_sec_f64 - elapsed_sec_f64 as u64 as f64;
+        let radians = second_fraction * 2. * PI * FREQUENCY_HZ;
+        let new_offset_f = (radians.cos() * RADIUS * 2., (radians * 2.).sin() * RADIUS);
+        let new_offset = (new_offset_f.0 as i32, new_offset_f.1 as i32);
+        if new_offset != offset {
+            let relative_motion = (new_offset.0 - offset.0, new_offset.1 - offset.1);
+            offset = new_offset;
+            let (relative_x, relative_y) = (relative_motion.0 as f64, relative_motion.1 as f64);
+            emulation
+                .consume(
+                    Event::Pointer(PointerEvent::Motion {
+                        time: 0,
+                        relative_x,
+                        relative_y,
+                    }),
+                    0,
+                )
+                .await;
         }
     }
 }

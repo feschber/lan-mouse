@@ -55,9 +55,6 @@ pub fn new(
                         None => break,
                     }
                 }
-                res = emulate.dispatch() => {
-                    res?;
-                }
             }
         }
 
