@@ -7,7 +7,11 @@ use tokio::{
 };
 
 use crate::{client::ClientHandle, config::EmulationBackend, server::State};
-use input_emulation::{self, error::EmulationCreationError, EmulationHandle, InputEmulation};
+use input_emulation::{
+    self,
+    error::{EmulationCreationError, EmulationError},
+    EmulationHandle, InputEmulation,
+};
 use input_event::{Event, KeyboardEvent};
 
 use super::{CaptureEvent, Server};
@@ -42,14 +46,14 @@ pub fn new(
             tokio::select! {
                 udp_event = udp_rx.recv() => {
                     let udp_event = udp_event.ok_or(anyhow!("receiver closed"))??;
-                    handle_udp_rx(&server, &capture_tx, &mut emulate, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await;
+                    handle_udp_rx(&server, &capture_tx, &mut emulate, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await?;
                 }
                 emulate_event = rx.recv() => {
                     match emulate_event {
                         Some(e) => match e {
                             EmulationEvent::Create(h) => emulate.create(h).await,
                             EmulationEvent::Destroy(h) => emulate.destroy(h).await,
-                            EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulate, c).await,
+                            EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulate, c).await?,
                             EmulationEvent::Terminate => break,
                         },
                         None => break,
@@ -66,7 +70,7 @@ pub fn new(
             .map(|(h, _)| h)
             .collect::<Vec<_>>();
         for client in clients {
-            release_keys(&server, &mut emulate, client).await;
+            release_keys(&server, &mut emulate, client).await?;
         }
 
         anyhow::Ok(())
@@ -82,7 +86,7 @@ async fn handle_udp_rx(
     last_ignored: &mut Option<SocketAddr>,
     event: (Event, SocketAddr),
     timer_tx: &Sender<()>,
-) {
+) -> Result<(), EmulationError> {
     let (event, addr) = event;
 
     // get handle for addr
@@ -93,7 +97,7 @@ async fn handle_udp_rx(
                 log::warn!("ignoring events from client {addr}");
                 last_ignored.replace(addr);
             }
-            return;
+            return Ok(());
         }
     };
 
@@ -107,7 +111,7 @@ async fn handle_udp_rx(
             Some((_, s)) => s,
             None => {
                 log::error!("unknown handle");
-                return;
+                return Ok(());
             }
         };
 
@@ -123,7 +127,7 @@ async fn handle_udp_rx(
             let _ = sender_tx.send((Event::Pong(), addr)).await;
         }
         (Event::Disconnect(), _) => {
-            release_keys(server, emulate, handle).await;
+            release_keys(server, emulate, handle).await?;
         }
         (event, addr) => {
             // tell clients that we are ready to receive events
@@ -156,7 +160,7 @@ async fn handle_udp_rx(
                             s
                         } else {
                             log::error!("unknown handle");
-                            return;
+                            return Ok(());
                         };
                         if state == 0 {
                             // ignore release event if key not pressed
@@ -171,7 +175,7 @@ async fn handle_udp_rx(
                     // workaround buggy rdp backend.
                     if !ignore_event {
                         // consume event
-                        emulate.consume(event, handle).await;
+                        emulate.consume(event, handle).await?;
                         log::trace!("{event} => emulate");
                     }
                 }
@@ -196,13 +200,14 @@ async fn handle_udp_rx(
             }
         }
     }
+    Ok(())
 }
 
 async fn release_keys(
     server: &Server,
     emulate: &mut Box<dyn InputEmulation>,
     client: ClientHandle,
-) {
+) -> Result<(), EmulationError> {
     let keys = server
         .client_manager
         .borrow_mut()
@@ -217,19 +222,18 @@ async fn release_keys(
             key,
             state: 0,
         });
-        emulate.consume(event, client).await;
+        emulate.consume(event, client).await?;
         if let Ok(key) = input_event::scancode::Linux::try_from(key) {
             log::warn!("releasing stuck key: {key:?}");
         }
     }
 
-    let modifiers_event = KeyboardEvent::Modifiers {
+    let event = Event::Keyboard(KeyboardEvent::Modifiers {
         mods_depressed: 0,
         mods_latched: 0,
         mods_locked: 0,
         group: 0,
-    };
-    emulate
-        .consume(Event::Keyboard(modifiers_event), client)
-        .await;
+    });
+    emulate.consume(event, client).await?;
+    Ok(())
 }

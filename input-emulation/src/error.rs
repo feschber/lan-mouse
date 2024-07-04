@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, io};
 
 use thiserror::Error;
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -10,6 +10,25 @@ use wayland_client::{
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::HandshakeError;
+
+#[derive(Debug, Error)]
+pub enum EmulationError {
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[error("libei error flushing events: `{0}`")]
+    Libei(#[from] reis::event::Error),
+    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[error("wayland error: `{0}`")]
+    Wayland(#[from] wayland_client::backend::WaylandError),
+    #[cfg(all(
+        unix,
+        any(feature = "xdg_desktop_portal", feature = "libei"),
+        not(target_os = "macos")
+    ))]
+    #[error("xdg-desktop-portal: `{0}`")]
+    Ashpd(#[from] ashpd::Error),
+    #[error("io error: `{0}`")]
+    Io(#[from] io::Error),
+}
 
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {

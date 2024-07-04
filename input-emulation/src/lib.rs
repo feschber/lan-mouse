@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use error::EmulationError;
 use std::fmt::Display;
 
 use input_event::Event;
@@ -70,7 +71,11 @@ impl Display for Backend {
 
 #[async_trait]
 pub trait InputEmulation: Send {
-    async fn consume(&mut self, event: Event, handle: EmulationHandle);
+    async fn consume(
+        &mut self,
+        event: Event,
+        handle: EmulationHandle,
+    ) -> Result<(), EmulationError>;
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
 }

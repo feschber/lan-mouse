@@ -13,6 +13,8 @@ use input_event::{
     KeyboardEvent, PointerEvent,
 };
 
+use crate::error::EmulationError;
+
 use super::{error::XdpEmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct DesktopPortalEmulation<'a> {
@@ -59,7 +61,11 @@ impl<'a> DesktopPortalEmulation<'a> {
 
 #[async_trait]
 impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
-    async fn consume(&mut self, event: input_event::Event, _client: EmulationHandle) {
+    async fn consume(
+        &mut self,
+        event: input_event::Event,
+        _client: EmulationHandle,
+    ) -> Result<(), EmulationError> {
         match event {
             Pointer(p) => match p {
                 PointerEvent::Motion {
@@ -67,17 +73,13 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                     relative_x,
                     relative_y,
                 } => {
-                    if let Err(e) = self
-                        .proxy
+                    self.proxy
                         .notify_pointer_motion(
                             self.session.as_ref().expect("no session"),
                             relative_x,
                             relative_y,
                         )
-                        .await
-                    {
-                        log::warn!("{e}");
-                    }
+                        .await?;
                 }
                 PointerEvent::Button {
                     time: _,
@@ -88,34 +90,26 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         0 => KeyState::Released,
                         _ => KeyState::Pressed,
                     };
-                    if let Err(e) = self
-                        .proxy
+                    self.proxy
                         .notify_pointer_button(
                             self.session.as_ref().expect("no session"),
                             button as i32,
                             state,
                         )
-                        .await
-                    {
-                        log::warn!("{e}");
-                    }
+                        .await?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
                     let axis = match axis {
                         0 => Axis::Vertical,
                         _ => Axis::Horizontal,
                     };
-                    if let Err(e) = self
-                        .proxy
+                    self.proxy
                         .notify_pointer_axis_discrete(
                             self.session.as_ref().expect("no session"),
                             axis,
                             value,
                         )
-                        .await
-                    {
-                        log::warn!("{e}");
-                    }
+                        .await?;
                 }
                 PointerEvent::Axis {
                     time: _,
@@ -130,18 +124,14 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         Axis::Vertical => (0., value),
                         Axis::Horizontal => (value, 0.),
                     };
-                    if let Err(e) = self
-                        .proxy
+                    self.proxy
                         .notify_pointer_axis(
                             self.session.as_ref().expect("no session"),
                             dx,
                             dy,
                             true,
                         )
-                        .await
-                    {
-                        log::warn!("{e}");
-                    }
+                        .await?;
                 }
                 PointerEvent::Frame {} => {}
             },
@@ -156,17 +146,13 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                             0 => KeyState::Released,
                             _ => KeyState::Pressed,
                         };
-                        if let Err(e) = self
-                            .proxy
+                        self.proxy
                             .notify_keyboard_keycode(
                                 self.session.as_ref().expect("no session"),
                                 key as i32,
                                 state,
                             )
-                            .await
-                        {
-                            log::warn!("{e}");
-                        }
+                            .await?;
                     }
                     KeyboardEvent::Modifiers { .. } => {
                         // ignore
@@ -175,6 +161,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
             }
             _ => {}
         }
+        Ok(())
     }
 
     async fn create(&mut self, _client: EmulationHandle) {}
