@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use std::{
@@ -33,7 +32,7 @@ use reis::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::error::EmulationError;
+use crate::error::{EmulationError, ReisConvertStreamError};
 
 use super::{error::LibeiEmulationCreationError, EmulationHandle, InputEmulation};
 
@@ -65,7 +64,7 @@ pub struct LibeiEmulation {
     context: ei::Context,
     devices: Devices,
     serial: AtomicU32,
-    ei_task: JoinHandle<Result<()>>,
+    ei_task: JoinHandle<Result<(), EmulationError>>,
 }
 
 async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
@@ -116,8 +115,8 @@ impl LibeiEmulation {
         .await?;
         let events = EiConvertEventStream::new(events, handshake.serial);
         let devices = Devices::default();
-        let ei_task =
-            tokio::task::spawn_local(ei_event_handler(events, context.clone(), devices.clone()));
+        let ei_handler = ei_event_handler(events, context.clone(), devices.clone());
+        let ei_task = tokio::task::spawn_local(ei_handler);
 
         let serial = AtomicU32::new(handshake.serial);
 
@@ -149,14 +148,10 @@ impl InputEmulation for LibeiEmulation {
             .as_micros() as u64;
         match event {
             Event::Pointer(p) => match p {
-                PointerEvent::Motion {
-                    time: _,
-                    relative_x,
-                    relative_y,
-                } => {
+                PointerEvent::Motion { time: _, dx, dy } => {
                     let pointer_device = self.devices.pointer.read().unwrap();
                     if let Some((d, p)) = pointer_device.as_ref() {
-                        p.motion_relative(relative_x as f32, relative_y as f32);
+                        p.motion_relative(dx as f32, dy as f32);
                         d.frame(self.serial.load(Ordering::SeqCst), now);
                     }
                 }
@@ -239,13 +234,13 @@ async fn ei_event_handler(
     mut events: EiConvertEventStream,
     context: ei::Context,
     devices: Devices,
-) -> Result<()> {
+) -> Result<(), EmulationError> {
     loop {
         let event = events
             .next()
             .await
-            .ok_or(anyhow!("ei stream closed"))?
-            .map_err(|e| anyhow!("libei error: {e:?}"))?;
+            .ok_or(EmulationError::EndOfStream)?
+            .map_err(ReisConvertStreamError::from)?;
         const CAPABILITIES: &[DeviceCapability] = &[
             DeviceCapability::Pointer,
             DeviceCapability::PointerAbsolute,
@@ -330,7 +325,7 @@ async fn ei_event_handler(
             // EiEvent::TouchMotion(_) => { },
             _ => unreachable!("unexpected ei event"),
         }
-        context.flush()?;
+        context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
     }
     Ok(())
 }

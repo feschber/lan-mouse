@@ -837,21 +837,16 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
         if let zwp_relative_pointer_v1::Event::RelativeMotion {
             utime_hi,
             utime_lo,
-            dx: _,
-            dy: _,
-            dx_unaccel: surface_x,
-            dy_unaccel: surface_y,
+            dx_unaccel: dx,
+            dy_unaccel: dy,
+            ..
         } = event
         {
             if let Some((_window, client)) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
                 app.pending_events.push_back((
                     *client,
-                    Event::Pointer(PointerEvent::Motion {
-                        time,
-                        relative_x: surface_x,
-                        relative_y: surface_y,
-                    }),
+                    Event::Pointer(PointerEvent::Motion { time, dx, dy }),
                 ));
             }
         }

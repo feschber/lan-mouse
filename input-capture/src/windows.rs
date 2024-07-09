@@ -1,4 +1,3 @@
-use anyhow::Result;
 use core::task::{Context, Poll};
 use futures::Stream;
 use once_cell::unsync::Lazy;
@@ -145,11 +144,8 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
             let (x, y) = (mouse_low_level.pt.x, mouse_low_level.pt.y);
             let (ex, ey) = ENTRY_POINT;
             let (dx, dy) = (x - ex, y - ey);
-            Some(PointerEvent::Motion {
-                time: 0,
-                relative_x: dx as f64,
-                relative_y: dy as f64,
-            })
+            let (dx, dy) = (dx as f64, dy as f64);
+            Some(PointerEvent::Motion { time: 0, dx, dy })
         },
         WPARAM(p) if p == WM_MOUSEWHEEL as usize => Some(PointerEvent::AxisDiscrete120 {
             axis: 0,

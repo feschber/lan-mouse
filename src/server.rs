@@ -116,7 +116,7 @@ impl Server {
             sender_tx.clone(),
             capture_channel.clone(),
             timer_tx,
-        )?;
+        );
 
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;

@@ -177,11 +177,7 @@ impl VirtualInput {
         match event {
             Event::Pointer(e) => {
                 match e {
-                    PointerEvent::Motion {
-                        time,
-                        relative_x,
-                        relative_y,
-                    } => self.pointer.motion(time, relative_x, relative_y),
+                    PointerEvent::Motion { time, dx, dy } => self.pointer.motion(time, dx, dy),
                     PointerEvent::Button {
                         time,
                         button,

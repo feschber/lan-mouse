@@ -4,7 +4,7 @@ use futures_core::Stream;
 
 use input_event::Event;
 
-use self::error::CaptureCreationError;
+pub use error::{CaptureCreationError, CaptureError};
 
 pub mod error;
 

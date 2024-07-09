@@ -103,12 +103,8 @@ impl InputEmulation for X11Emulation {
     async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
-                PointerEvent::Motion {
-                    time: _,
-                    relative_x,
-                    relative_y,
-                } => {
-                    self.relative_motion(relative_x as i32, relative_y as i32);
+                PointerEvent::Motion { time: _, dx, dy } => {
+                    self.relative_motion(dx as i32, dy as i32);
                 }
                 PointerEvent::Button {
                     time: _,

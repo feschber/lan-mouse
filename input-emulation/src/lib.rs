@@ -4,8 +4,6 @@ use std::fmt::Display;
 
 use input_event::Event;
 
-use anyhow::Result;
-
 use self::error::EmulationCreationError;
 
 #[cfg(windows)]

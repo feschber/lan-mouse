@@ -114,11 +114,7 @@ impl InputEmulation for MacOSEmulation {
     ) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
-                PointerEvent::Motion {
-                    time: _,
-                    relative_x,
-                    relative_y,
-                } => {
+                PointerEvent::Motion { time: _, dx, dy } => {
                     // FIXME secondary displays?
                     let (min_x, min_y, max_x, max_y) = unsafe {
                         let display = CGMainDisplayID();
@@ -137,8 +133,8 @@ impl InputEmulation for MacOSEmulation {
                         }
                     };
 
-                    mouse_location.x = (mouse_location.x + relative_x).clamp(min_x, max_x - 1.);
-                    mouse_location.y = (mouse_location.y + relative_y).clamp(min_y, max_y - 1.);
+                    mouse_location.x = (mouse_location.x + dx).clamp(min_x, max_x - 1.);
+                    mouse_location.y = (mouse_location.y + dy).clamp(min_y, max_y - 1.);
 
                     let mut event_type = CGEventType::MouseMoved;
                     if self.button_state.left {
@@ -160,14 +156,8 @@ impl InputEmulation for MacOSEmulation {
                             return Ok(());
                         }
                     };
-                    event.set_integer_value_field(
-                        EventField::MOUSE_EVENT_DELTA_X,
-                        relative_x as i64,
-                    );
-                    event.set_integer_value_field(
-                        EventField::MOUSE_EVENT_DELTA_Y,
-                        relative_y as i64,
-                    );
+                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
+                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
                     event.post(CGEventTapLocation::HID);
                 }
                 PointerEvent::Button {
