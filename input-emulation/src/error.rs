@@ -1,3 +1,4 @@
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::EiConvertEventStreamError;
 use std::io;
 use thiserror::Error;
@@ -19,6 +20,7 @@ pub struct ReisConvertStreamError {
     inner: EiConvertEventStreamError,
 }
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 impl From<EiConvertEventStreamError> for ReisConvertStreamError {
     fn from(e: EiConvertEventStreamError) -> Self {
         Self { inner: e }
