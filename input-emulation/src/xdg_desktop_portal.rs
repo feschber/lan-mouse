@@ -1,4 +1,3 @@
-use anyhow::Result;
 use ashpd::{
     desktop::{
         remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},

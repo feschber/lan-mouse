@@ -1,4 +1,3 @@
-use reis::tokio::EiConvertEventStreamError;
 use thiserror::Error;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -11,7 +10,7 @@ use wayland_client::{
 };
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-use reis::tokio::HandshakeError;
+use reis::tokio::{EiConvertEventStreamError, HandshakeError};
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
@@ -35,10 +34,13 @@ pub enum CaptureError {
     EndOfStream,
     #[error("io error: `{0}`")]
     Io(#[from] std::io::Error),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("error in libei stream: `{0}`")]
     Reis(#[from] ReisConvertEventStreamError),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("libei handshake failed: `{0}`")]
     Handshake(#[from] HandshakeError),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error(transparent)]
     Portal(#[from] ashpd::Error),
 }
@@ -60,7 +62,7 @@ pub enum CaptureCreationError {
     #[error("error creating macos capture backend: `{0}`")]
     Macos(#[from] MacOSInputCaptureCreationError),
     #[cfg(windows)]
-    #[error("error creating windows capture backend: `{0}`")]
+    #[error("error creating windows capture backend")]
     Windows,
 }
 

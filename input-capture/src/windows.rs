@@ -1,4 +1,3 @@
-use anyhow::Result;
 use core::task::{Context, Poll};
 use futures::Stream;
 use once_cell::unsync::Lazy;

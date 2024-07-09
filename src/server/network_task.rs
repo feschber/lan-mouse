@@ -1,6 +1,5 @@
 use std::{io, net::SocketAddr};
 
-use anyhow::Result;
 use thiserror::Error;
 use tokio::{
     net::UdpSocket,
@@ -16,7 +15,7 @@ use super::Server;
 pub async fn new(
     server: Server,
     frontend_notify_tx: Sender<FrontendEvent>,
-) -> Result<(
+) -> io::Result<(
     JoinHandle<()>,
     Sender<(Event, SocketAddr)>,
     Receiver<Result<(Event, SocketAddr), NetworkError>>,
@@ -113,7 +112,7 @@ async fn receive_event(socket: &UdpSocket) -> Result<(Event, SocketAddr), Networ
     Ok((Event::try_from(buf)?, src))
 }
 
-fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize> {
+fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize, NetworkError> {
     log::trace!("{:20} ------>->->-> {addr}", e.to_string());
     let data: Vec<u8> = (&e).into();
     // When udp blocks, we dont want to block the event loop.
