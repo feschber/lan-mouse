@@ -115,8 +115,8 @@ impl LibeiEmulation {
         .await?;
         let events = EiConvertEventStream::new(events, handshake.serial);
         let devices = Devices::default();
-        let ei_task =
-            tokio::task::spawn_local(ei_event_handler(events, context.clone(), devices.clone()));
+        let ei_handler = ei_event_handler(events, context.clone(), devices.clone());
+        let ei_task = tokio::task::spawn_local(ei_handler);
 
         let serial = AtomicU32::new(handshake.serial);
 
