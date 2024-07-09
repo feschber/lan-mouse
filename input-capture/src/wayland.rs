@@ -849,8 +849,8 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
                     *client,
                     Event::Pointer(PointerEvent::Motion {
                         time,
-                        relative_x: surface_x,
-                        relative_y: surface_y,
+                        dx: surface_x,
+                        dy: surface_y,
                     }),
                 ));
             }

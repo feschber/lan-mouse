@@ -1242,11 +1242,11 @@ dependencies = [
 name = "input-event"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures-core",
  "log",
  "num_enum",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

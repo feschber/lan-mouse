@@ -440,8 +440,8 @@ async fn handle_ei_event(
         EiEvent::PointerMotion(motion) => {
             let motion_event = PointerEvent::Motion {
                 time: motion.time as u32,
-                relative_x: motion.dx as f64,
-                relative_y: motion.dy as f64,
+                dx: motion.dx as f64,
+                dy: motion.dy as f64,
             };
             if let Some(current_client) = current_client {
                 event_tx

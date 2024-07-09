@@ -1,12 +1,16 @@
-use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 
+use thiserror::Error;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
 
-use crate::{client::ClientHandle, config::EmulationBackend, server::State};
+use crate::{
+    client::{ClientHandle, ClientManager},
+    config::EmulationBackend,
+    server::State,
+};
 use input_emulation::{
     self,
     error::{EmulationCreationError, EmulationError},
@@ -14,7 +18,7 @@ use input_emulation::{
 };
 use input_event::{Event, KeyboardEvent};
 
-use super::{CaptureEvent, Server};
+use super::{network_task::NetworkError, CaptureEvent, Server};
 
 #[derive(Clone, Debug)]
 pub enum EmulationEvent {
@@ -31,51 +35,73 @@ pub enum EmulationEvent {
 pub fn new(
     backend: Option<EmulationBackend>,
     server: Server,
-    mut udp_rx: Receiver<Result<(Event, SocketAddr)>>,
+    udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
     timer_tx: Sender<()>,
-) -> Result<(JoinHandle<Result<()>>, Sender<EmulationEvent>), EmulationCreationError> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let emulate_task = tokio::task::spawn_local(async move {
-        let backend = backend.map(|b| b.into());
-        let mut emulate = input_emulation::create(backend).await?;
-        let mut last_ignored = None;
+) -> (
+    JoinHandle<Result<(), LanMouseEmulationError>>,
+    Sender<EmulationEvent>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
+    let emulation_task =
+        emulation_task(backend, rx, server, udp_rx, sender_tx, capture_tx, timer_tx);
+    let emulate_task = tokio::task::spawn_local(emulation_task);
+    (emulate_task, tx)
+}
 
-        loop {
-            tokio::select! {
-                udp_event = udp_rx.recv() => {
-                    let udp_event = udp_event.ok_or(anyhow!("receiver closed"))??;
-                    handle_udp_rx(&server, &capture_tx, &mut emulate, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await?;
-                }
-                emulate_event = rx.recv() => {
-                    match emulate_event {
-                        Some(e) => match e {
-                            EmulationEvent::Create(h) => emulate.create(h).await,
-                            EmulationEvent::Destroy(h) => emulate.destroy(h).await,
-                            EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulate, c).await?,
-                            EmulationEvent::Terminate => break,
-                        },
-                        None => break,
+#[derive(Debug, Error)]
+pub enum LanMouseEmulationError {
+    #[error("error creating input-emulation: `{0}`")]
+    Create(#[from] EmulationCreationError),
+    #[error("error emulating input: `{0}`")]
+    Emulate(#[from] EmulationError),
+}
+
+async fn emulation_task(
+    backend: Option<EmulationBackend>,
+    mut rx: Receiver<EmulationEvent>,
+    server: Server,
+    mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
+    sender_tx: Sender<(Event, SocketAddr)>,
+    capture_tx: Sender<CaptureEvent>,
+    timer_tx: Sender<()>,
+) -> Result<(), LanMouseEmulationError> {
+    let backend = backend.map(|b| b.into());
+    let mut emulation = input_emulation::create(backend).await?;
+
+    let mut last_ignored = None;
+    loop {
+        tokio::select! {
+            udp_event = udp_rx.recv() => {
+                let udp_event = match udp_event {
+                    Some(Ok(e)) => e,
+                    Some(Err(e)) => {
+                        log::warn!("network error: {e}");
+                        continue;
                     }
+                    None => break,
+                };
+                handle_udp_rx(&server, &capture_tx, &mut emulation, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await?;
+            }
+            emulate_event = rx.recv() => {
+                match emulate_event {
+                    Some(e) => match e {
+                        EmulationEvent::Create(h) => emulation.create(h).await,
+                        EmulationEvent::Destroy(h) => emulation.destroy(h).await,
+                        EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulation, c).await?,
+                        EmulationEvent::Terminate => break,
+                    },
+                    None => break,
                 }
             }
         }
+    }
 
-        // release potentially still pressed keys
-        let clients = server
-            .client_manager
-            .borrow()
-            .get_client_states()
-            .map(|(h, _)| h)
-            .collect::<Vec<_>>();
-        for client in clients {
-            release_keys(&server, &mut emulate, client).await?;
-        }
+    // release potentially still pressed keys
+    release_all_keys(&server, &mut emulation).await?;
 
-        anyhow::Ok(())
-    });
-    Ok((emulate_task, tx))
+    Ok(())
 }
 
 async fn handle_udp_rx(
@@ -89,37 +115,14 @@ async fn handle_udp_rx(
 ) -> Result<(), EmulationError> {
     let (event, addr) = event;
 
-    // get handle for addr
-    let handle = match server.client_manager.borrow().get_client(addr) {
-        Some(a) => a,
-        None => {
-            if last_ignored.is_none() || last_ignored.is_some() && last_ignored.unwrap() != addr {
-                log::warn!("ignoring events from client {addr}");
-                last_ignored.replace(addr);
-            }
-            return Ok(());
-        }
+    log::trace!("{:20} <-<-<-<------ {addr}", event.to_string());
+
+    // get client handle for addr
+    let Some(handle) =
+        activate_client_if_exists(&mut server.client_manager.borrow_mut(), addr, last_ignored)
+    else {
+        return Ok(());
     };
-
-    // next event can be logged as ignored again
-    last_ignored.take();
-
-    log::trace!("{:20} <-<-<-<------ {addr} ({handle})", event.to_string());
-    {
-        let mut client_manager = server.client_manager.borrow_mut();
-        let client_state = match client_manager.get_mut(handle) {
-            Some((_, s)) => s,
-            None => {
-                log::error!("unknown handle");
-                return Ok(());
-            }
-        };
-
-        // reset ttl for client and
-        client_state.alive = true;
-        // set addr as new default for this client
-        client_state.active_addr = Some(addr);
-    }
 
     match (event, addr) {
         (Event::Pong(), _) => { /* ignore pong events */ }
@@ -148,30 +151,22 @@ async fn handle_udp_rx(
                     }
                 }
                 State::Receiving => {
-                    let mut ignore_event = false;
-                    if let Event::Keyboard(KeyboardEvent::Key {
-                        time: _,
-                        key,
-                        state,
-                    }) = event
-                    {
-                        let mut client_manager = server.client_manager.borrow_mut();
-                        let client_state = if let Some((_, s)) = client_manager.get_mut(handle) {
-                            s
+                    let ignore_event =
+                        if let Event::Keyboard(KeyboardEvent::Key { key, state, .. }) = event {
+                            let (ignore_event, restart_timer) = update_client_keys(
+                                &mut server.client_manager.borrow_mut(),
+                                handle,
+                                key,
+                                state,
+                            );
+                            // restart timer if necessary
+                            if restart_timer {
+                                let _ = timer_tx.try_send(());
+                            }
+                            ignore_event
                         } else {
-                            log::error!("unknown handle");
-                            return Ok(());
+                            false
                         };
-                        if state == 0 {
-                            // ignore release event if key not pressed
-                            ignore_event = !client_state.pressed_keys.remove(&key);
-                        } else {
-                            // ignore press event if key not released
-                            ignore_event = !client_state.pressed_keys.insert(key);
-                            let _ = timer_tx.try_send(());
-                        }
-                    }
-                    // ignore double press / release events to
                     // workaround buggy rdp backend.
                     if !ignore_event {
                         // consume event
@@ -199,6 +194,22 @@ async fn handle_udp_rx(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+async fn release_all_keys(
+    server: &Server,
+    emulation: &mut Box<dyn InputEmulation>,
+) -> Result<(), EmulationError> {
+    let clients = server
+        .client_manager
+        .borrow()
+        .get_client_states()
+        .map(|(h, _)| h)
+        .collect::<Vec<_>>();
+    for client in clients {
+        release_keys(server, emulation, client).await?;
     }
     Ok(())
 }
@@ -236,4 +247,51 @@ async fn release_keys(
     });
     emulate.consume(event, client).await?;
     Ok(())
+}
+
+fn activate_client_if_exists(
+    client_manager: &mut ClientManager,
+    addr: SocketAddr,
+    last_ignored: &mut Option<SocketAddr>,
+) -> Option<ClientHandle> {
+    let Some(handle) = client_manager.get_client(addr) else {
+        // log ignored if it is the first event from the client in a series
+        if last_ignored.is_none() || last_ignored.is_some() && last_ignored.unwrap() != addr {
+            log::warn!("ignoring events from client {addr}");
+            last_ignored.replace(addr);
+        }
+        return None;
+    };
+    // next event can be logged as ignored again
+    last_ignored.take();
+
+    let (_, client_state) = client_manager.get_mut(handle)?;
+
+    // reset ttl for client
+    client_state.alive = true;
+    // set addr as new default for this client
+    client_state.active_addr = Some(addr);
+    Some(handle)
+}
+
+fn update_client_keys(
+    client_manager: &mut ClientManager,
+    handle: ClientHandle,
+    key: u32,
+    state: u8,
+) -> (bool, bool) {
+    let Some(client_state) = client_manager.get_mut(handle).map(|(_, s)| s) else {
+        return (true, false);
+    };
+
+    // ignore double press / release events
+    let ignore_event = if state == 0 {
+        // ignore release event if key not pressed
+        !client_state.pressed_keys.remove(&key)
+    } else {
+        // ignore press event if key not released
+        !client_state.pressed_keys.insert(key)
+    };
+    let restart_timer = !client_state.pressed_keys.is_empty();
+    (ignore_event, restart_timer)
 }

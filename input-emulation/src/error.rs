@@ -1,6 +1,7 @@
-use std::{fmt::Display, io};
-
+use reis::tokio::EiConvertEventStreamError;
+use std::io;
 use thiserror::Error;
+
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use wayland_client::{
     backend::WaylandError,
@@ -11,11 +12,29 @@ use wayland_client::{
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::HandshakeError;
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+#[derive(Debug, Error)]
+#[error("error in libei stream: {inner:?}")]
+pub struct ReisConvertStreamError {
+    inner: EiConvertEventStreamError,
+}
+
+impl From<EiConvertEventStreamError> for ReisConvertStreamError {
+    fn from(e: EiConvertEventStreamError) -> Self {
+        Self { inner: e }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum EmulationError {
+    #[error("event stream closed")]
+    EndOfStream,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("libei error flushing events: `{0}`")]
     Libei(#[from] reis::event::Error),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[error("")]
+    LibeiConvertStream(#[from] ReisConvertStreamError),
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
     #[error("wayland error: `{0}`")]
     Wayland(#[from] wayland_client::backend::WaylandError),
@@ -33,58 +52,52 @@ pub enum EmulationError {
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[error("wlroots backend: `{0}`")]
     Wlroots(#[from] WlrootsEmulationCreationError),
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[error("libei backend: `{0}`")]
     Libei(#[from] LibeiEmulationCreationError),
     #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    #[error("xdg-desktop-portal: `{0}`")]
     Xdp(#[from] XdpEmulationCreationError),
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[error("x11: `{0}`")]
     X11(#[from] X11EmulationCreationError),
     #[cfg(target_os = "macos")]
+    #[error("macos: `{0}`")]
     MacOs(#[from] MacOSEmulationCreationError),
     #[cfg(windows)]
+    #[error("windows: `{0}`")]
     Windows(#[from] WindowsEmulationCreationError),
+    #[error("capture error")]
     NoAvailableBackend,
-}
-
-impl Display for EmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let reason = match self {
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-            EmulationCreationError::Wlroots(e) => format!("wlroots backend: {e}"),
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-            EmulationCreationError::Libei(e) => format!("libei backend: {e}"),
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
-            EmulationCreationError::Xdp(e) => format!("desktop portal backend: {e}"),
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-            EmulationCreationError::X11(e) => format!("x11 backend: {e}"),
-            #[cfg(target_os = "macos")]
-            EmulationCreationError::MacOs(e) => format!("macos backend: {e}"),
-            #[cfg(windows)]
-            EmulationCreationError::Windows(e) => format!("windows backend: {e}"),
-            EmulationCreationError::NoAvailableBackend => "no backend available".to_string(),
-        };
-        write!(f, "could not create input emulation backend: {reason}")
-    }
 }
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum WlrootsEmulationCreationError {
+    #[error(transparent)]
     Connect(#[from] ConnectError),
+    #[error(transparent)]
     Global(#[from] GlobalError),
+    #[error(transparent)]
     Wayland(#[from] WaylandError),
+    #[error(transparent)]
     Bind(#[from] WaylandBindError),
+    #[error(transparent)]
     Dispatch(#[from] DispatchError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 #[derive(Debug, Error)]
+#[error("wayland protocol \"{protocol}\" not supported: {inner}")]
 pub struct WaylandBindError {
     inner: BindError,
     protocol: &'static str,
 }
+
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 impl WaylandBindError {
     pub(crate) fn new(inner: BindError, protocol: &'static str) -> Self {
@@ -92,99 +105,36 @@ impl WaylandBindError {
     }
 }
 
-#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-impl Display for WaylandBindError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} protocol not supported: {}",
-            self.protocol, self.inner
-        )
-    }
-}
-
-#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-impl Display for WlrootsEmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WlrootsEmulationCreationError::Bind(e) => write!(f, "{e}"),
-            WlrootsEmulationCreationError::Connect(e) => {
-                write!(f, "could not connect to wayland compositor: {e}")
-            }
-            WlrootsEmulationCreationError::Global(e) => write!(f, "wayland error: {e}"),
-            WlrootsEmulationCreationError::Wayland(e) => write!(f, "wayland error: {e}"),
-            WlrootsEmulationCreationError::Dispatch(e) => {
-                write!(f, "error dispatching wayland events: {e}")
-            }
-            WlrootsEmulationCreationError::Io(e) => write!(f, "io error: {e}"),
-        }
-    }
-}
-
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum LibeiEmulationCreationError {
+    #[error(transparent)]
     Ashpd(#[from] ashpd::Error),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
     Handshake(#[from] HandshakeError),
-}
-
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-impl Display for LibeiEmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LibeiEmulationCreationError::Ashpd(e) => write!(f, "xdg-desktop-portal: {e}"),
-            LibeiEmulationCreationError::Io(e) => write!(f, "io error: {e}"),
-            LibeiEmulationCreationError::Handshake(e) => write!(f, "error in libei handshake: {e}"),
-        }
-    }
 }
 
 #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum XdpEmulationCreationError {
+    #[error(transparent)]
     Ashpd(#[from] ashpd::Error),
-}
-
-#[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
-impl Display for XdpEmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            XdpEmulationCreationError::Ashpd(e) => write!(f, "portal error: {e}"),
-        }
-    }
 }
 
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum X11EmulationCreationError {
+    #[error("could not open display")]
     OpenDisplay,
-}
-
-#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-impl Display for X11EmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            X11EmulationCreationError::OpenDisplay => write!(f, "could not open display!"),
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]
 #[derive(Debug, Error)]
 pub enum MacOSEmulationCreationError {
+    #[error("could not create event source")]
     EventSourceCreation,
-}
-
-#[cfg(target_os = "macos")]
-impl Display for MacOSEmulationCreationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MacOSEmulationCreationError::EventSourceCreation => {
-                write!(f, "could not create event source")
-            }
-        }
-    }
 }
 
 #[cfg(windows)]

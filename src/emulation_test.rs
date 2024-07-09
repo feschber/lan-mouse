@@ -40,8 +40,8 @@ async fn input_emulation_test(config: Config) -> Result<()> {
             let (relative_x, relative_y) = (relative_motion.0 as f64, relative_motion.1 as f64);
             let event = Event::Pointer(PointerEvent::Motion {
                 time: 0,
-                relative_x,
-                relative_y,
+                dx: relative_x,
+                dy: relative_y,
             });
             emulation.consume(event, 0).await?;
         }

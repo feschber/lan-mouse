@@ -70,13 +70,9 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
     ) -> Result<(), EmulationError> {
         match event {
             Pointer(p) => match p {
-                PointerEvent::Motion {
-                    time: _,
-                    relative_x,
-                    relative_y,
-                } => {
+                PointerEvent::Motion { time: _, dx, dy } => {
                     self.proxy
-                        .notify_pointer_motion(&self.session, relative_x, relative_y)
+                        .notify_pointer_motion(&self.session, dx, dy)
                         .await?;
                 }
                 PointerEvent::Button {
