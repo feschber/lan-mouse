@@ -35,38 +35,44 @@ pub async fn new(
             let udp_receiver = udp_receiver(&socket, &receiver_tx);
             let udp_sender = udp_sender(&socket, &mut sender_rx);
             tokio::select! {
-                _ = udp_receiver => { }
-                _ = udp_sender => { }
-                port = port_rx.recv() => {
-                    let Some(port) = port else {
-                        break;
-                    };
-
-                    if socket.local_addr().unwrap().port() == port {
-                        continue;
-                    }
-
-                    let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
-                    match UdpSocket::bind(listen_addr).await {
-                        Ok(new_socket) => {
-                            socket = new_socket;
-                            server.port.replace(port);
-                            let _ = frontend_notify_tx.send(FrontendEvent::PortChanged(port, None)).await;
-                        }
-                        Err(e) => {
-                            log::warn!("could not change port: {e}");
-                            let port = socket.local_addr().unwrap().port();
-                            let _ = frontend_notify_tx.send(FrontendEvent::PortChanged(
-                                    port,
-                                    Some(format!("could not change port: {e}")),
-                                )).await;
-                        }
-                    }
+                _ = udp_receiver => break, /* channel closed */
+                _ = udp_sender => break, /* channel closed */
+                port = port_rx.recv() => match port {
+                    Some(port) => update_port(&server, &frontend_notify_tx, &mut socket, port).await,
+                    _ => break,
                 }
             }
         }
     });
     Ok((udp_task, sender_tx, receiver_rx, port_tx))
+}
+
+async fn update_port(
+    server: &Server,
+    frontend_chan: &Sender<FrontendEvent>,
+    socket: &mut UdpSocket,
+    port: u16,
+) {
+    // if port is the same, we dont need to change it
+    if socket.local_addr().unwrap().port() == port {
+        return;
+    }
+
+    // create new socket
+    let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), port);
+    let frontend_event = match UdpSocket::bind(listen_addr).await {
+        Ok(new_socket) => {
+            *socket = new_socket;
+            server.port.replace(port);
+            FrontendEvent::PortChanged(port, None)
+        }
+        Err(e) => {
+            log::warn!("could not change port: {e}");
+            let port = socket.local_addr().unwrap().port();
+            FrontendEvent::PortChanged(port, Some(format!("could not change port: {e}")))
+        }
+    };
+    let _ = frontend_chan.send(frontend_event).await;
 }
 
 async fn udp_receiver(
@@ -75,7 +81,9 @@ async fn udp_receiver(
 ) {
     loop {
         let event = receive_event(&socket).await;
-        let _ = receiver_tx.send(event).await;
+        if let Err(_) = receiver_tx.send(event).await {
+            break;
+        }
     }
 }
 
