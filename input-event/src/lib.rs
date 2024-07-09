@@ -67,11 +67,7 @@ pub enum Event {
 impl Display for PointerEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PointerEvent::Motion {
-                time: _,
-                dx: relative_x,
-                dy: relative_y,
-            } => write!(f, "motion({relative_x},{relative_y})"),
+            PointerEvent::Motion { time: _, dx, dy } => write!(f, "motion({dx},{dy})"),
             PointerEvent::Button {
                 time: _,
                 button,

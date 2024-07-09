@@ -37,11 +37,11 @@ async fn input_emulation_test(config: Config) -> Result<()> {
         if new_offset != offset {
             let relative_motion = (new_offset.0 - offset.0, new_offset.1 - offset.1);
             offset = new_offset;
-            let (relative_x, relative_y) = (relative_motion.0 as f64, relative_motion.1 as f64);
+            let (dx, dy) = (relative_motion.0 as f64, relative_motion.1 as f64);
             let event = Event::Pointer(PointerEvent::Motion {
                 time: 0,
-                dx: relative_x,
-                dy: relative_y,
+                dx: dx,
+                dy: dy,
             });
             emulation.consume(event, 0).await?;
         }

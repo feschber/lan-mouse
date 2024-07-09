@@ -127,15 +127,11 @@ impl From<&PointerEvent> for Vec<u8> {
     fn from(event: &PointerEvent) -> Self {
         let id = vec![event.event_type() as u8];
         let data = match event {
-            PointerEvent::Motion {
-                time,
-                dx: relative_x,
-                dy: relative_y,
-            } => {
+            PointerEvent::Motion { time, dx, dy } => {
                 let time = time.to_be_bytes();
-                let relative_x = relative_x.to_be_bytes();
-                let relative_y = relative_y.to_be_bytes();
-                [&time[..], &relative_x[..], &relative_y[..]].concat()
+                let dx = dx.to_be_bytes();
+                let dy = dy.to_be_bytes();
+                [&time[..], &dx[..], &dy[..]].concat()
             }
             PointerEvent::Button {
                 time,
