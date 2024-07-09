@@ -80,8 +80,8 @@ async fn udp_receiver(
     receiver_tx: &Sender<Result<(Event, SocketAddr), NetworkError>>,
 ) {
     loop {
-        let event = receive_event(&socket).await;
-        if let Err(_) = receiver_tx.send(event).await {
+        let event = receive_event(socket).await;
+        if receiver_tx.send(event).await.is_err() {
             break;
         }
     }
@@ -93,7 +93,7 @@ async fn udp_sender(socket: &UdpSocket, rx: &mut Receiver<(Event, SocketAddr)>) 
             Some(e) => e,
             None => return,
         };
-        if let Err(e) = send_event(&socket, event, addr) {
+        if let Err(e) = send_event(socket, event, addr) {
             log::warn!("udp send failed: {e}");
         };
     }

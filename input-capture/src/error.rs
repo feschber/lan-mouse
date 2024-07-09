@@ -1,3 +1,4 @@
+use reis::tokio::EiConvertEventStreamError;
 use thiserror::Error;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -8,6 +9,39 @@ use wayland_client::{
     globals::{BindError, GlobalError},
     ConnectError, DispatchError,
 };
+
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+use reis::tokio::HandshakeError;
+
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+#[derive(Debug, Error)]
+#[error("error in libei stream: {inner:?}")]
+pub struct ReisConvertEventStreamError {
+    inner: EiConvertEventStreamError,
+}
+
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+impl From<EiConvertEventStreamError> for ReisConvertEventStreamError {
+    fn from(e: EiConvertEventStreamError) -> Self {
+        Self { inner: e }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CaptureError {
+    #[error("activation stream closed unexpectedly")]
+    ActivationClosed,
+    #[error("libei stream was closed")]
+    EndOfStream,
+    #[error("io error: `{0}`")]
+    Io(#[from] std::io::Error),
+    #[error("error in libei stream: `{0}`")]
+    Reis(#[from] ReisConvertEventStreamError),
+    #[error("libei handshake failed: `{0}`")]
+    Handshake(#[from] HandshakeError),
+    #[error(transparent)]
+    Portal(#[from] ashpd::Error),
+}
 
 #[derive(Debug, Error)]
 pub enum CaptureCreationError {
