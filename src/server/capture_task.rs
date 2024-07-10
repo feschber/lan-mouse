@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use std::{collections::HashSet, net::SocketAddr};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 use tokio::{
@@ -33,7 +33,7 @@ pub fn new(
     backend: Option<CaptureBackend>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
-    timer_notify: Notify,
+    timer_notify: Arc<Notify>,
     release_bind: Vec<scancode::Linux>,
     cancellation_token: CancellationToken,
 ) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
