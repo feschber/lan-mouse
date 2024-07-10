@@ -215,6 +215,13 @@ impl Window {
         }
     }
 
+    pub fn request_capture(&self) {
+        self.request(FrontendRequest::EnableCapture);
+    }
+
+    pub fn request_emulation(&self) {
+        self.request(FrontendRequest::EnableEmulation);
+    }
     pub fn request_client_state(&self, client: &ClientObject) {
         let handle = client.handle();
         let event = FrontendRequest::GetState(handle);

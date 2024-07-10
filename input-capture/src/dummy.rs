@@ -6,6 +6,8 @@ use futures_core::Stream;
 
 use input_event::Event;
 
+use crate::CaptureError;
+
 use super::{CaptureHandle, InputCapture, Position};
 
 pub struct DummyInputCapture {}
@@ -37,7 +39,7 @@ impl InputCapture for DummyInputCapture {
 }
 
 impl Stream for DummyInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending

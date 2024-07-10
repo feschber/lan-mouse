@@ -62,6 +62,8 @@ use tempfile;
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
+use crate::CaptureError;
+
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},
     CaptureHandle, InputCapture, Position,
@@ -582,7 +584,7 @@ impl InputCapture for WaylandInputCapture {
 }
 
 impl Stream for WaylandInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
@@ -600,7 +602,7 @@ impl Stream for WaylandInputCapture {
                     // prepare next read
                     match inner.prepare_read() {
                         Ok(_) => {}
-                        Err(e) => return Poll::Ready(Some(Err(e))),
+                        Err(e) => return Poll::Ready(Some(Err(e.into()))),
                     }
                 }
 
@@ -610,14 +612,14 @@ impl Stream for WaylandInputCapture {
                 // flush outgoing events
                 if let Err(e) = inner.flush_events() {
                     if e.kind() != ErrorKind::WouldBlock {
-                        return Poll::Ready(Some(Err(e)));
+                        return Poll::Ready(Some(Err(e.into())));
                     }
                 }
 
                 // prepare for the next read
                 match inner.prepare_read() {
                     Ok(_) => {}
-                    Err(e) => return Poll::Ready(Some(Err(e))),
+                    Err(e) => return Poll::Ready(Some(Err(e.into()))),
                 }
             }
 

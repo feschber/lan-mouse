@@ -36,7 +36,7 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{CaptureHandle, InputCapture, Position};
+use super::{CaptureError, CaptureHandle, InputCapture, Position};
 
 enum Request {
     Create(CaptureHandle, Position),
@@ -609,7 +609,7 @@ impl WindowsInputCapture {
 }
 
 impl Stream for WindowsInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),

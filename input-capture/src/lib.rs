@@ -92,7 +92,9 @@ impl Display for Backend {
     }
 }
 
-pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpin {
+pub trait InputCapture:
+    Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin
+{
     /// create a new client with the given id
     fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
 
@@ -105,8 +107,10 @@ pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpi
 
 pub async fn create_backend(
     backend: Backend,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
-{
+) -> Result<
+    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    CaptureCreationError,
+> {
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
@@ -124,8 +128,10 @@ pub async fn create_backend(
 
 pub async fn create(
     backend: Option<Backend>,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
-{
+) -> Result<
+    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    CaptureCreationError,
+> {
     if let Some(backend) = backend {
         let b = create_backend(backend).await;
         if b.is_ok() {

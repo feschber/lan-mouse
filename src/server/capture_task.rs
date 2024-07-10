@@ -22,6 +22,8 @@ pub enum CaptureEvent {
     Destroy(CaptureHandle),
     /// termination signal
     Terminate,
+    /// restart input capture
+    Restart,
 }
 
 pub fn new(
@@ -55,6 +57,13 @@ pub fn new(
                             }
                             CaptureEvent::Create(h, p) => capture.create(h, p)?,
                             CaptureEvent::Destroy(h) => capture.destroy(h)?,
+                            CaptureEvent::Restart => {
+                                let clients = server.client_manager.borrow().get_client_states().map(|(h, (c,_))| (h, c.pos)).collect::<Vec<_>>();
+                                capture = input_capture::create(backend).await?;
+                                for (handle, pos) in clients {
+                                    capture.create(handle, pos.into())?;
+                                }
+                            }
                             CaptureEvent::Terminate => break,
                         },
                         None => break,

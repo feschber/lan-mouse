@@ -5,7 +5,7 @@ use ashpd::{
     },
     enumflags2::BitFlags,
 };
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use reis::{
     ei::{self, keyboard::KeyState},
     eis::button::ButtonState,
@@ -17,9 +17,9 @@ use std::{
     collections::HashMap,
     io,
     os::unix::net::UnixStream,
-    pin::Pin,
+    pin::{pin, Pin},
     rc::Rc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tokio::{
     sync::mpsc::{Receiver, Sender},
@@ -192,7 +192,7 @@ async fn libei_event_handler(
             .map_err(ReisConvertEventStreamError::from)?;
         log::trace!("from ei: {ei_event:?}");
         let client = current_client.get();
-        handle_ei_event(ei_event, client, &context, &event_tx).await;
+        handle_ei_event(ei_event, client, &context, &event_tx).await?;
     }
 }
 
@@ -252,10 +252,9 @@ async fn do_capture<'a>(
         if active_clients.is_empty() {
             wait_for_active_client(&mut notify_rx, &mut active_clients).await;
             if notify_rx.is_closed() {
-                break Ok(());
-            } else {
-                continue;
+                break;
             }
+            continue;
         }
 
         let current_client = Rc::new(Cell::new(None));
@@ -270,13 +269,12 @@ async fn do_capture<'a>(
         let (context, ei_event_stream) = connect_to_eis(input_capture, &session).await?;
 
         // async event task
-        let mut ei_task: JoinHandle<Result<(), CaptureError>> =
-            tokio::task::spawn_local(libei_event_handler(
-                ei_event_stream,
-                context,
-                event_tx.clone(),
-                current_client.clone(),
-            ));
+        let mut ei_task = pin!(libei_event_handler(
+            ei_event_stream,
+            context,
+            event_tx.clone(),
+            current_client.clone(),
+        ));
 
         let mut activated = input_capture.receive_activated().await?;
         let mut zones_changed = input_capture.receive_zones_changed().await?;
@@ -320,10 +318,8 @@ async fn do_capture<'a>(
                             break;
                         }
                         res = &mut ei_task => {
-                            if let Err(e) = res.expect("ei task paniced") {
-                                log::warn!("libei task exited: {e}");
-                            }
-                            break;
+                            /* propagate errors to toplevel task */
+                            res?;
                         }
                     }
                     release_capture(
@@ -342,19 +338,16 @@ async fn do_capture<'a>(
                     }
                 },
                 res = &mut ei_task => {
-                    if let Err(e) = res.expect("ei task paniced") {
-                        log::warn!("libei task exited: {e}");
-                    }
-                    break;
+                    res?;
                 }
             }
         }
-        ei_task.abort();
         input_capture.disable(&session).await?;
         if event_tx.is_closed() {
-            break Ok(());
+            break;
         }
     }
+    Ok(())
 }
 
 async fn release_capture(
@@ -410,7 +403,7 @@ async fn handle_ei_event(
     current_client: Option<CaptureHandle>,
     context: &ei::Context,
     event_tx: &Sender<(CaptureHandle, Event)>,
-) {
+) -> Result<(), CaptureError> {
     match ei_event {
         EiEvent::SeatAdded(s) => {
             s.seat.bind_capabilities(&[
@@ -421,7 +414,7 @@ async fn handle_ei_event(
                 DeviceCapability::Scroll,
                 DeviceCapability::Button,
             ]);
-            context.flush().unwrap();
+            context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
         EiEvent::SeatRemoved(_) => {}
         EiEvent::DeviceAdded(_) => {}
@@ -439,7 +432,7 @@ async fn handle_ei_event(
                 event_tx
                     .send((current_client, Event::Keyboard(modifier_event)))
                     .await
-                    .unwrap();
+                    .map_err(|_| CaptureError::EndOfStream)?;
             }
         }
         EiEvent::Frame(_) => {}
@@ -459,7 +452,7 @@ async fn handle_ei_event(
                 event_tx
                     .send((current_client, Event::Pointer(motion_event)))
                     .await
-                    .unwrap();
+                    .map_err(|_| CaptureError::EndOfStream)?;
             }
         }
         EiEvent::PointerMotionAbsolute(_) => {}
@@ -476,7 +469,7 @@ async fn handle_ei_event(
                 event_tx
                     .send((current_client, Event::Pointer(button_event)))
                     .await
-                    .unwrap();
+                    .map_err(|_| CaptureError::EndOfStream)?;
             }
         }
         EiEvent::ScrollDelta(delta) => {
@@ -500,7 +493,7 @@ async fn handle_ei_event(
                     event_tx
                         .send((handle, Event::Pointer(event)))
                         .await
-                        .unwrap();
+                        .map_err(|_| CaptureError::EndOfStream)?;
                 }
             }
         }
@@ -516,7 +509,7 @@ async fn handle_ei_event(
                     event_tx
                         .send((current_client, Event::Pointer(event)))
                         .await
-                        .unwrap();
+                        .map_err(|_| CaptureError::EndOfStream)?;
                 }
             }
             if scroll.discrete_dx != 0 {
@@ -528,7 +521,7 @@ async fn handle_ei_event(
                     event_tx
                         .send((current_client, Event::Pointer(event)))
                         .await
-                        .unwrap();
+                        .map_err(|_| CaptureError::EndOfStream)?;
                 }
             };
         }
@@ -545,7 +538,7 @@ async fn handle_ei_event(
                 event_tx
                     .send((current_client, Event::Keyboard(key_event)))
                     .await
-                    .unwrap();
+                    .map_err(|_| CaptureError::EndOfStream)?;
             }
         }
         EiEvent::TouchDown(_) => {}
@@ -555,6 +548,7 @@ async fn handle_ei_event(
             log::error!("disconnect: {d:?}");
         }
     }
+    Ok(())
 }
 
 impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
@@ -584,12 +578,15 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
 }
 
 impl<'a> Stream for LibeiInputCapture<'a> {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match ready!(self.event_rx.poll_recv(cx)) {
-            None => Poll::Ready(None),
-            Some(e) => Poll::Ready(Some(Ok(e))),
+        match self.libei_task.poll_unpin(cx) {
+            Poll::Ready(r) => match r.expect("failed to join") {
+                Ok(()) => Poll::Ready(None),
+                Err(e) => Poll::Ready(Some(Err(e))),
+            },
+            Poll::Pending => self.event_rx.poll_recv(cx).map(|e| e.map(Result::Ok)),
         }
     }
 }

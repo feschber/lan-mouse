@@ -30,6 +30,8 @@ pub enum EmulationEvent {
     ReleaseKeys(ClientHandle),
     /// termination signal
     Terminate,
+    /// restart input emulation
+    Restart,
 }
 
 pub fn new(
@@ -90,6 +92,13 @@ async fn emulation_task(
                         EmulationEvent::Create(h) => emulation.create(h).await,
                         EmulationEvent::Destroy(h) => emulation.destroy(h).await,
                         EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulation, c).await?,
+                        EmulationEvent::Restart => {
+                            let clients = server.client_manager.borrow().get_client_states().map(|(h, _)| h).collect::<Vec<_>>();
+                            emulation = input_emulation::create(backend).await?;
+                            for handle in clients {
+                                emulation.create(handle).await;
+                            }
+                        },
                         EmulationEvent::Terminate => break,
                     },
                     None => break,

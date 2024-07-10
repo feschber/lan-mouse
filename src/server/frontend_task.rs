@@ -106,6 +106,12 @@ async fn handle_frontend_event(
 ) -> bool {
     log::debug!("frontend: {event:?}");
     match event {
+        FrontendRequest::EnableCapture => {
+            let _ = capture.send(CaptureEvent::Restart).await;
+        }
+        FrontendRequest::EnableEmulation => {
+            let _ = emulate.send(EmulationEvent::Restart).await;
+        }
         FrontendRequest::Create => {
             let handle = add_client(server, frontend).await;
             resolve_dns(server, resolve_tx, handle).await;

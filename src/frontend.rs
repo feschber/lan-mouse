@@ -109,6 +109,10 @@ pub enum FrontendRequest {
     UpdateFixIps(ClientHandle, Vec<IpAddr>),
     /// request the state of the given client
     GetState(ClientHandle),
+    /// request reenabling input capture
+    EnableCapture,
+    /// request reenabling input emulation
+    EnableEmulation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
