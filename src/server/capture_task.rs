@@ -59,6 +59,7 @@ pub fn new(
                             CaptureEvent::Destroy(h) => capture.destroy(h).await?,
                             CaptureEvent::Restart => {
                                 let clients = server.client_manager.borrow().get_client_states().map(|(h, (c,_))| (h, c.pos)).collect::<Vec<_>>();
+                                capture.async_drop().await?;
                                 capture = input_capture::create(backend).await?;
                                 for (handle, pos) in clients {
                                     capture.create(handle, pos.into()).await?;
