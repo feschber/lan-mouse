@@ -2,6 +2,7 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use async_trait::async_trait;
 use futures_core::Stream;
 
 use input_event::Event;
@@ -24,16 +25,21 @@ impl Default for DummyInputCapture {
     }
 }
 
-impl InputCapture for DummyInputCapture {
-    fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
+#[async_trait]
+impl<'a> InputCapture for DummyInputCapture {
+    async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
         Ok(())
     }
 
-    fn destroy(&mut self, _handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _handle: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn async_drop(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }

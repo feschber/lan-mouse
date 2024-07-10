@@ -1,5 +1,6 @@
 use std::{fmt::Display, io};
 
+use async_trait::async_trait;
 use futures_core::Stream;
 
 use input_event::Event;
@@ -92,17 +93,21 @@ impl Display for Backend {
     }
 }
 
+#[async_trait]
 pub trait InputCapture:
     Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin
 {
     /// create a new client with the given id
-    fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
+    async fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
 
     /// destroy the client with the given id, if it exists
-    fn destroy(&mut self, id: CaptureHandle) -> io::Result<()>;
+    async fn destroy(&mut self, id: CaptureHandle) -> io::Result<()>;
 
     /// release mouse
-    fn release(&mut self) -> io::Result<()>;
+    async fn release(&mut self) -> io::Result<()>;
+
+    /// destroy the input acpture
+    async fn async_drop(&mut self) -> Result<(), CaptureError>;
 }
 
 pub async fn create_backend(

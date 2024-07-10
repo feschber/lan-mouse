@@ -52,16 +52,16 @@ pub fn new(
                     match e {
                         Some(e) => match e {
                             CaptureEvent::Release => {
-                                capture.release()?;
+                                capture.release().await?;
                                 server.state.replace(State::Receiving);
                             }
-                            CaptureEvent::Create(h, p) => capture.create(h, p)?,
-                            CaptureEvent::Destroy(h) => capture.destroy(h)?,
+                            CaptureEvent::Create(h, p) => capture.create(h, p).await?,
+                            CaptureEvent::Destroy(h) => capture.destroy(h).await?,
                             CaptureEvent::Restart => {
                                 let clients = server.client_manager.borrow().get_client_states().map(|(h, (c,_))| (h, c.pos)).collect::<Vec<_>>();
                                 capture = input_capture::create(backend).await?;
                                 for (handle, pos) in clients {
-                                    capture.create(handle, pos.into())?;
+                                    capture.create(handle, pos.into()).await?;
                                 }
                             }
                             CaptureEvent::Terminate => break,
@@ -104,7 +104,7 @@ async fn handle_capture_event(
         if release_bind.iter().all(|k| pressed_keys.contains(k)) {
             pressed_keys.clear();
             log::info!("releasing pointer");
-            capture.release()?;
+            capture.release().await?;
             server.state.replace(State::Receiving);
             log::trace!("STATE ===> Receiving");
             // send an event to release all the modifiers
@@ -123,7 +123,7 @@ async fn handle_capture_event(
             None => {
                 // should not happen
                 log::warn!("unknown client!");
-                capture.release()?;
+                capture.release().await?;
                 server.state.replace(State::Receiving);
                 log::trace!("STATE ===> Receiving");
                 return Ok(());

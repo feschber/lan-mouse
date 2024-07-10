@@ -1196,6 +1196,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ashpd",
+ "async-trait",
  "core-graphics",
  "futures",
  "futures-core",

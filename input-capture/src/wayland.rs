@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use futures_core::Stream;
 use memmap::MmapOptions;
 use std::{
@@ -14,7 +15,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     os::unix::prelude::{AsRawFd, FromRawFd},
-    rc::Rc,
+    sync::Arc,
 };
 
 use wayland_protocols::{
@@ -104,8 +105,8 @@ struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
-    client_for_window: Vec<(Rc<Window>, CaptureHandle)>,
-    focused: Option<(Rc<Window>, CaptureHandle)>,
+    client_for_window: Vec<(Arc<Window>, CaptureHandle)>,
+    focused: Option<(Arc<Window>, CaptureHandle)>,
     g: Globals,
     wayland_fd: OwnedFd,
     read_guard: Option<ReadEventsGuard>,
@@ -477,7 +478,7 @@ impl State {
         log::debug!("outputs: {outputs:?}");
         outputs.iter().for_each(|(o, i)| {
             let window = Window::new(self, &self.qh, o, pos, i.size);
-            let window = Rc::new(window);
+            let window = Arc::new(window);
             self.client_for_window.push((window, client));
         });
     }
@@ -563,23 +564,29 @@ impl Inner {
     }
 }
 
+#[async_trait]
 impl InputCapture for WaylandInputCapture {
-    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
         self.add_client(handle, pos);
         let inner = self.0.get_mut();
         inner.flush_events()
     }
-    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+
+    async fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
         self.delete_client(handle);
         let inner = self.0.get_mut();
         inner.flush_events()
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> io::Result<()> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
         inner.flush_events()
+    }
+
+    async fn async_drop(&mut self) -> Result<(), CaptureError> {
+        Ok(())
     }
 }
 

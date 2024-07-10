@@ -1,6 +1,7 @@
 use std::io;
 use std::task::Poll;
 
+use async_trait::async_trait;
 use futures_core::Stream;
 
 use crate::CaptureError;
@@ -19,16 +20,21 @@ impl X11InputCapture {
     }
 }
 
+#[async_trait]
 impl InputCapture for X11InputCapture {
-    fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
         Ok(())
     }
 
-    fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn async_drop(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }
