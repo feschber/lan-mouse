@@ -62,7 +62,7 @@ struct ReleaseCaptureEvent;
 pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     capture_task: JoinHandle<Result<(), CaptureError>>,
-    event_rx: Option<Receiver<(CaptureHandle, Event)>>,
+    event_rx: Receiver<(CaptureHandle, Event)>,
     notify_capture: Sender<CaptureEvent>,
     notify_capture_session: Sender<ReleaseCaptureEvent>,
     cancellation_token: CancellationToken,
@@ -204,10 +204,6 @@ async fn libei_event_handler(
         log::trace!("from ei: {ei_event:?}");
         let client = current_client.get();
         handle_ei_event(ei_event, client, &context, &event_tx, &release_session).await?;
-        if event_tx.is_closed() {
-            log::info!("event_tx closed -> exiting");
-            break Ok(());
-        }
     }
 }
 
@@ -232,7 +228,6 @@ impl<'a> LibeiInputCapture<'a> {
             cancellation_token.clone(),
         );
         let capture_task = tokio::task::spawn_local(capture);
-        let event_rx = Some(event_rx);
 
         let producer = Self {
             input_capture,
@@ -305,11 +300,16 @@ async fn do_capture<'a>(
             );
 
             let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
-            log::info!("capture session + session_update task done!");
+            log::debug!("capture session + session_update task done!");
 
             // disable capture
-            log::info!("disabling input capture");
-            input_capture.disable(&session).await?;
+            log::debug!("disabling input capture");
+            if let Err(e) = input_capture.disable(&session).await {
+                log::warn!("input_capture.disable(&session) {e}");
+            }
+            if let Err(e) = session.close().await {
+                log::warn!("session.close(): {e}");
+            }
 
             // propagate error from capture session
             if capture_result.is_err() {
@@ -326,8 +326,6 @@ async fn do_capture<'a>(
                 CaptureEvent::Destroy(c) => active_clients.retain(|(h, _)| *h != c),
             }
         }
-
-        log::info!("no error occured");
 
         // break
         if cancellation_token.is_cancelled() {
@@ -378,7 +376,7 @@ async fn do_capture_session(
                 release_session_clone,
                 client,
             ) => {
-                log::info!("libei exited: {r:?} cancelling session task");
+                log::debug!("libei exited: {r:?} cancelling session task");
                 cancel_session_clone.cancel();
             }
             _ = cancel_ei_handler_clone.cancelled() => {},
@@ -389,6 +387,7 @@ async fn do_capture_session(
     let capture_session_task = async {
         // receiver for activation tokens
         let mut activated = input_capture.receive_activated().await?;
+        let mut ei_devices_changed = false;
         loop {
             tokio::select! {
                 activated = activated.next() => {
@@ -401,29 +400,34 @@ async fn do_capture_session(
                     current_client.replace(Some(client));
 
                     // client entered => send event
-                    if event_tx.send((client, Event::Enter())).await.is_err() {
-                        break;
-                    };
+                    event_tx.send((client, Event::Enter())).await.expect("no channel");
 
                     tokio::select! {
                         _ = capture_session_event.recv() => {}, /* capture release */
-                        _ = release_session.notified() => {
-                            log::warn!("release session aquired (a): {release_session:?}");
+                        _ = release_session.notified() => { /* release session */
+                            ei_devices_changed = true;
                         },
                         _ = cancel_session.cancelled() => break, /* kill session notify */
                     }
 
                     release_capture(input_capture, session, activated, client, &active_clients).await?;
+
                 }
                 _ = capture_session_event.recv() => {}, /* capture release -> we are not capturing anyway, so ignore */
-                _ = release_session.notified() => {
-                    log::warn!("release session aquired (b): {release_session:?}");
+                _ = release_session.notified() => { /* release session */
+                    ei_devices_changed = true;
                 },
                 _ = cancel_session.cancelled() => break, /* kill session notify */
             }
+            if ei_devices_changed {
+                /* for whatever reason, GNOME seems to kill the session
+                 * as soon as devices are added or removed, so we need
+                 * to cancel */
+                break;
+            }
         }
         // cancel libei task
-        log::info!("session exited: killing libei task");
+        log::debug!("session exited: killing libei task");
         cancel_ei_handler.cancel();
         Ok::<(), CaptureError>(())
     };
@@ -432,7 +436,7 @@ async fn do_capture_session(
 
     cancel_update.cancel();
 
-    log::info!("both session and ei task finished!");
+    log::debug!("both session and ei task finished!");
     a?;
     b?;
 
@@ -488,7 +492,8 @@ async fn handle_ei_event(
             ]);
             context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
-        EiEvent::SeatRemoved(_) | EiEvent::DeviceAdded(_) | EiEvent::DeviceRemoved(_) => {
+        EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
+            log::debug!("releasing session: {ei_event:?}");
             release_session.notify_waiters();
         }
         EiEvent::DevicePaused(_) | EiEvent::DeviceResumed(_) => {}
@@ -500,9 +505,7 @@ async fn handle_ei_event(
         _ => {
             if let Some(handle) = current_client {
                 for event in to_input_events(ei_event).into_iter() {
-                    if event_tx.send((handle, event)).await.is_err() {
-                        return Ok(());
-                    };
+                    event_tx.send((handle, event)).await.expect("no channel");
                 }
             }
         }
@@ -669,13 +672,11 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
-        let event_rx = self.event_rx.take().expect("no channel");
-        std::mem::drop(event_rx);
         self.cancellation_token.cancel();
         let task = &mut self.capture_task;
-        log::info!("waiting for capture to terminate...");
+        log::debug!("waiting for capture to terminate...");
         let res = task.await.expect("libei task panic");
-        log::info!("done!");
+        log::debug!("done!");
         res
     }
 }
@@ -689,12 +690,7 @@ impl<'a> Stream for LibeiInputCapture<'a> {
                 Ok(()) => Poll::Ready(None),
                 Err(e) => Poll::Ready(Some(Err(e))),
             },
-            Poll::Pending => self
-                .event_rx
-                .as_mut()
-                .expect("no channel")
-                .poll_recv(cx)
-                .map(|e| e.map(Result::Ok)),
+            Poll::Pending => self.event_rx.poll_recv(cx).map(|e| e.map(Result::Ok)),
         }
     }
 }

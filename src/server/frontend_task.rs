@@ -15,6 +15,7 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     client::{ClientHandle, Position},
@@ -33,10 +34,12 @@ pub(crate) fn new(
     emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
+    cancellation_token: CancellationToken,
 ) -> (JoinHandle<Result<()>>, Sender<FrontendRequest>) {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
     let event_tx_clone = event_tx.clone();
     let frontend_task = tokio::task::spawn_local(async move {
+        let mut join_handles = vec![];
         loop {
             tokio::select! {
                 stream = frontend.accept() => {
@@ -47,7 +50,7 @@ pub(crate) fn new(
                             continue;
                         }
                     };
-                    handle_frontend_stream(&event_tx_clone, stream).await;
+                    join_handles.push(handle_frontend_stream(&event_tx_clone, stream, cancellation_token.clone()));
                 }
                 event = event_rx.recv() => {
                     let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
@@ -59,6 +62,10 @@ pub(crate) fn new(
                     let notify = notify.ok_or(anyhow!("frontend notify closed"))?;
                     let _ = frontend.broadcast_event(notify).await;
                 }
+                _ = cancellation_token.cancelled() => {
+                    futures::future::join_all(join_handles).await;
+                    break;
+                }
             }
         }
         anyhow::Ok(())
@@ -66,33 +73,45 @@ pub(crate) fn new(
     (frontend_task, event_tx)
 }
 
-async fn handle_frontend_stream(
+fn handle_frontend_stream(
     frontend_tx: &Sender<FrontendRequest>,
+    #[cfg(unix)] stream: ReadHalf<UnixStream>,
+    #[cfg(windows)] stream: ReadHalf<TcpStream>,
+    cancellation_token: CancellationToken,
+) -> JoinHandle<()> {
+
+    let tx = frontend_tx.clone();
+    tokio::task::spawn_local(async move {
+        tokio::select! {
+            _ = listen_frontend(tx, stream) => return,
+            _ = cancellation_token.cancelled() => return,
+        }
+    })
+}
+
+async fn listen_frontend(
+    tx: Sender<FrontendRequest>,
     #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
     #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
 ) {
     use std::io;
-
-    let tx = frontend_tx.clone();
-    tokio::task::spawn_local(async move {
-        loop {
-            let request = frontend::wait_for_request(&mut stream).await;
-            match request {
-                Ok(request) => {
-                    let _ = tx.send(request).await;
-                }
-                Err(e) => {
-                    if let Some(e) = e.downcast_ref::<io::Error>() {
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            return;
-                        }
+    loop {
+        let request = frontend::wait_for_request(&mut stream).await;
+        match request {
+            Ok(request) => {
+                let _ = tx.send(request).await;
+            }
+            Err(e) => {
+                if let Some(e) = e.downcast_ref::<io::Error>() {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        return;
                     }
-                    log::error!("error reading frontend event: {e}");
-                    return;
                 }
+                log::error!("error reading frontend event: {e}");
+                return;
             }
         }
-    });
+    }
 }
 
 async fn handle_frontend_event(

@@ -1,7 +1,7 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
+    sync::{mpsc::Sender, Notify},
     task::JoinHandle,
 };
 
@@ -18,15 +18,13 @@ pub fn new(
     sender_ch: Sender<(Event, SocketAddr)>,
     emulate_notify: Sender<EmulationEvent>,
     capture_notify: Sender<CaptureEvent>,
-    mut timer_rx: Receiver<()>,
+    timer_notify: Arc<Notify>,
 ) -> JoinHandle<()> {
     // timer task
     let ping_task = tokio::task::spawn_local(async move {
         loop {
             // wait for wake up signal
-            let Some(_): Option<()> = timer_rx.recv().await else {
-                break;
-            };
+            timer_notify.notified().await;
             loop {
                 let receiving = server.state.get() == State::Receiving;
                 let (ping_clients, ping_addrs) = {

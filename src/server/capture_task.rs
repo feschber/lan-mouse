@@ -1,8 +1,13 @@
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use std::{collections::HashSet, net::SocketAddr};
+use tokio_util::sync::CancellationToken;
 
-use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
+use tokio::{
+    process::Command,
+    sync::{mpsc::Sender, Notify},
+    task::JoinHandle,
+};
 
 use input_capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position};
 
@@ -20,8 +25,6 @@ pub enum CaptureEvent {
     Create(CaptureHandle, Position),
     /// destory a capture client
     Destroy(CaptureHandle),
-    /// termination signal
-    Terminate,
     /// restart input capture
     Restart,
 }
@@ -30,8 +33,9 @@ pub fn new(
     backend: Option<CaptureBackend>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
-    timer_tx: Sender<()>,
+    timer_notify: Notify,
     release_bind: Vec<scancode::Linux>,
+    cancellation_token: CancellationToken,
 ) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(32);
     let backend = backend.map(|b| b.into());
@@ -42,7 +46,7 @@ pub fn new(
             tokio::select! {
                 event = capture.next() => {
                     match event {
-                        Some(Ok(event)) => handle_capture_event(&server, &mut capture, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?,
+                        Some(Ok(event)) => handle_capture_event(&server, &mut capture, &sender_tx, &timer_notify, event, &mut pressed_keys, &release_bind).await?,
                         Some(Err(e)) => return Err(anyhow!("input capture: {e:?}")),
                         None => return Err(anyhow!("input capture terminated")),
                     }
@@ -65,11 +69,11 @@ pub fn new(
                                     capture.create(handle, pos.into()).await?;
                                 }
                             }
-                            CaptureEvent::Terminate => break,
                         },
                         None => break,
                     }
                 }
+                _ = cancellation_token.cancelled() => break,
             }
         }
         anyhow::Ok(())
@@ -91,7 +95,7 @@ async fn handle_capture_event(
     server: &Server,
     capture: &mut Box<dyn InputCapture>,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    timer_tx: &Sender<()>,
+    timer_notify: &Notify,
     event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
     release_bind: &[scancode::Linux],
@@ -150,7 +154,7 @@ async fn handle_capture_event(
         (client_state.active_addr, enter, start_timer)
     };
     if start_timer {
-        let _ = timer_tx.try_send(());
+        timer_notify.notify_waiters();
     }
     if enter {
         spawn_hook_command(server, handle);

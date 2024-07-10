@@ -39,6 +39,7 @@ hostname = "0.4.0"
 slab = "0.4.9"
 endi = "1.1.0"
 thiserror = "1.0.61"
+tokio-util = "0.7.11"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"

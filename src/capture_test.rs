@@ -58,11 +58,11 @@ async fn input_capture_test(config: Config) -> Result<()> {
             };
             log::info!("position: {pos}, event: {event}");
             if let Event::Keyboard(KeyboardEvent::Key { key: 1, .. }) = event {
-                // input_capture.as_mut().unwrap().release()?;
-                break;
+                input_capture.as_mut().unwrap().release().await?;
+                // break;
             }
         }
-        input_capture.take().unwrap().terminate().await.unwrap();
+        // input_capture.take().unwrap().terminate().await.unwrap();
     }
     Ok(())
 }

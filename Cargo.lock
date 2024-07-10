@@ -1329,6 +1329,7 @@ dependencies = [
  "slab",
  "thiserror",
  "tokio",
+ "tokio-util",
  "toml",
 ]
 

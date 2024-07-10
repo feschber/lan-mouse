@@ -1,10 +1,14 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use thiserror::Error;
 use tokio::{
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Notify,
+    },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     client::{ClientHandle, ClientManager},
@@ -28,8 +32,6 @@ pub enum EmulationEvent {
     Destroy(EmulationHandle),
     /// input emulation must release keys for client
     ReleaseKeys(ClientHandle),
-    /// termination signal
-    Terminate,
     /// restart input emulation
     Restart,
 }
@@ -40,14 +42,23 @@ pub fn new(
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    timer_tx: Sender<()>,
+    timer_notify: Arc<Notify>,
+    cancellation_token: CancellationToken,
 ) -> (
     JoinHandle<Result<(), LanMouseEmulationError>>,
     Sender<EmulationEvent>,
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
-    let emulation_task =
-        emulation_task(backend, rx, server, udp_rx, sender_tx, capture_tx, timer_tx);
+    let emulation_task = emulation_task(
+        backend,
+        rx,
+        server,
+        udp_rx,
+        sender_tx,
+        capture_tx,
+        timer_notify,
+        cancellation_token,
+    );
     let emulate_task = tokio::task::spawn_local(emulation_task);
     (emulate_task, tx)
 }
@@ -67,7 +78,8 @@ async fn emulation_task(
     mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    timer_tx: Sender<()>,
+    timer_notify: Arc<Notify>,
+    cancellation_token: CancellationToken,
 ) -> Result<(), LanMouseEmulationError> {
     let backend = backend.map(|b| b.into());
     let mut emulation = input_emulation::create(backend).await?;
@@ -84,7 +96,7 @@ async fn emulation_task(
                     }
                     None => break,
                 };
-                handle_udp_rx(&server, &capture_tx, &mut emulation, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await?;
+                handle_udp_rx(&server, &capture_tx, &mut emulation, &sender_tx, &mut last_ignored, udp_event, &timer_notify).await?;
             }
             emulate_event = rx.recv() => {
                 match emulate_event {
@@ -99,11 +111,11 @@ async fn emulation_task(
                                 emulation.create(handle).await;
                             }
                         },
-                        EmulationEvent::Terminate => break,
                     },
                     None => break,
                 }
             }
+            _ = cancellation_token.cancelled() => break,
         }
     }
 
@@ -120,7 +132,7 @@ async fn handle_udp_rx(
     sender_tx: &Sender<(Event, SocketAddr)>,
     last_ignored: &mut Option<SocketAddr>,
     event: (Event, SocketAddr),
-    timer_tx: &Sender<()>,
+    timer_notify: &Notify,
 ) -> Result<(), EmulationError> {
     let (event, addr) = event;
 
@@ -170,7 +182,7 @@ async fn handle_udp_rx(
                             );
                             // restart timer if necessary
                             if restart_timer {
-                                let _ = timer_tx.try_send(());
+                                timer_notify.notify_waiters();
                             }
                             ignore_event
                         } else {

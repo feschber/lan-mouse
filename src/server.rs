@@ -2,9 +2,10 @@ use log;
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
-    rc::Rc,
+    rc::Rc, sync::Arc,
 };
-use tokio::signal;
+use tokio::{signal, sync::Notify};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     client::{ClientConfig, ClientHandle, ClientManager, ClientState},
@@ -14,7 +15,7 @@ use crate::{
     server::capture_task::CaptureEvent,
 };
 
-use self::{emulation_task::EmulationEvent, resolver_task::DnsRequest};
+use self::resolver_task::DnsRequest;
 
 mod capture_task;
 mod emulation_task;
@@ -92,8 +93,9 @@ impl Server {
             }
         };
 
-        let (timer_tx, timer_rx) = tokio::sync::mpsc::channel(1);
+        let timer_notify = Arc::new(Notify::new());
         let (frontend_notify_tx, frontend_notify_rx) = tokio::sync::mpsc::channel(1);
+        let cancellation_token = CancellationToken::new();
 
         // udp task
         let (mut udp_task, sender_tx, receiver_rx, port_tx) =
@@ -104,8 +106,9 @@ impl Server {
             capture_backend,
             self.clone(),
             sender_tx.clone(),
-            timer_tx.clone(),
+            timer_notify.clone(),
             self.release_bind.clone(),
+            cancellation_token.clone(),
         )?;
 
         // input emulation
@@ -115,13 +118,17 @@ impl Server {
             receiver_rx,
             sender_tx.clone(),
             capture_channel.clone(),
-            timer_tx,
+            timer_notify.clone(),
+            cancellation_token.clone(),
         );
 
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;
-        let (mut resolver_task, resolve_tx) =
-            resolver_task::new(resolver, self.clone(), frontend_notify_tx);
+        let (mut resolver_task, resolve_tx) = resolver_task::new(
+            resolver,
+            self.clone(),
+            frontend_notify_tx,
+        );
 
         // frontend listener
         let (mut frontend_task, frontend_tx) = frontend_task::new(
@@ -132,6 +139,7 @@ impl Server {
             emulate_channel.clone(),
             resolve_tx.clone(),
             port_tx,
+            cancellation_token.clone(),
         );
 
         // task that pings clients to see if they are responding
@@ -140,7 +148,7 @@ impl Server {
             sender_tx.clone(),
             emulate_channel.clone(),
             capture_channel.clone(),
-            timer_rx,
+            timer_notify,
         );
 
         let active = self
@@ -189,9 +197,7 @@ impl Server {
             _ = &mut ping_task => { }
         }
 
-        let _ = emulate_channel.send(EmulationEvent::Terminate).await;
-        let _ = capture_channel.send(CaptureEvent::Terminate).await;
-        let _ = frontend_tx.send(FrontendRequest::Terminate()).await;
+        cancellation_token.cancel();
 
         if !capture_task.is_finished() {
             if let Err(e) = capture_task.await {
