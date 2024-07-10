@@ -39,7 +39,7 @@ impl<'a> InputCapture for DummyInputCapture {
         Ok(())
     }
 
-    async fn async_drop(&mut self) -> Result<(), CaptureError> {
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }

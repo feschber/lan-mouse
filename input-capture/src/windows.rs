@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use core::task::{Context, Poll};
 use futures::Stream;
 use once_cell::unsync::Lazy;
@@ -62,8 +63,9 @@ unsafe fn signal_message_thread(event_type: EventType) {
     }
 }
 
+#[async_trait]
 impl InputCapture for WindowsInputCapture {
-    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -73,7 +75,8 @@ impl InputCapture for WindowsInputCapture {
         }
         Ok(())
     }
-    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+
+    async fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -84,8 +87,12 @@ impl InputCapture for WindowsInputCapture {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> io::Result<()> {
         unsafe { signal_message_thread(EventType::Release) };
+        Ok(())
+    }
+
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }

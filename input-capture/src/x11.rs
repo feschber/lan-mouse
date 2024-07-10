@@ -34,7 +34,7 @@ impl InputCapture for X11InputCapture {
         Ok(())
     }
 
-    async fn async_drop(&mut self) -> Result<(), CaptureError> {
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }

@@ -668,7 +668,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
         Ok(())
     }
 
-    async fn async_drop(&mut self) -> Result<(), CaptureError> {
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         let event_rx = self.event_rx.take().expect("no channel");
         std::mem::drop(event_rx);
         self.cancellation_token.cancel();

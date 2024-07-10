@@ -62,7 +62,7 @@ async fn input_capture_test(config: Config) -> Result<()> {
                 break;
             }
         }
-        input_capture.take().unwrap().async_drop().await.unwrap();
+        input_capture.take().unwrap().terminate().await.unwrap();
     }
     Ok(())
 }

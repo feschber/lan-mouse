@@ -1,6 +1,7 @@
 use crate::{
     error::MacOSInputCaptureCreationError, CaptureError, CaptureHandle, InputCapture, Position,
 };
+use async_trait::async_trait;
 use futures_core::Stream;
 use input_event::Event;
 use std::task::{Context, Poll};
@@ -22,16 +23,21 @@ impl Stream for MacOSInputCapture {
     }
 }
 
+#[async_trait]
 impl InputCapture for MacOSInputCapture {
-    fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
         Ok(())
     }
 
-    fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }

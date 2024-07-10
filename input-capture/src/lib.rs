@@ -107,7 +107,7 @@ pub trait InputCapture:
     async fn release(&mut self) -> io::Result<()>;
 
     /// destroy the input acpture
-    async fn async_drop(&mut self) -> Result<(), CaptureError>;
+    async fn terminate(&mut self) -> Result<(), CaptureError>;
 }
 
 pub async fn create_backend(
