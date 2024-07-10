@@ -43,6 +43,9 @@ pub enum CaptureError {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error(transparent)]
     Portal(#[from] ashpd::Error),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[error("libei disconnected - reason: `{0}`")]
+    Disconnected(String),
 }
 
 #[derive(Debug, Error)]

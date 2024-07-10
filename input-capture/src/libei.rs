@@ -192,7 +192,10 @@ async fn libei_event_handler(
             .map_err(ReisConvertEventStreamError::from)?;
         log::trace!("from ei: {ei_event:?}");
         let client = current_client.get();
-        handle_ei_event(ei_event, client, &context, &event_tx).await?;
+        if !handle_ei_event(ei_event, client, &context, &event_tx).await? {
+            /* close requested */
+            break Ok(());
+        }
     }
 }
 
@@ -403,7 +406,7 @@ async fn handle_ei_event(
     current_client: Option<CaptureHandle>,
     context: &ei::Context,
     event_tx: &Sender<(CaptureHandle, Event)>,
-) -> Result<(), CaptureError> {
+) -> Result<bool, CaptureError> {
     match ei_event {
         EiEvent::SeatAdded(s) => {
             s.seat.bind_capabilities(&[
@@ -429,10 +432,11 @@ async fn handle_ei_event(
                 group: mods.group,
             };
             if let Some(current_client) = current_client {
-                event_tx
+                if event_tx
                     .send((current_client, Event::Keyboard(modifier_event)))
-                    .await
-                    .map_err(|_| CaptureError::EndOfStream)?;
+                    .await.is_err() {
+                    return Ok(false);
+                }
             }
         }
         EiEvent::Frame(_) => {}
@@ -449,10 +453,11 @@ async fn handle_ei_event(
                 dy: motion.dy as f64,
             };
             if let Some(current_client) = current_client {
-                event_tx
+                if event_tx
                     .send((current_client, Event::Pointer(motion_event)))
-                    .await
-                    .map_err(|_| CaptureError::EndOfStream)?;
+                    .await.is_err() {
+                    return Ok(false);
+                }
             }
         }
         EiEvent::PointerMotionAbsolute(_) => {}
@@ -466,10 +471,11 @@ async fn handle_ei_event(
                 },
             };
             if let Some(current_client) = current_client {
-                event_tx
+                if event_tx
                     .send((current_client, Event::Pointer(button_event)))
-                    .await
-                    .map_err(|_| CaptureError::EndOfStream)?;
+                    .await.is_err() {
+                    return Ok(false);
+                }
             }
         }
         EiEvent::ScrollDelta(delta) => {
@@ -490,10 +496,11 @@ async fn handle_ei_event(
                     });
                 }
                 for event in events {
-                    event_tx
+                    if event_tx
                         .send((handle, Event::Pointer(event)))
-                        .await
-                        .map_err(|_| CaptureError::EndOfStream)?;
+                        .await.is_err() {
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -506,10 +513,11 @@ async fn handle_ei_event(
                     value: scroll.discrete_dy,
                 };
                 if let Some(current_client) = current_client {
-                    event_tx
+                    if event_tx
                         .send((current_client, Event::Pointer(event)))
-                        .await
-                        .map_err(|_| CaptureError::EndOfStream)?;
+                        .await.is_err() {
+                        return Ok(false);
+                    }
                 }
             }
             if scroll.discrete_dx != 0 {
@@ -518,10 +526,11 @@ async fn handle_ei_event(
                     value: scroll.discrete_dx,
                 };
                 if let Some(current_client) = current_client {
-                    event_tx
+                    if event_tx
                         .send((current_client, Event::Pointer(event)))
-                        .await
-                        .map_err(|_| CaptureError::EndOfStream)?;
+                        .await.is_err() {
+                        return Ok(false);
+                    }
                 }
             };
         }
@@ -535,20 +544,19 @@ async fn handle_ei_event(
                 time: key.time as u32,
             };
             if let Some(current_client) = current_client {
-                event_tx
+                if event_tx
                     .send((current_client, Event::Keyboard(key_event)))
-                    .await
-                    .map_err(|_| CaptureError::EndOfStream)?;
+                    .await.is_err() {
+                    return Ok(false);
+                }
             }
         }
         EiEvent::TouchDown(_) => {}
         EiEvent::TouchUp(_) => {}
         EiEvent::TouchMotion(_) => {}
-        EiEvent::Disconnected(d) => {
-            log::error!("disconnect: {d:?}");
-        }
+        EiEvent::Disconnected(d) => return Err(CaptureError::Disconnected(format!("{:?}", d.reason))),
     }
-    Ok(())
+    Ok(true)
 }
 
 impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
