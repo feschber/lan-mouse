@@ -117,42 +117,47 @@ async fn handle_capture_event(
         }
     }
 
-    let (addr, enter, start_timer) = {
+    let info = {
         let mut enter = false;
         let mut start_timer = false;
 
         // get client state for handle
         let mut client_manager = server.client_manager.borrow_mut();
-        let client_state = match client_manager.get_mut(handle) {
-            Some((_, s)) => s,
-            None => {
-                // should not happen
-                log::warn!("unknown client!");
-                capture.release().await?;
-                server.state.replace(State::Receiving);
-                log::trace!("STATE ===> Receiving");
-                return Ok(());
+        let client_state = client_manager.get_mut(handle).map(|(_, s)| s);
+        if let Some(client_state) = client_state {
+            // if we just entered the client we want to send additional enter events until
+            // we get a leave event
+            if let Event::Enter() = e {
+                server.state.replace(State::AwaitingLeave);
+                server.active_client.replace(Some(handle));
+                log::trace!("Active client => {}", handle);
+                start_timer = true;
+                log::trace!("STATE ===> AwaitingLeave");
+                enter = true;
+            } else {
+                // ignore any potential events in receiving mode
+                if server.state.get() == State::Receiving && e != Event::Disconnect() {
+                    return Ok(());
+                }
             }
-        };
-
-        // if we just entered the client we want to send additional enter events until
-        // we get a leave event
-        if let Event::Enter() = e {
-            server.state.replace(State::AwaitingLeave);
-            server.active_client.replace(Some(handle));
-            log::trace!("Active client => {}", handle);
-            start_timer = true;
-            log::trace!("STATE ===> AwaitingLeave");
-            enter = true;
+            Some((client_state.active_addr, enter, start_timer))
         } else {
-            // ignore any potential events in receiving mode
-            if server.state.get() == State::Receiving && e != Event::Disconnect() {
-                return Ok(());
-            }
+            None
         }
-
-        (client_state.active_addr, enter, start_timer)
     };
+
+    let (addr, enter, start_timer) = match info {
+        Some(i) => i,
+        None => {
+            // should not happen
+            log::warn!("unknown client!");
+            capture.release().await?;
+            server.state.replace(State::Receiving);
+            log::trace!("STATE ===> Receiving");
+            return Ok(());
+        }
+    };
+
     if start_timer {
         timer_notify.notify_waiters();
     }

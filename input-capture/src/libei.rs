@@ -312,9 +312,7 @@ async fn do_capture<'a>(
             }
 
             // propagate error from capture session
-            if capture_result.is_err() {
-                return capture_result;
-            }
+            capture_result?;
         } else {
             handle_session_update_request.await;
         }
@@ -352,7 +350,7 @@ async fn do_capture_session(
 
     // set barriers
     let client_for_barrier_id =
-        update_barriers(input_capture, session, &active_clients, next_barrier_id).await?;
+        update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
 
     log::debug!("enabling session");
     input_capture.enable(session).await?;
@@ -410,7 +408,7 @@ async fn do_capture_session(
                         _ = cancel_session.cancelled() => break, /* kill session notify */
                     }
 
-                    release_capture(input_capture, session, activated, client, &active_clients).await?;
+                    release_capture(input_capture, session, activated, client, active_clients).await?;
 
                 }
                 _ = capture_session_event.recv() => {}, /* capture release -> we are not capturing anyway, so ignore */

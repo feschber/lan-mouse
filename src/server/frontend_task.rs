@@ -82,8 +82,8 @@ fn handle_frontend_stream(
     let tx = frontend_tx.clone();
     tokio::task::spawn_local(async move {
         tokio::select! {
-            _ = listen_frontend(tx, stream) => return,
-            _ = cancellation_token.cancelled() => return,
+            _ = listen_frontend(tx, stream) => {},
+            _ = cancellation_token.cancelled() => {},
         }
     })
 }

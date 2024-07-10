@@ -26,7 +26,7 @@ impl Default for DummyInputCapture {
 }
 
 #[async_trait]
-impl<'a> InputCapture for DummyInputCapture {
+impl InputCapture for DummyInputCapture {
     async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
         Ok(())
     }
