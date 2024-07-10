@@ -2,7 +2,8 @@ use log;
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
-    rc::Rc, sync::Arc,
+    rc::Rc,
+    sync::Arc,
 };
 use tokio::{signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
@@ -124,11 +125,8 @@ impl Server {
 
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;
-        let (mut resolver_task, resolve_tx) = resolver_task::new(
-            resolver,
-            self.clone(),
-            frontend_notify_tx,
-        );
+        let (mut resolver_task, resolve_tx) =
+            resolver_task::new(resolver, self.clone(), frontend_notify_tx);
 
         // frontend listener
         let (mut frontend_task, frontend_tx) = frontend_task::new(

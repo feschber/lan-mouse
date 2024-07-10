@@ -79,7 +79,6 @@ fn handle_frontend_stream(
     #[cfg(windows)] stream: ReadHalf<TcpStream>,
     cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
-
     let tx = frontend_tx.clone();
     tokio::task::spawn_local(async move {
         tokio::select! {
