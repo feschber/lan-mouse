@@ -248,7 +248,7 @@ impl<'a> LibeiInputCapture<'a> {
 }
 
 async fn do_capture<'a>(
-    input_capture_ptr: *const InputCapture<'static>,
+    input_capture: *const InputCapture<'a>,
     mut capture_event: Receiver<CaptureEvent>,
     mut release_capture_channel: Receiver<ReleaseCaptureEvent>,
     session: Option<(Session<'a>, BitFlags<Capabilities>)>,
@@ -258,34 +258,16 @@ async fn do_capture<'a>(
     let mut session = session.map(|s| s.0);
 
     /* safety: libei_task does not outlive Self */
-    let input_capture = unsafe { &*input_capture_ptr };
-
+    let input_capture = unsafe { &*input_capture };
     let mut active_clients: Vec<(CaptureHandle, Position)> = vec![];
     let mut next_barrier_id = 1u32;
 
     let mut zones_changed = input_capture.receive_zones_changed().await?;
 
     loop {
-        // create session
-        let mut session = match session.take() {
-            Some(s) => s,
-            None => create_session(input_capture).await?.0,
-        };
-
         // do capture session
         let cancel_session = CancellationToken::new();
         let cancel_update = CancellationToken::new();
-
-        let capture_session = do_capture_session(
-            input_capture,
-            &mut session,
-            &event_tx,
-            &mut active_clients,
-            &mut next_barrier_id,
-            &mut release_capture_channel,
-            cancel_session.clone(),
-            cancel_update.clone(),
-        );
 
         let mut capture_event_occured: Option<CaptureEvent> = None;
         let mut zones_have_changed = false;
@@ -293,14 +275,10 @@ async fn do_capture<'a>(
         // kill session if clients need to be updated
         let handle_session_update_request = async {
             tokio::select! {
-                /* exit requested */
-                _ = cancellation_token.cancelled() => {},
-                /* session exited */
-                _ = cancel_update.cancelled() => {},
-                /* zones have changed */
-                _ = zones_changed.next() => zones_have_changed = true,
-                /* clients changed */
-                e = capture_event.recv() => if let Some(e) = e {
+                _ = cancellation_token.cancelled() => {}, /* exit requested */
+                _ = cancel_update.cancelled() => {}, /* session exited */
+                _ = zones_changed.next() => zones_have_changed = true, /* zones have changed */
+                e = capture_event.recv() => if let Some(e) = e { /* clients changed */
                     capture_event_occured.replace(e);
                 },
             }
@@ -308,12 +286,38 @@ async fn do_capture<'a>(
             cancel_session.cancel();
         };
 
-        let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
-        log::info!("capture session + session_update task done!");
+        if !active_clients.is_empty() {
+            // create session
+            let mut session = match session.take() {
+                Some(s) => s,
+                None => create_session(input_capture).await?.0,
+            };
 
-        // disable capture
-        log::info!("disabling input capture");
-        input_capture.disable(&session).await?;
+            let capture_session = do_capture_session(
+                input_capture,
+                &mut session,
+                &event_tx,
+                &mut active_clients,
+                &mut next_barrier_id,
+                &mut release_capture_channel,
+                cancel_session.clone(),
+                cancel_update.clone(),
+            );
+
+            let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
+            log::info!("capture session + session_update task done!");
+
+            // disable capture
+            log::info!("disabling input capture");
+            input_capture.disable(&session).await?;
+
+            // propagate error from capture session
+            if capture_result.is_err() {
+                return capture_result;
+            }
+        } else {
+            handle_session_update_request.await;
+        }
 
         // update clients if requested
         if let Some(event) = capture_event_occured.take() {
@@ -321,11 +325,6 @@ async fn do_capture<'a>(
                 CaptureEvent::Create(c, p) => active_clients.push((c, p)),
                 CaptureEvent::Destroy(c) => active_clients.retain(|(h, _)| *h != c),
             }
-        }
-
-        // propagate error from capture session
-        if capture_result.is_err() {
-            return capture_result;
         }
 
         log::info!("no error occured");
