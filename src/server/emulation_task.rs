@@ -156,13 +156,13 @@ async fn do_emulation_session(
                         continue;
                     }
                 };
-                handle_udp_rx(&server, &capture_tx, emulation, &sender_tx, &mut last_ignored, udp_event).await?;
+                handle_udp_rx(server, capture_tx, emulation, sender_tx, &mut last_ignored, udp_event).await?;
             }
             emulate_event = rx.recv() => {
                 match emulate_event.expect("channel closed") {
                     EmulationEvent::Create(h) => emulation.create(h).await,
                     EmulationEvent::Destroy(h) => emulation.destroy(h).await,
-                    EmulationEvent::ReleaseKeys(c) => release_keys(&server, emulation, c).await?,
+                    EmulationEvent::ReleaseKeys(c) => release_keys(server, emulation, c).await?,
                 }
             }
             _ = server.notifies.cancel.cancelled() => break Ok(()),

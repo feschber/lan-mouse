@@ -45,7 +45,7 @@ async fn do_dns(
         if let Some((_, s)) = server.client_manager.borrow_mut().get_mut(handle) {
             s.resolving = true;
         }
-        notify_state_change(&frontend, &server, handle).await;
+        notify_state_change(&frontend, server, handle).await;
 
         let ips = match resolver.resolve(&host).await {
             Ok(ips) => ips,
@@ -64,7 +64,7 @@ async fn do_dns(
             s.ips = addrs;
             s.resolving = false;
         }
-        notify_state_change(&frontend, &server, handle).await;
+        notify_state_change(&frontend, server, handle).await;
     }
 }
 
