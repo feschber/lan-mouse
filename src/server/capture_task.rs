@@ -249,7 +249,7 @@ async fn handle_capture_event(
     };
 
     if start_timer {
-        timer_notify.notify_one();
+        timer_notify.notify_waiters();
     }
     if enter {
         spawn_hook_command(server, handle);

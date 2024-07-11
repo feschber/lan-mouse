@@ -508,7 +508,7 @@ async fn handle_ei_event(
         }
         EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
             log::debug!("releasing session: {ei_event:?}");
-            release_session.notify_one();
+            release_session.notify_waiters();
         }
         EiEvent::DevicePaused(_) | EiEvent::DeviceResumed(_) => {}
         EiEvent::DeviceStartEmulating(_) => log::debug!("START EMULATING"),
@@ -681,7 +681,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     }
 
     async fn release(&mut self) -> Result<(), CaptureError> {
-        self.notify_release.notify_one();
+        self.notify_release.notify_waiters();
         Ok(())
     }
 

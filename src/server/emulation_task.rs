@@ -257,7 +257,7 @@ async fn handle_udp_rx(
                             );
                             // restart timer if necessary
                             if restart_timer {
-                                timer_notify.notify_one();
+                                timer_notify.notify_waiters();
                             }
                             ignore_event
                         } else {

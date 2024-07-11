@@ -127,11 +127,11 @@ async fn handle_frontend_event(
     log::debug!("frontend: {event:?}");
     match event {
         FrontendRequest::EnableCapture => {
-            notify_capture.notify_one();
+            notify_capture.notify_waiters();
         }
         FrontendRequest::EnableEmulation => {
             log::info!("received emulation enable request");
-            notify_emulation.notify_one();
+            notify_emulation.notify_waiters();
         }
         FrontendRequest::Create => {
             let handle = add_client(server, frontend).await;
