@@ -108,7 +108,9 @@ async fn emulation_task(
         if cancellation_token.is_cancelled() {
             break;
         }
+        log::info!("waiting for user to request input emulation ...");
         notify_emulation.notified().await;
+        log::info!("... done");
     }
 }
 
@@ -124,10 +126,25 @@ async fn do_emulation(
     cancellation_token: &CancellationToken,
 ) -> Result<(), LanMouseEmulationError> {
     let backend = backend.map(|b| b.into());
+    log::info!("creating input emulation...");
     let mut emulation = input_emulation::create(backend).await?;
     let _ = frontend_tx
         .send(FrontendEvent::EmulationStatus(Status::Enabled))
         .await;
+
+    let res = do_emulation_session(
+        &mut emulation,
+        rx,
+        server,
+        udp_rx,
+        sender_tx,
+        capture_tx,
+        timer_notify,
+        cancellation_token,
+    )
+    .await;
+    emulation.terminate().await;
+    res?;
 
     // FIXME DUPLICATES
     // add clients
@@ -141,38 +158,46 @@ async fn do_emulation(
     //     emulation.create(handle).await;
     // }
 
-    let mut last_ignored = None;
-    loop {
-        tokio::select! {
-            udp_event = udp_rx.recv() => {
-                let udp_event = match udp_event {
-                    Some(Ok(e)) => e,
-                    Some(Err(e)) => {
-                        log::warn!("network error: {e}");
-                        continue;
-                    }
-                    None => break,
-                };
-                handle_udp_rx(&server, &capture_tx, &mut emulation, &sender_tx, &mut last_ignored, udp_event, &timer_notify).await?;
-            }
-            emulate_event = rx.recv() => {
-                match emulate_event {
-                    Some(e) => match e {
-                        EmulationEvent::Create(h) => emulation.create(h).await,
-                        EmulationEvent::Destroy(h) => emulation.destroy(h).await,
-                        EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulation, c).await?,
-                    },
-                    None => break,
-                }
-            }
-            _ = cancellation_token.cancelled() => break,
-        }
-    }
-
     // release potentially still pressed keys
     release_all_keys(server, &mut emulation).await?;
 
     Ok(())
+}
+
+async fn do_emulation_session(
+    emulation: &mut Box<dyn InputEmulation>,
+    rx: &mut Receiver<EmulationEvent>,
+    server: &Server,
+    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    capture_tx: &Sender<CaptureEvent>,
+    timer_notify: &Notify,
+    cancellation_token: &CancellationToken,
+) -> Result<(), LanMouseEmulationError> {
+    let mut last_ignored = None;
+
+    loop {
+        tokio::select! {
+            udp_event = udp_rx.recv() => {
+                let udp_event = match udp_event.expect("channel closed") {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("network error: {e}");
+                        continue;
+                    }
+                };
+                handle_udp_rx(&server, &capture_tx, emulation, &sender_tx, &mut last_ignored, udp_event, &timer_notify).await?;
+            }
+            emulate_event = rx.recv() => {
+                match emulate_event.expect("channel closed") {
+                    EmulationEvent::Create(h) => emulation.create(h).await,
+                    EmulationEvent::Destroy(h) => emulation.destroy(h).await,
+                    EmulationEvent::ReleaseKeys(c) => release_keys(&server, emulation, c).await?,
+                }
+            }
+            _ = cancellation_token.cancelled() => break Ok(()),
+        }
+    }
 }
 
 async fn handle_udp_rx(
@@ -232,7 +257,7 @@ async fn handle_udp_rx(
                             );
                             // restart timer if necessary
                             if restart_timer {
-                                timer_notify.notify_waiters();
+                                timer_notify.notify_one();
                             }
                             ignore_event
                         } else {

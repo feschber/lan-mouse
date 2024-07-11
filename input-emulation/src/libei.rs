@@ -5,8 +5,8 @@ use std::{
     io,
     os::{fd::OwnedFd, unix::net::UnixStream},
     sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        Arc, Mutex, RwLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -63,8 +63,10 @@ struct Devices {
 pub struct LibeiEmulation {
     context: ei::Context,
     devices: Devices,
+    ei_task: JoinHandle<()>,
+    error: Arc<Mutex<Option<EmulationError>>>,
+    libei_error: Arc<AtomicBool>,
     serial: AtomicU32,
-    ei_task: JoinHandle<Result<(), EmulationError>>,
 }
 
 async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
@@ -95,7 +97,9 @@ async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
         };
     };
 
-    proxy.connect_to_eis(&session).await
+    let fd = proxy.connect_to_eis(&session).await?;
+    session.close().await?;
+    Ok(fd)
 }
 
 impl LibeiEmulation {
@@ -115,16 +119,26 @@ impl LibeiEmulation {
         .await?;
         let events = EiConvertEventStream::new(events, handshake.serial);
         let devices = Devices::default();
-        let ei_handler = ei_event_handler(events, context.clone(), devices.clone());
+        let libei_error = Arc::new(AtomicBool::default());
+        let error = Arc::new(Mutex::new(None));
+        let ei_handler = ei_task(
+            events,
+            context.clone(),
+            devices.clone(),
+            libei_error.clone(),
+            error.clone(),
+        );
         let ei_task = tokio::task::spawn_local(ei_handler);
 
         let serial = AtomicU32::new(handshake.serial);
 
         Ok(Self {
-            serial,
             context,
-            ei_task,
             devices,
+            ei_task,
+            error,
+            libei_error,
+            serial,
         })
     }
 }
@@ -146,6 +160,12 @@ impl InputEmulation for LibeiEmulation {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros() as u64;
+        if self.libei_error.load(Ordering::SeqCst) {
+            // don't break sending additional events but signal error
+            if let Some(e) = self.error.lock().unwrap().take() {
+                return Err(e);
+            }
+        }
         match event {
             Event::Pointer(p) => match p {
                 PointerEvent::Motion { time: _, dx, dy } => {
@@ -228,12 +248,35 @@ impl InputEmulation for LibeiEmulation {
 
     async fn create(&mut self, _: EmulationHandle) {}
     async fn destroy(&mut self, _: EmulationHandle) {}
+
+    async fn terminate(&mut self) {
+        self.ei_task.abort();
+        /* FIXME */
+    }
 }
 
-async fn ei_event_handler(
+async fn ei_task(
     mut events: EiConvertEventStream,
     context: ei::Context,
     devices: Devices,
+    libei_error: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<EmulationError>>>,
+) {
+    loop {
+        match ei_event_handler(&mut events, &context, &devices).await {
+            Ok(()) => {}
+            Err(e) => {
+                libei_error.store(true, Ordering::SeqCst);
+                error.lock().unwrap().replace(e);
+            }
+        }
+    }
+}
+
+async fn ei_event_handler(
+    events: &mut EiConvertEventStream,
+    context: &ei::Context,
+    devices: &Devices,
 ) -> Result<(), EmulationError> {
     loop {
         let event = events
@@ -253,7 +296,7 @@ async fn ei_event_handler(
         match event {
             EiEvent::Disconnected(e) => {
                 log::debug!("ei disconnected: {e:?}");
-                break;
+                return Err(EmulationError::EndOfStream);
             }
             EiEvent::SeatAdded(e) => {
                 e.seat().bind_capabilities(CAPABILITIES);
@@ -327,5 +370,4 @@ async fn ei_event_handler(
         }
         context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
     }
-    Ok(())
 }

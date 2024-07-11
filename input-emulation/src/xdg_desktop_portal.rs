@@ -142,6 +142,14 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
 
     async fn create(&mut self, _client: EmulationHandle) {}
     async fn destroy(&mut self, _client: EmulationHandle) {}
+    async fn terminate(&mut self) {
+        if let Err(e) = self.session.close().await {
+            log::warn!("session.close(): {e}");
+        };
+        if let Err(e) = self.session.receive_closed().await {
+            log::warn!("session.receive_closed(): {e}");
+        };
+    }
 }
 
 impl<'a> AsyncDrop for DesktopPortalEmulation<'a> {

@@ -76,6 +76,7 @@ pub trait InputEmulation: Send {
     ) -> Result<(), EmulationError>;
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
+    async fn terminate(&mut self);
 }
 
 pub async fn create_backend(

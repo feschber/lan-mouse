@@ -95,7 +95,7 @@ async fn capture_task(
         )
         .await
         {
-            log::warn!("input emulation exited: {e}");
+            log::warn!("input capture exited: {e}");
         }
         let _ = frontend_tx
             .send(FrontendEvent::CaptureStatus(Status::Disabled))
@@ -249,7 +249,7 @@ async fn handle_capture_event(
     };
 
     if start_timer {
-        timer_notify.notify_waiters();
+        timer_notify.notify_one();
     }
     if enter {
         spawn_hook_command(server, handle);

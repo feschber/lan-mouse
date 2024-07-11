@@ -33,8 +33,8 @@ pub(crate) fn new(
     mut frontend: FrontendListener,
     mut event: Receiver<FrontendEvent>,
     server: Server,
-    notify_capture: Arc<Notify>,
     notify_emulation: Arc<Notify>,
+    notify_capture: Arc<Notify>,
     capture: Sender<CaptureEvent>,
     emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
@@ -127,10 +127,11 @@ async fn handle_frontend_event(
     log::debug!("frontend: {event:?}");
     match event {
         FrontendRequest::EnableCapture => {
-            notify_capture.notify_waiters();
+            notify_capture.notify_one();
         }
         FrontendRequest::EnableEmulation => {
-            notify_emulation.notify_waiters();
+            log::info!("received emulation enable request");
+            notify_emulation.notify_one();
         }
         FrontendRequest::Create => {
             let handle = add_client(server, frontend).await;

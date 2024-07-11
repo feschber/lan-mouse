@@ -508,7 +508,7 @@ async fn handle_ei_event(
         }
         EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
             log::debug!("releasing session: {ei_event:?}");
-            release_session.notify_waiters();
+            release_session.notify_one();
         }
         EiEvent::DevicePaused(_) | EiEvent::DeviceResumed(_) => {}
         EiEvent::DeviceStartEmulating(_) => log::debug!("START EMULATING"),
