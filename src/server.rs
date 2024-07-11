@@ -152,7 +152,7 @@ impl Server {
 
         // create dns resolver
         let resolver = DnsResolver::new().await?;
-        let resolver = resolver_task::new(resolver, dns_rx, self.clone(), frontend_tx);
+        let resolver = resolver_task::new(self.clone(), resolver, dns_rx, frontend_tx);
 
         // frontend listener
         let frontend = frontend_task::new(

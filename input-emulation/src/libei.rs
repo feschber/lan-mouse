@@ -108,7 +108,6 @@ impl LibeiEmulation {
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
-        context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         let mut events = EiEventStream::new(context.clone())?;
         let handshake = ei_handshake(
             &mut events,

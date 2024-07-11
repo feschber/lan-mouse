@@ -16,9 +16,9 @@ pub struct DnsRequest {
 }
 
 pub fn new(
+    server: Server,
     resolver: DnsResolver,
     dns_rx: Receiver<DnsRequest>,
-    server: Server,
     frontend: Sender<FrontendEvent>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_local(async move {

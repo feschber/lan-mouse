@@ -35,14 +35,14 @@ pub(crate) fn new(
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
 ) -> JoinHandle<()> {
-    let request = request_tx.clone();
+    let request_tx = request_tx.clone();
     tokio::task::spawn_local(async move {
         let mut join_handles = vec![];
         loop {
             tokio::select! {
                 stream = frontend.accept() => {
                     match stream {
-                        Ok(s) => join_handles.push(handle_frontend_stream(server.clone(), &request, s)),
+                        Ok(s) => join_handles.push(handle_frontend_stream(server.clone(), &request_tx, s)),
                         Err(e) => log::warn!("error accepting frontend connection: {e}"),
                     };
                 }
