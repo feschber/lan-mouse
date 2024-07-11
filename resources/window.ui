@@ -120,21 +120,54 @@
                         </child>
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">capture /  emulation status</property>
-                            <child>
-                              <object class="GtkButton" id="input_emulation_button">
-                                <property name="icon-name">input-mouse-symbolic</property>
-                                <property name="valign">center</property>
-                                <signal name="clicked" handler="handle_emulation" swapped="true"/>
-                              </object>
-                            </child>
+                            <property name="title">input capture is disabled</property>
+                            <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
-                                <property name="icon-name">input-mouse-symbolic</property>
-                                <property name="valign">center</property>
+                                <property name="child">
+                                  <object class="AdwButtonContent">
+                                    <property name="icon-name">object-rotate-right-symbolic</property>
+                                    <property name="label" translatable="yes">Reenable</property>
+                                  </object>
+                                </property>
                                 <signal name="clicked" handler="handle_capture" swapped="true"/>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="circular"/>
+                                  <class name="flat"/>
+                                </style>
                               </object>
                             </child>
+                            <style>
+                              <class name="warning"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title">input emulation is disabled</property>
+                            <property name="icon-name">dialog-warning-symbolic</property>
+                            <child>
+                              <object class="GtkButton" id="input_emulation_button">
+                                <property name="child">
+                                  <object class="AdwButtonContent">
+                                    <property name="icon-name">object-rotate-right-symbolic</property>
+                                    <property name="label" translatable="yes">Reenable</property>
+                                  </object>
+                                </property>
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="handle_emulation" swapped="true"/>
+                                <style>
+                                  <class name="circular"/>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                            </child>
+                            <style>
+                              <class name="warning"/>
+                            </style>
                           </object>
                         </child>
                       </object>
