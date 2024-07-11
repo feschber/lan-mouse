@@ -97,8 +97,6 @@ pub enum FrontendRequest {
     Enumerate(),
     /// resolve dns
     ResolveDns(ClientHandle),
-    /// service shutdown
-    Terminate(),
     /// update hostname
     UpdateHostname(ClientHandle, Option<String>),
     /// update port

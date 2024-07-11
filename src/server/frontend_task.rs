@@ -162,10 +162,6 @@ async fn handle_frontend_event(
         FrontendRequest::GetState(handle) => {
             broadcast_client(server, frontend, handle).await;
         }
-        FrontendRequest::Terminate() => {
-            log::info!("terminating gracefully...");
-            return true;
-        }
         FrontendRequest::UpdateFixIps(handle, fix_ips) => {
             update_fix_ips(server, handle, fix_ips).await;
             resolve_dns(server, resolve_tx, handle).await;
