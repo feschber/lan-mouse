@@ -112,15 +112,15 @@ async fn do_capture(
         .map(|(h, s)| (h, s.clone()))
         .collect::<Vec<_>>();
     log::info!("{clients:?}");
-    let clients = server
-        .client_manager
-        .borrow()
-        .get_client_states()
-        .map(|(h, (c, _))| (h, c.pos))
-        .collect::<Vec<_>>();
-    for (handle, pos) in clients {
-        capture.create(handle, pos.into()).await?;
-    }
+    // let clients = server
+    //     .client_manager
+    //     .borrow()
+    //     .get_client_states()
+    //     .map(|(h, (c, _))| (h, c.pos))
+    //     .collect::<Vec<_>>();
+    // for (handle, pos) in clients {
+    //     capture.create(handle, pos.into()).await?;
+    // }
 
     let mut pressed_keys = HashSet::new();
     loop {
