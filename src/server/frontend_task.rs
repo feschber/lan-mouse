@@ -10,7 +10,6 @@ use tokio::net::UnixStream;
 #[cfg(windows)]
 use tokio::net::TcpStream;
 
-use anyhow::{anyhow, Result};
 use tokio::{
     io::ReadHalf,
     sync::{
@@ -32,7 +31,7 @@ use super::{
 
 pub(crate) fn new(
     mut frontend: FrontendListener,
-    mut notify_rx: Receiver<FrontendEvent>,
+    mut event: Receiver<FrontendEvent>,
     server: Server,
     notify_capture: Arc<Notify>,
     notify_emulation: Arc<Notify>,
@@ -41,32 +40,28 @@ pub(crate) fn new(
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
     cancellation_token: CancellationToken,
-) -> (JoinHandle<Result<()>>, Sender<FrontendRequest>) {
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
-    let event_tx_clone = event_tx.clone();
+) -> (JoinHandle<()>, Sender<FrontendRequest>) {
+    let (request_tx, mut request) = tokio::sync::mpsc::channel(32);
+    let request_tx_clone = request_tx.clone();
     let frontend_task = tokio::task::spawn_local(async move {
         let mut join_handles = vec![];
         loop {
             tokio::select! {
                 stream = frontend.accept() => {
-                    let stream = match stream {
-                        Ok(s) => s,
-                        Err(e) => {
-                            log::warn!("error accepting frontend connection: {e}");
-                            continue;
-                        }
+                    match stream {
+                        Ok(s) => join_handles.push(handle_frontend_stream(&request_tx_clone, s, cancellation_token.clone())),
+                        Err(e) => log::warn!("error accepting frontend connection: {e}"),
                     };
-                    join_handles.push(handle_frontend_stream(&event_tx_clone, stream, cancellation_token.clone()));
                 }
-                event = event_rx.recv() => {
-                    let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
-                    if handle_frontend_event(&server, &notify_capture, &notify_emulation, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
+                request = request.recv() => {
+                    let request = request.expect("frontend request channel closed");
+                    if handle_frontend_event(&server, &notify_capture, &notify_emulation, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, request).await {
                         break;
                     }
                 }
-                notify = notify_rx.recv() => {
-                    let notify = notify.ok_or(anyhow!("frontend notify closed"))?;
-                    let _ = frontend.broadcast_event(notify).await;
+                event = event.recv() => {
+                    let event = event.expect("channel closed");
+                    let _ = frontend.broadcast_event(event).await;
                 }
                 _ = cancellation_token.cancelled() => {
                     futures::future::join_all(join_handles).await;
@@ -74,9 +69,8 @@ pub(crate) fn new(
                 }
             }
         }
-        anyhow::Ok(())
     });
-    (frontend_task, event_tx)
+    (frontend_task, request_tx)
 }
 
 fn handle_frontend_stream(

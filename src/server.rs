@@ -97,7 +97,7 @@ impl Server {
             }
         };
 
-        let timer_notify = Arc::new(Notify::new());
+        let timer_notify = Arc::new(Notify::new()); /* notify ping timer restart */
         let (frontend_tx, frontend_rx) = channel(1); /* events coming from frontends */
         let cancellation_token = CancellationToken::new(); /* notify termination */
         let notify_capture = Arc::new(Notify::new()); /* notify capture restart */
@@ -166,6 +166,7 @@ impl Server {
             emulate_channel.clone(),
             capture_channel.clone(),
             timer_notify,
+            cancellation_token.clone(),
         );
 
         let active = self
@@ -196,11 +197,7 @@ impl Server {
             }
             _ = &mut capture_task => { }
             _ = &mut emulation_task => { }
-            e = &mut frontend_task => {
-                if let Ok(Err(e)) = e {
-                    log::error!("error in frontend listener: {e}");
-                }
-            }
+            _ = &mut frontend_task => { }
             _ = &mut resolver_task => { }
             _ = &mut udp_task => { }
             _ = &mut ping_task => { }
@@ -209,9 +206,14 @@ impl Server {
         // cancel tasks
         cancellation_token.cancel();
 
-        let _ = join!(capture_task, emulation_task, frontend_task, udp_task);
+        let _ = join!(
+            capture_task,
+            emulation_task,
+            frontend_task,
+            udp_task,
+            resolver_task
+        );
 
-        resolver_task.abort();
         ping_task.abort();
 
         Ok(())
