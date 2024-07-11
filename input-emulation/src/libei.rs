@@ -97,9 +97,7 @@ async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
         };
     };
 
-    let fd = proxy.connect_to_eis(&session).await?;
-    session.close().await?;
-    Ok(fd)
+    proxy.connect_to_eis(&session).await
 }
 
 impl LibeiEmulation {
