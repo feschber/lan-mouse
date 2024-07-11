@@ -265,14 +265,23 @@ async fn do_capture<'a>(
         // kill session if clients need to be updated
         let handle_session_update_request = async {
             tokio::select! {
-                _ = cancellation_token.cancelled() => {}, /* exit requested */
-                _ = cancel_update.cancelled() => {}, /* session exited */
-                _ = zones_changed.next() => zones_have_changed = true, /* zones have changed */
+                _ = cancellation_token.cancelled() => {
+                    log::debug!("cancelled")
+                }, /* exit requested */
+                _ = cancel_update.cancelled() => {
+                    log::debug!("update task cancelled");
+                }, /* session exited */
+                _ = zones_changed.next() => {
+                    log::debug!("zones changed!");
+                    zones_have_changed = true
+                }, /* zones have changed */
                 e = capture_event.recv() => if let Some(e) = e { /* clients changed */
+                    log::debug!("capture event: {e:?}");
                     capture_event_occured.replace(e);
                 },
             }
             // kill session (might already be dead!)
+            log::debug!("=> cancelling session");
             cancel_session.cancel();
         };
 
