@@ -192,9 +192,7 @@ impl Server {
         log::info!("running service");
 
         tokio::select! {
-            _ = signal::ctrl_c() => {
-                log::info!("terminating service");
-            }
+            _ = signal::ctrl_c() => log::info!("terminating service"),
             _ = &mut capture => { }
             _ = &mut emulation => { }
             _ = &mut frontend => { }
