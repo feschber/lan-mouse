@@ -23,13 +23,12 @@ pub fn new(
     cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
     // timer task
-    let ping_task = tokio::task::spawn_local(async move {
+    tokio::task::spawn_local(async move {
         tokio::select! {
             _ = cancellation_token.cancelled() => {}
             _ = ping_task(server, sender_ch, emulate_notify, capture_notify, timer_notify) => {}
         }
-    });
-    ping_task
+    })
 }
 
 async fn ping_task(

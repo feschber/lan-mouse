@@ -170,7 +170,7 @@ async fn do_emulation(
     }
 
     // release potentially still pressed keys
-    release_all_keys(&server, &mut emulation).await?;
+    release_all_keys(server, &mut emulation).await?;
 
     Ok(())
 }
