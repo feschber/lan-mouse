@@ -129,17 +129,17 @@ async fn do_emulation(
         .send(FrontendEvent::EmulationStatus(Status::Enabled))
         .await;
 
-    // FIMXE DUPLICATES
+    // FIXME DUPLICATES
     // add clients
-    let clients = server
-        .client_manager
-        .borrow()
-        .get_client_states()
-        .map(|(h, _)| h)
-        .collect::<Vec<_>>();
-    for handle in clients {
-        emulation.create(handle).await;
-    }
+    // let clients = server
+    //     .client_manager
+    //     .borrow()
+    //     .get_client_states()
+    //     .map(|(h, _)| h)
+    //     .collect::<Vec<_>>();
+    // for handle in clients {
+    //     emulation.create(handle).await;
+    // }
 
     let mut last_ignored = None;
     loop {
