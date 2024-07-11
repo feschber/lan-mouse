@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    error::Error,
     fmt::Display,
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -8,22 +7,18 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use slab::Slab;
+use thiserror::Error;
 
 use crate::config::DEFAULT_PORT;
 use input_capture;
 
-#[derive(Debug, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
+    #[default]
     Left,
     Right,
     Top,
     Bottom,
-}
-
-impl Default for Position {
-    fn default() -> Self {
-        Self::Left
-    }
 }
 
 impl From<Position> for input_capture::Position {
@@ -37,18 +32,11 @@ impl From<Position> for input_capture::Position {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("not a valid position: {pos}")]
 pub struct PositionParseError {
-    string: String,
+    pos: String,
 }
-
-impl Display for PositionParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "not a valid position: {}", self.string)
-    }
-}
-
-impl Error for PositionParseError {}
 
 impl FromStr for Position {
     type Err = PositionParseError;
@@ -59,7 +47,7 @@ impl FromStr for Position {
             "right" => Ok(Self::Right),
             "top" => Ok(Self::Top),
             "bottom" => Ok(Self::Bottom),
-            _ => Err(PositionParseError { string: s.into() }),
+            _ => Err(PositionParseError { pos: s.into() }),
         }
     }
 }
@@ -141,27 +129,15 @@ pub struct ClientState {
     pub resolving: bool,
 }
 
+#[derive(Default)]
 pub struct ClientManager {
     clients: Slab<(ClientConfig, ClientState)>,
 }
 
-impl Default for ClientManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ClientManager {
-    pub fn new() -> Self {
-        let clients = Slab::new();
-        Self { clients }
-    }
-
     /// add a new client to this manager
     pub fn add_client(&mut self) -> ClientHandle {
-        let client_config = Default::default();
-        let client_state = Default::default();
-        self.clients.insert((client_config, client_state)) as ClientHandle
+        self.clients.insert(Default::default()) as ClientHandle
     }
 
     /// find a client by its address

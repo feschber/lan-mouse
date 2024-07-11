@@ -51,7 +51,7 @@ pub struct Server {
 impl Server {
     pub fn new(config: &Config) -> Self {
         let active_client = Rc::new(Cell::new(None));
-        let client_manager = Rc::new(RefCell::new(ClientManager::new()));
+        let client_manager = Rc::new(RefCell::new(ClientManager::default()));
         let state = Rc::new(Cell::new(State::Receiving));
         let port = Rc::new(Cell::new(config.port));
         for config_client in config.get_clients() {
@@ -104,7 +104,7 @@ impl Server {
         let notify_emulation = Arc::new(Notify::new()); /* notify emultation restart */
 
         // udp task
-        let (mut network, udp_send, udp_recv, port_tx) = network_task::new(
+        let (network, udp_send, udp_recv, port_tx) = network_task::new(
             self.clone(),
             frontend_tx.clone(),
             cancellation_token.clone(),
@@ -112,7 +112,7 @@ impl Server {
         .await?;
 
         // input capture
-        let (mut capture, capture_channel) = capture_task::new(
+        let (capture, capture_channel) = capture_task::new(
             capture_backend,
             self.clone(),
             udp_send.clone(),
@@ -124,7 +124,7 @@ impl Server {
         );
 
         // input emulation
-        let (mut emulation, emulate_channel) = emulation_task::new(
+        let (emulation, emulate_channel) = emulation_task::new(
             emulation_backend,
             self.clone(),
             udp_recv,
@@ -138,7 +138,7 @@ impl Server {
 
         // create dns resolver
         let resolver = dns::DnsResolver::new().await?;
-        let (mut resolver, dns_req) = resolver_task::new(
+        let (resolver, dns_req) = resolver_task::new(
             resolver,
             self.clone(),
             frontend_tx,
@@ -146,7 +146,7 @@ impl Server {
         );
 
         // frontend listener
-        let (mut frontend, frontend_tx) = frontend_task::new(
+        let (frontend, frontend_tx) = frontend_task::new(
             frontend,
             frontend_rx,
             self.clone(),
@@ -160,7 +160,7 @@ impl Server {
         );
 
         // task that pings clients to see if they are responding
-        let mut ping = ping_task::new(
+        let ping = ping_task::new(
             self.clone(),
             udp_send.clone(),
             emulate_channel.clone(),
@@ -189,17 +189,10 @@ impl Server {
                 let _ = dns_req.send(DnsRequest { hostname, handle }).await;
             }
         }
-        log::info!("running service");
 
-        tokio::select! {
-            _ = signal::ctrl_c() => log::info!("terminating service"),
-            _ = &mut capture => { }
-            _ = &mut emulation => { }
-            _ = &mut frontend => { }
-            _ = &mut resolver => { }
-            _ = &mut network => { }
-            _ = &mut ping => { }
-        }
+        log::info!("running service");
+        signal::ctrl_c().await.expect("failed to listen for CTRL+C");
+        log::info!("terminating service");
 
         cancellation_token.cancel();
         let _ = join!(capture, emulation, frontend, network, resolver, ping);
