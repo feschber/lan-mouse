@@ -115,6 +115,21 @@ pub enum FrontendRequest {
     EnableEmulation,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Status {
+    Enabled,
+    Disabled,
+}
+
+impl From<Status> for bool {
+    fn from(status: Status) -> Self {
+        match status {
+            Status::Enabled => true,
+            Status::Disabled => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
     /// a client was created
@@ -131,6 +146,10 @@ pub enum FrontendEvent {
     Enumerate(Vec<(ClientHandle, ClientConfig, ClientState)>),
     /// an error occured
     Error(String),
+    /// capture status
+    CaptureStatus(Status),
+    /// emulation status
+    EmulationStatus(Status),
 }
 
 pub struct FrontendListener {

@@ -25,15 +25,15 @@ impl Stream for MacOSInputCapture {
 
 #[async_trait]
 impl InputCapture for MacOSInputCapture {
-    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _id: CaptureHandle) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 

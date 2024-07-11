@@ -1,4 +1,4 @@
-use std::{fmt::Display, io};
+use std::fmt::Display;
 
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -98,13 +98,13 @@ pub trait InputCapture:
     Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin
 {
     /// create a new client with the given id
-    async fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
+    async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError>;
 
     /// destroy the client with the given id, if it exists
-    async fn destroy(&mut self, id: CaptureHandle) -> io::Result<()>;
+    async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError>;
 
     /// release mouse
-    async fn release(&mut self) -> io::Result<()>;
+    async fn release(&mut self) -> Result<(), CaptureError>;
 
     /// destroy the input acpture
     async fn terminate(&mut self) -> Result<(), CaptureError>;

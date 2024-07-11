@@ -222,6 +222,7 @@ impl Window {
     pub fn request_emulation(&self) {
         self.request(FrontendRequest::EnableEmulation);
     }
+
     pub fn request_client_state(&self, client: &ClientObject) {
         let handle = client.handle();
         let event = FrontendRequest::GetState(handle);
@@ -285,5 +286,25 @@ impl Window {
         let toast = adw::Toast::new(msg);
         let toast_overlay = &self.imp().toast_overlay;
         toast_overlay.add_toast(toast);
+    }
+
+    pub fn set_capture(&self, active: bool) {
+        self.imp().capture_active.replace(active);
+        self.update_capture_emulation_status();
+    }
+
+    pub fn set_emulation(&self, active: bool) {
+        self.imp().emulation_active.replace(active);
+        self.update_capture_emulation_status();
+    }
+
+    fn update_capture_emulation_status(&self) {
+        let capture = self.imp().capture_active.get();
+        let emulation = self.imp().emulation_active.get();
+        self.imp().capture_status_row.set_visible(!capture);
+        self.imp().emulation_status_row.set_visible(!emulation);
+        self.imp()
+            .capture_emulation_group
+            .set_visible(!capture || !emulation);
     }
 }

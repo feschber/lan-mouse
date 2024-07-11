@@ -65,7 +65,7 @@ unsafe fn signal_message_thread(event_type: EventType) {
 
 #[async_trait]
 impl InputCapture for WindowsInputCapture {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -76,7 +76,7 @@ impl InputCapture for WindowsInputCapture {
         Ok(())
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -87,7 +87,7 @@ impl InputCapture for WindowsInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         unsafe { signal_message_thread(EventType::Release) };
         Ok(())
     }

@@ -566,23 +566,23 @@ impl Inner {
 
 #[async_trait]
 impl InputCapture for WaylandInputCapture {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         self.add_client(handle, pos);
         let inner = self.0.get_mut();
-        inner.flush_events()
+        Ok(inner.flush_events()?)
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
         self.delete_client(handle);
         let inner = self.0.get_mut();
-        inner.flush_events()
+        Ok(inner.flush_events()?)
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
-        inner.flush_events()
+        Ok(inner.flush_events()?)
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {

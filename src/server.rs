@@ -102,15 +102,21 @@ impl Server {
         let (mut udp_task, sender_tx, receiver_rx, port_tx) =
             network_task::new(self.clone(), frontend_notify_tx.clone()).await?;
 
+        // restart notify tokens
+        let notify_capture = Arc::new(Notify::new());
+        let notify_emulation = Arc::new(Notify::new());
+
         // input capture
         let (mut capture_task, capture_channel) = capture_task::new(
             capture_backend,
             self.clone(),
             sender_tx.clone(),
+            frontend_notify_tx.clone(),
             timer_notify.clone(),
             self.release_bind.clone(),
             cancellation_token.clone(),
-        )?;
+            notify_capture.clone(),
+        );
 
         // input emulation
         let (mut emulation_task, emulate_channel) = emulation_task::new(
@@ -119,8 +125,10 @@ impl Server {
             receiver_rx,
             sender_tx.clone(),
             capture_channel.clone(),
+            frontend_notify_tx.clone(),
             timer_notify.clone(),
             cancellation_token.clone(),
+            notify_emulation.clone(),
         );
 
         // create dns resolver
@@ -133,6 +141,8 @@ impl Server {
             frontend,
             frontend_notify_rx,
             self.clone(),
+            notify_emulation,
+            notify_capture,
             capture_channel.clone(),
             emulate_channel.clone(),
             resolve_tx.clone(),
@@ -175,16 +185,8 @@ impl Server {
             _ = signal::ctrl_c() => {
                 log::info!("terminating service");
             }
-            e = &mut capture_task => {
-                if let Ok(Err(e)) = e {
-                    log::error!("error in input capture task: {e}");
-                }
-            }
-            e = &mut emulation_task => {
-                if let Ok(Err(e)) = e {
-                    log::error!("error in input emulation task: {e}");
-                }
-            }
+            _ = &mut capture_task => { }
+            _ = &mut emulation_task => { }
             e = &mut frontend_task => {
                 if let Ok(Err(e)) = e {
                     log::error!("error in frontend listener: {e}");
@@ -198,20 +200,13 @@ impl Server {
         cancellation_token.cancel();
 
         if !capture_task.is_finished() {
-            if let Err(e) = capture_task.await {
-                log::error!("error in input capture task: {e}");
-            }
+            let _ = capture_task.await;
         }
         if !emulation_task.is_finished() {
-            if let Err(e) = emulation_task.await {
-                log::error!("error in input emulation task: {e}");
-            }
+            let _ = emulation_task.await;
         }
-
         if !frontend_task.is_finished() {
-            if let Err(e) = frontend_task.await {
-                log::error!("error in frontend listener: {e}");
-            }
+            let _ = frontend_task.await;
         }
 
         resolver_task.abort();

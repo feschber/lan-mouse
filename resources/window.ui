@@ -45,11 +45,12 @@
                     <property name="orientation">vertical</property>
                     <property name="spacing">12</property>
                     <child>
-                      <object class="AdwPreferencesGroup">
+                      <object class="AdwPreferencesGroup" id="capture_emulation_group">
                       <property name="title" translatable="yes">Capture / Emulation Status</property>
                         <child>
-                          <object class="AdwActionRow">
+                          <object class="AdwActionRow" id="capture_status_row">
                             <property name="title">input capture is disabled</property>
+                            <property name="subtitle">required for outgoing and incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
@@ -73,8 +74,9 @@
                           </object>
                         </child>
                         <child>
-                          <object class="AdwActionRow">
+                          <object class="AdwActionRow" id="emulation_status_row">
                             <property name="title">input emulation is disabled</property>
+                            <property name="subtitle">required for incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_emulation_button">

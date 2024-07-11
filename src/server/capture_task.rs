@@ -1,21 +1,39 @@
-use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use tokio::{
     process::Command,
-    sync::{mpsc::Sender, Notify},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Notify,
+    },
     task::JoinHandle,
 };
 
-use input_capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position};
+use input_capture::{
+    self, error::CaptureCreationError, CaptureError, CaptureHandle, InputCapture, Position,
+};
 
 use input_event::{scancode, Event, KeyboardEvent};
 
-use crate::{client::ClientHandle, config::CaptureBackend, server::State};
+use crate::{
+    client::ClientHandle,
+    config::CaptureBackend,
+    frontend::{FrontendEvent, Status},
+    server::State,
+};
 
 use super::Server;
+
+#[derive(Debug, Error)]
+pub enum LanMouseCaptureError {
+    #[error("error creating input-capture: `{0}`")]
+    Create(#[from] CaptureCreationError),
+    #[error("error while capturing input: `{0}`")]
+    Capture(#[from] CaptureError),
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum CaptureEvent {
@@ -25,60 +43,125 @@ pub enum CaptureEvent {
     Create(CaptureHandle, Position),
     /// destory a capture client
     Destroy(CaptureHandle),
-    /// restart input capture
-    Restart,
 }
 
 pub fn new(
     backend: Option<CaptureBackend>,
     server: Server,
     sender_tx: Sender<(Event, SocketAddr)>,
+    frontend_tx: Sender<FrontendEvent>,
     timer_notify: Arc<Notify>,
     release_bind: Vec<scancode::Linux>,
     cancellation_token: CancellationToken,
-) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+    notify_capture: Arc<Notify>,
+) -> (JoinHandle<()>, Sender<CaptureEvent>) {
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
     let backend = backend.map(|b| b.into());
-    let task = tokio::task::spawn_local(async move {
-        let mut capture = input_capture::create(backend).await?;
-        let mut pressed_keys = HashSet::new();
-        loop {
-            tokio::select! {
-                event = capture.next() => {
-                    match event {
-                        Some(Ok(event)) => handle_capture_event(&server, &mut capture, &sender_tx, &timer_notify, event, &mut pressed_keys, &release_bind).await?,
-                        Some(Err(e)) => return Err(anyhow!("input capture: {e:?}")),
-                        None => return Err(anyhow!("input capture terminated")),
-                    }
-                }
-                e = rx.recv() => {
-                    log::debug!("input capture notify rx: {e:?}");
-                    match e {
-                        Some(e) => match e {
-                            CaptureEvent::Release => {
-                                capture.release().await?;
-                                server.state.replace(State::Receiving);
-                            }
-                            CaptureEvent::Create(h, p) => capture.create(h, p).await?,
-                            CaptureEvent::Destroy(h) => capture.destroy(h).await?,
-                            CaptureEvent::Restart => {
-                                let clients = server.client_manager.borrow().get_client_states().map(|(h, (c,_))| (h, c.pos)).collect::<Vec<_>>();
-                                capture.terminate().await?;
-                                capture = input_capture::create(backend).await?;
-                                for (handle, pos) in clients {
-                                    capture.create(handle, pos.into()).await?;
-                                }
-                            }
-                        },
-                        None => break,
-                    }
-                }
-                _ = cancellation_token.cancelled() => break,
-            }
+    let task = tokio::task::spawn_local(capture_task(
+        backend,
+        server,
+        sender_tx,
+        rx,
+        frontend_tx,
+        timer_notify,
+        release_bind,
+        cancellation_token,
+        notify_capture,
+    ));
+    (task, tx)
+}
+
+async fn capture_task(
+    backend: Option<input_capture::Backend>,
+    server: Server,
+    sender_tx: Sender<(Event, SocketAddr)>,
+    mut notify_rx: Receiver<CaptureEvent>,
+    frontend_tx: Sender<FrontendEvent>,
+    timer_notify: Arc<Notify>,
+    release_bind: Vec<scancode::Linux>,
+    cancellation_token: CancellationToken,
+    notify_capture: Arc<Notify>,
+) {
+    loop {
+        if let Err(e) = do_capture(
+            backend,
+            &server,
+            &sender_tx,
+            &mut notify_rx,
+            &frontend_tx,
+            &timer_notify,
+            &release_bind,
+            &cancellation_token,
+        )
+        .await
+        {
+            log::warn!("input emulation exited: {e}");
         }
-        anyhow::Ok(())
-    });
-    Ok((task, tx))
+        let _ = frontend_tx
+            .send(FrontendEvent::CaptureStatus(Status::Disabled))
+            .await;
+        if cancellation_token.is_cancelled() {
+            break;
+        }
+        notify_capture.notified().await;
+    }
+}
+
+async fn do_capture(
+    backend: Option<input_capture::Backend>,
+    server: &Server,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    notify_rx: &mut Receiver<CaptureEvent>,
+    frontend_tx: &Sender<FrontendEvent>,
+    timer_notify: &Notify,
+    release_bind: &[scancode::Linux],
+    cancellation_token: &CancellationToken,
+) -> Result<(), LanMouseCaptureError> {
+    let mut capture = input_capture::create(backend).await?;
+    let _ = frontend_tx
+        .send(FrontendEvent::CaptureStatus(Status::Enabled))
+        .await;
+
+    // FIXME DUPLICATES
+    let clients = server
+        .client_manager
+        .borrow()
+        .get_client_states()
+        .map(|(h, (c, _))| (h, c.pos))
+        .collect::<Vec<_>>();
+    for (handle, pos) in clients {
+        capture.create(handle, pos.into()).await?;
+    }
+
+    let mut pressed_keys = HashSet::new();
+    loop {
+        tokio::select! {
+            event = capture.next() => {
+                match event {
+                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, timer_notify, event, &mut pressed_keys, release_bind).await?,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Ok(()),
+                }
+            }
+            e = notify_rx.recv() => {
+                log::debug!("input capture notify rx: {e:?}");
+                match e {
+                    Some(e) => match e {
+                        CaptureEvent::Release => {
+                            capture.release().await?;
+                            server.state.replace(State::Receiving);
+                        }
+                        CaptureEvent::Create(h, p) => capture.create(h, p).await?,
+                        CaptureEvent::Destroy(h) => capture.destroy(h).await?,
+                    },
+                    None => break,
+                }
+            }
+            _ = cancellation_token.cancelled() => break,
+        }
+    }
+    capture.terminate().await?;
+    Ok(())
 }
 
 fn update_pressed_keys(pressed_keys: &mut HashSet<scancode::Linux>, key: u32, state: u8) {
@@ -99,7 +182,7 @@ async fn handle_capture_event(
     event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
     release_bind: &[scancode::Linux],
-) -> Result<()> {
+) -> Result<(), CaptureError> {
     let (handle, mut e) = event;
     log::trace!("({handle}) {e:?}");
 

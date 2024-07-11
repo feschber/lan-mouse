@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     client::{ClientHandle, ClientManager},
     config::EmulationBackend,
+    frontend::{FrontendEvent, Status},
     server::State,
 };
 use input_emulation::{
@@ -32,8 +33,6 @@ pub enum EmulationEvent {
     Destroy(EmulationHandle),
     /// input emulation must release keys for client
     ReleaseKeys(ClientHandle),
-    /// restart input emulation
-    Restart,
 }
 
 pub fn new(
@@ -42,12 +41,11 @@ pub fn new(
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
+    frontend_tx: Sender<FrontendEvent>,
     timer_notify: Arc<Notify>,
     cancellation_token: CancellationToken,
-) -> (
-    JoinHandle<Result<(), LanMouseEmulationError>>,
-    Sender<EmulationEvent>,
-) {
+    notify_emulation: Arc<Notify>,
+) -> (JoinHandle<()>, Sender<EmulationEvent>) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let emulation_task = emulation_task(
         backend,
@@ -56,8 +54,10 @@ pub fn new(
         udp_rx,
         sender_tx,
         capture_tx,
+        frontend_tx,
         timer_notify,
         cancellation_token,
+        notify_emulation,
     );
     let emulate_task = tokio::task::spawn_local(emulation_task);
     (emulate_task, tx)
@@ -78,11 +78,68 @@ async fn emulation_task(
     mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
+    frontend_tx: Sender<FrontendEvent>,
     timer_notify: Arc<Notify>,
     cancellation_token: CancellationToken,
+    notify_emulation: Arc<Notify>,
+) {
+    loop {
+        match do_emulation(
+            backend,
+            &mut rx,
+            &server,
+            &mut udp_rx,
+            &sender_tx,
+            &capture_tx,
+            &frontend_tx,
+            &timer_notify,
+            &cancellation_token,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => {
+                log::warn!("input emulation exited: {e}");
+            }
+        }
+        let _ = frontend_tx
+            .send(FrontendEvent::EmulationStatus(Status::Disabled))
+            .await;
+        if cancellation_token.is_cancelled() {
+            break;
+        }
+        notify_emulation.notified().await;
+    }
+}
+
+async fn do_emulation(
+    backend: Option<EmulationBackend>,
+    rx: &mut Receiver<EmulationEvent>,
+    server: &Server,
+    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    capture_tx: &Sender<CaptureEvent>,
+    frontend_tx: &Sender<FrontendEvent>,
+    timer_notify: &Notify,
+    cancellation_token: &CancellationToken,
 ) -> Result<(), LanMouseEmulationError> {
     let backend = backend.map(|b| b.into());
     let mut emulation = input_emulation::create(backend).await?;
+    let _ = frontend_tx
+        .send(FrontendEvent::EmulationStatus(Status::Enabled))
+        .await;
+
+    // FIMXE DUPLICATES
+    // add clients
+    let clients = server
+        .client_manager
+        .borrow()
+        .get_client_states()
+        .map(|(h, _)| h)
+        .collect::<Vec<_>>();
+    for handle in clients {
+        emulation.create(handle).await;
+    }
 
     let mut last_ignored = None;
     loop {
@@ -104,13 +161,6 @@ async fn emulation_task(
                         EmulationEvent::Create(h) => emulation.create(h).await,
                         EmulationEvent::Destroy(h) => emulation.destroy(h).await,
                         EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulation, c).await?,
-                        EmulationEvent::Restart => {
-                            let clients = server.client_manager.borrow().get_client_states().map(|(h, _)| h).collect::<Vec<_>>();
-                            emulation = input_emulation::create(backend).await?;
-                            for handle in clients {
-                                emulation.create(handle).await;
-                            }
-                        },
                     },
                     None => break,
                 }

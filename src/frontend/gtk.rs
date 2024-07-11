@@ -150,6 +150,12 @@ fn build_ui(app: &Application) {
                     }
                     window.imp().set_port(port);
                 }
+                FrontendEvent::CaptureStatus(s) => {
+                    window.set_capture(s.into());
+                }
+                FrontendEvent::EmulationStatus(s) => {
+                    window.set_emulation(s.into());
+                }
             }
         }
     }));

@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
 };
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -12,7 +13,10 @@ use tokio::net::TcpStream;
 use anyhow::{anyhow, Result};
 use tokio::{
     io::ReadHalf,
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Notify,
+    },
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -30,6 +34,8 @@ pub(crate) fn new(
     mut frontend: FrontendListener,
     mut notify_rx: Receiver<FrontendEvent>,
     server: Server,
+    notify_capture: Arc<Notify>,
+    notify_emulation: Arc<Notify>,
     capture: Sender<CaptureEvent>,
     emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
@@ -54,7 +60,7 @@ pub(crate) fn new(
                 }
                 event = event_rx.recv() => {
                     let frontend_event = event.ok_or(anyhow!("frontend channel closed"))?;
-                    if handle_frontend_event(&server, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
+                    if handle_frontend_event(&server, &notify_capture, &notify_emulation, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, frontend_event).await {
                         break;
                     }
                 }
@@ -115,6 +121,8 @@ async fn listen_frontend(
 
 async fn handle_frontend_event(
     server: &Server,
+    notify_capture: &Notify,
+    notify_emulation: &Notify,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
     resolve_tx: &Sender<DnsRequest>,
@@ -125,10 +133,10 @@ async fn handle_frontend_event(
     log::debug!("frontend: {event:?}");
     match event {
         FrontendRequest::EnableCapture => {
-            let _ = capture.send(CaptureEvent::Restart).await;
+            notify_capture.notify_waiters();
         }
         FrontendRequest::EnableEmulation => {
-            let _ = emulate.send(EmulationEvent::Restart).await;
+            notify_emulation.notify_waiters();
         }
         FrontendRequest::Create => {
             let handle = add_client(server, frontend).await;

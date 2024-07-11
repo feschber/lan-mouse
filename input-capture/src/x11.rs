@@ -1,4 +1,3 @@
-use std::io;
 use std::task::Poll;
 
 use async_trait::async_trait;
@@ -22,15 +21,15 @@ impl X11InputCapture {
 
 #[async_trait]
 impl InputCapture for X11InputCapture {
-    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn destroy(&mut self, _id: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _id: CaptureHandle) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 

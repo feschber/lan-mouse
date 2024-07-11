@@ -37,10 +37,9 @@ use once_cell::sync::Lazy;
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::error::{CaptureError, ReisConvertEventStreamError};
-
 use super::{
-    error::LibeiCaptureCreationError, CaptureHandle, InputCapture as LanMouseInputCapture, Position,
+    error::{CaptureError, LibeiCaptureCreationError, ReisConvertEventStreamError},
+    CaptureHandle, InputCapture as LanMouseInputCapture, Position,
 };
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
@@ -648,7 +647,7 @@ fn to_input_events(ei_event: EiEvent) -> Events {
 
 #[async_trait]
 impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
             .send(CaptureEvent::Create(handle, pos))
@@ -656,7 +655,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
         Ok(())
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
             .send(CaptureEvent::Destroy(handle))
@@ -664,7 +663,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
         Ok(())
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         let _ = self.notify_capture_session.send(ReleaseCaptureEvent).await;
         Ok(())
     }

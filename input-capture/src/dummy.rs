@@ -1,4 +1,3 @@
-use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -27,15 +26,15 @@ impl Default for DummyInputCapture {
 
 #[async_trait]
 impl InputCapture for DummyInputCapture {
-    async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn destroy(&mut self, _handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _handle: CaptureHandle) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    async fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 

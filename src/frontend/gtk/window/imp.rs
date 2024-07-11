@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow, ToastOverlay};
+use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
 use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
@@ -31,6 +31,12 @@ pub struct Window {
     #[template_child]
     pub toast_overlay: TemplateChild<ToastOverlay>,
     #[template_child]
+    pub capture_emulation_group: TemplateChild<PreferencesGroup>,
+    #[template_child]
+    pub capture_status_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub emulation_status_row: TemplateChild<ActionRow>,
+    #[template_child]
     pub input_emulation_button: TemplateChild<Button>,
     #[template_child]
     pub input_capture_button: TemplateChild<Button>,
@@ -40,6 +46,8 @@ pub struct Window {
     #[cfg(windows)]
     pub stream: RefCell<Option<TcpStream>>,
     pub port: Cell<u16>,
+    pub capture_active: Cell<bool>,
+    pub emulation_active: Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -111,7 +119,6 @@ impl Window {
 
     #[template_callback]
     fn handle_capture(&self) {
-        log::info!("requesting capture");
         self.obj().request_capture();
     }
 
