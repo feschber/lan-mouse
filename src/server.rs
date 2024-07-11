@@ -3,7 +3,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     rc::Rc,
-    sync::Arc,
 };
 use tokio::{
     join, signal,
@@ -14,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     client::{ClientConfig, ClientHandle, ClientManager, ClientState},
     config::{CaptureBackend, Config, EmulationBackend},
-    dns,
+    dns::DnsResolver,
     frontend::{FrontendListener, FrontendRequest},
     server::capture_task::CaptureEvent,
 };
@@ -46,6 +45,15 @@ pub struct Server {
     port: Rc<Cell<u16>>,
     state: Rc<Cell<State>>,
     release_bind: Vec<input_event::scancode::Linux>,
+    notifies: Rc<Notifies>,
+}
+
+#[derive(Default)]
+struct Notifies {
+    ping: Notify,
+    capture: Notify,
+    emulation: Notify,
+    cancel: CancellationToken,
 }
 
 impl Server {
@@ -72,13 +80,18 @@ impl Server {
             let c = client_manager.get_mut(handle).expect("invalid handle");
             *c = (client, state);
         }
+
+        // task notification tokens
+        let notifies = Rc::new(Notifies::default());
         let release_bind = config.release_bind.clone();
+
         Self {
             active_client,
             client_manager,
             port,
             state,
             release_bind,
+            notifies,
         }
     }
 
@@ -97,76 +110,69 @@ impl Server {
             }
         };
 
-        let notify_ping = Arc::new(Notify::new()); /* notify ping timer restart */
-        let (frontend_tx, frontend_rx) = channel(1); /* events coming from frontends */
-        let cancellation_token = CancellationToken::new(); /* notify termination */
-        let notify_capture = Arc::new(Notify::new()); /* notify capture restart */
-        let notify_emulation = Arc::new(Notify::new()); /* notify emultation restart */
+        let (frontend_tx, frontend_rx) = channel(1); /* events for frontends */
+        let (request_tx, request_rx) = channel(1); /* requests coming from frontends */
+        let (capture_tx, capture_rx) = channel(1); /* requests for input capture */
+        let (emulation_tx, emulation_rx) = channel(1); /* emulation requests */
+        let (udp_recv_tx, udp_recv_rx) = channel(1); /* udp receiver */
+        let (udp_send_tx, udp_send_rx) = channel(1); /* udp sender */
+        let (port_tx, port_rx) = channel(1); /* port change request */
+        let (dns_tx, dns_rx) = channel(1); /* dns requests */
 
         // udp task
-        let (network, udp_send, udp_recv, port_tx) = network_task::new(
+        let network = network_task::new(
             self.clone(),
+            udp_recv_tx,
+            udp_send_rx,
+            port_rx,
             frontend_tx.clone(),
-            cancellation_token.clone(),
         )
         .await?;
 
         // input capture
-        let (capture, capture_channel) = capture_task::new(
-            capture_backend,
+        let capture = capture_task::new(
             self.clone(),
-            udp_send.clone(),
+            capture_backend,
+            capture_rx,
+            udp_send_tx.clone(),
             frontend_tx.clone(),
-            notify_ping.clone(),
             self.release_bind.clone(),
-            cancellation_token.clone(),
-            notify_capture.clone(),
         );
 
         // input emulation
-        let (emulation, emulate_channel) = emulation_task::new(
-            emulation_backend,
+        let emulation = emulation_task::new(
             self.clone(),
-            udp_recv,
-            udp_send.clone(),
-            capture_channel.clone(),
+            emulation_backend,
+            emulation_rx,
+            udp_recv_rx,
+            udp_send_tx.clone(),
+            capture_tx.clone(),
             frontend_tx.clone(),
-            notify_ping.clone(),
-            cancellation_token.clone(),
-            notify_emulation.clone(),
         );
 
         // create dns resolver
-        let resolver = dns::DnsResolver::new().await?;
-        let (resolver, dns_req) = resolver_task::new(
-            resolver,
-            self.clone(),
-            frontend_tx,
-            cancellation_token.clone(),
-        );
+        let resolver = DnsResolver::new().await?;
+        let resolver = resolver_task::new(resolver, dns_rx, self.clone(), frontend_tx);
 
         // frontend listener
-        let (frontend, frontend_tx) = frontend_task::new(
+        let frontend = frontend_task::new(
+            self.clone(),
             frontend,
             frontend_rx,
-            self.clone(),
-            notify_emulation,
-            notify_capture,
-            capture_channel.clone(),
-            emulate_channel.clone(),
-            dns_req.clone(),
+            request_tx.clone(),
+            request_rx,
+            capture_tx.clone(),
+            emulation_tx.clone(),
+            dns_tx.clone(),
             port_tx,
-            cancellation_token.clone(),
         );
 
         // task that pings clients to see if they are responding
         let ping = ping_task::new(
             self.clone(),
-            udp_send.clone(),
-            emulate_channel.clone(),
-            capture_channel.clone(),
-            notify_ping,
-            cancellation_token.clone(),
+            udp_send_tx.clone(),
+            emulation_tx.clone(),
+            capture_tx.clone(),
         );
 
         let active = self
@@ -182,11 +188,11 @@ impl Server {
             })
             .collect::<Vec<_>>();
         for (handle, hostname) in active {
-            frontend_tx
+            request_tx
                 .send(FrontendRequest::Activate(handle, true))
                 .await?;
             if let Some(hostname) = hostname {
-                let _ = dns_req.send(DnsRequest { hostname, handle }).await;
+                let _ = dns_tx.send(DnsRequest { hostname, handle }).await;
             }
         }
 
@@ -194,9 +200,45 @@ impl Server {
         signal::ctrl_c().await.expect("failed to listen for CTRL+C");
         log::info!("terminating service");
 
-        cancellation_token.cancel();
+        self.cancel();
         let _ = join!(capture, emulation, frontend, network, resolver, ping);
 
         Ok(())
+    }
+
+    fn cancel(&self) {
+        self.notifies.cancel.cancel();
+    }
+
+    async fn cancelled(&self) {
+        self.notifies.cancel.cancelled().await
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.notifies.cancel.is_cancelled()
+    }
+
+    fn notify_capture(&self) {
+        self.notifies.capture.notify_waiters()
+    }
+
+    async fn capture_notified(&self) {
+        self.notifies.capture.notified().await
+    }
+
+    fn notify_emulation(&self) {
+        self.notifies.emulation.notify_waiters()
+    }
+
+    async fn emulation_notified(&self) {
+        self.notifies.emulation.notified().await
+    }
+
+    fn restart_ping_timer(&self) {
+        self.notifies.ping.notify_waiters()
+    }
+
+    async fn ping_timer_notified(&self) {
+        self.notifies.ping.notified().await
     }
 }

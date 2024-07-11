@@ -6,7 +6,6 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
-use tokio_util::sync::CancellationToken;
 
 use crate::frontend::FrontendEvent;
 use input_event::{Event, ProtocolError};
@@ -15,25 +14,19 @@ use super::Server;
 
 pub async fn new(
     server: Server,
+    udp_recv_tx: Sender<Result<(Event, SocketAddr), NetworkError>>,
+    udp_send_rx: Receiver<(Event, SocketAddr)>,
+    mut port_rx: Receiver<u16>,
     frontend_notify_tx: Sender<FrontendEvent>,
-    cancellation_token: CancellationToken,
-) -> io::Result<(
-    JoinHandle<()>,
-    Sender<(Event, SocketAddr)>,
-    Receiver<Result<(Event, SocketAddr), NetworkError>>,
-    Sender<u16>,
-)> {
+) -> io::Result<JoinHandle<()>> {
     // bind the udp socket
     let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), server.port.get());
     let mut socket = UdpSocket::bind(listen_addr).await?;
-    let (receiver_tx, receiver_rx) = tokio::sync::mpsc::channel(32);
-    let (sender_tx, sender_rx) = tokio::sync::mpsc::channel(32);
-    let (port_tx, mut port_rx) = tokio::sync::mpsc::channel(32);
 
-    let udp_task = tokio::task::spawn_local(async move {
-        let mut sender_rx = sender_rx;
+    Ok(tokio::task::spawn_local(async move {
+        let mut sender_rx = udp_send_rx;
         loop {
-            let udp_receiver = udp_receiver(&socket, &receiver_tx);
+            let udp_receiver = udp_receiver(&socket, &udp_recv_tx);
             let udp_sender = udp_sender(&socket, &mut sender_rx);
             tokio::select! {
                 _ = udp_receiver => break, /* channel closed */
@@ -42,11 +35,10 @@ pub async fn new(
                     Some(port) => update_port(&server, &frontend_notify_tx, &mut socket, port).await,
                     _ => continue,
                 },
-                _ = cancellation_token.cancelled() => break, /* cancellation requested */
+                _ = server.cancelled() => break, /* cancellation requested */
             }
         }
-    });
-    Ok((udp_task, sender_tx, receiver_rx, port_tx))
+    }))
 }
 
 async fn update_port(

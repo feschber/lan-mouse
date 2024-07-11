@@ -1,12 +1,8 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
-use tokio::{
-    sync::{mpsc::Sender, Notify},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 use input_event::Event;
-use tokio_util::sync::CancellationToken;
 
 use crate::client::ClientHandle;
 
@@ -19,28 +15,25 @@ pub fn new(
     sender_ch: Sender<(Event, SocketAddr)>,
     emulate_notify: Sender<EmulationEvent>,
     capture_notify: Sender<CaptureEvent>,
-    timer_notify: Arc<Notify>,
-    cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
     // timer task
     tokio::task::spawn_local(async move {
         tokio::select! {
-            _ = cancellation_token.cancelled() => {}
-            _ = ping_task(server, sender_ch, emulate_notify, capture_notify, timer_notify) => {}
+            _ = server.notifies.cancel.cancelled() => {}
+            _ = ping_task(&server, sender_ch, emulate_notify, capture_notify) => {}
         }
     })
 }
 
 async fn ping_task(
-    server: Server,
+    server: &Server,
     sender_ch: Sender<(Event, SocketAddr)>,
     emulate_notify: Sender<EmulationEvent>,
     capture_notify: Sender<CaptureEvent>,
-    timer_notify: Arc<Notify>,
 ) {
     loop {
         // wait for wake up signal
-        timer_notify.notified().await;
+        server.ping_timer_notified().await;
         loop {
             let receiving = server.state.get() == State::Receiving;
             let (ping_clients, ping_addrs) = {

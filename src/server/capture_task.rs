@@ -1,14 +1,10 @@
 use futures::StreamExt;
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr};
 use thiserror::Error;
-use tokio_util::sync::CancellationToken;
 
 use tokio::{
     process::Command,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Notify,
-    },
+    sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
 
@@ -46,41 +42,31 @@ pub enum CaptureEvent {
 }
 
 pub fn new(
-    backend: Option<CaptureBackend>,
     server: Server,
+    backend: Option<CaptureBackend>,
+    capture_rx: Receiver<CaptureEvent>,
     udp_send: Sender<(Event, SocketAddr)>,
     frontend_tx: Sender<FrontendEvent>,
-    notify_ping: Arc<Notify>,
     release_bind: Vec<scancode::Linux>,
-    cancellation_token: CancellationToken,
-    notify_capture: Arc<Notify>,
-) -> (JoinHandle<()>, Sender<CaptureEvent>) {
-    let (tx, rx) = tokio::sync::mpsc::channel(32);
+) -> JoinHandle<()> {
     let backend = backend.map(|b| b.into());
-    let task = tokio::task::spawn_local(capture_task(
-        backend,
+    tokio::task::spawn_local(capture_task(
         server,
+        backend,
         udp_send,
-        rx,
+        capture_rx,
         frontend_tx,
-        notify_ping,
         release_bind,
-        cancellation_token,
-        notify_capture,
-    ));
-    (task, tx)
+    ))
 }
 
 async fn capture_task(
-    backend: Option<input_capture::Backend>,
     server: Server,
+    backend: Option<input_capture::Backend>,
     sender_tx: Sender<(Event, SocketAddr)>,
     mut notify_rx: Receiver<CaptureEvent>,
     frontend_tx: Sender<FrontendEvent>,
-    timer_notify: Arc<Notify>,
     release_bind: Vec<scancode::Linux>,
-    cancellation_token: CancellationToken,
-    notify_capture: Arc<Notify>,
 ) {
     loop {
         if let Err(e) = do_capture(
@@ -89,9 +75,7 @@ async fn capture_task(
             &sender_tx,
             &mut notify_rx,
             &frontend_tx,
-            &timer_notify,
             &release_bind,
-            &cancellation_token,
         )
         .await
         {
@@ -100,10 +84,10 @@ async fn capture_task(
         let _ = frontend_tx
             .send(FrontendEvent::CaptureStatus(Status::Disabled))
             .await;
-        if cancellation_token.is_cancelled() {
+        if server.is_cancelled() {
             break;
         }
-        notify_capture.notified().await;
+        server.capture_notified().await;
     }
 }
 
@@ -113,9 +97,7 @@ async fn do_capture(
     sender_tx: &Sender<(Event, SocketAddr)>,
     notify_rx: &mut Receiver<CaptureEvent>,
     frontend_tx: &Sender<FrontendEvent>,
-    timer_notify: &Notify,
     release_bind: &[scancode::Linux],
-    cancellation_token: &CancellationToken,
 ) -> Result<(), LanMouseCaptureError> {
     let mut capture = input_capture::create(backend).await?;
     let _ = frontend_tx
@@ -145,7 +127,7 @@ async fn do_capture(
         tokio::select! {
             event = capture.next() => {
                 match event {
-                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, timer_notify, event, &mut pressed_keys, release_bind).await?,
+                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, event, &mut pressed_keys, release_bind).await?,
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
                 }
@@ -164,7 +146,7 @@ async fn do_capture(
                     None => break,
                 }
             }
-            _ = cancellation_token.cancelled() => break,
+            _ = server.cancelled() => break,
         }
     }
     capture.terminate().await?;
@@ -185,7 +167,6 @@ async fn handle_capture_event(
     server: &Server,
     capture: &mut Box<dyn InputCapture>,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    timer_notify: &Notify,
     event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
     release_bind: &[scancode::Linux],
@@ -249,7 +230,7 @@ async fn handle_capture_event(
     };
 
     if start_timer {
-        timer_notify.notify_waiters();
+        server.restart_ping_timer();
     }
     if enter {
         spawn_hook_command(server, handle);

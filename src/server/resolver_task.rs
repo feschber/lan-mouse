@@ -4,7 +4,6 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
-use tokio_util::sync::CancellationToken;
 
 use crate::{client::ClientHandle, dns::DnsResolver, frontend::FrontendEvent};
 
@@ -18,23 +17,21 @@ pub struct DnsRequest {
 
 pub fn new(
     resolver: DnsResolver,
+    dns_rx: Receiver<DnsRequest>,
     server: Server,
     frontend: Sender<FrontendEvent>,
-    cancellation_token: CancellationToken,
-) -> (JoinHandle<()>, Sender<DnsRequest>) {
-    let (dns_tx, dns_rx) = tokio::sync::mpsc::channel::<DnsRequest>(32);
-    let resolver_task = tokio::task::spawn_local(async move {
+) -> JoinHandle<()> {
+    tokio::task::spawn_local(async move {
         tokio::select! {
-            _ = cancellation_token.cancelled() => {},
-            _ = do_dns(resolver, server, frontend, dns_rx) => {},
+            _ = server.cancelled() => {},
+            _ = do_dns(&server, resolver, frontend, dns_rx) => {},
         }
-    });
-    (resolver_task, dns_tx)
+    })
 }
 
 async fn do_dns(
+    server: &Server,
     resolver: DnsResolver,
-    server: Server,
     frontend: Sender<FrontendEvent>,
     mut dns_rx: Receiver<DnsRequest>,
 ) {

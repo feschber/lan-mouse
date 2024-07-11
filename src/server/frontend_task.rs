@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
-    sync::Arc,
 };
 #[cfg(unix)]
 use tokio::net::UnixStream;
@@ -12,13 +11,9 @@ use tokio::net::TcpStream;
 
 use tokio::{
     io::ReadHalf,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Notify,
-    },
+    sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
-use tokio_util::sync::CancellationToken;
 
 use crate::{
     client::{ClientHandle, Position},
@@ -30,32 +25,30 @@ use super::{
 };
 
 pub(crate) fn new(
+    server: Server,
     mut frontend: FrontendListener,
     mut event: Receiver<FrontendEvent>,
-    server: Server,
-    notify_emulation: Arc<Notify>,
-    notify_capture: Arc<Notify>,
+    request_tx: Sender<FrontendRequest>,
+    mut request_rx: Receiver<FrontendRequest>,
     capture: Sender<CaptureEvent>,
     emulate: Sender<EmulationEvent>,
     resolve_ch: Sender<DnsRequest>,
     port_tx: Sender<u16>,
-    cancellation_token: CancellationToken,
-) -> (JoinHandle<()>, Sender<FrontendRequest>) {
-    let (request_tx, mut request) = tokio::sync::mpsc::channel(32);
-    let request_tx_clone = request_tx.clone();
-    let frontend_task = tokio::task::spawn_local(async move {
+) -> JoinHandle<()> {
+    let request = request_tx.clone();
+    tokio::task::spawn_local(async move {
         let mut join_handles = vec![];
         loop {
             tokio::select! {
                 stream = frontend.accept() => {
                     match stream {
-                        Ok(s) => join_handles.push(handle_frontend_stream(&request_tx_clone, s, cancellation_token.clone())),
+                        Ok(s) => join_handles.push(handle_frontend_stream(server.clone(), &request, s)),
                         Err(e) => log::warn!("error accepting frontend connection: {e}"),
                     };
                 }
-                request = request.recv() => {
+                request = request_rx.recv() => {
                     let request = request.expect("frontend request channel closed");
-                    if handle_frontend_event(&server, &notify_capture, &notify_emulation, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, request).await {
+                    if handle_frontend_event(&server, &capture, &emulate, &resolve_ch, &mut frontend, &port_tx, request).await {
                         break;
                     }
                 }
@@ -63,33 +56,32 @@ pub(crate) fn new(
                     let event = event.expect("channel closed");
                     let _ = frontend.broadcast_event(event).await;
                 }
-                _ = cancellation_token.cancelled() => {
+                _ = server.cancelled() => {
                     futures::future::join_all(join_handles).await;
                     break;
                 }
             }
         }
-    });
-    (frontend_task, request_tx)
+    })
 }
 
 fn handle_frontend_stream(
-    frontend_tx: &Sender<FrontendRequest>,
+    server: Server,
+    request_tx: &Sender<FrontendRequest>,
     #[cfg(unix)] stream: ReadHalf<UnixStream>,
     #[cfg(windows)] stream: ReadHalf<TcpStream>,
-    cancellation_token: CancellationToken,
 ) -> JoinHandle<()> {
-    let tx = frontend_tx.clone();
+    let tx = request_tx.clone();
     tokio::task::spawn_local(async move {
         tokio::select! {
             _ = listen_frontend(tx, stream) => {},
-            _ = cancellation_token.cancelled() => {},
+            _ = server.cancelled() => {},
         }
     })
 }
 
 async fn listen_frontend(
-    tx: Sender<FrontendRequest>,
+    request_tx: Sender<FrontendRequest>,
     #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
     #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
 ) {
@@ -98,7 +90,7 @@ async fn listen_frontend(
         let request = frontend::wait_for_request(&mut stream).await;
         match request {
             Ok(request) => {
-                let _ = tx.send(request).await;
+                let _ = request_tx.send(request).await;
             }
             Err(e) => {
                 if let Some(e) = e.downcast_ref::<io::Error>() {
@@ -115,8 +107,6 @@ async fn listen_frontend(
 
 async fn handle_frontend_event(
     server: &Server,
-    notify_capture: &Notify,
-    notify_emulation: &Notify,
     capture: &Sender<CaptureEvent>,
     emulate: &Sender<EmulationEvent>,
     resolve_tx: &Sender<DnsRequest>,
@@ -127,11 +117,12 @@ async fn handle_frontend_event(
     log::debug!("frontend: {event:?}");
     match event {
         FrontendRequest::EnableCapture => {
-            notify_capture.notify_waiters();
+            log::info!("received capture enable request");
+            server.notify_capture();
         }
         FrontendRequest::EnableEmulation => {
             log::info!("received emulation enable request");
-            notify_emulation.notify_waiters();
+            server.notify_emulation();
         }
         FrontendRequest::Create => {
             let handle = add_client(server, frontend).await;
