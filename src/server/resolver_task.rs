@@ -1,6 +1,10 @@
 use std::collections::HashSet;
 
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
+use tokio_util::sync::CancellationToken;
 
 use crate::{client::ClientHandle, dns::DnsResolver, frontend::FrontendEvent};
 
@@ -14,52 +18,65 @@ pub struct DnsRequest {
 
 pub fn new(
     resolver: DnsResolver,
-    mut server: Server,
-    mut frontend: Sender<FrontendEvent>,
+    server: Server,
+    frontend: Sender<FrontendEvent>,
+    cancellation_token: CancellationToken,
 ) -> (JoinHandle<()>, Sender<DnsRequest>) {
-    let (dns_tx, mut dns_rx) = tokio::sync::mpsc::channel::<DnsRequest>(32);
+    let (dns_tx, dns_rx) = tokio::sync::mpsc::channel::<DnsRequest>(32);
     let resolver_task = tokio::task::spawn_local(async move {
-        loop {
-            let (host, handle) = match dns_rx.recv().await {
-                Some(r) => (r.hostname, r.handle),
-                None => break,
-            };
-
-            /* update resolving status */
-            if let Some((_, s)) = server.client_manager.borrow_mut().get_mut(handle) {
-                s.resolving = true;
-            }
-            notify_state_change(&mut frontend, &mut server, handle).await;
-
-            let ips = match resolver.resolve(&host).await {
-                Ok(ips) => ips,
-                Err(e) => {
-                    log::warn!("could not resolve host '{host}': {e}");
-                    vec![]
-                }
-            };
-
-            /* update ips and resolving state */
-            if let Some((c, s)) = server.client_manager.borrow_mut().get_mut(handle) {
-                let mut addrs = HashSet::from_iter(c.fix_ips.iter().cloned());
-                for ip in ips {
-                    addrs.insert(ip);
-                }
-                s.ips = addrs;
-                s.resolving = false;
-            }
-            notify_state_change(&mut frontend, &mut server, handle).await;
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {},
+            _ = do_dns(resolver, server, frontend, dns_rx) => {},
         }
     });
     (resolver_task, dns_tx)
 }
 
+async fn do_dns(
+    resolver: DnsResolver,
+    server: Server,
+    frontend: Sender<FrontendEvent>,
+    mut dns_rx: Receiver<DnsRequest>,
+) {
+    loop {
+        let (host, handle) = match dns_rx.recv().await {
+            Some(r) => (r.hostname, r.handle),
+            None => break,
+        };
+
+        /* update resolving status */
+        if let Some((_, s)) = server.client_manager.borrow_mut().get_mut(handle) {
+            s.resolving = true;
+        }
+        notify_state_change(&frontend, &server, handle).await;
+
+        let ips = match resolver.resolve(&host).await {
+            Ok(ips) => ips,
+            Err(e) => {
+                log::warn!("could not resolve host '{host}': {e}");
+                vec![]
+            }
+        };
+
+        /* update ips and resolving state */
+        if let Some((c, s)) = server.client_manager.borrow_mut().get_mut(handle) {
+            let mut addrs = HashSet::from_iter(c.fix_ips.iter().cloned());
+            for ip in ips {
+                addrs.insert(ip);
+            }
+            s.ips = addrs;
+            s.resolving = false;
+        }
+        notify_state_change(&frontend, &server, handle).await;
+    }
+}
+
 async fn notify_state_change(
-    frontend: &mut Sender<FrontendEvent>,
-    server: &mut Server,
+    frontend: &Sender<FrontendEvent>,
+    server: &Server,
     handle: ClientHandle,
 ) {
-    let state = server.client_manager.borrow_mut().get_mut(handle).cloned();
+    let state = server.client_manager.borrow().get(handle).cloned();
     if let Some((config, state)) = state {
         let _ = frontend
             .send(FrontendEvent::State(handle, config, state))

@@ -48,7 +48,7 @@ use super::{
 
 /// events that necessitate restarting the capture session
 #[derive(Clone, Copy, Debug)]
-enum CaptureEvent {
+enum LibeiNotifyEvent {
     Create(CaptureHandle, Position),
     Destroy(CaptureHandle),
 }
@@ -58,7 +58,7 @@ pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     capture_task: JoinHandle<Result<(), CaptureError>>,
     event_rx: Receiver<(CaptureHandle, Event)>,
-    notify_capture: Sender<CaptureEvent>,
+    notify_capture: Sender<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     cancellation_token: CancellationToken,
 }
@@ -239,7 +239,7 @@ impl<'a> LibeiInputCapture<'a> {
 
 async fn do_capture<'a>(
     input_capture: *const InputCapture<'a>,
-    mut capture_event: Receiver<CaptureEvent>,
+    mut capture_event: Receiver<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     session: Option<(Session<'a>, BitFlags<Capabilities>)>,
     event_tx: Sender<(CaptureHandle, Event)>,
@@ -259,7 +259,7 @@ async fn do_capture<'a>(
         let cancel_session = CancellationToken::new();
         let cancel_update = CancellationToken::new();
 
-        let mut capture_event_occured: Option<CaptureEvent> = None;
+        let mut capture_event_occured: Option<LibeiNotifyEvent> = None;
         let mut zones_have_changed = false;
 
         // kill session if clients need to be updated
@@ -315,8 +315,8 @@ async fn do_capture<'a>(
         // update clients if requested
         if let Some(event) = capture_event_occured.take() {
             match event {
-                CaptureEvent::Create(c, p) => active_clients.push((c, p)),
-                CaptureEvent::Destroy(c) => active_clients.retain(|(h, _)| *h != c),
+                LibeiNotifyEvent::Create(c, p) => active_clients.push((c, p)),
+                LibeiNotifyEvent::Destroy(c) => active_clients.retain(|(h, _)| *h != c),
             }
         }
 
@@ -658,7 +658,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
-            .send(CaptureEvent::Create(handle, pos))
+            .send(LibeiNotifyEvent::Create(handle, pos))
             .await;
         Ok(())
     }
@@ -666,7 +666,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
-            .send(CaptureEvent::Destroy(handle))
+            .send(LibeiNotifyEvent::Destroy(handle))
             .await;
         Ok(())
     }

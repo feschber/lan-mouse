@@ -6,6 +6,7 @@ use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::frontend::FrontendEvent;
 use input_event::{Event, ProtocolError};
@@ -15,6 +16,7 @@ use super::Server;
 pub async fn new(
     server: Server,
     frontend_notify_tx: Sender<FrontendEvent>,
+    cancellation_token: CancellationToken,
 ) -> io::Result<(
     JoinHandle<()>,
     Sender<(Event, SocketAddr)>,
@@ -38,8 +40,9 @@ pub async fn new(
                 _ = udp_sender => break, /* channel closed */
                 port = port_rx.recv() => match port {
                     Some(port) => update_port(&server, &frontend_notify_tx, &mut socket, port).await,
-                    _ => break,
-                }
+                    _ => continue,
+                },
+                _ = cancellation_token.cancelled() => break, /* cancellation requested */
             }
         }
     });
@@ -80,18 +83,13 @@ async fn udp_receiver(
 ) {
     loop {
         let event = receive_event(socket).await;
-        if receiver_tx.send(event).await.is_err() {
-            break;
-        }
+        receiver_tx.send(event).await.expect("channel closed");
     }
 }
 
 async fn udp_sender(socket: &UdpSocket, rx: &mut Receiver<(Event, SocketAddr)>) {
     loop {
-        let (event, addr) = match rx.recv().await {
-            Some(e) => e,
-            None => return,
-        };
+        let (event, addr) = rx.recv().await.expect("channel closed");
         if let Err(e) = send_event(socket, event, addr) {
             log::warn!("udp send failed: {e}");
         };
