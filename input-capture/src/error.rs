@@ -1,4 +1,3 @@
-use ashpd::desktop::ResponseError;
 use thiserror::Error;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -10,6 +9,8 @@ use wayland_client::{
     ConnectError, DispatchError,
 };
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+use ashpd::desktop::ResponseError;
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::{EiConvertEventStreamError, HandshakeError};
 
@@ -72,6 +73,7 @@ pub enum CaptureCreationError {
 
 impl CaptureCreationError {
     /// request was intentionally denied by the user
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     pub(crate) fn cancelled_by_user(&self) -> bool {
         matches!(
             self,
@@ -79,6 +81,10 @@ impl CaptureCreationError {
                 ResponseError::Cancelled
             )))
         )
+    }
+    #[cfg(not(all(unix, feature = "libei", not(target_os = "macos"))))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        false
     }
 }
 

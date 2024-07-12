@@ -80,6 +80,8 @@ impl InputEmulation for WindowsEmulation {
     async fn create(&mut self, _handle: EmulationHandle) {}
 
     async fn destroy(&mut self, _handle: EmulationHandle) {}
+
+    async fn terminate(&mut self) {}
 }
 
 impl WindowsEmulation {

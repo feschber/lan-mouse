@@ -1,3 +1,4 @@
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use ashpd::{desktop::ResponseError, Error::Response};
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::EiConvertEventStreamError;
@@ -78,6 +79,7 @@ pub enum EmulationCreationError {
 
 impl EmulationCreationError {
     /// request was intentionally denied by the user
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     pub(crate) fn cancelled_by_user(&self) -> bool {
         matches!(
             self,
@@ -87,6 +89,10 @@ impl EmulationCreationError {
                 ResponseError::Cancelled,
             )))
         )
+    }
+    #[cfg(not(all(unix, feature = "libei", not(target_os = "macos"))))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        false
     }
 }
 

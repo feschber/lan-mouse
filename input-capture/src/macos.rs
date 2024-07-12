@@ -4,8 +4,8 @@ use crate::{
 use async_trait::async_trait;
 use futures_core::Stream;
 use input_event::Event;
+use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::{io, pin::Pin};
 
 pub struct MacOSInputCapture;
 

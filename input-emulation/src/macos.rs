@@ -295,4 +295,6 @@ impl InputEmulation for MacOSEmulation {
     async fn create(&mut self, _handle: EmulationHandle) {}
 
     async fn destroy(&mut self, _handle: EmulationHandle) {}
+
+    async fn terminate(&mut self) {}
 }

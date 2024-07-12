@@ -5,7 +5,7 @@ pub mod error;
 pub mod proto;
 pub mod scancode;
 
-#[cfg(feature = "libei")]
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 mod libei;
 
 // FIXME
