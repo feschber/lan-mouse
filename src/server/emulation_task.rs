@@ -109,7 +109,12 @@ async fn do_emulation(
 ) -> Result<(), LanMouseEmulationError> {
     let backend = backend.map(|b| b.into());
     log::info!("creating input emulation...");
-    let mut emulation = input_emulation::create(backend).await?;
+    let mut emulation = tokio::select! {
+        r = input_emulation::create(backend) => {
+            r?
+        }
+        _ = server.cancelled() => return Ok(()),
+    };
     let _ = frontend_tx
         .send(FrontendEvent::EmulationStatus(Status::Enabled))
         .await;

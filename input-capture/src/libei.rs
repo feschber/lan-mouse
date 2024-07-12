@@ -1,7 +1,7 @@
 use ashpd::{
     desktop::{
         input_capture::{Activated, Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
-        ResponseError, Session,
+        Session,
     },
     enumflags2::BitFlags,
 };
@@ -140,21 +140,12 @@ async fn create_session<'a>(
     input_capture: &'a InputCapture<'a>,
 ) -> std::result::Result<(Session<'a>, BitFlags<Capabilities>), ashpd::Error> {
     log::debug!("creating input capture session");
-    let (session, capabilities) = loop {
-        match input_capture
-            .create_session(
-                &ashpd::WindowIdentifier::default(),
-                Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
-            )
-            .await
-        {
-            Ok(s) => break s,
-            Err(ashpd::Error::Response(ResponseError::Cancelled)) => continue,
-            o => o?,
-        };
-    };
-    log::debug!("capabilities: {capabilities:?}");
-    Ok((session, capabilities))
+    input_capture
+        .create_session(
+            &ashpd::WindowIdentifier::default(),
+            Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
+        )
+        .await
 }
 
 async fn connect_to_eis(

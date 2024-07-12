@@ -99,7 +99,14 @@ async fn do_capture(
     frontend_tx: &Sender<FrontendEvent>,
     release_bind: &[scancode::Linux],
 ) -> Result<(), LanMouseCaptureError> {
-    let mut capture = input_capture::create(backend).await?;
+    /* allow cancelling capture request */
+    let mut capture = tokio::select! {
+        r = input_capture::create(backend) => {
+            r?
+        },
+        _ = server.cancelled() => return Ok(()),
+    };
+
     let _ = frontend_tx
         .send(FrontendEvent::CaptureStatus(Status::Enabled))
         .await;

@@ -156,7 +156,6 @@ pub async fn create(
         Backend::Windows,
         #[cfg(target_os = "macos")]
         Backend::MacOs,
-        Backend::Dummy,
     ] {
         match create_backend(backend).await {
             Ok(b) => {
