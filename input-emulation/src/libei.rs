@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
-        ResponseError,
+        ResponseError, Session,
     },
     WindowIdentifier,
 };
@@ -60,30 +60,32 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub struct LibeiEmulation {
+pub struct LibeiEmulation<'a> {
     context: ei::Context,
     devices: Devices,
     ei_task: JoinHandle<()>,
     error: Arc<Mutex<Option<EmulationError>>>,
     libei_error: Arc<AtomicBool>,
     serial: AtomicU32,
+    _remote_desktop: RemoteDesktop<'a>,
+    session: Session<'a>,
 }
 
-async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
-    let proxy = RemoteDesktop::new().await?;
+async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), ashpd::Error> {
+    let remote_desktop = RemoteDesktop::new().await?;
 
     // retry when user presses the cancel button
     let (session, _) = loop {
         log::debug!("creating session ...");
-        let session = proxy.create_session().await?;
+        let session = remote_desktop.create_session().await?;
 
         log::debug!("selecting devices ...");
-        proxy
+        remote_desktop
             .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
             .await?;
 
         log::info!("requesting permission for input emulation");
-        match proxy
+        match remote_desktop
             .start(&session, &WindowIdentifier::default())
             .await?
             .response()
@@ -97,12 +99,13 @@ async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
         };
     };
 
-    proxy.connect_to_eis(&session).await
+    let fd = remote_desktop.connect_to_eis(&session).await?;
+    Ok((remote_desktop, session, fd))
 }
 
-impl LibeiEmulation {
+impl<'a> LibeiEmulation<'a> {
     pub async fn new() -> Result<Self, LibeiEmulationCreationError> {
-        let eifd = get_ei_fd().await?;
+        let (remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
@@ -136,18 +139,20 @@ impl LibeiEmulation {
             error,
             libei_error,
             serial,
+            remote_desktop,
+            session,
         })
     }
 }
 
-impl Drop for LibeiEmulation {
+impl<'a> Drop for LibeiEmulation<'a> {
     fn drop(&mut self) {
         self.ei_task.abort();
     }
 }
 
 #[async_trait]
-impl InputEmulation for LibeiEmulation {
+impl<'a> InputEmulation for LibeiEmulation<'a> {
     async fn consume(
         &mut self,
         event: Event,
@@ -247,8 +252,21 @@ impl InputEmulation for LibeiEmulation {
     async fn destroy(&mut self, _: EmulationHandle) {}
 
     async fn terminate(&mut self) {
+        if let Err(e) = self.session.close().await {
+            log::warn!("session.close(): {e}");
+        };
+        match self
+            .session
+            .receive_closed()
+            .await
+            .expect("could not receive closed")
+            .next()
+            .await
+        {
+            Some(c) => log::info!("session closed: {c:?}"),
+            None => log::warn!("session.receive_closed(): Unexpected EOF"),
+        };
         self.ei_task.abort();
-        /* FIXME */
     }
 }
 

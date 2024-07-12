@@ -44,7 +44,7 @@ use super::{
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
  * prevents receiving further events after a session has been disabled once.
- * Therefore the session needs to recreated when the barriers are updated */
+ * Therefore the session needs to be recreated when the barriers are updated */
 
 /// events that necessitate restarting the capture session
 #[derive(Clone, Copy, Debug)]
@@ -79,14 +79,15 @@ static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
     m
 });
 
+/// returns (start pos, end pos), inclusive
 fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
     let (x, y) = (r.x_offset(), r.y_offset());
-    let (width, height) = (r.width() as i32, r.height() as i32);
+    let (w, h) = (r.width() as i32, r.height() as i32);
     match pos {
-        Position::Left => (x, y, x, y + height - 1), // start pos, end pos, inclusive
-        Position::Right => (x + width, y, x + width, y + height - 1),
-        Position::Top => (x, y, x + width - 1, y),
-        Position::Bottom => (x, y + height, x + width - 1, y + height),
+        Position::Left => (x, y, x, y + h - 1),
+        Position::Right => (x + w, y, x + w, y + h - 1),
+        Position::Top => (x, y, x + w - 1, y),
+        Position::Bottom => (x, y + h, x + w - 1, y + h),
     }
 }
 
@@ -487,6 +488,15 @@ async fn release_capture(
     Ok(())
 }
 
+static ALL_CAPABILITIES: &[DeviceCapability] = &[
+    DeviceCapability::Pointer,
+    DeviceCapability::PointerAbsolute,
+    DeviceCapability::Keyboard,
+    DeviceCapability::Touch,
+    DeviceCapability::Scroll,
+    DeviceCapability::Button,
+];
+
 async fn handle_ei_event(
     ei_event: EiEvent,
     current_client: Option<CaptureHandle>,
@@ -496,14 +506,7 @@ async fn handle_ei_event(
 ) -> Result<(), CaptureError> {
     match ei_event {
         EiEvent::SeatAdded(s) => {
-            s.seat.bind_capabilities(&[
-                DeviceCapability::Pointer,
-                DeviceCapability::PointerAbsolute,
-                DeviceCapability::Keyboard,
-                DeviceCapability::Touch,
-                DeviceCapability::Scroll,
-                DeviceCapability::Button,
-            ]);
+            s.seat.bind_capabilities(ALL_CAPABILITIES);
             context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
         EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
