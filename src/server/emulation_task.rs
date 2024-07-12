@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{
     client::{ClientHandle, ClientManager},
-    frontend::{FrontendEvent, Status},
+    frontend::Status,
     server::State,
 };
 use input_emulation::{
@@ -63,8 +63,7 @@ async fn emulation_task(
                 log::warn!("input emulation exited: {e}");
             }
         }
-        let emulation_disabled = FrontendEvent::EmulationStatus(Status::Disabled);
-        server.notify_frontend(emulation_disabled);
+        server.set_emulation_status(Status::Disabled);
 
         if server.notifies.cancel.is_cancelled() {
             break;
@@ -90,8 +89,8 @@ async fn do_emulation(
         }
         _ = server.cancelled() => return Ok(()),
     };
-    let emulation_enabled = FrontendEvent::EmulationStatus(Status::Enabled);
-    server.notify_frontend(emulation_enabled);
+
+    server.set_emulation_status(Status::Enabled);
 
     let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
     emulation.terminate().await;

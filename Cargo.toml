@@ -10,8 +10,8 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/ferdinandschober/lan-mouse"
 
 [profile.release]
-# strip = true
-# lto = "fat"
+strip = true
+lto = "fat"
 
 [dependencies]
 input-event = { path = "input-event", version = "0.1.0" }

@@ -113,10 +113,11 @@ pub enum FrontendRequest {
     EnableEmulation,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum Status {
-    Enabled,
+    #[default]
     Disabled,
+    Enabled,
 }
 
 impl From<Status> for bool {

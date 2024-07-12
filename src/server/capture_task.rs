@@ -14,11 +14,7 @@ use input_capture::{
 
 use input_event::{scancode, Event, KeyboardEvent};
 
-use crate::{
-    client::ClientHandle,
-    frontend::{FrontendEvent, Status},
-    server::State,
-};
+use crate::{client::ClientHandle, frontend::Status, server::State};
 
 use super::Server;
 
@@ -59,7 +55,7 @@ async fn capture_task(
         if let Err(e) = do_capture(backend, &server, &sender_tx, &mut notify_rx).await {
             log::warn!("input capture exited: {e}");
         }
-        server.notify_frontend(FrontendEvent::CaptureStatus(Status::Disabled));
+        server.set_capture_status(Status::Disabled);
         if server.is_cancelled() {
             break;
         }
@@ -81,7 +77,7 @@ async fn do_capture(
         _ = server.cancelled() => return Ok(()),
     };
 
-    server.notify_frontend(FrontendEvent::CaptureStatus(Status::Enabled));
+    server.set_capture_status(Status::Enabled);
 
     // FIXME DUPLICATES
     let clients = server

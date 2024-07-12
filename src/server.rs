@@ -22,7 +22,7 @@ use crate::{
     client::{ClientConfig, ClientHandle, ClientManager, ClientState, Position},
     config::Config,
     dns::DnsResolver,
-    frontend::{self, FrontendEvent, FrontendListener, FrontendRequest},
+    frontend::{self, FrontendEvent, FrontendListener, FrontendRequest, Status},
     server::capture_task::CaptureEvent,
 };
 
@@ -59,6 +59,8 @@ pub struct Server {
     config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
     pending_dns_requests: Rc<RefCell<VecDeque<ClientHandle>>>,
+    capture_status: Rc<Cell<Status>>,
+    emulation_status: Rc<Cell<Status>>,
 }
 
 #[derive(Default)]
@@ -113,6 +115,8 @@ impl Server {
             notifies,
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             pending_dns_requests: Rc::new(RefCell::new(VecDeque::new())),
+            capture_status: Default::default(),
+            emulation_status: Default::default(),
         }
     }
 
@@ -178,6 +182,9 @@ impl Server {
                         Ok(s) => join_handles.push(self.clone().handle_frontend_stream(s, request_tx.clone())),
                         Err(e) => log::warn!("error accepting frontend connection: {e}"),
                     };
+                    self.enumerate();
+                    self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
+                    self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 }
                 request = request_rx.recv() => {
                     self.handle_request(&capture_tx, &emulation_tx, request.expect("channel closed")).await;
@@ -317,42 +324,23 @@ impl Server {
                     self.deactivate_client(capture, emulate, handle).await;
                 }
             }
-            FrontendRequest::ChangePort(port) => {
-                self.request_port_change(port);
-            }
+            FrontendRequest::ChangePort(port) => self.request_port_change(port),
             FrontendRequest::Delete(handle) => {
                 self.remove_client(capture, emulate, handle).await;
                 self.notify_frontend(FrontendEvent::Deleted(handle));
             }
-            FrontendRequest::Enumerate() => {
-                let clients = self
-                    .client_manager
-                    .borrow()
-                    .get_client_states()
-                    .map(|(h, (c, s))| (h, c.clone(), s.clone()))
-                    .collect();
-                self.notify_frontend(FrontendEvent::Enumerate(clients));
-            }
-            FrontendRequest::GetState(handle) => {
-                self.broadcast_client(handle);
-            }
+            FrontendRequest::Enumerate() => self.enumerate(),
+            FrontendRequest::GetState(handle) => self.broadcast_client(handle),
             FrontendRequest::UpdateFixIps(handle, fix_ips) => {
-                self.update_fix_ips(handle, fix_ips).await;
+                self.update_fix_ips(handle, fix_ips);
                 self.request_dns(handle);
             }
-            FrontendRequest::UpdateHostname(handle, hostname) => {
-                self.update_hostname(handle, hostname).await;
-                self.request_dns(handle);
-            }
-            FrontendRequest::UpdatePort(handle, port) => {
-                self.update_port(handle, port);
-            }
+            FrontendRequest::UpdateHostname(handle, host) => self.update_hostname(handle, host),
+            FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
             FrontendRequest::UpdatePosition(handle, pos) => {
                 self.update_pos(handle, capture, emulate, pos).await;
             }
-            FrontendRequest::ResolveDns(handle) => {
-                self.request_dns(handle);
-            }
+            FrontendRequest::ResolveDns(handle) => self.request_dns(handle),
         };
         false
     }
@@ -370,6 +358,16 @@ impl Server {
                 _ = self.cancelled() => {},
             }
         })
+    }
+
+    fn enumerate(&self) {
+        let clients = self
+            .client_manager
+            .borrow()
+            .get_client_states()
+            .map(|(h, (c, s))| (h, c.clone(), s.clone()))
+            .collect();
+        self.notify_frontend(FrontendEvent::Enumerate(clients));
     }
 
     async fn add_client(&self) -> ClientHandle {
@@ -447,7 +445,7 @@ impl Server {
         }
     }
 
-    async fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
+    fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
         let mut client_manager = self.client_manager.borrow_mut();
         let Some((c, _)) = client_manager.get_mut(handle) else {
             return;
@@ -456,7 +454,7 @@ impl Server {
         c.fix_ips = fix_ips;
     }
 
-    async fn update_hostname(&self, handle: ClientHandle, hostname: Option<String>) {
+    fn update_hostname(&self, handle: ClientHandle, hostname: Option<String>) {
         let mut client_manager = self.client_manager.borrow_mut();
         let Some((c, s)) = client_manager.get_mut(handle) else {
             return;
@@ -520,6 +518,18 @@ impl Server {
             FrontendEvent::NoSuchClient(handle)
         };
         self.notify_frontend(event);
+    }
+
+    fn set_emulation_status(&self, status: Status) {
+        self.emulation_status.replace(status);
+        let status = FrontendEvent::EmulationStatus(status);
+        self.notify_frontend(status);
+    }
+
+    fn set_capture_status(&self, status: Status) {
+        self.capture_status.replace(status);
+        let status = FrontendEvent::CaptureStatus(status);
+        self.notify_frontend(status);
     }
 }
 
