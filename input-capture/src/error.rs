@@ -73,12 +73,12 @@ pub enum CaptureCreationError {
 impl CaptureCreationError {
     /// request was intentionally denied by the user
     pub(crate) fn cancelled_by_user(&self) -> bool {
-        match self {
-            CaptureCreationError::Libei(LibeiCaptureCreationError::Ashpd(
-                ashpd::Error::Response(ResponseError::Cancelled),
-            )) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            CaptureCreationError::Libei(LibeiCaptureCreationError::Ashpd(ashpd::Error::Response(
+                ResponseError::Cancelled
+            )))
+        )
     }
 }
 

@@ -79,15 +79,14 @@ pub enum EmulationCreationError {
 impl EmulationCreationError {
     /// request was intentionally denied by the user
     pub(crate) fn cancelled_by_user(&self) -> bool {
-        match self {
+        matches!(
+            self,
             EmulationCreationError::Libei(LibeiEmulationCreationError::Ashpd(Response(
                 ResponseError::Cancelled,
-            )))
-            | EmulationCreationError::Xdp(XdpEmulationCreationError::Ashpd(Response(
+            ))) | EmulationCreationError::Xdp(XdpEmulationCreationError::Ashpd(Response(
                 ResponseError::Cancelled,
-            ))) => true,
-            _ => false,
-        }
+            )))
+        )
     }
 }
 

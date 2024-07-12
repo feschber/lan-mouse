@@ -290,8 +290,7 @@ async fn do_capture<'a>(
                 &mut active_clients,
                 &mut next_barrier_id,
                 &notify_release,
-                cancel_session.clone(),
-                cancel_update.clone(),
+                (cancel_session.clone(), cancel_update.clone()),
             );
 
             let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
@@ -334,9 +333,9 @@ async fn do_capture_session(
     active_clients: &mut Vec<(CaptureHandle, Position)>,
     next_barrier_id: &mut u32,
     notify_release: &Notify,
-    cancel_session: CancellationToken,
-    cancel_update: CancellationToken,
+    cancel: (CancellationToken, CancellationToken),
 ) -> Result<(), CaptureError> {
+    let (cancel_session, cancel_update) = cancel;
     // current client
     let current_client = Rc::new(Cell::new(None));
 
