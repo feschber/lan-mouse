@@ -11,7 +11,7 @@ use std::default::Default;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::task::ready;
-use std::{io, pin::Pin, thread};
+use std::{pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
