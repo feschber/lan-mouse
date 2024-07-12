@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
@@ -265,6 +265,8 @@ async fn ei_task(
             Err(e) => {
                 libei_error.store(true, Ordering::SeqCst);
                 error.lock().unwrap().replace(e);
+                // wait for termination -> otherwise we will loop forever
+                future::pending::<()>().await;
             }
         }
     }
