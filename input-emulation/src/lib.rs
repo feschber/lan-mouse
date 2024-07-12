@@ -132,6 +132,7 @@ pub async fn create(
                 log::info!("using emulation backend: {backend}");
                 return Ok(b);
             }
+            Err(e) if e.cancelled_by_user() => return Err(e),
             Err(e) => log::warn!("{e}"),
         }
     }

@@ -29,29 +29,19 @@ impl<'a> DesktopPortalEmulation<'a> {
         let proxy = RemoteDesktop::new().await?;
 
         // retry when user presses the cancel button
-        let (session, _) = loop {
-            log::debug!("creating session ...");
-            let session = proxy.create_session().await?;
+        log::debug!("creating session ...");
+        let session = proxy.create_session().await?;
 
-            log::debug!("selecting devices ...");
-            proxy
-                .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
-                .await?;
+        log::debug!("selecting devices ...");
+        proxy
+            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+            .await?;
 
-            log::info!("requesting permission for input emulation");
-            match proxy
-                .start(&session, &WindowIdentifier::default())
-                .await?
-                .response()
-            {
-                Ok(d) => break (session, d),
-                Err(ashpd::Error::Response(ResponseError::Cancelled)) => {
-                    log::warn!("request cancelled!");
-                    continue;
-                }
-                e => e?,
-            };
-        };
+        log::info!("requesting permission for input emulation");
+        let _devices = proxy
+            .start(&session, &WindowIdentifier::default())
+            .await?
+            .response()?;
 
         log::debug!("started session");
         let session = session;

@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
-        ResponseError, Session,
+        Session,
     },
     WindowIdentifier,
 };
@@ -74,30 +74,19 @@ pub struct LibeiEmulation<'a> {
 async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
-    // retry when user presses the cancel button
-    let (session, _) = loop {
-        log::debug!("creating session ...");
-        let session = remote_desktop.create_session().await?;
+    log::debug!("creating session ...");
+    let session = remote_desktop.create_session().await?;
 
-        log::debug!("selecting devices ...");
-        remote_desktop
-            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
-            .await?;
+    log::debug!("selecting devices ...");
+    remote_desktop
+        .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+        .await?;
 
-        log::info!("requesting permission for input emulation");
-        match remote_desktop
-            .start(&session, &WindowIdentifier::default())
-            .await?
-            .response()
-        {
-            Ok(d) => break (session, d),
-            Err(ashpd::Error::Response(ResponseError::Cancelled)) => {
-                log::warn!("request cancelled!");
-                continue;
-            }
-            e => e?,
-        };
-    };
+    log::info!("requesting permission for input emulation");
+    let _devices = remote_desktop
+        .start(&session, &WindowIdentifier::default())
+        .await?
+        .response()?;
 
     let fd = remote_desktop.connect_to_eis(&session).await?;
     Ok((remote_desktop, session, fd))

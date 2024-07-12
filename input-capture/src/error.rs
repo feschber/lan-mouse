@@ -1,3 +1,4 @@
+use ashpd::desktop::ResponseError;
 use thiserror::Error;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -67,6 +68,18 @@ pub enum CaptureCreationError {
     #[cfg(windows)]
     #[error("error creating windows capture backend")]
     Windows,
+}
+
+impl CaptureCreationError {
+    /// request was intentionally denied by the user
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        match self {
+            CaptureCreationError::Libei(LibeiCaptureCreationError::Ashpd(
+                ashpd::Error::Response(ResponseError::Cancelled),
+            )) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
