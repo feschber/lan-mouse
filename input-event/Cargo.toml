@@ -12,3 +12,8 @@ log = "0.4.22"
 num_enum = "0.7.2"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0.61"
+reis = { version = "0.2.0", optional = true }
+
+[features]
+default = ["libei"]
+libei = ["dep:reis"]

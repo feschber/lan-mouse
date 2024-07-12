@@ -5,6 +5,9 @@ pub mod error;
 pub mod proto;
 pub mod scancode;
 
+#[cfg(feature = "libei")]
+mod libei;
+
 // FIXME
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
