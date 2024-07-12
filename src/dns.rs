@@ -56,6 +56,7 @@ impl DnsResolver {
                 continue;
             };
 
+            /* FIXME race -> need some other event */
             server.notify_client_update(handle);
 
             log::info!("resolving ({handle}) `{hostname}` ...");
