@@ -59,7 +59,12 @@ async fn capture_task(
         if server.is_cancelled() {
             break;
         }
-        server.capture_notified().await;
+
+        // allow cancellation
+        tokio::select! {
+            _ = server.capture_notified() => {},
+            _ = server.cancelled() => break,
+        }
     }
 }
 

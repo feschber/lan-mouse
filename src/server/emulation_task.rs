@@ -69,7 +69,13 @@ async fn emulation_task(
             break;
         }
         log::info!("waiting for user to request input emulation ...");
-        server.emulation_notified().await;
+
+        // allow cancellation
+        tokio::select! {
+            _ = server.emulation_notified() => {},
+            _ = server.cancelled() => break,
+        }
+
         log::info!("... done");
     }
 }
