@@ -253,7 +253,7 @@ impl FrontendListener {
         Ok(rx)
     }
 
-    pub(crate) async fn broadcast_event(&mut self, notify: FrontendEvent) -> Result<()> {
+    pub(crate) async fn broadcast(&mut self, notify: FrontendEvent) {
         // encode event
         let json = serde_json::to_string(&notify).unwrap();
         let payload = json.as_bytes();
@@ -277,7 +277,6 @@ impl FrontendListener {
         // could not find a better solution because async
         let mut keep = keep.into_iter();
         self.tx_streams.retain(|_| keep.next().unwrap());
-        Ok(())
     }
 }
 

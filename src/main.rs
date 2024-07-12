@@ -37,7 +37,7 @@ pub fn run() -> Result<()> {
         emulation_test::run()?;
     } else if config.daemon {
         // if daemon is specified we run the service
-        run_service(&config)?;
+        run_service(config)?;
     } else {
         //  otherwise start the service as a child process and
         //  run a frontend
@@ -58,7 +58,7 @@ pub fn run() -> Result<()> {
     anyhow::Ok(())
 }
 
-fn run_service(config: &Config) -> Result<()> {
+fn run_service(config: Config) -> Result<()> {
     // create single threaded tokio runtime
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -70,10 +70,8 @@ fn run_service(config: &Config) -> Result<()> {
         // run main loop
         log::info!("Press {:?} to release the mouse", config.release_bind);
 
-        let server = Server::new(config);
-        server
-            .run(config.capture_backend, config.emulation_backend)
-            .await?;
+        let mut server = Server::new(config);
+        server.run().await?;
 
         log::debug!("service exiting");
         anyhow::Ok(())

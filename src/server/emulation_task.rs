@@ -8,7 +8,6 @@ use tokio::{
 
 use crate::{
     client::{ClientHandle, ClientManager},
-    config::EmulationBackend,
     frontend::{FrontendEvent, Status},
     server::State,
 };
@@ -33,22 +32,12 @@ pub enum EmulationEvent {
 
 pub fn new(
     server: Server,
-    backend: Option<EmulationBackend>,
     emulation_rx: Receiver<EmulationEvent>,
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    frontend_tx: Sender<FrontendEvent>,
 ) -> JoinHandle<()> {
-    let emulation_task = emulation_task(
-        backend,
-        emulation_rx,
-        server,
-        udp_rx,
-        sender_tx,
-        capture_tx,
-        frontend_tx,
-    );
+    let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx, capture_tx);
     tokio::task::spawn_local(emulation_task)
 }
 
@@ -61,34 +50,22 @@ pub enum LanMouseEmulationError {
 }
 
 async fn emulation_task(
-    backend: Option<EmulationBackend>,
-    mut rx: Receiver<EmulationEvent>,
     server: Server,
+    mut rx: Receiver<EmulationEvent>,
     mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    frontend_tx: Sender<FrontendEvent>,
 ) {
     loop {
-        match do_emulation(
-            &server,
-            backend,
-            &mut rx,
-            &mut udp_rx,
-            &sender_tx,
-            &capture_tx,
-            &frontend_tx,
-        )
-        .await
-        {
+        match do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
             Ok(()) => {}
             Err(e) => {
                 log::warn!("input emulation exited: {e}");
             }
         }
-        let _ = frontend_tx
-            .send(FrontendEvent::EmulationStatus(Status::Disabled))
-            .await;
+        let emulation_disabled = FrontendEvent::EmulationStatus(Status::Disabled);
+        server.notify_frontend(emulation_disabled);
+
         if server.notifies.cancel.is_cancelled() {
             break;
         }
@@ -100,14 +77,12 @@ async fn emulation_task(
 
 async fn do_emulation(
     server: &Server,
-    backend: Option<EmulationBackend>,
     rx: &mut Receiver<EmulationEvent>,
     udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     capture_tx: &Sender<CaptureEvent>,
-    frontend_tx: &Sender<FrontendEvent>,
 ) -> Result<(), LanMouseEmulationError> {
-    let backend = backend.map(|b| b.into());
+    let backend = server.config.emulation_backend.map(|b| b.into());
     log::info!("creating input emulation...");
     let mut emulation = tokio::select! {
         r = input_emulation::create(backend) => {
@@ -115,25 +90,17 @@ async fn do_emulation(
         }
         _ = server.cancelled() => return Ok(()),
     };
-    let _ = frontend_tx
-        .send(FrontendEvent::EmulationStatus(Status::Enabled))
-        .await;
+    let emulation_enabled = FrontendEvent::EmulationStatus(Status::Enabled);
+    server.notify_frontend(emulation_enabled);
 
     let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
     emulation.terminate().await;
     res?;
 
-    // FIXME DUPLICATES
     // add clients
-    // let clients = server
-    //     .client_manager
-    //     .borrow()
-    //     .get_client_states()
-    //     .map(|(h, _)| h)
-    //     .collect::<Vec<_>>();
-    // for handle in clients {
-    //     emulation.create(handle).await;
-    // }
+    for handle in server.active_clients() {
+        emulation.create(handle).await;
+    }
 
     // release potentially still pressed keys
     release_all_keys(server, &mut emulation).await?;

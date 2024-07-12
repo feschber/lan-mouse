@@ -16,7 +16,6 @@ use input_event::{scancode, Event, KeyboardEvent};
 
 use crate::{
     client::ClientHandle,
-    config::CaptureBackend,
     frontend::{FrontendEvent, Status},
     server::State,
 };
@@ -43,21 +42,11 @@ pub enum CaptureEvent {
 
 pub fn new(
     server: Server,
-    backend: Option<CaptureBackend>,
     capture_rx: Receiver<CaptureEvent>,
     udp_send: Sender<(Event, SocketAddr)>,
-    frontend_tx: Sender<FrontendEvent>,
-    release_bind: Vec<scancode::Linux>,
 ) -> JoinHandle<()> {
-    let backend = backend.map(|b| b.into());
-    tokio::task::spawn_local(capture_task(
-        server,
-        backend,
-        udp_send,
-        capture_rx,
-        frontend_tx,
-        release_bind,
-    ))
+    let backend = server.config.capture_backend.map(|b| b.into());
+    tokio::task::spawn_local(capture_task(server, backend, udp_send, capture_rx))
 }
 
 async fn capture_task(
@@ -65,25 +54,12 @@ async fn capture_task(
     backend: Option<input_capture::Backend>,
     sender_tx: Sender<(Event, SocketAddr)>,
     mut notify_rx: Receiver<CaptureEvent>,
-    frontend_tx: Sender<FrontendEvent>,
-    release_bind: Vec<scancode::Linux>,
 ) {
     loop {
-        if let Err(e) = do_capture(
-            backend,
-            &server,
-            &sender_tx,
-            &mut notify_rx,
-            &frontend_tx,
-            &release_bind,
-        )
-        .await
-        {
+        if let Err(e) = do_capture(backend, &server, &sender_tx, &mut notify_rx).await {
             log::warn!("input capture exited: {e}");
         }
-        let _ = frontend_tx
-            .send(FrontendEvent::CaptureStatus(Status::Disabled))
-            .await;
+        server.notify_frontend(FrontendEvent::CaptureStatus(Status::Disabled));
         if server.is_cancelled() {
             break;
         }
@@ -96,8 +72,6 @@ async fn do_capture(
     server: &Server,
     sender_tx: &Sender<(Event, SocketAddr)>,
     notify_rx: &mut Receiver<CaptureEvent>,
-    frontend_tx: &Sender<FrontendEvent>,
-    release_bind: &[scancode::Linux],
 ) -> Result<(), LanMouseCaptureError> {
     /* allow cancelling capture request */
     let mut capture = tokio::select! {
@@ -107,9 +81,7 @@ async fn do_capture(
         _ = server.cancelled() => return Ok(()),
     };
 
-    let _ = frontend_tx
-        .send(FrontendEvent::CaptureStatus(Status::Enabled))
-        .await;
+    server.notify_frontend(FrontendEvent::CaptureStatus(Status::Enabled));
 
     // FIXME DUPLICATES
     let clients = server
@@ -119,22 +91,16 @@ async fn do_capture(
         .map(|(h, s)| (h, s.clone()))
         .collect::<Vec<_>>();
     log::info!("{clients:?}");
-    // let clients = server
-    //     .client_manager
-    //     .borrow()
-    //     .get_client_states()
-    //     .map(|(h, (c, _))| (h, c.pos))
-    //     .collect::<Vec<_>>();
-    // for (handle, pos) in clients {
-    //     capture.create(handle, pos.into()).await?;
-    // }
+    for (handle, (config, _state)) in clients {
+        capture.create(handle, config.pos.into()).await?;
+    }
 
     let mut pressed_keys = HashSet::new();
     loop {
         tokio::select! {
             event = capture.next() => {
                 match event {
-                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, event, &mut pressed_keys, release_bind).await?,
+                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, event, &mut pressed_keys).await?,
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
                 }
@@ -176,7 +142,6 @@ async fn handle_capture_event(
     sender_tx: &Sender<(Event, SocketAddr)>,
     event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
-    release_bind: &[scancode::Linux],
 ) -> Result<(), CaptureError> {
     let (handle, mut e) = event;
     log::trace!("({handle}) {e:?}");
@@ -184,7 +149,7 @@ async fn handle_capture_event(
     if let Event::Keyboard(KeyboardEvent::Key { key, state, .. }) = e {
         update_pressed_keys(pressed_keys, key, state);
         log::debug!("{pressed_keys:?}");
-        if release_bind.iter().all(|k| pressed_keys.contains(k)) {
+        if server.release_bind.iter().all(|k| pressed_keys.contains(k)) {
             pressed_keys.clear();
             log::info!("releasing pointer");
             capture.release().await?;
