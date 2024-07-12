@@ -134,9 +134,10 @@ impl Server {
         let (emulation_tx, emulation_rx) = channel(1); /* emulation requests */
         let (udp_recv_tx, udp_recv_rx) = channel(1); /* udp receiver */
         let (udp_send_tx, udp_send_rx) = channel(1); /* udp sender */
+        let (request_tx, mut request_rx) = channel(1); /* frontend requests */
 
         // udp task
-        let network = network_task::new(self.clone(), udp_recv_tx, udp_send_rx).await?;
+        let network = network_task::new(self.clone(), udp_recv_tx.clone(), udp_send_rx).await?;
 
         // input capture
         let capture = capture_task::new(self.clone(), capture_rx, udp_send_tx.clone());
@@ -173,8 +174,6 @@ impl Server {
 
         let mut join_handles = vec![];
 
-        let (request_tx, mut request_rx) = channel(1);
-
         loop {
             tokio::select! {
                 stream = frontend.accept() => {
@@ -187,7 +186,7 @@ impl Server {
                     self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 }
                 request = request_rx.recv() => {
-                    self.handle_request(&capture_tx, &emulation_tx, request.expect("channel closed")).await;
+                    self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request.expect("channel closed")).await;
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
                     let events = self
@@ -222,6 +221,15 @@ impl Server {
         self.cancel();
         futures::future::join_all(join_handles).await;
         let _ = join!(capture, dns_task, emulation, network, ping);
+
+        assert!(
+            !capture_tx.is_closed()
+                && !emulation_tx.is_closed()
+                && !udp_recv_tx.is_closed()
+                && !udp_send_tx.is_closed()
+                && !request_tx.is_closed()
+                && !dns_request.is_closed()
+        );
 
         Ok(())
     }
