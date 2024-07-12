@@ -178,7 +178,7 @@ impl Server {
             tokio::select! {
                 stream = frontend.accept() => {
                     match stream {
-                        Ok(s) => join_handles.push(self.clone().handle_frontend_stream(s, request_tx.clone())),
+                        Ok(s) => join_handles.push(handle_frontend_stream(self.notifies.cancel.clone(), s, request_tx.clone())),
                         Err(e) => log::warn!("error accepting frontend connection: {e}"),
                     };
                     self.enumerate();
@@ -349,21 +349,6 @@ impl Server {
             FrontendRequest::ResolveDns(handle) => self.request_dns(handle),
         };
         false
-    }
-
-    fn handle_frontend_stream(
-        self,
-        #[cfg(unix)] stream: ReadHalf<UnixStream>,
-        #[cfg(windows)] stream: ReadHalf<TcpStream>,
-        request_channel: Sender<FrontendRequest>,
-    ) -> JoinHandle<()> {
-        let tx = request_channel.clone();
-        tokio::task::spawn_local(async move {
-            tokio::select! {
-                _ = listen_frontend(tx, stream) => {},
-                _ = self.cancelled() => {},
-            }
-        })
     }
 
     fn enumerate(&self) {
@@ -562,4 +547,19 @@ async fn listen_frontend(
             }
         }
     }
+}
+
+fn handle_frontend_stream(
+    cancel: CancellationToken,
+    #[cfg(unix)] stream: ReadHalf<UnixStream>,
+    #[cfg(windows)] stream: ReadHalf<TcpStream>,
+    request_channel: Sender<FrontendRequest>,
+) -> JoinHandle<()> {
+    let tx = request_channel.clone();
+    tokio::task::spawn_local(async move {
+        tokio::select! {
+            _ = listen_frontend(tx, stream) => {},
+            _ = cancel.cancelled() => {},
+        }
+    })
 }
