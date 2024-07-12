@@ -105,7 +105,7 @@ async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), as
 
 impl<'a> LibeiEmulation<'a> {
     pub async fn new() -> Result<Self, LibeiEmulationCreationError> {
-        let (remote_desktop, session, eifd) = get_ei_fd().await?;
+        let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
@@ -139,7 +139,7 @@ impl<'a> LibeiEmulation<'a> {
             error,
             libei_error,
             serial,
-            remote_desktop,
+            _remote_desktop,
             session,
         })
     }
@@ -252,20 +252,7 @@ impl<'a> InputEmulation for LibeiEmulation<'a> {
     async fn destroy(&mut self, _: EmulationHandle) {}
 
     async fn terminate(&mut self) {
-        if let Err(e) = self.session.close().await {
-            log::warn!("session.close(): {e}");
-        };
-        match self
-            .session
-            .receive_closed()
-            .await
-            .expect("could not receive closed")
-            .next()
-            .await
-        {
-            Some(c) => log::info!("session closed: {c:?}"),
-            None => log::warn!("session.receive_closed(): Unexpected EOF"),
-        };
+        let _ = self.session.close().await;
         self.ei_task.abort();
     }
 }
