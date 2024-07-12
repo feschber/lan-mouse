@@ -184,6 +184,7 @@ impl Server {
                     self.enumerate();
                     self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
                     self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
+                    self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
                 }
                 request = request_rx.recv() => {
                     self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request.expect("channel closed")).await;
