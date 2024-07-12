@@ -57,6 +57,10 @@ input capture (to send events *to* other clients) on different operating systems
 > If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
 > Otherwise input capture will not work.
 
+> [!Important]
+> The mouse cursor will be invisible when sending input to a Windows system if
+> there is no real mouse connected to the machine.
+
 ## Installation
 ### Install via cargo
 ```sh
