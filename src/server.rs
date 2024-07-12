@@ -287,6 +287,7 @@ impl Server {
 
     fn request_dns(&self, handle: ClientHandle) {
         self.pending_dns_requests.borrow_mut().push_back(handle);
+        self.notifies.dns_request_pending.notify_one();
     }
 
     async fn handle_request(

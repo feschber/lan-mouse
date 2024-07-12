@@ -58,6 +58,7 @@ impl DnsResolver {
 
             server.notify_client_update(handle);
 
+            log::info!("resolving ({handle}) `{hostname}` ...");
             let ips = match self.resolve(&hostname).await {
                 Ok(ips) => ips,
                 Err(e) => {
