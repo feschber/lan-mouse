@@ -1,7 +1,7 @@
 use ashpd::{
     desktop::{
         remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
-        ResponseError, Session,
+        Session,
     },
     zbus::AsyncDrop,
     WindowIdentifier,
