@@ -218,18 +218,16 @@ impl Server {
 
         log::info!("terminating service");
 
+        assert!(!capture_tx.is_closed());
+        assert!(!emulation_tx.is_closed());
+        assert!(!udp_recv_tx.is_closed());
+        assert!(!udp_send_tx.is_closed());
+        assert!(!request_tx.is_closed());
+        assert!(!dns_request.is_closed());
+
         self.cancel();
         futures::future::join_all(join_handles).await;
         let _ = join!(capture, dns_task, emulation, network, ping);
-
-        assert!(
-            !capture_tx.is_closed()
-                && !emulation_tx.is_closed()
-                && !udp_recv_tx.is_closed()
-                && !udp_send_tx.is_closed()
-                && !request_tx.is_closed()
-                && !dns_request.is_closed()
-        );
 
         Ok(())
     }
