@@ -98,14 +98,15 @@ async fn do_emulation(
 
     server.set_emulation_status(Status::Enabled);
 
-    let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
-    emulation.terminate().await;
-    res?;
-
     // add clients
     for handle in server.active_clients() {
         emulation.create(handle).await;
     }
+
+    let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
+
+    emulation.terminate().await;
+    res?;
 
     // release potentially still pressed keys
     release_all_keys(server, &mut emulation).await?;
