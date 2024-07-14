@@ -193,13 +193,13 @@ impl Server {
                     log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
-                    let events = self
-                        .pending_frontend_events
-                        .borrow_mut()
-                        .drain(..)
-                        .collect::<Vec<_>>();
-                    for event in events {
-                        frontend.broadcast(event).await;
+                    loop {
+                        let event = self.pending_frontend_events.borrow_mut().pop_front();
+                        if let Some(event) = event {
+                            frontend.broadcast(event).await;
+                        } else {
+                            break;
+                        }
                     }
                 },
                 _ = self.notifies.dns_request_pending.notified() => {
@@ -561,12 +561,11 @@ fn handle_frontend_stream(
     cancel: CancellationToken,
     #[cfg(unix)] stream: ReadHalf<UnixStream>,
     #[cfg(windows)] stream: ReadHalf<TcpStream>,
-    request_channel: Sender<FrontendRequest>,
+    request_tx: Sender<FrontendRequest>,
 ) -> JoinHandle<()> {
-    let tx = request_channel.clone();
     tokio::task::spawn_local(async move {
         tokio::select! {
-            _ = listen_frontend(tx, stream) => {},
+            _ = listen_frontend(request_tx, stream) => {},
             _ = cancel.cancelled() => {},
         }
     })
