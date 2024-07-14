@@ -287,7 +287,7 @@ impl Server {
         self.notify_frontend(FrontendEvent::PortChanged(port, msg));
     }
 
-    pub(crate) fn notify_client_update(&self, handle: ClientHandle) {
+    pub(crate) fn client_resolved(&self, handle: ClientHandle) {
         let state = self.client_manager.borrow().get(handle).cloned();
         if let Some((config, state)) = state {
             self.notify_frontend(FrontendEvent::State(handle, config, state));
@@ -373,7 +373,7 @@ impl Server {
         handle
     }
 
-    pub async fn deactivate_client(
+    async fn deactivate_client(
         &self,
         capture: &Sender<CaptureEvent>,
         emulate: &Sender<EmulationEvent>,
@@ -390,7 +390,7 @@ impl Server {
         log::debug!("deactivating client {handle} done");
     }
 
-    pub async fn activate_client(
+    async fn activate_client(
         &self,
         capture: &Sender<CaptureEvent>,
         emulate: &Sender<EmulationEvent>,
@@ -423,7 +423,7 @@ impl Server {
         log::debug!("activating client {handle} done");
     }
 
-    pub async fn remove_client(
+    async fn remove_client(
         &self,
         capture: &Sender<CaptureEvent>,
         emulate: &Sender<EmulationEvent>,

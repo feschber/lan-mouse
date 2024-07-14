@@ -11,7 +11,7 @@ use input_event::{Event, ProtocolError};
 
 use super::Server;
 
-pub async fn new(
+pub(crate) async fn new(
     server: Server,
     udp_recv_tx: Sender<Result<(Event, SocketAddr), NetworkError>>,
     udp_send_rx: Receiver<(Event, SocketAddr)>,

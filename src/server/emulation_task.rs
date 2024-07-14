@@ -21,7 +21,7 @@ use input_event::{Event, KeyboardEvent};
 use super::{network_task::NetworkError, CaptureEvent, Server};
 
 #[derive(Clone, Debug)]
-pub enum EmulationEvent {
+pub(crate) enum EmulationEvent {
     /// create a new client
     Create(EmulationHandle),
     /// destroy a client
@@ -30,7 +30,7 @@ pub enum EmulationEvent {
     ReleaseKeys(ClientHandle),
 }
 
-pub fn new(
+pub(crate) fn new(
     server: Server,
     emulation_rx: Receiver<EmulationEvent>,
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,

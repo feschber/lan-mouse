@@ -10,7 +10,7 @@ use super::{capture_task::CaptureEvent, emulation_task::EmulationEvent, Server, 
 
 const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
-pub fn new(
+pub(crate) fn new(
     server: Server,
     sender_ch: Sender<(Event, SocketAddr)>,
     emulate_notify: Sender<EmulationEvent>,

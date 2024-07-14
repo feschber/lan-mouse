@@ -19,7 +19,7 @@ use crate::{client::ClientHandle, frontend::Status, server::State};
 use super::Server;
 
 #[derive(Debug, Error)]
-pub enum LanMouseCaptureError {
+pub(crate) enum LanMouseCaptureError {
     #[error("error creating input-capture: `{0}`")]
     Create(#[from] CaptureCreationError),
     #[error("error while capturing input: `{0}`")]
@@ -27,7 +27,7 @@ pub enum LanMouseCaptureError {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum CaptureEvent {
+pub(crate) enum CaptureEvent {
     /// capture must release the mouse
     Release,
     /// add a capture client
@@ -36,7 +36,7 @@ pub enum CaptureEvent {
     Destroy(CaptureHandle),
 }
 
-pub fn new(
+pub(crate) fn new(
     server: Server,
     capture_rx: Receiver<CaptureEvent>,
     udp_send: Sender<(Event, SocketAddr)>,

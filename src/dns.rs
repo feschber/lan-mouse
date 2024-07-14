@@ -24,7 +24,7 @@ impl DnsResolver {
         ))
     }
 
-    pub(crate) async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn Error>> {
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn Error>> {
         let response = self.resolver.lookup_ip(host).await?;
         for ip in response.iter() {
             log::info!("{host}: adding ip {ip}");
@@ -32,7 +32,7 @@ impl DnsResolver {
         Ok(response.iter().collect())
     }
 
-    pub async fn run(mut self, server: Server) {
+    pub(crate) async fn run(mut self, server: Server) {
         tokio::select! {
             _ = server.cancelled() => {},
             _ = self.do_dns(&server) => {},
@@ -56,7 +56,7 @@ impl DnsResolver {
             };
 
             /* FIXME race -> need some other event */
-            server.notify_client_update(handle);
+            server.client_resolved(handle);
 
             log::info!("resolving ({handle}) `{hostname}` ...");
             let ips = match self.resolve(&hostname).await {
@@ -76,7 +76,7 @@ impl DnsResolver {
                 s.ips = addrs;
                 s.resolving = false;
             }
-            server.notify_client_update(handle);
+            server.client_resolved(handle);
         }
     }
 }
