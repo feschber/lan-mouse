@@ -25,7 +25,6 @@ impl DnsResolver {
     }
 
     pub(crate) async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn Error>> {
-        log::info!("resolving {host} ...");
         let response = self.resolver.lookup_ip(host).await?;
         for ip in response.iter() {
             log::info!("{host}: adding ip {ip}");
