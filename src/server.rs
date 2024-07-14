@@ -1,3 +1,4 @@
+use capture_task::CaptureEvent;
 use emulation_task::EmulationEvent;
 use log;
 use std::{
@@ -23,7 +24,6 @@ use crate::{
     config::Config,
     dns::DnsResolver,
     frontend::{self, FrontendEvent, FrontendListener, FrontendRequest, Status},
-    server::capture_task::CaptureEvent,
 };
 
 #[cfg(unix)]
