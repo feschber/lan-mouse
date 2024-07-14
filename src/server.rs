@@ -193,23 +193,21 @@ impl Server {
                     log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
-                    loop {
+                    while let Some(event) = {
+                        /* need to drop borrow before next iteration! */
                         let event = self.pending_frontend_events.borrow_mut().pop_front();
-                        if let Some(event) = event {
-                            frontend.broadcast(event).await;
-                        } else {
-                            break;
-                        }
+                        event
+                    } {
+                        frontend.broadcast(event).await;
                     }
                 },
                 _ = self.notifies.dns_request_pending.notified() => {
-                    loop {
+                    while let Some(request) = {
+                        /* need to drop borrow before next iteration! */
                         let request = self.pending_dns_requests.borrow_mut().pop_front();
-                        if let Some(request) = request {
-                            dns_request.send(request).await.expect("channel closed");
-                        } else {
-                            break;
-                        }
+                        request
+                    } {
+                        dns_request.send(request).await.expect("channel closed");
                     }
                 }
                 _ = self.cancelled() => break,
