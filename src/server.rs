@@ -203,13 +203,13 @@ impl Server {
                     }
                 },
                 _ = self.notifies.dns_request_pending.notified() => {
-                    let requests = self
-                        .pending_dns_requests
-                        .borrow_mut()
-                        .drain(..)
-                        .collect::<Vec<_>>();
-                    for request in requests {
-                        dns_request.send(request).await.expect("channel closed");
+                    loop {
+                        let request = self.pending_dns_requests.borrow_mut().pop_front();
+                        if let Some(request) = request {
+                            dns_request.send(request).await.expect("channel closed");
+                        } else {
+                            break;
+                        }
                     }
                 }
                 _ = self.cancelled() => break,
