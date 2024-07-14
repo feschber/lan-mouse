@@ -187,7 +187,10 @@ impl Server {
                     self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
                 }
                 request = request_rx.recv() => {
-                    self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request.expect("channel closed")).await;
+                    let request = request.expect("channel closed");
+                    log::debug!("received frontend request: {request:?}");
+                    self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request).await;
+                    log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
                     let events = self
@@ -376,6 +379,7 @@ impl Server {
         emulate: &Sender<EmulationEvent>,
         handle: ClientHandle,
     ) {
+        log::debug!("deactivating client {handle}");
         match self.client_manager.borrow_mut().get_mut(handle) {
             Some((_, s)) => s.active = false,
             None => return,
@@ -383,6 +387,7 @@ impl Server {
 
         let _ = capture.send(CaptureEvent::Destroy(handle)).await;
         let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
+        log::debug!("deactivating client {handle} done");
     }
 
     pub async fn activate_client(
@@ -391,6 +396,7 @@ impl Server {
         emulate: &Sender<EmulationEvent>,
         handle: ClientHandle,
     ) {
+        log::debug!("activating client");
         /* deactivate potential other client at this position */
         let pos = match self.client_manager.borrow().get(handle) {
             Some((client, _)) => client.pos,
@@ -412,8 +418,11 @@ impl Server {
         };
 
         /* notify emulation, capture and frontends */
+        log::debug!("capture.send(Create)");
         let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
+        log::debug!("emulation.send(Create)");
         let _ = emulate.send(EmulationEvent::Create(handle)).await;
+        log::debug!("activating client {handle} done");
     }
 
     pub async fn remove_client(

@@ -57,26 +57,22 @@ async fn emulation_task(
     capture_tx: Sender<CaptureEvent>,
 ) {
     loop {
-        match do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
-            Ok(()) => {}
-            Err(e) => {
-                log::warn!("input emulation exited: {e}");
-            }
+        if let Err(e) = do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
+            log::warn!("input emulation exited: {e}");
         }
         server.set_emulation_status(Status::Disabled);
-
-        if server.notifies.cancel.is_cancelled() {
+        if server.is_cancelled() {
             break;
         }
-        log::info!("waiting for user to request input emulation ...");
 
         // allow cancellation
-        tokio::select! {
-            _ = server.emulation_notified() => {},
-            _ = server.cancelled() => break,
+        loop {
+            tokio::select! {
+                _ = rx.recv() => continue, /* need to ignore requests here! */
+                _ = server.emulation_notified() => break,
+                _ = server.cancelled() => return,
+            }
         }
-
-        log::info!("... done");
     }
 }
 

@@ -61,9 +61,12 @@ async fn capture_task(
         }
 
         // allow cancellation
-        tokio::select! {
-            _ = server.capture_notified() => {},
-            _ = server.cancelled() => break,
+        loop {
+            tokio::select! {
+                _ = notify_rx.recv() => continue, /* need to ignore requests here! */
+                _ = server.capture_notified() => break,
+                _ = server.cancelled() => return,
+            }
         }
     }
 }
