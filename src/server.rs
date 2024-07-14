@@ -418,9 +418,7 @@ impl Server {
         };
 
         /* notify emulation, capture and frontends */
-        log::debug!("capture.send(Create)");
         let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
-        log::debug!("emulation.send(Create)");
         let _ = emulate.send(EmulationEvent::Create(handle)).await;
         log::debug!("activating client {handle} done");
     }
