@@ -1,5 +1,13 @@
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum InputCaptureError {
+    #[error("error creating input-capture: `{0}`")]
+    Create(#[from] CaptureCreationError),
+    #[error("error while capturing input: `{0}`")]
+    Capture(#[from] CaptureError),
+}
+
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use std::io;
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]

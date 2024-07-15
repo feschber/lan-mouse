@@ -1,10 +1,9 @@
 use async_trait::async_trait;
-use error::EmulationError;
 use std::fmt::Display;
 
 use input_event::Event;
 
-use self::error::EmulationCreationError;
+pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
 #[cfg(windows)]
 pub mod windows;

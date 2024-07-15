@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::net::IpAddr;
 use tokio::sync::mpsc::Receiver;
 
@@ -12,7 +11,7 @@ pub(crate) struct DnsResolver {
 }
 
 impl DnsResolver {
-    pub(crate) fn new(dns_request: Receiver<ClientHandle>) -> Result<Self> {
+    pub(crate) fn new(dns_request: Receiver<ClientHandle>) -> Result<Self, ResolveError> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
         Ok(Self {
             resolver,

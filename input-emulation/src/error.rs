@@ -1,3 +1,11 @@
+#[derive(Debug, Error)]
+pub enum InputEmulationError {
+    #[error("error creating input-emulation: `{0}`")]
+    Create(#[from] EmulationCreationError),
+    #[error("error emulating input: `{0}`")]
+    Emulate(#[from] EmulationError),
+}
+
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use ashpd::{desktop::ResponseError, Error::Response};
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]

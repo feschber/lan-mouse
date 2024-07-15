@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 
-use thiserror::Error;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -11,11 +10,7 @@ use crate::{
     frontend::Status,
     server::State,
 };
-use input_emulation::{
-    self,
-    error::{EmulationCreationError, EmulationError},
-    EmulationHandle, InputEmulation,
-};
+use input_emulation::{self, EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::{Event, KeyboardEvent};
 
 use super::{network_task::NetworkError, CaptureEvent, Server};
@@ -39,14 +34,6 @@ pub(crate) fn new(
 ) -> JoinHandle<()> {
     let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx, capture_tx);
     tokio::task::spawn_local(emulation_task)
-}
-
-#[derive(Debug, Error)]
-pub enum LanMouseEmulationError {
-    #[error("error creating input-emulation: `{0}`")]
-    Create(#[from] EmulationCreationError),
-    #[error("error emulating input: `{0}`")]
-    Emulate(#[from] EmulationError),
 }
 
 async fn emulation_task(
@@ -82,7 +69,7 @@ async fn do_emulation(
     udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     capture_tx: &Sender<CaptureEvent>,
-) -> Result<(), LanMouseEmulationError> {
+) -> Result<(), InputEmulationError> {
     let backend = server.config.emulation_backend.map(|b| b.into());
     log::info!("creating input emulation...");
     let mut emulation = tokio::select! {
@@ -117,7 +104,7 @@ async fn do_emulation_session(
     udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: &Sender<(Event, SocketAddr)>,
     capture_tx: &Sender<CaptureEvent>,
-) -> Result<(), LanMouseEmulationError> {
+) -> Result<(), InputEmulationError> {
     let mut last_ignored = None;
 
     loop {

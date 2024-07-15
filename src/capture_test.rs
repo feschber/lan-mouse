@@ -1,11 +1,10 @@
 use crate::config::Config;
-use anyhow::Result;
 use futures::StreamExt;
-use input_capture::{self, CaptureError, InputCapture, Position};
+use input_capture::{self, CaptureError, InputCapture, InputCaptureError, Position};
 use input_event::{Event, KeyboardEvent};
 use tokio::task::LocalSet;
 
-pub fn run() -> Result<()> {
+pub fn run() -> anyhow::Result<()> {
     log::info!("running input capture test");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -14,10 +13,10 @@ pub fn run() -> Result<()> {
 
     let config = Config::new()?;
 
-    runtime.block_on(LocalSet::new().run_until(input_capture_test(config)))
+    Ok(runtime.block_on(LocalSet::new().run_until(input_capture_test(config)))?)
 }
 
-async fn input_capture_test(config: Config) -> Result<()> {
+async fn input_capture_test(config: Config) -> Result<(), InputCaptureError> {
     log::info!("creating input capture");
     let backend = config.capture_backend.map(|b| b.into());
     loop {

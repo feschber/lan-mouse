@@ -1,6 +1,5 @@
 use futures::StreamExt;
 use std::{collections::HashSet, net::SocketAddr};
-use thiserror::Error;
 
 use tokio::{
     process::Command,
@@ -8,23 +7,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use input_capture::{
-    self, error::CaptureCreationError, CaptureError, CaptureHandle, InputCapture, Position,
-};
+use input_capture::{self, CaptureError, CaptureHandle, InputCapture, InputCaptureError, Position};
 
 use input_event::{scancode, Event, KeyboardEvent};
 
 use crate::{client::ClientHandle, frontend::Status, server::State};
 
 use super::Server;
-
-#[derive(Debug, Error)]
-pub(crate) enum LanMouseCaptureError {
-    #[error("error creating input-capture: `{0}`")]
-    Create(#[from] CaptureCreationError),
-    #[error("error while capturing input: `{0}`")]
-    Capture(#[from] CaptureError),
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum CaptureEvent {
@@ -76,7 +65,7 @@ async fn do_capture(
     server: &Server,
     sender_tx: &Sender<(Event, SocketAddr)>,
     notify_rx: &mut Receiver<CaptureEvent>,
-) -> Result<(), LanMouseCaptureError> {
+) -> Result<(), InputCaptureError> {
     /* allow cancelling capture request */
     let mut capture = tokio::select! {
         r = input_capture::create(backend) => {
