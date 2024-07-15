@@ -1,8 +1,8 @@
 use anyhow::Result;
-use std::{collections::HashSet, error::Error, net::IpAddr};
+use std::net::IpAddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 
 use crate::{client::ClientHandle, server::Server};
 
@@ -24,7 +24,7 @@ impl DnsResolver {
         ))
     }
 
-    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, Box<dyn Error>> {
+    async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, ResolveError> {
         let response = self.resolver.lookup_ip(host).await?;
         for ip in response.iter() {
             log::info!("{host}: adding ip {ip}");
@@ -44,21 +44,14 @@ impl DnsResolver {
             let handle = self.dns_request.recv().await.expect("channel closed");
 
             /* update resolving status */
-            let hostname = if let Some((c, s)) = server.client_manager.borrow_mut().get_mut(handle)
-            {
-                s.resolving = true;
-                c.hostname.clone()
-            } else {
-                continue;
+            let hostname = match server.get_hostname(handle) {
+                Some(hostname) => hostname,
+                None => continue,
             };
-            let Some(hostname) = hostname else {
-                continue;
-            };
-
-            /* FIXME race -> need some other event */
-            server.client_resolved(handle);
 
             log::info!("resolving ({handle}) `{hostname}` ...");
+            server.set_resolving(handle, true);
+
             let ips = match self.resolve(&hostname).await {
                 Ok(ips) => ips,
                 Err(e) => {
@@ -67,16 +60,8 @@ impl DnsResolver {
                 }
             };
 
-            /* update ips and resolving state */
-            if let Some((c, s)) = server.client_manager.borrow_mut().get_mut(handle) {
-                let mut addrs = HashSet::from_iter(c.fix_ips.iter().cloned());
-                for ip in ips {
-                    addrs.insert(ip);
-                }
-                s.ips = addrs;
-                s.resolving = false;
-            }
-            server.client_resolved(handle);
+            server.update_dns_ips(handle, ips);
+            server.set_resolving(handle, false);
         }
     }
 }

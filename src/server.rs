@@ -285,7 +285,7 @@ impl Server {
         self.notify_frontend(FrontendEvent::PortChanged(port, msg));
     }
 
-    pub(crate) fn client_resolved(&self, handle: ClientHandle) {
+    pub(crate) fn client_updated(&self, handle: ClientHandle) {
         let state = self.client_manager.borrow().get(handle).cloned();
         if let Some((config, state)) = state {
             self.notify_frontend(FrontendEvent::State(handle, config, state));
@@ -296,7 +296,8 @@ impl Server {
         self.client_manager
             .borrow()
             .get_client_states()
-            .filter_map(|(h, (_, s))| if s.active { Some(h) } else { None })
+            .filter(|(_, (_, s))| s.active)
+            .map(|(h, _)| h)
             .collect()
     }
 
@@ -443,12 +444,28 @@ impl Server {
     }
 
     fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
-        let mut client_manager = self.client_manager.borrow_mut();
-        let Some((c, _)) = client_manager.get_mut(handle) else {
-            return;
+        if let Some((c, _)) = self.client_manager.borrow_mut().get_mut(handle) {
+            c.fix_ips = fix_ips;
         };
+        self.update_ips(handle);
+    }
 
-        c.fix_ips = fix_ips;
+    pub(crate) fn update_dns_ips(&self, handle: ClientHandle, dns_ips: Vec<IpAddr>) {
+        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
+            s.dns_ips = dns_ips;
+        };
+        self.update_ips(handle);
+    }
+
+    fn update_ips(&self, handle: ClientHandle) {
+        if let Some((c, s)) = self.client_manager.borrow_mut().get_mut(handle) {
+            s.ips = c
+                .fix_ips
+                .iter()
+                .cloned()
+                .chain(s.dns_ips.iter().cloned())
+                .collect::<HashSet<_>>();
+        }
     }
 
     fn update_hostname(&self, handle: ClientHandle, hostname: Option<String>) {
@@ -527,6 +544,20 @@ impl Server {
         self.capture_status.replace(status);
         let status = FrontendEvent::CaptureStatus(status);
         self.notify_frontend(status);
+    }
+
+    pub(crate) fn set_resolving(&self, handle: ClientHandle, status: bool) {
+        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
+            s.resolving = status;
+        }
+        self.client_updated(handle);
+    }
+
+    pub(crate) fn get_hostname(&self, handle: u64) -> Option<String> {
+        self.client_manager
+            .borrow_mut()
+            .get_mut(handle)
+            .and_then(|(c, _)| c.hostname.clone())
     }
 }
 

@@ -119,6 +119,8 @@ pub struct ClientState {
     pub active_addr: Option<SocketAddr>,
     /// tracks whether or not the client is responding to pings
     pub alive: bool,
+    /// ips from dns
+    pub dns_ips: Vec<IpAddr>,
     /// all ip addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses

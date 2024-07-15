@@ -124,6 +124,7 @@
                             <property name="title">port</property>
                             <child>
                               <object class="GtkEntry" id="port_entry">
+                                <property name="max-width-chars">5</property>
                                 <signal name="activate" handler="handle_port_edit_apply" swapped="true"/>
                                 <signal name="changed" handler="handle_port_changed" swapped="true"/>
                                 <!-- <signal name="delete-text" handler="handle_port_changed" swapped="true"/> -->
