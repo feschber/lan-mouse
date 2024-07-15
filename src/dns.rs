@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::net::IpAddr;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::Receiver;
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 
@@ -12,16 +12,12 @@ pub(crate) struct DnsResolver {
 }
 
 impl DnsResolver {
-    pub(crate) async fn new() -> Result<(Self, Sender<ClientHandle>)> {
+    pub(crate) fn new(dns_request: Receiver<ClientHandle>) -> Result<Self> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
-        let (dns_tx, dns_request) = channel(1);
-        Ok((
-            Self {
-                resolver,
-                dns_request,
-            },
-            dns_tx,
-        ))
+        Ok(Self {
+            resolver,
+            dns_request,
+        })
     }
 
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, ResolveError> {

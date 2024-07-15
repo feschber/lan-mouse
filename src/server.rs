@@ -135,6 +135,7 @@ impl Server {
         let (udp_recv_tx, udp_recv_rx) = channel(1); /* udp receiver */
         let (udp_send_tx, udp_send_rx) = channel(1); /* udp sender */
         let (request_tx, mut request_rx) = channel(1); /* frontend requests */
+        let (dns_tx, dns_rx) = channel(1); /* dns requests */
 
         // udp task
         let network = network_task::new(self.clone(), udp_recv_tx.clone(), udp_send_rx).await?;
@@ -152,11 +153,8 @@ impl Server {
         );
 
         // create dns resolver
-        let (resolver, dns_request) = DnsResolver::new().await?;
-        let server = self.clone();
-        let dns_task = tokio::task::spawn_local(async move {
-            resolver.run(server).await;
-        });
+        let resolver = DnsResolver::new(dns_rx)?;
+        let dns_task = tokio::task::spawn_local(resolver.run(self.clone()));
 
         // task that pings clients to see if they are responding
         let ping = ping_task::new(
@@ -207,7 +205,7 @@ impl Server {
                         let request = self.pending_dns_requests.borrow_mut().pop_front();
                         request
                     } {
-                        dns_request.send(request).await.expect("channel closed");
+                        dns_tx.send(request).await.expect("channel closed");
                     }
                 }
                 _ = self.cancelled() => break,
@@ -225,7 +223,7 @@ impl Server {
         assert!(!udp_recv_tx.is_closed());
         assert!(!udp_send_tx.is_closed());
         assert!(!request_tx.is_closed());
-        assert!(!dns_request.is_closed());
+        assert!(!dns_tx.is_closed());
 
         self.cancel();
         futures::future::join_all(join_handles).await;
