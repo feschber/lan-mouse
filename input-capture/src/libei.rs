@@ -60,6 +60,7 @@ pub struct LibeiInputCapture<'a> {
     notify_capture: Sender<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     cancellation_token: CancellationToken,
+    terminated: bool,
 }
 
 static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
@@ -222,6 +223,7 @@ impl<'a> LibeiInputCapture<'a> {
             notify_capture,
             notify_release,
             cancellation_token,
+            terminated: false,
         };
 
         Ok(producer)
@@ -548,7 +550,16 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
         log::debug!("waiting for capture to terminate...");
         let res = task.await.expect("libei task panic");
         log::debug!("done!");
+        self.terminated = true;
         res
+    }
+}
+
+impl<'a> Drop for LibeiInputCapture<'a> {
+    fn drop(&mut self) {
+        if !self.terminated {
+            panic!("LibeiInputCapture dropped without being terminated!");
+        }
     }
 }
 
