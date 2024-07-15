@@ -106,7 +106,7 @@ pub trait InputCapture:
     /// release mouse
     async fn release(&mut self) -> Result<(), CaptureError>;
 
-    /// destroy the input acpture
+    /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;
 }
 

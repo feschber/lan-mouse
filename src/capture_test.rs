@@ -29,8 +29,8 @@ async fn input_capture_test(config: Config) -> Result<()> {
         input_capture.create(3, Position::Bottom).await?;
         if let Err(e) = do_capture(&mut input_capture).await {
             log::warn!("{e} - recreating capture");
-            let _ = input_capture.terminate().await;
         }
+        let _ = input_capture.terminate().await;
     }
 }
 
