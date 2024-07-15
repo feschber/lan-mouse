@@ -558,6 +558,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
 impl<'a> Drop for LibeiInputCapture<'a> {
     fn drop(&mut self) {
         if !self.terminated {
+            /* this workaround is needed until async drop is stabilized */
             panic!("LibeiInputCapture dropped without being terminated!");
         }
     }
