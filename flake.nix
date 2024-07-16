@@ -16,6 +16,7 @@
     inherit (nixpkgs) lib;
     genSystems = lib.genAttrs [
       "aarch64-darwin"
+      "aarch64-linux"
       "x86_64-darwin"
       "x86_64-linux"
     ];
@@ -50,6 +51,7 @@
           xorg.libX11
           gtk4
           libadwaita
+          librsvg
           xorg.libXtst
         ] ++ lib.optionals stdenv.isDarwin [
           darwin.apple_sdk_11_0.frameworks.CoreGraphics

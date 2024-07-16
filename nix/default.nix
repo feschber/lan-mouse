@@ -14,6 +14,7 @@ rustPlatform.buildRustPackage {
   nativeBuildInputs = with pkgs; [
     pkg-config
     cmake
+    makeWrapper
     buildPackages.gtk4
   ];
 
@@ -35,6 +36,12 @@ rustPlatform.buildRustPackage {
 
   # Set Environment Variables
   RUST_BACKTRACE = "full";
+
+  # Needed to enable support for SVG icons in GTK
+  postInstall = ''
+    wrapProgram "$out/bin/lan-mouse" \
+      --set GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg.out}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache
+  '';
 
   meta = with lib; {
     description = "Lan Mouse is a mouse and keyboard sharing software";
