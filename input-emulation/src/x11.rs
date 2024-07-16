@@ -148,4 +148,8 @@ impl InputEmulation for X11Emulation {
     async fn destroy(&mut self, _: EmulationHandle) {
         // for our purposes it does not matter what client sent the event
     }
+
+    async fn terminate(&mut self) {
+        /* nothing to do */
+    }
 }

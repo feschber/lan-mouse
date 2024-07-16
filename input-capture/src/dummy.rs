@@ -1,10 +1,12 @@
-use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use async_trait::async_trait;
 use futures_core::Stream;
 
 use input_event::Event;
+
+use crate::CaptureError;
 
 use super::{CaptureHandle, InputCapture, Position};
 
@@ -22,22 +24,27 @@ impl Default for DummyInputCapture {
     }
 }
 
+#[async_trait]
 impl InputCapture for DummyInputCapture {
-    fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> io::Result<()> {
+    async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    fn destroy(&mut self, _handle: CaptureHandle) -> io::Result<()> {
+    async fn destroy(&mut self, _handle: CaptureHandle) -> Result<(), CaptureError> {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
+        Ok(())
+    }
+
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }
 
 impl Stream for DummyInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending

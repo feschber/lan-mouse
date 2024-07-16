@@ -1,10 +1,11 @@
-use std::{fmt::Display, io};
+use std::fmt::Display;
 
+use async_trait::async_trait;
 use futures_core::Stream;
 
 use input_event::Event;
 
-pub use error::{CaptureCreationError, CaptureError};
+pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
 pub mod error;
 
@@ -92,21 +93,29 @@ impl Display for Backend {
     }
 }
 
-pub trait InputCapture: Stream<Item = io::Result<(CaptureHandle, Event)>> + Unpin {
+#[async_trait]
+pub trait InputCapture:
+    Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin
+{
     /// create a new client with the given id
-    fn create(&mut self, id: CaptureHandle, pos: Position) -> io::Result<()>;
+    async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError>;
 
     /// destroy the client with the given id, if it exists
-    fn destroy(&mut self, id: CaptureHandle) -> io::Result<()>;
+    async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError>;
 
     /// release mouse
-    fn release(&mut self) -> io::Result<()>;
+    async fn release(&mut self) -> Result<(), CaptureError>;
+
+    /// destroy the input capture
+    async fn terminate(&mut self) -> Result<(), CaptureError>;
 }
 
 pub async fn create_backend(
     backend: Backend,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
-{
+) -> Result<
+    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    CaptureCreationError,
+> {
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
@@ -124,8 +133,10 @@ pub async fn create_backend(
 
 pub async fn create(
     backend: Option<Backend>,
-) -> Result<Box<dyn InputCapture<Item = io::Result<(CaptureHandle, Event)>>>, CaptureCreationError>
-{
+) -> Result<
+    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    CaptureCreationError,
+> {
     if let Some(backend) = backend {
         let b = create_backend(backend).await;
         if b.is_ok() {
@@ -145,13 +156,13 @@ pub async fn create(
         Backend::Windows,
         #[cfg(target_os = "macos")]
         Backend::MacOs,
-        Backend::Dummy,
     ] {
         match create_backend(backend).await {
             Ok(b) => {
                 log::info!("using capture backend: {backend}");
                 return Ok(b);
             }
+            Err(e) if e.cancelled_by_user() => return Err(e),
             Err(e) => log::warn!("{backend} input capture backend unavailable: {e}"),
         }
     }

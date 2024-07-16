@@ -1,5 +1,13 @@
 use thiserror::Error;
 
+#[derive(Debug, Error)]
+pub enum InputCaptureError {
+    #[error("error creating input-capture: `{0}`")]
+    Create(#[from] CaptureCreationError),
+    #[error("error while capturing input: `{0}`")]
+    Capture(#[from] CaptureError),
+}
+
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
 use std::io;
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
@@ -9,6 +17,8 @@ use wayland_client::{
     ConnectError, DispatchError,
 };
 
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+use ashpd::desktop::ResponseError;
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::{EiConvertEventStreamError, HandshakeError};
 
@@ -43,6 +53,9 @@ pub enum CaptureError {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error(transparent)]
     Portal(#[from] ashpd::Error),
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[error("libei disconnected - reason: `{0}`")]
+    Disconnected(String),
 }
 
 #[derive(Debug, Error)]
@@ -64,6 +77,23 @@ pub enum CaptureCreationError {
     #[cfg(windows)]
     #[error("error creating windows capture backend")]
     Windows,
+}
+
+impl CaptureCreationError {
+    /// request was intentionally denied by the user
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        matches!(
+            self,
+            CaptureCreationError::Libei(LibeiCaptureCreationError::Ashpd(ashpd::Error::Response(
+                ResponseError::Cancelled
+            )))
+        )
+    }
+    #[cfg(not(all(unix, feature = "libei", not(target_os = "macos"))))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]

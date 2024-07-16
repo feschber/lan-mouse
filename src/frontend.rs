@@ -97,8 +97,6 @@ pub enum FrontendRequest {
     Enumerate(),
     /// resolve dns
     ResolveDns(ClientHandle),
-    /// service shutdown
-    Terminate(),
     /// update hostname
     UpdateHostname(ClientHandle, Option<String>),
     /// update port
@@ -109,6 +107,26 @@ pub enum FrontendRequest {
     UpdateFixIps(ClientHandle, Vec<IpAddr>),
     /// request the state of the given client
     GetState(ClientHandle),
+    /// request reenabling input capture
+    EnableCapture,
+    /// request reenabling input emulation
+    EnableEmulation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub enum Status {
+    #[default]
+    Disabled,
+    Enabled,
+}
+
+impl From<Status> for bool {
+    fn from(status: Status) -> Self {
+        match status {
+            Status::Enabled => true,
+            Status::Disabled => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +145,10 @@ pub enum FrontendEvent {
     Enumerate(Vec<(ClientHandle, ClientConfig, ClientState)>),
     /// an error occured
     Error(String),
+    /// capture status
+    CaptureStatus(Status),
+    /// emulation status
+    EmulationStatus(Status),
 }
 
 pub struct FrontendListener {
@@ -232,7 +254,7 @@ impl FrontendListener {
         Ok(rx)
     }
 
-    pub(crate) async fn broadcast_event(&mut self, notify: FrontendEvent) -> Result<()> {
+    pub(crate) async fn broadcast(&mut self, notify: FrontendEvent) {
         // encode event
         let json = serde_json::to_string(&notify).unwrap();
         let payload = json.as_bytes();
@@ -256,7 +278,6 @@ impl FrontendListener {
         // could not find a better solution because async
         let mut keep = keep.into_iter();
         self.tx_streams.retain(|_| keep.next().unwrap());
-        Ok(())
     }
 }
 

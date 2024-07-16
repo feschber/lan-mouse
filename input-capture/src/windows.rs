@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use core::task::{Context, Poll};
 use futures::Stream;
 use once_cell::unsync::Lazy;
@@ -10,7 +11,7 @@ use std::default::Default;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::task::ready;
-use std::{io, pin::Pin, thread};
+use std::{pin::Pin, thread};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -36,7 +37,7 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{CaptureHandle, InputCapture, Position};
+use super::{CaptureError, CaptureHandle, InputCapture, Position};
 
 enum Request {
     Create(CaptureHandle, Position),
@@ -62,8 +63,9 @@ unsafe fn signal_message_thread(event_type: EventType) {
     }
 }
 
+#[async_trait]
 impl InputCapture for WindowsInputCapture {
-    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -73,7 +75,8 @@ impl InputCapture for WindowsInputCapture {
         }
         Ok(())
     }
-    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
+
+    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
@@ -84,8 +87,12 @@ impl InputCapture for WindowsInputCapture {
         Ok(())
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn release(&mut self) -> Result<(), CaptureError> {
         unsafe { signal_message_thread(EventType::Release) };
+        Ok(())
+    }
+
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
 }
@@ -609,7 +616,7 @@ impl WindowsInputCapture {
 }
 
 impl Stream for WindowsInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),

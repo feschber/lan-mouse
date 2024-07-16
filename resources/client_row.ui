@@ -44,6 +44,7 @@
 				<child>
 					<object class="GtkEntry" id="port">
 						<!-- <property name="title" translatable="yes">port</property> -->
+                        <property name="max-width-chars">5</property>
 						<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
 						<property name="xalign">0.5</property>
 						<property name="valign">center</property>

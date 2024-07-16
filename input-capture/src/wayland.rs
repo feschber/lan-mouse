@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use futures_core::Stream;
 use memmap::MmapOptions;
 use std::{
@@ -14,7 +15,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     os::unix::prelude::{AsRawFd, FromRawFd},
-    rc::Rc,
+    sync::Arc,
 };
 
 use wayland_protocols::{
@@ -62,6 +63,8 @@ use tempfile;
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
+use crate::CaptureError;
+
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},
     CaptureHandle, InputCapture, Position,
@@ -102,8 +105,8 @@ struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
-    client_for_window: Vec<(Rc<Window>, CaptureHandle)>,
-    focused: Option<(Rc<Window>, CaptureHandle)>,
+    client_for_window: Vec<(Arc<Window>, CaptureHandle)>,
+    focused: Option<(Arc<Window>, CaptureHandle)>,
     g: Globals,
     wayland_fd: OwnedFd,
     read_guard: Option<ReadEventsGuard>,
@@ -475,7 +478,7 @@ impl State {
         log::debug!("outputs: {outputs:?}");
         outputs.iter().for_each(|(o, i)| {
             let window = Window::new(self, &self.qh, o, pos, i.size);
-            let window = Rc::new(window);
+            let window = Arc::new(window);
             self.client_for_window.push((window, client));
         });
     }
@@ -561,28 +564,34 @@ impl Inner {
     }
 }
 
+#[async_trait]
 impl InputCapture for WaylandInputCapture {
-    fn create(&mut self, handle: CaptureHandle, pos: Position) -> io::Result<()> {
+    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         self.add_client(handle, pos);
         let inner = self.0.get_mut();
-        inner.flush_events()
-    }
-    fn destroy(&mut self, handle: CaptureHandle) -> io::Result<()> {
-        self.delete_client(handle);
-        let inner = self.0.get_mut();
-        inner.flush_events()
+        Ok(inner.flush_events()?)
     }
 
-    fn release(&mut self) -> io::Result<()> {
+    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
+        self.delete_client(handle);
+        let inner = self.0.get_mut();
+        Ok(inner.flush_events()?)
+    }
+
+    async fn release(&mut self) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
-        inner.flush_events()
+        Ok(inner.flush_events()?)
+    }
+
+    async fn terminate(&mut self) -> Result<(), CaptureError> {
+        Ok(())
     }
 }
 
 impl Stream for WaylandInputCapture {
-    type Item = io::Result<(CaptureHandle, Event)>;
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
@@ -600,7 +609,7 @@ impl Stream for WaylandInputCapture {
                     // prepare next read
                     match inner.prepare_read() {
                         Ok(_) => {}
-                        Err(e) => return Poll::Ready(Some(Err(e))),
+                        Err(e) => return Poll::Ready(Some(Err(e.into()))),
                     }
                 }
 
@@ -610,14 +619,14 @@ impl Stream for WaylandInputCapture {
                 // flush outgoing events
                 if let Err(e) = inner.flush_events() {
                     if e.kind() != ErrorKind::WouldBlock {
-                        return Poll::Ready(Some(Err(e)));
+                        return Poll::Ready(Some(Err(e.into())));
                     }
                 }
 
                 // prepare for the next read
                 match inner.prepare_read() {
                     Ok(_) => {}
-                    Err(e) => return Poll::Ready(Some(Err(e))),
+                    Err(e) => return Poll::Ready(Some(Err(e.into()))),
                 }
             }
 

@@ -207,29 +207,35 @@ impl Window {
     }
 
     pub fn request_port_change(&self) {
-        let port = self.imp().port_entry.get().text().to_string();
-        if let Ok(port) = port.as_str().parse::<u16>() {
-            self.request(FrontendRequest::ChangePort(port));
-        } else {
-            self.request(FrontendRequest::ChangePort(DEFAULT_PORT));
-        }
+        let port = self
+            .imp()
+            .port_entry
+            .get()
+            .text()
+            .as_str()
+            .parse::<u16>()
+            .unwrap_or(DEFAULT_PORT);
+        self.request(FrontendRequest::ChangePort(port));
+    }
+
+    pub fn request_capture(&self) {
+        self.request(FrontendRequest::EnableCapture);
+    }
+
+    pub fn request_emulation(&self) {
+        self.request(FrontendRequest::EnableEmulation);
     }
 
     pub fn request_client_state(&self, client: &ClientObject) {
-        let handle = client.handle();
-        let event = FrontendRequest::GetState(handle);
-        self.request(event);
+        self.request(FrontendRequest::GetState(client.handle()));
     }
 
     pub fn request_client_create(&self) {
-        let event = FrontendRequest::Create;
-        self.request(event);
+        self.request(FrontendRequest::Create);
     }
 
     pub fn request_dns(&self, client: &ClientObject) {
-        let data = client.get_data();
-        let event = FrontendRequest::ResolveDns(data.handle);
-        self.request(event);
+        self.request(FrontendRequest::ResolveDns(client.get_data().handle));
     }
 
     pub fn request_client_update(&self, client: &ClientObject) {
@@ -249,15 +255,11 @@ impl Window {
     }
 
     pub fn request_client_activate(&self, client: &ClientObject, active: bool) {
-        let handle = client.handle();
-        let event = FrontendRequest::Activate(handle, active);
-        self.request(event);
+        self.request(FrontendRequest::Activate(client.handle(), active));
     }
 
     pub fn request_client_delete(&self, client: &ClientObject) {
-        let handle = client.handle();
-        let event = FrontendRequest::Delete(handle);
-        self.request(event);
+        self.request(FrontendRequest::Delete(client.handle()));
     }
 
     pub fn request(&self, event: FrontendRequest) {
@@ -278,5 +280,25 @@ impl Window {
         let toast = adw::Toast::new(msg);
         let toast_overlay = &self.imp().toast_overlay;
         toast_overlay.add_toast(toast);
+    }
+
+    pub fn set_capture(&self, active: bool) {
+        self.imp().capture_active.replace(active);
+        self.update_capture_emulation_status();
+    }
+
+    pub fn set_emulation(&self, active: bool) {
+        self.imp().emulation_active.replace(active);
+        self.update_capture_emulation_status();
+    }
+
+    fn update_capture_emulation_status(&self) {
+        let capture = self.imp().capture_active.get();
+        let emulation = self.imp().emulation_active.get();
+        self.imp().capture_status_row.set_visible(!capture);
+        self.imp().emulation_status_row.set_visible(!emulation);
+        self.imp()
+            .capture_emulation_group
+            .set_visible(!capture || !emulation);
     }
 }

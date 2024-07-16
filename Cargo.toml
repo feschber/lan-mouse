@@ -1,9 +1,5 @@
 [workspace]
-members = [
-    "input-capture",
-    "input-emulation",
-    "input-event",
-]
+members = ["input-capture", "input-emulation", "input-event"]
 
 [package]
 name = "lan-mouse"
@@ -29,16 +25,30 @@ anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.11.3"
 serde_json = "1.0.107"
-tokio = {version = "1.32.0", features = ["io-util", "io-std", "macros", "net", "process", "rt", "sync", "signal"] }
+tokio = { version = "1.32.0", features = [
+    "io-util",
+    "io-std",
+    "macros",
+    "net",
+    "process",
+    "rt",
+    "sync",
+    "signal",
+] }
 futures = "0.3.28"
-clap = { version="4.4.11", features = ["derive"] }
-gtk = { package = "gtk4", version = "0.8.1", features = ["v4_2"], optional = true }
-adw = { package = "libadwaita", version = "0.6.0", features = ["v1_1"], optional = true }
+clap = { version = "4.4.11", features = ["derive"] }
+gtk = { package = "gtk4", version = "0.8.1", features = [
+    "v4_2",
+], optional = true }
+adw = { package = "libadwaita", version = "0.6.0", features = [
+    "v1_1",
+], optional = true }
 async-channel = { version = "2.1.1", optional = true }
 hostname = "0.4.0"
 slab = "0.4.9"
 endi = "1.1.0"
 thiserror = "1.0.61"
+tokio-util = "0.7.11"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
@@ -47,9 +57,9 @@ libc = "0.2.148"
 glib-build-tools = { version = "0.19.0", optional = true }
 
 [features]
-default = [ "wayland", "x11", "xdg_desktop_portal", "libei", "gtk" ]
-wayland = [ "input-capture/wayland", "input-emulation/wayland" ]
-x11 = [ "input-capture/x11", "input-emulation/x11" ]
-xdg_desktop_portal = [ "input-emulation/xdg_desktop_portal" ]
-libei = [ "input-capture/libei", "input-emulation/libei" ]
+default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
+wayland = ["input-capture/wayland", "input-emulation/wayland"]
+x11 = ["input-capture/x11", "input-emulation/x11"]
+xdg_desktop_portal = ["input-emulation/xdg_desktop_portal"]
+libei = ["input-event/libei", "input-capture/libei", "input-emulation/libei"]
 gtk = ["dep:gtk", "dep:adw", "dep:async-channel", "dep:glib-build-tools"]

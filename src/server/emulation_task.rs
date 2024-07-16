@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 
-use thiserror::Error;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -8,100 +7,128 @@ use tokio::{
 
 use crate::{
     client::{ClientHandle, ClientManager},
-    config::EmulationBackend,
+    frontend::Status,
     server::State,
 };
-use input_emulation::{
-    self,
-    error::{EmulationCreationError, EmulationError},
-    EmulationHandle, InputEmulation,
-};
+use input_emulation::{self, EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::{Event, KeyboardEvent};
 
 use super::{network_task::NetworkError, CaptureEvent, Server};
 
 #[derive(Clone, Debug)]
-pub enum EmulationEvent {
+pub(crate) enum EmulationEvent {
     /// create a new client
     Create(EmulationHandle),
     /// destroy a client
     Destroy(EmulationHandle),
     /// input emulation must release keys for client
     ReleaseKeys(ClientHandle),
-    /// termination signal
-    Terminate,
 }
 
-pub fn new(
-    backend: Option<EmulationBackend>,
+pub(crate) fn new(
     server: Server,
+    emulation_rx: Receiver<EmulationEvent>,
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    timer_tx: Sender<()>,
-) -> (
-    JoinHandle<Result<(), LanMouseEmulationError>>,
-    Sender<EmulationEvent>,
-) {
-    let (tx, rx) = tokio::sync::mpsc::channel(32);
-    let emulation_task =
-        emulation_task(backend, rx, server, udp_rx, sender_tx, capture_tx, timer_tx);
-    let emulate_task = tokio::task::spawn_local(emulation_task);
-    (emulate_task, tx)
-}
-
-#[derive(Debug, Error)]
-pub enum LanMouseEmulationError {
-    #[error("error creating input-emulation: `{0}`")]
-    Create(#[from] EmulationCreationError),
-    #[error("error emulating input: `{0}`")]
-    Emulate(#[from] EmulationError),
+) -> JoinHandle<()> {
+    let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx, capture_tx);
+    tokio::task::spawn_local(emulation_task)
 }
 
 async fn emulation_task(
-    backend: Option<EmulationBackend>,
-    mut rx: Receiver<EmulationEvent>,
     server: Server,
+    mut rx: Receiver<EmulationEvent>,
     mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
     capture_tx: Sender<CaptureEvent>,
-    timer_tx: Sender<()>,
-) -> Result<(), LanMouseEmulationError> {
-    let backend = backend.map(|b| b.into());
-    let mut emulation = input_emulation::create(backend).await?;
-
-    let mut last_ignored = None;
+) {
     loop {
-        tokio::select! {
-            udp_event = udp_rx.recv() => {
-                let udp_event = match udp_event {
-                    Some(Ok(e)) => e,
-                    Some(Err(e)) => {
-                        log::warn!("network error: {e}");
-                        continue;
-                    }
-                    None => break,
-                };
-                handle_udp_rx(&server, &capture_tx, &mut emulation, &sender_tx, &mut last_ignored, udp_event, &timer_tx).await?;
-            }
-            emulate_event = rx.recv() => {
-                match emulate_event {
-                    Some(e) => match e {
-                        EmulationEvent::Create(h) => emulation.create(h).await,
-                        EmulationEvent::Destroy(h) => emulation.destroy(h).await,
-                        EmulationEvent::ReleaseKeys(c) => release_keys(&server, &mut emulation, c).await?,
-                        EmulationEvent::Terminate => break,
-                    },
-                    None => break,
-                }
+        if let Err(e) = do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
+            log::warn!("input emulation exited: {e}");
+        }
+        server.set_emulation_status(Status::Disabled);
+        if server.is_cancelled() {
+            break;
+        }
+
+        // allow cancellation
+        loop {
+            tokio::select! {
+                _ = rx.recv() => continue, /* need to ignore requests here! */
+                _ = server.emulation_notified() => break,
+                _ = server.cancelled() => return,
             }
         }
     }
+}
+
+async fn do_emulation(
+    server: &Server,
+    rx: &mut Receiver<EmulationEvent>,
+    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    capture_tx: &Sender<CaptureEvent>,
+) -> Result<(), InputEmulationError> {
+    let backend = server.config.emulation_backend.map(|b| b.into());
+    log::info!("creating input emulation...");
+    let mut emulation = tokio::select! {
+        r = input_emulation::create(backend) => {
+            r?
+        }
+        _ = server.cancelled() => return Ok(()),
+    };
+
+    server.set_emulation_status(Status::Enabled);
+
+    // add clients
+    for handle in server.active_clients() {
+        emulation.create(handle).await;
+    }
+
+    let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
+
+    emulation.terminate().await;
+    res?;
 
     // release potentially still pressed keys
-    release_all_keys(&server, &mut emulation).await?;
+    release_all_keys(server, &mut emulation).await?;
 
     Ok(())
+}
+
+async fn do_emulation_session(
+    server: &Server,
+    emulation: &mut Box<dyn InputEmulation>,
+    rx: &mut Receiver<EmulationEvent>,
+    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    capture_tx: &Sender<CaptureEvent>,
+) -> Result<(), InputEmulationError> {
+    let mut last_ignored = None;
+
+    loop {
+        tokio::select! {
+            udp_event = udp_rx.recv() => {
+                let udp_event = match udp_event.expect("channel closed") {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("network error: {e}");
+                        continue;
+                    }
+                };
+                handle_udp_rx(server, capture_tx, emulation, sender_tx, &mut last_ignored, udp_event).await?;
+            }
+            emulate_event = rx.recv() => {
+                match emulate_event.expect("channel closed") {
+                    EmulationEvent::Create(h) => emulation.create(h).await,
+                    EmulationEvent::Destroy(h) => emulation.destroy(h).await,
+                    EmulationEvent::ReleaseKeys(c) => release_keys(server, emulation, c).await?,
+                }
+            }
+            _ = server.notifies.cancel.cancelled() => break Ok(()),
+        }
+    }
 }
 
 async fn handle_udp_rx(
@@ -111,7 +138,6 @@ async fn handle_udp_rx(
     sender_tx: &Sender<(Event, SocketAddr)>,
     last_ignored: &mut Option<SocketAddr>,
     event: (Event, SocketAddr),
-    timer_tx: &Sender<()>,
 ) -> Result<(), EmulationError> {
     let (event, addr) = event;
 
@@ -161,7 +187,7 @@ async fn handle_udp_rx(
                             );
                             // restart timer if necessary
                             if restart_timer {
-                                let _ = timer_tx.try_send(());
+                                server.restart_ping_timer();
                             }
                             ignore_event
                         } else {

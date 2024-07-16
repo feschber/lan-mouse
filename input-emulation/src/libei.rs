@@ -1,12 +1,12 @@
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
     io,
     os::{fd::OwnedFd, unix::net::UnixStream},
     sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        Arc, Mutex, RwLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
-        ResponseError,
+        Session,
     },
     WindowIdentifier,
 };
@@ -60,51 +60,44 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub struct LibeiEmulation {
+pub struct LibeiEmulation<'a> {
     context: ei::Context,
     devices: Devices,
+    ei_task: JoinHandle<()>,
+    error: Arc<Mutex<Option<EmulationError>>>,
+    libei_error: Arc<AtomicBool>,
     serial: AtomicU32,
-    ei_task: JoinHandle<Result<(), EmulationError>>,
+    _remote_desktop: RemoteDesktop<'a>,
+    session: Session<'a>,
 }
 
-async fn get_ei_fd() -> Result<OwnedFd, ashpd::Error> {
-    let proxy = RemoteDesktop::new().await?;
+async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), ashpd::Error> {
+    let remote_desktop = RemoteDesktop::new().await?;
 
-    // retry when user presses the cancel button
-    let (session, _) = loop {
-        log::debug!("creating session ...");
-        let session = proxy.create_session().await?;
+    log::debug!("creating session ...");
+    let session = remote_desktop.create_session().await?;
 
-        log::debug!("selecting devices ...");
-        proxy
-            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
-            .await?;
+    log::debug!("selecting devices ...");
+    remote_desktop
+        .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+        .await?;
 
-        log::info!("requesting permission for input emulation");
-        match proxy
-            .start(&session, &WindowIdentifier::default())
-            .await?
-            .response()
-        {
-            Ok(d) => break (session, d),
-            Err(ashpd::Error::Response(ResponseError::Cancelled)) => {
-                log::warn!("request cancelled!");
-                continue;
-            }
-            e => e?,
-        };
-    };
+    log::info!("requesting permission for input emulation");
+    let _devices = remote_desktop
+        .start(&session, &WindowIdentifier::default())
+        .await?
+        .response()?;
 
-    proxy.connect_to_eis(&session).await
+    let fd = remote_desktop.connect_to_eis(&session).await?;
+    Ok((remote_desktop, session, fd))
 }
 
-impl LibeiEmulation {
+impl<'a> LibeiEmulation<'a> {
     pub async fn new() -> Result<Self, LibeiEmulationCreationError> {
-        let eifd = get_ei_fd().await?;
+        let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
-        context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         let mut events = EiEventStream::new(context.clone())?;
         let handshake = ei_handshake(
             &mut events,
@@ -115,28 +108,40 @@ impl LibeiEmulation {
         .await?;
         let events = EiConvertEventStream::new(events, handshake.serial);
         let devices = Devices::default();
-        let ei_handler = ei_event_handler(events, context.clone(), devices.clone());
+        let libei_error = Arc::new(AtomicBool::default());
+        let error = Arc::new(Mutex::new(None));
+        let ei_handler = ei_task(
+            events,
+            context.clone(),
+            devices.clone(),
+            libei_error.clone(),
+            error.clone(),
+        );
         let ei_task = tokio::task::spawn_local(ei_handler);
 
         let serial = AtomicU32::new(handshake.serial);
 
         Ok(Self {
-            serial,
             context,
-            ei_task,
             devices,
+            ei_task,
+            error,
+            libei_error,
+            serial,
+            _remote_desktop,
+            session,
         })
     }
 }
 
-impl Drop for LibeiEmulation {
+impl<'a> Drop for LibeiEmulation<'a> {
     fn drop(&mut self) {
         self.ei_task.abort();
     }
 }
 
 #[async_trait]
-impl InputEmulation for LibeiEmulation {
+impl<'a> InputEmulation for LibeiEmulation<'a> {
     async fn consume(
         &mut self,
         event: Event,
@@ -146,6 +151,12 @@ impl InputEmulation for LibeiEmulation {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros() as u64;
+        if self.libei_error.load(Ordering::SeqCst) {
+            // don't break sending additional events but signal error
+            if let Some(e) = self.error.lock().unwrap().take() {
+                return Err(e);
+            }
+        }
         match event {
             Event::Pointer(p) => match p {
                 PointerEvent::Motion { time: _, dx, dy } => {
@@ -228,12 +239,37 @@ impl InputEmulation for LibeiEmulation {
 
     async fn create(&mut self, _: EmulationHandle) {}
     async fn destroy(&mut self, _: EmulationHandle) {}
+
+    async fn terminate(&mut self) {
+        let _ = self.session.close().await;
+        self.ei_task.abort();
+    }
 }
 
-async fn ei_event_handler(
+async fn ei_task(
     mut events: EiConvertEventStream,
     context: ei::Context,
     devices: Devices,
+    libei_error: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<EmulationError>>>,
+) {
+    loop {
+        match ei_event_handler(&mut events, &context, &devices).await {
+            Ok(()) => {}
+            Err(e) => {
+                libei_error.store(true, Ordering::SeqCst);
+                error.lock().unwrap().replace(e);
+                // wait for termination -> otherwise we will loop forever
+                future::pending::<()>().await;
+            }
+        }
+    }
+}
+
+async fn ei_event_handler(
+    events: &mut EiConvertEventStream,
+    context: &ei::Context,
+    devices: &Devices,
 ) -> Result<(), EmulationError> {
     loop {
         let event = events
@@ -253,7 +289,7 @@ async fn ei_event_handler(
         match event {
             EiEvent::Disconnected(e) => {
                 log::debug!("ei disconnected: {e:?}");
-                break;
+                return Err(EmulationError::EndOfStream);
             }
             EiEvent::SeatAdded(e) => {
                 e.seat().bind_capabilities(CAPABILITIES);
@@ -327,5 +363,4 @@ async fn ei_event_handler(
         }
         context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
     }
-    Ok(())
 }

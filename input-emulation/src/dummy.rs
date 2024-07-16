@@ -26,4 +26,7 @@ impl InputEmulation for DummyEmulation {
     }
     async fn create(&mut self, _: EmulationHandle) {}
     async fn destroy(&mut self, _: EmulationHandle) {}
+    async fn terminate(&mut self) {
+        /* nothing to do */
+    }
 }

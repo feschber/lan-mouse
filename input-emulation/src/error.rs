@@ -1,3 +1,13 @@
+#[derive(Debug, Error)]
+pub enum InputEmulationError {
+    #[error("error creating input-emulation: `{0}`")]
+    Create(#[from] EmulationCreationError),
+    #[error("error emulating input: `{0}`")]
+    Emulate(#[from] EmulationError),
+}
+
+#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+use ashpd::{desktop::ResponseError, Error::Response};
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use reis::tokio::EiConvertEventStreamError;
 use std::io;
@@ -73,6 +83,25 @@ pub enum EmulationCreationError {
     Windows(#[from] WindowsEmulationCreationError),
     #[error("capture error")]
     NoAvailableBackend,
+}
+
+impl EmulationCreationError {
+    /// request was intentionally denied by the user
+    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        matches!(
+            self,
+            EmulationCreationError::Libei(LibeiEmulationCreationError::Ashpd(Response(
+                ResponseError::Cancelled,
+            ))) | EmulationCreationError::Xdp(XdpEmulationCreationError::Ashpd(Response(
+                ResponseError::Cancelled,
+            )))
+        )
+    }
+    #[cfg(not(all(unix, feature = "libei", not(target_os = "macos"))))]
+    pub(crate) fn cancelled_by_user(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]

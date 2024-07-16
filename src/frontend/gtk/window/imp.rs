@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::os::unix::net::UnixStream;
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow, ToastOverlay};
+use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
 use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
@@ -30,12 +30,24 @@ pub struct Window {
     pub hostname_label: TemplateChild<Label>,
     #[template_child]
     pub toast_overlay: TemplateChild<ToastOverlay>,
+    #[template_child]
+    pub capture_emulation_group: TemplateChild<PreferencesGroup>,
+    #[template_child]
+    pub capture_status_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub emulation_status_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub input_emulation_button: TemplateChild<Button>,
+    #[template_child]
+    pub input_capture_button: TemplateChild<Button>,
     pub clients: RefCell<Option<gio::ListStore>>,
     #[cfg(unix)]
     pub stream: RefCell<Option<UnixStream>>,
     #[cfg(windows)]
     pub stream: RefCell<Option<TcpStream>>,
     pub port: Cell<u16>,
+    pub capture_active: Cell<bool>,
+    pub emulation_active: Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -98,6 +110,16 @@ impl Window {
             .set_text(self.port.get().to_string().as_str());
         self.port_edit_apply.set_visible(false);
         self.port_edit_cancel.set_visible(false);
+    }
+
+    #[template_callback]
+    fn handle_emulation(&self) {
+        self.obj().request_emulation();
+    }
+
+    #[template_callback]
+    fn handle_capture(&self) {
+        self.obj().request_capture();
     }
 
     pub fn set_port(&self, port: u16) {

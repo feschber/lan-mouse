@@ -8,7 +8,7 @@ use std::{
     process, str,
 };
 
-use crate::frontend::{gtk::window::Window, FrontendRequest};
+use crate::frontend::gtk::window::Window;
 
 use adw::Application;
 use endi::{Endian, ReadBytes};
@@ -113,7 +113,6 @@ fn build_ui(app: &Application) {
     });
 
     let window = Window::new(app, tx);
-    window.request(FrontendRequest::Enumerate());
 
     glib::spawn_future_local(clone!(@weak window => async move {
         loop {
@@ -149,6 +148,12 @@ fn build_ui(app: &Application) {
                         Some(msg) => window.show_toast(msg.as_str()),
                     }
                     window.imp().set_port(port);
+                }
+                FrontendEvent::CaptureStatus(s) => {
+                    window.set_capture(s.into());
+                }
+                FrontendEvent::EmulationStatus(s) => {
+                    window.set_emulation(s.into());
                 }
             }
         }

@@ -1,10 +1,9 @@
 use async_trait::async_trait;
-use error::EmulationError;
 use std::fmt::Display;
 
 use input_event::Event;
 
-use self::error::EmulationCreationError;
+pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
 #[cfg(windows)]
 pub mod windows;
@@ -76,6 +75,7 @@ pub trait InputEmulation: Send {
     ) -> Result<(), EmulationError>;
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
+    async fn terminate(&mut self);
 }
 
 pub async fn create_backend(
@@ -131,6 +131,7 @@ pub async fn create(
                 log::info!("using emulation backend: {backend}");
                 return Ok(b);
             }
+            Err(e) if e.cancelled_by_user() => return Err(e),
             Err(e) => log::warn!("{e}"),
         }
     }

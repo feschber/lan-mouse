@@ -165,6 +165,9 @@ impl InputEmulation for WlrootsEmulation {
             log::error!("{}", e);
         }
     }
+    async fn terminate(&mut self) {
+        /* nothing to do */
+    }
 }
 
 struct VirtualInput {

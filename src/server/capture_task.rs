@@ -1,70 +1,122 @@
-use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use std::{collections::HashSet, net::SocketAddr};
 
-use tokio::{process::Command, sync::mpsc::Sender, task::JoinHandle};
+use tokio::{
+    process::Command,
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
-use input_capture::{self, error::CaptureCreationError, CaptureHandle, InputCapture, Position};
+use input_capture::{self, CaptureError, CaptureHandle, InputCapture, InputCaptureError, Position};
 
 use input_event::{scancode, Event, KeyboardEvent};
 
-use crate::{client::ClientHandle, config::CaptureBackend, server::State};
+use crate::{client::ClientHandle, frontend::Status, server::State};
 
 use super::Server;
 
 #[derive(Clone, Copy, Debug)]
-pub enum CaptureEvent {
+pub(crate) enum CaptureEvent {
     /// capture must release the mouse
     Release,
     /// add a capture client
     Create(CaptureHandle, Position),
     /// destory a capture client
     Destroy(CaptureHandle),
-    /// termination signal
-    Terminate,
 }
 
-pub fn new(
-    backend: Option<CaptureBackend>,
+pub(crate) fn new(
     server: Server,
+    capture_rx: Receiver<CaptureEvent>,
+    udp_send: Sender<(Event, SocketAddr)>,
+) -> JoinHandle<()> {
+    let backend = server.config.capture_backend.map(|b| b.into());
+    tokio::task::spawn_local(capture_task(server, backend, udp_send, capture_rx))
+}
+
+async fn capture_task(
+    server: Server,
+    backend: Option<input_capture::Backend>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    timer_tx: Sender<()>,
-    release_bind: Vec<scancode::Linux>,
-) -> Result<(JoinHandle<Result<()>>, Sender<CaptureEvent>), CaptureCreationError> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-    let backend = backend.map(|b| b.into());
-    let task = tokio::task::spawn_local(async move {
-        let mut capture = input_capture::create(backend).await?;
-        let mut pressed_keys = HashSet::new();
+    mut notify_rx: Receiver<CaptureEvent>,
+) {
+    loop {
+        if let Err(e) = do_capture(backend, &server, &sender_tx, &mut notify_rx).await {
+            log::warn!("input capture exited: {e}");
+        }
+        server.set_capture_status(Status::Disabled);
+        if server.is_cancelled() {
+            break;
+        }
+
+        // allow cancellation
         loop {
             tokio::select! {
-                event = capture.next() => {
-                    match event {
-                        Some(Ok(event)) => handle_capture_event(&server, &mut capture, &sender_tx, &timer_tx, event, &mut pressed_keys, &release_bind).await?,
-                        Some(Err(e)) => return Err(anyhow!("input capture: {e:?}")),
-                        None => return Err(anyhow!("input capture terminated")),
-                    }
-                }
-                e = rx.recv() => {
-                    log::debug!("input capture notify rx: {e:?}");
-                    match e {
-                        Some(e) => match e {
-                            CaptureEvent::Release => {
-                                capture.release()?;
-                                server.state.replace(State::Receiving);
-                            }
-                            CaptureEvent::Create(h, p) => capture.create(h, p)?,
-                            CaptureEvent::Destroy(h) => capture.destroy(h)?,
-                            CaptureEvent::Terminate => break,
-                        },
-                        None => break,
-                    }
-                }
+                _ = notify_rx.recv() => continue, /* need to ignore requests here! */
+                _ = server.capture_notified() => break,
+                _ = server.cancelled() => return,
             }
         }
-        anyhow::Ok(())
-    });
-    Ok((task, tx))
+    }
+}
+
+async fn do_capture(
+    backend: Option<input_capture::Backend>,
+    server: &Server,
+    sender_tx: &Sender<(Event, SocketAddr)>,
+    notify_rx: &mut Receiver<CaptureEvent>,
+) -> Result<(), InputCaptureError> {
+    /* allow cancelling capture request */
+    let mut capture = tokio::select! {
+        r = input_capture::create(backend) => {
+            r?
+        },
+        _ = server.cancelled() => return Ok(()),
+    };
+
+    server.set_capture_status(Status::Enabled);
+
+    // FIXME DUPLICATES
+    let clients = server
+        .client_manager
+        .borrow()
+        .get_client_states()
+        .map(|(h, s)| (h, s.clone()))
+        .collect::<Vec<_>>();
+    log::info!("{clients:?}");
+    for (handle, (config, _state)) in clients {
+        capture.create(handle, config.pos.into()).await?;
+    }
+
+    let mut pressed_keys = HashSet::new();
+    loop {
+        tokio::select! {
+            event = capture.next() => {
+                match event {
+                    Some(Ok(event)) => handle_capture_event(server, &mut capture, sender_tx, event, &mut pressed_keys).await?,
+                    Some(Err(e)) => return Err(e.into()),
+                    None => return Ok(()),
+                }
+            }
+            e = notify_rx.recv() => {
+                log::debug!("input capture notify rx: {e:?}");
+                match e {
+                    Some(e) => match e {
+                        CaptureEvent::Release => {
+                            capture.release().await?;
+                            server.state.replace(State::Receiving);
+                        }
+                        CaptureEvent::Create(h, p) => capture.create(h, p).await?,
+                        CaptureEvent::Destroy(h) => capture.destroy(h).await?,
+                    },
+                    None => break,
+                }
+            }
+            _ = server.cancelled() => break,
+        }
+    }
+    capture.terminate().await?;
+    Ok(())
 }
 
 fn update_pressed_keys(pressed_keys: &mut HashSet<scancode::Linux>, key: u32, state: u8) {
@@ -81,21 +133,19 @@ async fn handle_capture_event(
     server: &Server,
     capture: &mut Box<dyn InputCapture>,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    timer_tx: &Sender<()>,
     event: (CaptureHandle, Event),
     pressed_keys: &mut HashSet<scancode::Linux>,
-    release_bind: &[scancode::Linux],
-) -> Result<()> {
+) -> Result<(), CaptureError> {
     let (handle, mut e) = event;
     log::trace!("({handle}) {e:?}");
 
     if let Event::Keyboard(KeyboardEvent::Key { key, state, .. }) = e {
         update_pressed_keys(pressed_keys, key, state);
         log::debug!("{pressed_keys:?}");
-        if release_bind.iter().all(|k| pressed_keys.contains(k)) {
+        if server.release_bind.iter().all(|k| pressed_keys.contains(k)) {
             pressed_keys.clear();
             log::info!("releasing pointer");
-            capture.release()?;
+            capture.release().await?;
             server.state.replace(State::Receiving);
             log::trace!("STATE ===> Receiving");
             // send an event to release all the modifiers
@@ -103,44 +153,49 @@ async fn handle_capture_event(
         }
     }
 
-    let (addr, enter, start_timer) = {
+    let info = {
         let mut enter = false;
         let mut start_timer = false;
 
         // get client state for handle
         let mut client_manager = server.client_manager.borrow_mut();
-        let client_state = match client_manager.get_mut(handle) {
-            Some((_, s)) => s,
-            None => {
-                // should not happen
-                log::warn!("unknown client!");
-                capture.release()?;
-                server.state.replace(State::Receiving);
-                log::trace!("STATE ===> Receiving");
-                return Ok(());
+        let client_state = client_manager.get_mut(handle).map(|(_, s)| s);
+        if let Some(client_state) = client_state {
+            // if we just entered the client we want to send additional enter events until
+            // we get a leave event
+            if let Event::Enter() = e {
+                server.state.replace(State::AwaitingLeave);
+                server.active_client.replace(Some(handle));
+                log::trace!("Active client => {}", handle);
+                start_timer = true;
+                log::trace!("STATE ===> AwaitingLeave");
+                enter = true;
+            } else {
+                // ignore any potential events in receiving mode
+                if server.state.get() == State::Receiving && e != Event::Disconnect() {
+                    return Ok(());
+                }
             }
-        };
-
-        // if we just entered the client we want to send additional enter events until
-        // we get a leave event
-        if let Event::Enter() = e {
-            server.state.replace(State::AwaitingLeave);
-            server.active_client.replace(Some(handle));
-            log::trace!("Active client => {}", handle);
-            start_timer = true;
-            log::trace!("STATE ===> AwaitingLeave");
-            enter = true;
+            Some((client_state.active_addr, enter, start_timer))
         } else {
-            // ignore any potential events in receiving mode
-            if server.state.get() == State::Receiving && e != Event::Disconnect() {
-                return Ok(());
-            }
+            None
         }
-
-        (client_state.active_addr, enter, start_timer)
     };
+
+    let (addr, enter, start_timer) = match info {
+        Some(i) => i,
+        None => {
+            // should not happen
+            log::warn!("unknown client!");
+            capture.release().await?;
+            server.state.replace(State::Receiving);
+            log::trace!("STATE ===> Receiving");
+            return Ok(());
+        }
+    };
+
     if start_timer {
-        let _ = timer_tx.try_send(());
+        server.restart_ping_timer();
     }
     if enter {
         spawn_hook_command(server, handle);

@@ -273,6 +273,12 @@ impl<'a> Cli<'a> {
             FrontendEvent::Error(e) => {
                 eprintln!("ERROR: {e}");
             }
+            FrontendEvent::CaptureStatus(s) => {
+                eprintln!("capture status: {s:?}")
+            }
+            FrontendEvent::EmulationStatus(s) => {
+                eprintln!("emulation status: {s:?}")
+            }
         }
     }
 
