@@ -51,6 +51,7 @@
           xorg.libX11
           gtk4
           libadwaita
+          librsvg
           xorg.libXtst
         ] ++ lib.optionals stdenv.isDarwin [
           darwin.apple_sdk_11_0.frameworks.CoreGraphics
