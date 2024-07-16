@@ -88,11 +88,11 @@ async fn do_emulation(
 
     let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
 
-    emulation.terminate().await;
-    res?;
-
     // release potentially still pressed keys
     release_all_keys(server, &mut emulation).await?;
+
+    emulation.terminate().await;
+    res?;
 
     Ok(())
 }
