@@ -83,7 +83,7 @@ impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
                         _ => Axis::Horizontal,
                     };
                     self.proxy
-                        .notify_pointer_axis_discrete(&self.session, axis, value)
+                        .notify_pointer_axis_discrete(&self.session, axis, value / 120)
                         .await?;
                 }
                 PointerEvent::Axis {
