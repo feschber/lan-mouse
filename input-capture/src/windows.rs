@@ -519,7 +519,7 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
         }
 
         /* window is used ro receive WM_DISPLAYCHANGE messages */
-        let ret = CreateWindowExW(
+        CreateWindowExW(
             Default::default(),
             w!("lan-mouse-message-window-class"),
             w!("lan-mouse-msg-window"),
@@ -532,10 +532,8 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
             HMENU::default(),
             instance,
             None,
-        );
-        if ret.0 == 0 {
-            panic!("CreateWindowExW");
-        }
+        )
+        .expect("CreateWindowExW");
 
         /* run message loop */
         loop {
@@ -543,7 +541,7 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
             let Some(msg) = get_msg() else {
                 break;
             };
-            if msg.hwnd.0 == 0 {
+            if msg.hwnd.0.is_null() {
                 /* messages sent via PostThreadMessage */
                 match msg.wParam.0 {
                     x if x == EventType::Exit as usize => break,
