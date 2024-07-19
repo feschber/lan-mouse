@@ -63,31 +63,61 @@ impl Window {
         let selection_model = NoSelection::new(Some(self.clients()));
         self.imp().client_list.bind_model(
             Some(&selection_model),
-            clone!(@weak self as window => @default-panic, move |obj| {
-                let client_object = obj.downcast_ref().expect("Expected object of type `ClientObject`.");
-                let row = window.create_client_row(client_object);
-                row.connect_closure("request-update", false, closure_local!(@strong window => move |row: ClientRow, active: bool| {
-                    if let Some(client) = window.client_by_idx(row.index() as u32) {
-                        window.request_client_activate(&client, active);
-                        window.request_client_update(&client);
-                        window.request_client_state(&client);
-                    }
-                }));
-                row.connect_closure("request-delete", false, closure_local!(@strong window => move |row: ClientRow| {
-                    if let Some(client) = window.client_by_idx(row.index() as u32) {
-                        window.request_client_delete(&client);
-                    }
-                }));
-                row.connect_closure("request-dns", false, closure_local!(@strong window => move
-                |row: ClientRow| {
-                    if let Some(client) = window.client_by_idx(row.index() as u32) {
-                        window.request_client_update(&client);
-                        window.request_dns(&client);
-                        window.request_client_state(&client);
-                    }
-                }));
-                row.upcast()
-            })
+            clone!(
+                #[weak(rename_to = window)]
+                self,
+                #[upgrade_or_panic]
+                move |obj| {
+                    let client_object = obj
+                        .downcast_ref()
+                        .expect("Expected object of type `ClientObject`.");
+                    let row = window.create_client_row(client_object);
+                    row.connect_closure(
+                        "request-update",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow, active: bool| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    window.request_client_activate(&client, active);
+                                    window.request_client_update(&client);
+                                    window.request_client_state(&client);
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-delete",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    window.request_client_delete(&client);
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-dns",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    window.request_client_update(&client);
+                                    window.request_dns(&client);
+                                    window.request_client_state(&client);
+                                }
+                            }
+                        ),
+                    );
+                    row.upcast()
+                }
+            ),
         );
     }
 

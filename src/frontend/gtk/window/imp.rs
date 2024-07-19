@@ -84,11 +84,15 @@ impl Window {
             clipboard.set_text(hostname.to_str().expect("hostname: invalid utf8"));
             button.set_icon_name("emblem-ok-symbolic");
             button.set_css_classes(&["success"]);
-            glib::spawn_future_local(clone!(@weak button => async move {
-                glib::timeout_future_seconds(1).await;
-                button.set_icon_name("edit-copy-symbolic");
-                button.set_css_classes(&[]);
-            }));
+            glib::spawn_future_local(clone!(
+                #[weak]
+                button,
+                async move {
+                    glib::timeout_future_seconds(1).await;
+                    button.set_icon_name("edit-copy-symbolic");
+                    button.set_css_classes(&[]);
+                }
+            ));
         }
     }
 

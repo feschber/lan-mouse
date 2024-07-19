@@ -118,7 +118,7 @@ fn select_barriers(
 
 async fn update_barriers(
     input_capture: &InputCapture<'_>,
-    session: &Session<'_>,
+    session: &Session<'_, InputCapture<'_>>,
     active_clients: &Vec<(CaptureHandle, Position)>,
     next_barrier_id: &mut u32,
 ) -> Result<HashMap<BarrierID, CaptureHandle>, ashpd::Error> {
@@ -139,7 +139,7 @@ async fn update_barriers(
 
 async fn create_session<'a>(
     input_capture: &'a InputCapture<'a>,
-) -> std::result::Result<(Session<'a>, BitFlags<Capabilities>), ashpd::Error> {
+) -> std::result::Result<(Session<'_, InputCapture<'_>>, BitFlags<Capabilities>), ashpd::Error> {
     log::debug!("creating input capture session");
     input_capture
         .create_session(
@@ -151,7 +151,7 @@ async fn create_session<'a>(
 
 async fn connect_to_eis(
     input_capture: &InputCapture<'_>,
-    session: &Session<'_>,
+    session: &Session<'_, InputCapture<'_>>,
 ) -> Result<(ei::Context, EiConvertEventStream), CaptureError> {
     log::debug!("connect_to_eis");
     let fd = input_capture.connect_to_eis(session).await?;
@@ -230,11 +230,11 @@ impl<'a> LibeiInputCapture<'a> {
     }
 }
 
-async fn do_capture<'a>(
-    input_capture: *const InputCapture<'a>,
+async fn do_capture(
+    input_capture: *const InputCapture<'static>,
     mut capture_event: Receiver<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
-    session: Option<(Session<'a>, BitFlags<Capabilities>)>,
+    session: Option<(Session<'_, InputCapture<'_>>, BitFlags<Capabilities>)>,
     event_tx: Sender<(CaptureHandle, Event)>,
     cancellation_token: CancellationToken,
 ) -> Result<(), CaptureError> {
@@ -330,7 +330,7 @@ async fn do_capture<'a>(
 
 async fn do_capture_session(
     input_capture: &InputCapture<'_>,
-    session: &mut Session<'_>,
+    session: &mut Session<'_, InputCapture<'_>>,
     event_tx: &Sender<(CaptureHandle, Event)>,
     active_clients: &mut Vec<(CaptureHandle, Position)>,
     next_barrier_id: &mut u32,
@@ -389,7 +389,7 @@ async fn do_capture_session(
                     log::debug!("activated: {activated:?}");
 
                     let client = *client_for_barrier_id
-                        .get(&activated.barrier_id())
+                        .get(&activated.barrier_id().expect("no barrier id reported by compositor!"))
                         .expect("invalid barrier id");
                     current_client.replace(Some(client));
 
@@ -449,15 +449,19 @@ async fn do_capture_session(
     Ok(())
 }
 
-async fn release_capture(
-    input_capture: &InputCapture<'_>,
-    session: &Session<'_>,
+async fn release_capture<'a>(
+    input_capture: &InputCapture<'a>,
+    session: &Session<'a, InputCapture<'a>>,
     activated: Activated,
     current_client: CaptureHandle,
     active_clients: &[(CaptureHandle, Position)],
 ) -> Result<(), CaptureError> {
-    log::debug!("releasing input capture {}", activated.activation_id());
-    let (x, y) = activated.cursor_position();
+    if let Some(activation_id) = activated.activation_id() {
+        log::debug!("releasing input capture {activation_id}");
+    }
+    let (x, y) = activated
+        .cursor_position()
+        .expect("compositor did not report cursor position!");
     let pos = active_clients
         .iter()
         .filter(|(c, _)| *c == current_client)
@@ -474,7 +478,7 @@ async fn release_capture(
     // release 1px to the right of the entered zone
     let cursor_position = (x as f64 + dx, y as f64 + dy);
     input_capture
-        .release(session, activated.activation_id(), cursor_position)
+        .release(session, activated.activation_id(), Some(cursor_position))
         .await?;
     Ok(())
 }

@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use ashpd::{
     desktop::{
         remote_desktop::{DeviceType, RemoteDesktop},
-        Session,
+        PersistMode, Session,
     },
     WindowIdentifier,
 };
@@ -68,10 +68,11 @@ pub struct LibeiEmulation<'a> {
     libei_error: Arc<AtomicBool>,
     serial: AtomicU32,
     _remote_desktop: RemoteDesktop<'a>,
-    session: Session<'a>,
+    session: Session<'a, RemoteDesktop<'a>>,
 }
 
-async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), ashpd::Error> {
+async fn get_ei_fd<'a>(
+) -> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
     log::debug!("creating session ...");
@@ -79,7 +80,12 @@ async fn get_ei_fd<'a>() -> Result<(RemoteDesktop<'a>, Session<'a>, OwnedFd), as
 
     log::debug!("selecting devices ...");
     remote_desktop
-        .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+        .select_devices(
+            &session,
+            DeviceType::Keyboard | DeviceType::Pointer,
+            None,
+            PersistMode::ExplicitlyRevoked,
+        )
         .await?;
 
     log::info!("requesting permission for input emulation");

@@ -52,10 +52,13 @@ impl ObjectSubclass for ClientRow {
 impl ObjectImpl for ClientRow {
     fn constructed(&self) {
         self.parent_constructed();
-        self.delete_button
-            .connect_clicked(clone!(@weak self as row => move |button| {
+        self.delete_button.connect_clicked(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |button| {
                 row.handle_client_delete(button);
-            }));
+            }
+        ));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {

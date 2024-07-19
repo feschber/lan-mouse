@@ -1,7 +1,7 @@
 use ashpd::{
     desktop::{
         remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
-        Session,
+        PersistMode, Session,
     },
     zbus::AsyncDrop,
     WindowIdentifier,
@@ -20,7 +20,7 @@ use super::{error::XdpEmulationCreationError, EmulationHandle, InputEmulation};
 
 pub struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
-    session: Session<'a>,
+    session: Session<'a, RemoteDesktop<'a>>,
 }
 
 impl<'a> DesktopPortalEmulation<'a> {
@@ -34,7 +34,12 @@ impl<'a> DesktopPortalEmulation<'a> {
 
         log::debug!("selecting devices ...");
         proxy
-            .select_devices(&session, DeviceType::Keyboard | DeviceType::Pointer)
+            .select_devices(
+                &session,
+                DeviceType::Keyboard | DeviceType::Pointer,
+                None,
+                PersistMode::ExplicitlyRevoked,
+            )
             .await?;
 
         log::info!("requesting permission for input emulation");

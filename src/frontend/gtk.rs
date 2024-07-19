@@ -114,50 +114,54 @@ fn build_ui(app: &Application) {
 
     let window = Window::new(app, tx);
 
-    glib::spawn_future_local(clone!(@weak window => async move {
-        loop {
-            let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
-            match notify {
-                FrontendEvent::Created(handle, client, state) => {
-                    window.new_client(handle, client, state);
-                },
-                FrontendEvent::Deleted(client) => {
-                    window.delete_client(client);
-                }
-                FrontendEvent::State(handle, config, state) => {
-                    window.update_client_config(handle, config);
-                    window.update_client_state(handle, state);
-                }
-                FrontendEvent::NoSuchClient(_) => { }
-                FrontendEvent::Error(e) => {
-                    window.show_toast(e.as_str());
-                },
-                FrontendEvent::Enumerate(clients) => {
-                    for (handle, client, state) in clients {
-                        if window.client_idx(handle).is_some() {
-                            window.update_client_config(handle, client);
-                            window.update_client_state(handle, state);
-                        } else {
-                            window.new_client(handle, client, state);
+    glib::spawn_future_local(clone!(
+        #[weak]
+        window,
+        async move {
+            loop {
+                let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
+                match notify {
+                    FrontendEvent::Created(handle, client, state) => {
+                        window.new_client(handle, client, state);
+                    }
+                    FrontendEvent::Deleted(client) => {
+                        window.delete_client(client);
+                    }
+                    FrontendEvent::State(handle, config, state) => {
+                        window.update_client_config(handle, config);
+                        window.update_client_state(handle, state);
+                    }
+                    FrontendEvent::NoSuchClient(_) => {}
+                    FrontendEvent::Error(e) => {
+                        window.show_toast(e.as_str());
+                    }
+                    FrontendEvent::Enumerate(clients) => {
+                        for (handle, client, state) in clients {
+                            if window.client_idx(handle).is_some() {
+                                window.update_client_config(handle, client);
+                                window.update_client_state(handle, state);
+                            } else {
+                                window.new_client(handle, client, state);
+                            }
                         }
                     }
-                },
-                FrontendEvent::PortChanged(port, msg) => {
-                    match msg {
-                        None => window.show_toast(format!("port changed: {port}").as_str()),
-                        Some(msg) => window.show_toast(msg.as_str()),
+                    FrontendEvent::PortChanged(port, msg) => {
+                        match msg {
+                            None => window.show_toast(format!("port changed: {port}").as_str()),
+                            Some(msg) => window.show_toast(msg.as_str()),
+                        }
+                        window.imp().set_port(port);
                     }
-                    window.imp().set_port(port);
-                }
-                FrontendEvent::CaptureStatus(s) => {
-                    window.set_capture(s.into());
-                }
-                FrontendEvent::EmulationStatus(s) => {
-                    window.set_emulation(s.into());
+                    FrontendEvent::CaptureStatus(s) => {
+                        window.set_capture(s.into());
+                    }
+                    FrontendEvent::EmulationStatus(s) => {
+                        window.set_emulation(s.into());
+                    }
                 }
             }
         }
-    }));
+    ));
 
     window.present();
 }
