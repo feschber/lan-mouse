@@ -91,13 +91,35 @@ fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
     }
 }
 
+/// Ashpd does not expose fields
+#[derive(Clone, Copy, Debug)]
+struct ICBarrier {
+    barrier_id: BarrierID,
+    position: (i32, i32, i32, i32),
+}
+
+impl ICBarrier {
+    fn new(barrier_id: BarrierID, position: (i32, i32, i32, i32)) -> Self {
+        Self {
+            barrier_id,
+            position,
+        }
+    }
+}
+
+impl From<ICBarrier> for Barrier {
+    fn from(barrier: ICBarrier) -> Self {
+        Barrier::new(barrier.barrier_id, barrier.position)
+    }
+}
+
 fn select_barriers(
     zones: &Zones,
-    clients: &Vec<(CaptureHandle, Position)>,
+    clients: &[(CaptureHandle, Position)],
     next_barrier_id: &mut u32,
-) -> (Vec<Barrier>, HashMap<BarrierID, CaptureHandle>) {
+) -> (Vec<ICBarrier>, HashMap<BarrierID, CaptureHandle>) {
     let mut client_for_barrier = HashMap::new();
-    let mut barriers: Vec<Barrier> = vec![];
+    let mut barriers: Vec<ICBarrier> = vec![];
 
     for (handle, pos) in clients {
         let mut client_barriers = zones
@@ -108,7 +130,7 @@ fn select_barriers(
                 *next_barrier_id = id + 1;
                 let position = pos_to_barrier(r, *pos);
                 client_for_barrier.insert(id, *handle);
-                Barrier::new(id, position)
+                ICBarrier::new(id, position)
             })
             .collect();
         barriers.append(&mut client_barriers);
@@ -119,9 +141,9 @@ fn select_barriers(
 async fn update_barriers(
     input_capture: &InputCapture<'_>,
     session: &Session<'_, InputCapture<'_>>,
-    active_clients: &Vec<(CaptureHandle, Position)>,
+    active_clients: &[(CaptureHandle, Position)],
     next_barrier_id: &mut u32,
-) -> Result<HashMap<BarrierID, CaptureHandle>, ashpd::Error> {
+) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, CaptureHandle>), ashpd::Error> {
     let zones = input_capture.zones(session).await?.response()?;
     log::debug!("zones: {zones:?}");
 
@@ -129,12 +151,13 @@ async fn update_barriers(
     log::debug!("barriers: {barriers:?}");
     log::debug!("client for barrier id: {id_map:?}");
 
+    let ashpd_barriers: Vec<Barrier> = barriers.iter().copied().map(|b| b.into()).collect();
     let response = input_capture
-        .set_pointer_barriers(session, &barriers, zones.zone_set())
+        .set_pointer_barriers(session, &ashpd_barriers, zones.zone_set())
         .await?;
     let response = response.response()?;
     log::debug!("{response:?}");
-    Ok(id_map)
+    Ok((barriers, id_map))
 }
 
 async fn create_session<'a>(
@@ -289,7 +312,7 @@ async fn do_capture(
                 input_capture,
                 &mut session,
                 &event_tx,
-                &mut active_clients,
+                &active_clients,
                 &mut next_barrier_id,
                 &notify_release,
                 (cancel_session.clone(), cancel_update.clone()),
@@ -332,7 +355,7 @@ async fn do_capture_session(
     input_capture: &InputCapture<'_>,
     session: &mut Session<'_, InputCapture<'_>>,
     event_tx: &Sender<(CaptureHandle, Event)>,
-    active_clients: &mut Vec<(CaptureHandle, Position)>,
+    active_clients: &[(CaptureHandle, Position)],
     next_barrier_id: &mut u32,
     notify_release: &Notify,
     cancel: (CancellationToken, CancellationToken),
@@ -345,7 +368,7 @@ async fn do_capture_session(
     let (context, ei_event_stream) = connect_to_eis(input_capture, session).await?;
 
     // set barriers
-    let client_for_barrier_id =
+    let (barriers, client_for_barrier_id) =
         update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
 
     log::debug!("enabling session");
@@ -388,9 +411,15 @@ async fn do_capture_session(
                     let activated = activated.ok_or(CaptureError::ActivationClosed)?;
                     log::debug!("activated: {activated:?}");
 
-                    let client = *client_for_barrier_id
-                        .get(&activated.barrier_id().expect("no barrier id reported by compositor!"))
-                        .expect("invalid barrier id");
+                    // get barrier id from activation
+                    let barrier_id = match activated.barrier_id() {
+                        Some(bid) => bid,
+                        // workaround for KDE plasma not reporting barrier ids
+                        None => find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor")),
+                    };
+
+                    // find client corresponding to barrier
+                    let client = *client_for_barrier_id.get(&barrier_id).expect("invalid barrier id");
                     current_client.replace(Some(client));
 
                     // client entered => send event
@@ -462,6 +491,7 @@ async fn release_capture<'a>(
     let (x, y) = activated
         .cursor_position()
         .expect("compositor did not report cursor position!");
+    log::debug!("client entered @ ({x}, {y})");
     let pos = active_clients
         .iter()
         .filter(|(c, _)| *c == current_client)
@@ -481,6 +511,34 @@ async fn release_capture<'a>(
         .release(session, activated.activation_id(), Some(cursor_position))
         .await?;
     Ok(())
+}
+
+fn find_corresponding_client(barriers: &[ICBarrier], pos: (f32, f32)) -> BarrierID {
+    barriers
+        .iter()
+        .copied()
+        .min_by_key(|b| {
+            let (x1, y1, x2, y2) = b.position;
+            let (x1, y1, x2, y2) = (x1 as f32, y1 as f32, x2 as f32, y2 as f32);
+            distance_to_line(((x1, y1), (x2, y2)), pos) as i32
+        })
+        .expect("could not find barrier corresponding to client")
+        .barrier_id
+}
+
+fn distance_to_line(line: ((f32, f32), (f32, f32)), p: (f32, f32)) -> f32 {
+    let ((x1, y1), (x2, y2)) = line;
+    let (x0, y0) = p;
+    /*
+     * we use the fact that for the triangle spanned by the line and p,
+     * the height of the triangle is the desired distance and can be calculated by
+     * h = 2A / b with b being the line_length and
+     */
+    let double_triangle_area = ((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1).abs();
+    let line_length = ((y2 - y1).powf(2.0) + (x2 - x1).powf(2.0)).sqrt();
+    let distance = double_triangle_area / line_length;
+    log::debug!("distance to line({line:?}, {p:?}) = {distance}");
+    distance
 }
 
 static ALL_CAPABILITIES: &[DeviceCapability] = &[
