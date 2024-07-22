@@ -50,6 +50,8 @@ endi = "1.1.0"
 thiserror = "1.0.61"
 tokio-util = "0.7.11"
 webrtc-dtls = "0.10.0"
+rustls = "0.23.11"
+webrtc-util = "0.9.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
