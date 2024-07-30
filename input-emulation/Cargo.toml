@@ -4,7 +4,7 @@ description = "cross-platform input emulation library used by lan-mouse"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/ferdinandschober/lan-mouse"
+repository = "https://github.com/feschber/lan-mouse"
 
 [dependencies]
 async-trait = "0.1.80"
