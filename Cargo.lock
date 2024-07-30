@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "async-channel",
