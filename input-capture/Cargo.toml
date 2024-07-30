@@ -10,7 +10,7 @@ repository = "https://github.com/feschber/lan-mouse"
 futures = "0.3.28"
 futures-core = "0.3.30"
 log = "0.4.22"
-input-event = { path = "../input-event", version = "0.2.0" }
+input-event = { path = "../input-event", version = "0.2.1" }
 memmap = "0.7"
 tempfile = "3.8"
 thiserror = "1.0.61"
