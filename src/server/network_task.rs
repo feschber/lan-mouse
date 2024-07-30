@@ -90,7 +90,7 @@ pub(crate) enum NetworkError {
 async fn receive_event(socket: &UdpSocket) -> Result<(Event, SocketAddr), NetworkError> {
     let mut buf = vec![0u8; 22];
     let (_amt, src) = socket.recv_from(&mut buf).await?;
-    Ok((Event::try_from(buf)?, src))
+    Ok((Event::try_from(buf.as_slice())?, src))
 }
 
 fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize, NetworkError> {

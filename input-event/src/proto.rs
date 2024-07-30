@@ -105,10 +105,10 @@ impl From<&Event> for Vec<u8> {
     }
 }
 
-impl TryFrom<Vec<u8>> for Event {
+impl TryFrom<&[u8]> for Event {
     type Error = ProtocolError;
 
-    fn try_from(value: Vec<u8>) -> Result<Self, ProtocolError> {
+    fn try_from(value: &[u8]) -> Result<Self, ProtocolError> {
         let event_id = u8::from_be_bytes(value[..1].try_into()?);
         match event_id {
             i if i == (EventType::Pointer as u8) => Ok(Event::Pointer(value.try_into()?)),
@@ -201,10 +201,10 @@ where
     Ok(f64::from_be_bytes(data.try_into()?))
 }
 
-impl TryFrom<Vec<u8>> for PointerEvent {
+impl TryFrom<&[u8]> for PointerEvent {
     type Error = ProtocolError;
 
-    fn try_from(data: Vec<u8>) -> Result<Self, ProtocolError> {
+    fn try_from(data: &[u8]) -> Result<Self, ProtocolError> {
         match data.get(1) {
             Some(id) => match id.to_owned().try_into()? {
                 PointerEventType::Motion => {
@@ -276,10 +276,10 @@ impl From<&KeyboardEvent> for Vec<u8> {
     }
 }
 
-impl TryFrom<Vec<u8>> for KeyboardEvent {
+impl TryFrom<&[u8]> for KeyboardEvent {
     type Error = ProtocolError;
 
-    fn try_from(data: Vec<u8>) -> Result<Self, ProtocolError> {
+    fn try_from(data: &[u8]) -> Result<Self, ProtocolError> {
         match data.get(1) {
             Some(id) => match id.to_owned().try_into()? {
                 KeyboardEventType::Key => {
