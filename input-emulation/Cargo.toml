@@ -10,7 +10,7 @@ repository = "https://github.com/ferdinandschober/lan-mouse"
 async-trait = "0.1.80"
 futures = "0.3.28"
 log = "0.4.22"
-input-event = { path = "../input-event", version = "0.1.0" }
+input-event = { path = "../input-event", version = "0.2.0" }
 thiserror = "1.0.61"
 tokio = { version = "1.32.0", features = [
     "io-util",
