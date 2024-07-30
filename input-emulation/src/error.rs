@@ -88,7 +88,7 @@ pub enum EmulationCreationError {
 impl EmulationCreationError {
     /// request was intentionally denied by the user
     pub(crate) fn cancelled_by_user(&self) -> bool {
-        #[cfg(feature = "libei")]
+        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         if matches!(
             self,
             EmulationCreationError::Libei(LibeiEmulationCreationError::Ashpd(Response(
@@ -97,7 +97,7 @@ impl EmulationCreationError {
         ) {
             return true;
         }
-        #[cfg(feature = "xdg_desktop_portal")]
+        #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
         if matches!(
             self,
             EmulationCreationError::Xdp(XdpEmulationCreationError::Ashpd(Response(
