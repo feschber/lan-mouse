@@ -1,11 +1,10 @@
 use async_trait::async_trait;
 use futures_core::Stream;
-use memmap::MmapOptions;
 use std::{
     collections::VecDeque,
     env,
     io::{self, ErrorKind},
-    os::fd::{AsFd, OwnedFd, RawFd},
+    os::fd::{AsFd, RawFd},
     pin::Pin,
     task::{ready, Context, Poll},
 };
@@ -14,7 +13,7 @@ use tokio::io::unix::AsyncFd;
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    os::unix::prelude::{AsRawFd, FromRawFd},
+    os::unix::prelude::AsRawFd,
     sync::Arc,
 };
 
@@ -108,7 +107,7 @@ struct State {
     client_for_window: Vec<(Arc<Window>, CaptureHandle)>,
     focused: Option<(Arc<Window>, CaptureHandle)>,
     g: Globals,
-    wayland_fd: OwnedFd,
+    wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: VecDeque<(CaptureHandle, Event)>,
@@ -123,7 +122,7 @@ struct Inner {
 
 impl AsRawFd for Inner {
     fn as_raw_fd(&self) -> RawFd {
-        self.state.wayland_fd.as_raw_fd()
+        self.state.wayland_fd
     }
 }
 
@@ -308,10 +307,7 @@ impl WaylandInputCapture {
         // flush outgoing events
         queue.flush()?;
 
-        // prepare reading wayland events
-        let read_guard = queue.prepare_read().unwrap(); // there can not yet be events to dispatch
-        let wayland_fd = read_guard.connection_fd().try_clone_to_owned().unwrap();
-        std::mem::drop(read_guard);
+        let wayland_fd = queue.as_fd().as_raw_fd();
 
         let mut state = State {
             pointer: None,
@@ -819,15 +815,6 @@ impl Dispatch<WlKeyboard, ()> for State {
                         }),
                     ));
                 }
-            }
-            wl_keyboard::Event::Keymap {
-                format: _,
-                fd,
-                size: _,
-            } => {
-                let fd = unsafe { &File::from_raw_fd(fd.as_raw_fd()) };
-                let _mmap = unsafe { MmapOptions::new().map_copy(fd).unwrap() };
-                // TODO keymap
             }
             _ => (),
         }
