@@ -1,4 +1,4 @@
-use super::{error::EmulationError, EmulationHandle, InputEmulation};
+use super::{error::EmulationError, Emulation, EmulationHandle};
 use async_trait::async_trait;
 use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
 use core_graphics::event::{
@@ -106,7 +106,7 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8) {
 }
 
 #[async_trait]
-impl InputEmulation for MacOSEmulation {
+impl Emulation for MacOSEmulation {
     async fn consume(
         &mut self,
         event: Event,
