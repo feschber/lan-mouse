@@ -1,6 +1,6 @@
 use crate::config::Config;
 use futures::StreamExt;
-use input_capture::{self, CaptureError, InputCapture, InputCaptureError, Position};
+use input_capture::{self, CaptureError, CaptureEvent, InputCapture, InputCaptureError, Position};
 use input_event::{Event, KeyboardEvent};
 use tokio::task::LocalSet;
 
@@ -46,7 +46,7 @@ async fn do_capture(input_capture: &mut InputCapture) -> Result<(), CaptureError
             _ => Position::Bottom,
         };
         log::info!("position: {pos}, event: {event}");
-        if let Event::Keyboard(KeyboardEvent::Key { key: 1, .. }) = event {
+        if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key: 1, .. })) = event {
             input_capture.release().await?;
             break Ok(());
         }

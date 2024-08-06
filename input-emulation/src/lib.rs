@@ -195,9 +195,9 @@ impl InputEmulation {
         }
 
         let event = Event::Keyboard(KeyboardEvent::Modifiers {
-            mods_depressed: 0,
-            mods_latched: 0,
-            mods_locked: 0,
+            depressed: 0,
+            latched: 0,
+            locked: 0,
             group: 0,
         });
         self.emulation.consume(event, handle).await?;

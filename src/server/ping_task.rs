@@ -1,8 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
+use lan_mouse_proto::ProtoEvent;
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
-
-use input_event::Event;
 
 use crate::client::ClientHandle;
 
@@ -12,7 +11,7 @@ const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
 pub(crate) fn new(
     server: Server,
-    sender_ch: Sender<(Event, SocketAddr)>,
+    sender_ch: Sender<(ProtoEvent, SocketAddr)>,
     emulate_notify: Sender<EmulationRequest>,
     capture_notify: Sender<CaptureRequest>,
 ) -> JoinHandle<()> {
@@ -27,7 +26,7 @@ pub(crate) fn new(
 
 async fn ping_task(
     server: &Server,
-    sender_ch: Sender<(Event, SocketAddr)>,
+    sender_ch: Sender<(ProtoEvent, SocketAddr)>,
     emulate_notify: Sender<EmulationRequest>,
     capture_notify: Sender<CaptureRequest>,
 ) {
@@ -86,7 +85,7 @@ async fn ping_task(
 
             // ping clients
             for addr in ping_addrs {
-                if sender_ch.send((Event::Ping(), addr)).await.is_err() {
+                if sender_ch.send((ProtoEvent::Ping, addr)).await.is_err() {
                     break;
                 }
             }

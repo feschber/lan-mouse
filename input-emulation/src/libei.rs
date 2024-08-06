@@ -213,7 +213,6 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                         d.frame(self.serial.load(Ordering::SeqCst), now);
                     }
                 }
-                PointerEvent::Frame {} => {}
             },
             Event::Keyboard(k) => match k {
                 KeyboardEvent::Key {
@@ -235,7 +234,6 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            _ => {}
         }
         self.context
             .flush()

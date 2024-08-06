@@ -60,7 +60,7 @@ use wayland_client::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::CaptureError;
+use crate::{CaptureError, CaptureEvent};
 
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},
@@ -108,7 +108,7 @@ struct State {
     wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
-    pending_events: VecDeque<(CaptureHandle, Event)>,
+    pending_events: VecDeque<(CaptureHandle, CaptureEvent)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
     scroll_discrete_pending: bool,
 }
@@ -585,7 +585,7 @@ impl Capture for WaylandInputCapture {
 }
 
 impl Stream for WaylandInputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
@@ -694,7 +694,7 @@ impl Dispatch<WlPointer, ()> for State {
                     .iter()
                     .find(|(w, _c)| w.surface == surface)
                     .unwrap();
-                app.pending_events.push_back((*client, Event::Enter()));
+                app.pending_events.push_back((*client, CaptureEvent::Begin));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in
@@ -718,11 +718,11 @@ impl Dispatch<WlPointer, ()> for State {
                 let (_, client) = app.focused.as_ref().unwrap();
                 app.pending_events.push_back((
                     *client,
-                    Event::Pointer(PointerEvent::Button {
+                    CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                         time,
                         button,
                         state: u32::from(state),
-                    }),
+                    })),
                 ));
             }
             wl_pointer::Event::Axis { time, axis, value } => {
@@ -735,11 +735,11 @@ impl Dispatch<WlPointer, ()> for State {
                 } else {
                     app.pending_events.push_back((
                         *client,
-                        Event::Pointer(PointerEvent::Axis {
+                        CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                             time,
                             axis: u32::from(axis) as u8,
                             value,
-                        }),
+                        })),
                     ));
                 }
             }
@@ -748,10 +748,10 @@ impl Dispatch<WlPointer, ()> for State {
                 app.scroll_discrete_pending = true;
                 app.pending_events.push_back((
                     *client,
-                    Event::Pointer(PointerEvent::AxisDiscrete120 {
+                    CaptureEvent::Input(Event::Pointer(PointerEvent::AxisDiscrete120 {
                         axis: u32::from(axis) as u8,
                         value: value120,
-                    }),
+                    })),
                 ));
             }
             wl_pointer::Event::Frame {} => {
@@ -787,11 +787,11 @@ impl Dispatch<WlKeyboard, ()> for State {
                 if let Some(client) = client {
                     app.pending_events.push_back((
                         *client,
-                        Event::Keyboard(KeyboardEvent::Key {
+                        CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                             time,
                             key,
                             state: u32::from(state) as u8,
-                        }),
+                        })),
                     ));
                 }
             }
@@ -805,12 +805,12 @@ impl Dispatch<WlKeyboard, ()> for State {
                 if let Some(client) = client {
                     app.pending_events.push_back((
                         *client,
-                        Event::Keyboard(KeyboardEvent::Modifiers {
-                            mods_depressed,
-                            mods_latched,
-                            mods_locked,
+                        CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Modifiers {
+                            depressed: mods_depressed,
+                            latched: mods_latched,
+                            locked: mods_locked,
                             group,
-                        }),
+                        })),
                     ));
                 }
             }
@@ -840,7 +840,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
                 app.pending_events.push_back((
                     *client,
-                    Event::Pointer(PointerEvent::Motion { time, dx, dy }),
+                    CaptureEvent::Input(Event::Pointer(PointerEvent::Motion { time, dx, dy })),
                 ));
             }
         }
