@@ -24,12 +24,12 @@ use super::{EmulationHandle, InputEmulation};
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
-pub struct WindowsEmulation {
+pub(crate) struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
 }
 
 impl WindowsEmulation {
-    pub fn new() -> Result<Self, WindowsEmulationCreationError> {
+    pub(crate) fn new() -> Result<Self, WindowsEmulationCreationError> {
         Ok(Self { repeat_task: None })
     }
 }

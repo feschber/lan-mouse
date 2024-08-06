@@ -11,16 +11,16 @@ use input_event::{
 
 use crate::error::EmulationError;
 
-use super::{error::X11EmulationCreationError, EmulationHandle, InputEmulation};
+use super::{error::X11EmulationCreationError, Emulation, EmulationHandle};
 
-pub struct X11Emulation {
+pub(crate) struct X11Emulation {
     display: *mut xlib::Display,
 }
 
 unsafe impl Send for X11Emulation {}
 
 impl X11Emulation {
-    pub fn new() -> Result<Self, X11EmulationCreationError> {
+    pub(crate) fn new() -> Result<Self, X11EmulationCreationError> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
                 d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
@@ -99,7 +99,7 @@ impl Drop for X11Emulation {
 }
 
 #[async_trait]
-impl InputEmulation for X11Emulation {
+impl Emulation for X11Emulation {
     async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {

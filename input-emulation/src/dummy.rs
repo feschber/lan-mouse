@@ -3,19 +3,19 @@ use input_event::Event;
 
 use crate::error::EmulationError;
 
-use super::{EmulationHandle, InputEmulation};
+use super::{Emulation, EmulationHandle};
 
 #[derive(Default)]
-pub struct DummyEmulation;
+pub(crate) struct DummyEmulation;
 
 impl DummyEmulation {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {}
     }
 }
 
 #[async_trait]
-impl InputEmulation for DummyEmulation {
+impl Emulation for DummyEmulation {
     async fn consume(
         &mut self,
         event: Event,

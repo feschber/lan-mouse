@@ -16,8 +16,8 @@ use super::error::MacOSEmulationCreationError;
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
-pub struct MacOSEmulation {
-    pub event_source: CGEventSource,
+pub(crate) struct MacOSEmulation {
+    event_source: CGEventSource,
     repeat_task: Option<AbortHandle>,
     button_state: ButtonState,
 }
@@ -53,7 +53,7 @@ impl IndexMut<CGMouseButton> for ButtonState {
 unsafe impl Send for MacOSEmulation {}
 
 impl MacOSEmulation {
-    pub fn new() -> Result<Self, MacOSEmulationCreationError> {
+    pub(crate) fn new() -> Result<Self, MacOSEmulationCreationError> {
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| MacOSEmulationCreationError::EventSourceCreation)?;
         let button_state = ButtonState {

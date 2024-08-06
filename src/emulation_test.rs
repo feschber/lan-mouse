@@ -1,5 +1,6 @@
 use crate::config::Config;
 use anyhow::Result;
+use input_emulation::InputEmulation;
 use input_event::{Event, PointerEvent};
 use std::f64::consts::PI;
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ const RADIUS: f64 = 100.0;
 
 async fn input_emulation_test(config: Config) -> Result<()> {
     let backend = config.emulation_backend.map(|b| b.into());
-    let mut emulation = input_emulation::create(backend).await?;
+    let mut emulation = InputEmulation::new(backend).await?;
     emulation.create(0).await;
     let start = Instant::now();
     let mut offset = (0, 0);

@@ -1,6 +1,6 @@
 use crate::error::EmulationError;
 
-use super::{error::WlrootsEmulationCreationError, InputEmulation};
+use super::{error::WlrootsEmulationCreationError, Emulation};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io;
@@ -50,7 +50,7 @@ pub(crate) struct WlrootsEmulation {
 }
 
 impl WlrootsEmulation {
-    pub fn new() -> Result<Self, WlrootsEmulationCreationError> {
+    pub(crate) fn new() -> Result<Self, WlrootsEmulationCreationError> {
         let conn = Connection::connect_to_env()?;
         let (globals, queue) = registry_queue_init::<State>(&conn)?;
         let qh = queue.handle();
@@ -116,7 +116,7 @@ impl State {
 }
 
 #[async_trait]
-impl InputEmulation for WlrootsEmulation {
+impl Emulation for WlrootsEmulation {
     async fn consume(
         &mut self,
         event: Event,
