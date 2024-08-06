@@ -178,7 +178,7 @@ impl InputEmulation {
 
     pub async fn release_keys(&mut self, handle: EmulationHandle) -> Result<(), EmulationError> {
         if let Some(keys) = self.pressed_keys.get_mut(&handle) {
-            let keys = keys.drain().map(|k| k as u32).collect::<Vec<_>>();
+            let keys = keys.drain().collect::<Vec<_>>();
             for key in keys {
                 let event = Event::Keyboard(KeyboardEvent::Key {
                     time: 0,
