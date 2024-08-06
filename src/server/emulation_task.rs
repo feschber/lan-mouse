@@ -85,11 +85,8 @@ async fn do_emulation(
     }
 
     let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
-
-    // manual drop
-    emulation.terminate().await;
-
-    Ok(res?)
+    emulation.terminate().await; // manual drop
+    res
 }
 
 async fn do_emulation_session(
