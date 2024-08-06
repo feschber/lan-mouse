@@ -125,8 +125,8 @@ pub struct ClientState {
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
     pub ips: HashSet<IpAddr>,
-    /// keys currently pressed by this client
-    pub pressed_keys: HashSet<u32>,
+    /// client has pressed keys
+    pub has_pressed_keys: bool,
     /// dns resolving in progress
     pub resolving: bool,
 }

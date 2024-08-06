@@ -34,7 +34,7 @@ use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use crate::error::{EmulationError, ReisConvertStreamError};
 
-use super::{error::LibeiEmulationCreationError, EmulationHandle, InputEmulation};
+use super::{error::LibeiEmulationCreationError, Emulation, EmulationHandle};
 
 static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -60,7 +60,7 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub struct LibeiEmulation<'a> {
+pub(crate) struct LibeiEmulation<'a> {
     context: ei::Context,
     devices: Devices,
     ei_task: JoinHandle<()>,
@@ -99,7 +99,7 @@ async fn get_ei_fd<'a>(
 }
 
 impl<'a> LibeiEmulation<'a> {
-    pub async fn new() -> Result<Self, LibeiEmulationCreationError> {
+    pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
         let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
@@ -147,7 +147,7 @@ impl<'a> Drop for LibeiEmulation<'a> {
 }
 
 #[async_trait]
-impl<'a> InputEmulation for LibeiEmulation<'a> {
+impl<'a> Emulation for LibeiEmulation<'a> {
     async fn consume(
         &mut self,
         event: Event,

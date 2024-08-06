@@ -16,15 +16,15 @@ use input_event::{
 
 use crate::error::EmulationError;
 
-use super::{error::XdpEmulationCreationError, EmulationHandle, InputEmulation};
+use super::{error::XdpEmulationCreationError, Emulation, EmulationHandle};
 
-pub struct DesktopPortalEmulation<'a> {
+pub(crate) struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
     session: Session<'a, RemoteDesktop<'a>>,
 }
 
 impl<'a> DesktopPortalEmulation<'a> {
-    pub async fn new() -> Result<DesktopPortalEmulation<'a>, XdpEmulationCreationError> {
+    pub(crate) async fn new() -> Result<DesktopPortalEmulation<'a>, XdpEmulationCreationError> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
 
@@ -56,7 +56,7 @@ impl<'a> DesktopPortalEmulation<'a> {
 }
 
 #[async_trait]
-impl<'a> InputEmulation for DesktopPortalEmulation<'a> {
+impl<'a> Emulation for DesktopPortalEmulation<'a> {
     async fn consume(
         &mut self,
         event: input_event::Event,

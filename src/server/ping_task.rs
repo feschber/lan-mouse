@@ -42,8 +42,8 @@ async fn ping_task(
                 let ping_clients: Vec<ClientHandle> = if receiving {
                     // if receiving we care about clients with pressed keys
                     client_manager
-                        .get_client_states_mut()
-                        .filter(|(_, (_, s))| !s.pressed_keys.is_empty())
+                        .get_client_states()
+                        .filter(|(_, (_, s))| s.has_pressed_keys)
                         .map(|(h, _)| h)
                         .collect()
                 } else {

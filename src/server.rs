@@ -441,6 +441,12 @@ impl Server {
         }
     }
 
+    fn update_pressed_keys(&self, handle: ClientHandle, has_pressed_keys: bool) {
+        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
+            s.has_pressed_keys = has_pressed_keys;
+        }
+    }
+
     fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
         if let Some((c, _)) = self.client_manager.borrow_mut().get_mut(handle) {
             c.fix_ips = fix_ips;

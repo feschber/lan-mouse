@@ -19,23 +19,23 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
 
-use super::{EmulationHandle, InputEmulation};
+use super::{Emulation, EmulationHandle};
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
-pub struct WindowsEmulation {
+pub(crate) struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
 }
 
 impl WindowsEmulation {
-    pub fn new() -> Result<Self, WindowsEmulationCreationError> {
+    pub(crate) fn new() -> Result<Self, WindowsEmulationCreationError> {
         Ok(Self { repeat_task: None })
     }
 }
 
 #[async_trait]
-impl InputEmulation for WindowsEmulation {
+impl Emulation for WindowsEmulation {
     async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
