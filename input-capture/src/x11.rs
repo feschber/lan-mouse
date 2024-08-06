@@ -5,7 +5,7 @@ use futures_core::Stream;
 
 use crate::CaptureError;
 
-use super::InputCapture;
+use super::Capture;
 use input_event::Event;
 
 use super::error::X11InputCaptureCreationError;
@@ -20,7 +20,7 @@ impl X11InputCapture {
 }
 
 #[async_trait]
-impl InputCapture for X11InputCapture {
+impl Capture for X11InputCapture {
     async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }

@@ -20,7 +20,7 @@ async fn input_capture_test(config: Config) -> Result<(), InputCaptureError> {
     log::info!("creating input capture");
     let backend = config.capture_backend.map(|b| b.into());
     loop {
-        let mut input_capture = input_capture::create(backend).await?;
+        let mut input_capture = InputCapture::new(backend).await?;
         log::info!("creating clients");
         input_capture.create(0, Position::Left).await?;
         input_capture.create(1, Position::Right).await?;
@@ -33,7 +33,7 @@ async fn input_capture_test(config: Config) -> Result<(), InputCaptureError> {
     }
 }
 
-async fn do_capture(input_capture: &mut Box<dyn InputCapture>) -> Result<(), CaptureError> {
+async fn do_capture(input_capture: &mut InputCapture) -> Result<(), CaptureError> {
     loop {
         let (client, event) = input_capture
             .next()

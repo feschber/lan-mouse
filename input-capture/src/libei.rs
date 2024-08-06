@@ -38,7 +38,7 @@ use input_event::Event;
 
 use super::{
     error::{CaptureError, LibeiCaptureCreationError, ReisConvertEventStreamError},
-    CaptureHandle, InputCapture as LanMouseInputCapture, Position,
+    Capture as LanMouseInputCapture, CaptureHandle, Position,
 };
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that

@@ -1,5 +1,5 @@
 use crate::{
-    error::MacOSInputCaptureCreationError, CaptureError, CaptureHandle, InputCapture, Position,
+    error::MacOSInputCaptureCreationError, Capture, CaptureError, CaptureHandle, Position,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -24,7 +24,7 @@ impl Stream for MacOSInputCapture {
 }
 
 #[async_trait]
-impl InputCapture for MacOSInputCapture {
+impl Capture for MacOSInputCapture {
     async fn create(&mut self, _id: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }

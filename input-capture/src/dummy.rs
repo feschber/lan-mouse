@@ -8,7 +8,7 @@ use input_event::Event;
 
 use crate::CaptureError;
 
-use super::{CaptureHandle, InputCapture, Position};
+use super::{Capture, CaptureHandle, Position};
 
 pub struct DummyInputCapture {}
 
@@ -25,7 +25,7 @@ impl Default for DummyInputCapture {
 }
 
 #[async_trait]
-impl InputCapture for DummyInputCapture {
+impl Capture for DummyInputCapture {
     async fn create(&mut self, _handle: CaptureHandle, _pos: Position) -> Result<(), CaptureError> {
         Ok(())
     }

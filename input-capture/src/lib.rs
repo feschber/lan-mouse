@@ -1,31 +1,32 @@
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display, task::Poll};
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use futures_core::Stream;
 
-use input_event::Event;
+use input_event::{scancode, Event, KeyboardEvent};
 
 pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
 pub mod error;
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-pub mod libei;
+mod libei;
 
 #[cfg(target_os = "macos")]
-pub mod macos;
+mod macos;
 
 #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-pub mod wayland;
+mod wayland;
 
 #[cfg(windows)]
-pub mod windows;
+mod windows;
 
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
-pub mod x11;
+mod x11;
 
 /// fallback input capture (does not produce events)
-pub mod dummy;
+mod dummy;
 
 pub type CaptureHandle = u64;
 
@@ -93,10 +94,79 @@ impl Display for Backend {
     }
 }
 
+pub struct InputCapture {
+    capture: Box<dyn Capture>,
+    pressed_keys: HashSet<scancode::Linux>,
+}
+
+impl InputCapture {
+    /// create a new client with the given id
+    pub async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+        self.capture.create(id, pos).await
+    }
+
+    /// destroy the client with the given id, if it exists
+    pub async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
+        self.capture.destroy(id).await
+    }
+
+    /// release mouse
+    pub async fn release(&mut self) -> Result<(), CaptureError> {
+        self.pressed_keys.clear();
+        self.capture.release().await
+    }
+
+    /// destroy the input capture
+    pub async fn terminate(&mut self) -> Result<(), CaptureError> {
+        self.capture.terminate().await
+    }
+
+    /// creates a new [`InputCapture`]
+    pub async fn new(backend: Option<Backend>) -> Result<Self, CaptureCreationError> {
+        let capture = create(backend).await?;
+        Ok(Self {
+            capture,
+            pressed_keys: HashSet::new(),
+        })
+    }
+
+    /// check whether the given keys are pressed
+    pub fn keys_pressed(&self, keys: &[scancode::Linux]) -> bool {
+        keys.iter().all(|k| self.pressed_keys.contains(k))
+    }
+
+    fn update_pressed_keys(&mut self, key: u32, state: u8) {
+        if let Ok(scancode) = scancode::Linux::try_from(key) {
+            log::debug!("key: {key}, state: {state}, scancode: {scancode:?}");
+            match state {
+                1 => self.pressed_keys.insert(scancode),
+                _ => self.pressed_keys.remove(&scancode),
+            };
+        }
+    }
+}
+
+impl Stream for InputCapture {
+    type Item = Result<(CaptureHandle, Event), CaptureError>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        match self.capture.poll_next_unpin(cx) {
+            Poll::Ready(e) => {
+                if let Some(Ok((_, Event::Keyboard(KeyboardEvent::Key { key, state, .. })))) = e {
+                    self.update_pressed_keys(key, state);
+                }
+                Poll::Ready(e)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 #[async_trait]
-pub trait InputCapture:
-    Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin
-{
+trait Capture: Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin {
     /// create a new client with the given id
     async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError>;
 
@@ -110,10 +180,10 @@ pub trait InputCapture:
     async fn terminate(&mut self) -> Result<(), CaptureError>;
 }
 
-pub async fn create_backend(
+async fn create_backend(
     backend: Backend,
 ) -> Result<
-    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
     CaptureCreationError,
 > {
     match backend {
@@ -131,10 +201,10 @@ pub async fn create_backend(
     }
 }
 
-pub async fn create(
+async fn create(
     backend: Option<Backend>,
 ) -> Result<
-    Box<dyn InputCapture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
     CaptureCreationError,
 > {
     if let Some(backend) = backend {
