@@ -169,11 +169,11 @@ async fn handle_udp_rx(
                 State::Receiving => {
                     log::trace!("{event} => emulate");
                     emulate.consume(event, handle).await?;
-                    if emulate.has_pressed_keys(handle) {
-                        server.update_pressed_keys(handle, true);
+                    let has_pressed_keys = emulate.has_pressed_keys(handle);
+                    server.update_pressed_keys(handle, has_pressed_keys);
+                    if has_pressed_keys {
                         server.restart_ping_timer();
                     }
-                    server.update_pressed_keys(handle, false);
                 }
                 State::AwaitingLeave => {
                     // we just entered the deadzone of a client, so
