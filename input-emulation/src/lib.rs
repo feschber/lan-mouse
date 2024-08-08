@@ -155,6 +155,7 @@ impl InputEmulation {
 
     pub async fn create(&mut self, handle: EmulationHandle) -> bool {
         if self.handles.insert(handle) {
+            self.pressed_keys.insert(handle, HashSet::new());
             self.emulation.create(handle).await;
             true
         } else {
@@ -165,6 +166,7 @@ impl InputEmulation {
     pub async fn destroy(&mut self, handle: EmulationHandle) {
         let _ = self.release_keys(handle).await;
         if self.handles.remove(&handle) {
+            self.pressed_keys.remove(&handle);
             self.emulation.destroy(handle).await
         }
     }
