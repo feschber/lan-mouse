@@ -253,7 +253,7 @@ impl Server {
         self.notifies.capture.notify_waiters()
     }
 
-    async fn capture_notified(&self) {
+    async fn capture_enabled(&self) {
         self.notifies.capture.notified().await
     }
 
@@ -562,6 +562,27 @@ impl Server {
             .borrow_mut()
             .get_mut(handle)
             .and_then(|(c, _)| c.hostname.clone())
+    }
+
+    fn get_state(&self) -> State {
+        self.state.get()
+    }
+
+    fn set_state(&self, state: State) {
+        log::debug!("state => {state:?}");
+        self.state.replace(state);
+    }
+
+    fn set_active(&self, handle: Option<u64>) {
+        log::debug!("active client => {handle:?}");
+        self.active_client.replace(handle);
+    }
+
+    fn active_addr(&self, handle: u64) -> Option<SocketAddr> {
+        self.client_manager
+            .borrow()
+            .get(handle)
+            .and_then(|(_, s)| s.active_addr)
     }
 }
 
