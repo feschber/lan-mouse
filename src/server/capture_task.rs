@@ -16,7 +16,7 @@ use crate::{client::ClientHandle, frontend::Status, server::State};
 use super::Server;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum CaptureEvent {
+pub(crate) enum CaptureRequest {
     /// capture must release the mouse
     Release,
     /// add a capture client
@@ -27,7 +27,7 @@ pub(crate) enum CaptureEvent {
 
 pub(crate) fn new(
     server: Server,
-    capture_rx: Receiver<CaptureEvent>,
+    capture_rx: Receiver<CaptureRequest>,
     udp_send: Sender<(Event, SocketAddr)>,
 ) -> JoinHandle<()> {
     let backend = server.config.capture_backend.map(|b| b.into());
@@ -38,7 +38,7 @@ async fn capture_task(
     server: Server,
     backend: Option<input_capture::Backend>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    mut notify_rx: Receiver<CaptureEvent>,
+    mut notify_rx: Receiver<CaptureRequest>,
 ) {
     loop {
         if let Err(e) = do_capture(backend, &server, &sender_tx, &mut notify_rx).await {
@@ -53,7 +53,7 @@ async fn capture_task(
         loop {
             tokio::select! {
                 _ = notify_rx.recv() => continue, /* need to ignore requests here! */
-                _ = server.capture_notified() => break,
+                _ = server.capture_enabled() => break,
                 _ = server.cancelled() => return,
             }
         }
@@ -64,7 +64,7 @@ async fn do_capture(
     backend: Option<input_capture::Backend>,
     server: &Server,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    notify_rx: &mut Receiver<CaptureEvent>,
+    notify_rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
     /* allow cancelling capture request */
     let mut capture = tokio::select! {
@@ -100,12 +100,12 @@ async fn do_capture(
                 log::debug!("input capture notify rx: {e:?}");
                 match e {
                     Some(e) => match e {
-                        CaptureEvent::Release => {
+                        CaptureRequest::Release => {
                             capture.release().await?;
                             server.state.replace(State::Receiving);
                         }
-                        CaptureEvent::Create(h, p) => capture.create(h, p).await?,
-                        CaptureEvent::Destroy(h) => capture.destroy(h).await?,
+                        CaptureRequest::Create(h, p) => capture.create(h, p).await?,
+                        CaptureRequest::Destroy(h) => capture.destroy(h).await?,
                     },
                     None => break,
                 }
@@ -123,68 +123,38 @@ async fn handle_capture_event(
     sender_tx: &Sender<(Event, SocketAddr)>,
     event: (CaptureHandle, Event),
 ) -> Result<(), CaptureError> {
-    let (handle, mut e) = event;
-    log::trace!("({handle}) {e:?}");
+    let (handle, event) = event;
+    log::trace!("({handle}) {event:?}");
+
+    // capture started
+    if event == Event::Enter() {
+        server.set_state(State::AwaitingLeave);
+        server.set_active(Some(handle));
+        server.restart_ping_timer();
+        spawn_hook_command(server, handle);
+    }
+
+    // release capture if emulation set state to Receiveing
+    if server.get_state() == State::Receiving {
+        capture.release().await?;
+        return Ok(());
+    }
 
     // check release bind
     if capture.keys_pressed(&server.release_bind) {
         capture.release().await?;
-        server.state.replace(State::Receiving);
-        e = Event::Disconnect();
+        server.set_state(State::Receiving);
     }
 
-    let info = {
-        let mut enter = false;
-        let mut start_timer = false;
-
-        // get client state for handle
-        let mut client_manager = server.client_manager.borrow_mut();
-        let client_state = client_manager.get_mut(handle).map(|(_, s)| s);
-        if let Some(client_state) = client_state {
-            // if we just entered the client we want to send additional enter events until
-            // we get a leave event
-            if let Event::Enter() = e {
-                server.state.replace(State::AwaitingLeave);
-                server.active_client.replace(Some(handle));
-                log::trace!("Active client => {}", handle);
-                start_timer = true;
-                log::trace!("STATE ===> AwaitingLeave");
-                enter = true;
-            } else {
-                // ignore any potential events in receiving mode
-                if server.state.get() == State::Receiving && e != Event::Disconnect() {
-                    return Ok(());
-                }
-            }
-            Some((client_state.active_addr, enter, start_timer))
-        } else {
-            None
-        }
-    };
-
-    let (addr, enter, start_timer) = match info {
-        Some(i) => i,
-        None => {
-            // should not happen
-            log::warn!("unknown client!");
-            capture.release().await?;
-            server.state.replace(State::Receiving);
-            log::trace!("STATE ===> Receiving");
-            return Ok(());
-        }
-    };
-
-    if start_timer {
-        server.restart_ping_timer();
-    }
-    if enter {
-        spawn_hook_command(server, handle);
-    }
-    if let Some(addr) = addr {
-        if enter {
-            let _ = sender_tx.send((Event::Enter(), addr)).await;
-        }
-        let _ = sender_tx.send((e, addr)).await;
+    if let Some(addr) = server.active_addr(handle) {
+        let event = match server.get_state() {
+            State::Sending => event,
+            /* send additional enter events until acknowleged */
+            State::AwaitingLeave => Event::Enter(),
+            /* released capture */
+            State::Receiving => Event::Disconnect(),
+        };
+        sender_tx.send((event, addr)).await.expect("sender closed");
     }
     Ok(())
 }
