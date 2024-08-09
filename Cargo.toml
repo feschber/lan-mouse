@@ -1,5 +1,5 @@
 [workspace]
-members = ["input-capture", "input-emulation", "input-event"]
+members = ["input-capture", "input-emulation", "input-event", "lan-mouse-proto"]
 
 [package]
 name = "lan-mouse"
@@ -17,6 +17,7 @@ lto = "fat"
 input-event = { path = "input-event", version = "0.2.1" }
 input-emulation = { path = "input-emulation", version = "0.2.1", default-features = false }
 input-capture = { path = "input-capture", version = "0.2.0", default-features = false }
+lan-mouse-proto = { path = "lan-mouse-proto", version = "0.1.0" }
 
 hickory-resolver = "0.24.1"
 toml = "0.8"

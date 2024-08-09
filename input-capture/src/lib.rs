@@ -30,6 +30,23 @@ mod dummy;
 
 pub type CaptureHandle = u64;
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum CaptureEvent {
+    /// capture on this capture handle is now active
+    Begin,
+    /// input event coming from capture handle
+    Input(Event),
+}
+
+impl Display for CaptureEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CaptureEvent::Begin => write!(f, "begin capture"),
+            CaptureEvent::Input(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Position {
     Left,
@@ -147,7 +164,7 @@ impl InputCapture {
 }
 
 impl Stream for InputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -155,7 +172,11 @@ impl Stream for InputCapture {
     ) -> Poll<Option<Self::Item>> {
         match self.capture.poll_next_unpin(cx) {
             Poll::Ready(e) => {
-                if let Some(Ok((_, Event::Keyboard(KeyboardEvent::Key { key, state, .. })))) = e {
+                if let Some(Ok((
+                    _,
+                    CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })),
+                ))) = e
+                {
                     self.update_pressed_keys(key, state);
                 }
                 Poll::Ready(e)
@@ -166,7 +187,7 @@ impl Stream for InputCapture {
 }
 
 #[async_trait]
-trait Capture: Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unpin {
+trait Capture: Stream<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>> + Unpin {
     /// create a new client with the given id
     async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError>;
 
@@ -183,7 +204,7 @@ trait Capture: Stream<Item = Result<(CaptureHandle, Event), CaptureError>> + Unp
 async fn create_backend(
     backend: Backend,
 ) -> Result<
-    Box<dyn Capture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>>>,
     CaptureCreationError,
 > {
     match backend {
@@ -204,7 +225,7 @@ async fn create_backend(
 async fn create(
     backend: Option<Backend>,
 ) -> Result<
-    Box<dyn Capture<Item = Result<(CaptureHandle, Event), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>>>,
     CaptureCreationError,
 > {
     if let Some(backend) = backend {

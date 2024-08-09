@@ -7,14 +7,13 @@ use tokio::{
     task::JoinHandle,
 };
 
-use input_event::{Event, ProtocolError};
-
 use super::Server;
+use lan_mouse_proto::{ProtoEvent, ProtocolError};
 
 pub(crate) async fn new(
     server: Server,
-    udp_recv_tx: Sender<Result<(Event, SocketAddr), NetworkError>>,
-    udp_send_rx: Receiver<(Event, SocketAddr)>,
+    udp_recv_tx: Sender<Result<(ProtoEvent, SocketAddr), NetworkError>>,
+    udp_send_rx: Receiver<(ProtoEvent, SocketAddr)>,
 ) -> io::Result<JoinHandle<()>> {
     // bind the udp socket
     let listen_addr = SocketAddr::new("0.0.0.0".parse().unwrap(), server.port.get());
@@ -62,7 +61,7 @@ async fn update_port(server: &Server, socket: &mut UdpSocket) {
 
 async fn udp_receiver(
     socket: &UdpSocket,
-    receiver_tx: &Sender<Result<(Event, SocketAddr), NetworkError>>,
+    receiver_tx: &Sender<Result<(ProtoEvent, SocketAddr), NetworkError>>,
 ) {
     loop {
         let event = receive_event(socket).await;
@@ -70,7 +69,7 @@ async fn udp_receiver(
     }
 }
 
-async fn udp_sender(socket: &UdpSocket, rx: &mut Receiver<(Event, SocketAddr)>) {
+async fn udp_sender(socket: &UdpSocket, rx: &mut Receiver<(ProtoEvent, SocketAddr)>) {
     loop {
         let (event, addr) = rx.recv().await.expect("channel closed");
         if let Err(e) = send_event(socket, event, addr) {
@@ -87,16 +86,17 @@ pub(crate) enum NetworkError {
     Io(#[from] io::Error),
 }
 
-async fn receive_event(socket: &UdpSocket) -> Result<(Event, SocketAddr), NetworkError> {
-    let mut buf = vec![0u8; 22];
-    let (_amt, src) = socket.recv_from(&mut buf).await?;
-    Ok((Event::try_from(buf)?, src))
+async fn receive_event(socket: &UdpSocket) -> Result<(ProtoEvent, SocketAddr), NetworkError> {
+    let mut buf = [0u8; lan_mouse_proto::MAX_EVENT_SIZE];
+    let (_len, src) = socket.recv_from(&mut buf).await?;
+    let event = ProtoEvent::try_from(buf)?;
+    Ok((event, src))
 }
 
-fn send_event(sock: &UdpSocket, e: Event, addr: SocketAddr) -> Result<usize, NetworkError> {
+fn send_event(sock: &UdpSocket, e: ProtoEvent, addr: SocketAddr) -> Result<usize, NetworkError> {
     log::trace!("{:20} ------>->->-> {addr}", e.to_string());
-    let data: Vec<u8> = (&e).into();
+    let (data, len): ([u8; lan_mouse_proto::MAX_EVENT_SIZE], usize) = e.into();
     // When udp blocks, we dont want to block the event loop.
     // Dropping events is better than potentially crashing the input capture.
-    Ok(sock.try_send_to(&data, addr)?)
+    Ok(sock.try_send_to(&data[..len], addr)?)
 }

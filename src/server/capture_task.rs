@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use lan_mouse_proto::ProtoEvent;
 use std::net::SocketAddr;
 
 use tokio::{
@@ -7,9 +8,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use input_capture::{self, CaptureError, CaptureHandle, InputCapture, InputCaptureError, Position};
-
-use input_event::Event;
+use input_capture::{
+    self, CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
+};
 
 use crate::{client::ClientHandle, frontend::Status, server::State};
 
@@ -28,7 +29,7 @@ pub(crate) enum CaptureRequest {
 pub(crate) fn new(
     server: Server,
     capture_rx: Receiver<CaptureRequest>,
-    udp_send: Sender<(Event, SocketAddr)>,
+    udp_send: Sender<(ProtoEvent, SocketAddr)>,
 ) -> JoinHandle<()> {
     let backend = server.config.capture_backend.map(|b| b.into());
     tokio::task::spawn_local(capture_task(server, backend, udp_send, capture_rx))
@@ -37,7 +38,7 @@ pub(crate) fn new(
 async fn capture_task(
     server: Server,
     backend: Option<input_capture::Backend>,
-    sender_tx: Sender<(Event, SocketAddr)>,
+    sender_tx: Sender<(ProtoEvent, SocketAddr)>,
     mut notify_rx: Receiver<CaptureRequest>,
 ) {
     loop {
@@ -63,7 +64,7 @@ async fn capture_task(
 async fn do_capture(
     backend: Option<input_capture::Backend>,
     server: &Server,
-    sender_tx: &Sender<(Event, SocketAddr)>,
+    sender_tx: &Sender<(ProtoEvent, SocketAddr)>,
     notify_rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
     /* allow cancelling capture request */
@@ -120,17 +121,20 @@ async fn do_capture(
 async fn handle_capture_event(
     server: &Server,
     capture: &mut InputCapture,
-    sender_tx: &Sender<(Event, SocketAddr)>,
-    event: (CaptureHandle, Event),
+    sender_tx: &Sender<(ProtoEvent, SocketAddr)>,
+    event: (CaptureHandle, CaptureEvent),
 ) -> Result<(), CaptureError> {
     let (handle, event) = event;
     log::trace!("({handle}) {event:?}");
 
     // capture started
-    if event == Event::Enter() {
-        server.set_state(State::AwaitingLeave);
+    if event == CaptureEvent::Begin {
+        // wait for remote to acknowlegde enter
+        server.set_state(State::AwaitAck);
         server.set_active(Some(handle));
+        // restart ping timer to release capture if unreachable
         server.restart_ping_timer();
+        // spawn enter hook cmd
         spawn_hook_command(server, handle);
     }
 
@@ -148,14 +152,18 @@ async fn handle_capture_event(
 
     if let Some(addr) = server.active_addr(handle) {
         let event = match server.get_state() {
-            State::Sending => event,
+            State::Sending => match event {
+                CaptureEvent::Begin => ProtoEvent::Enter(0),
+                CaptureEvent::Input(e) => ProtoEvent::Input(e),
+            },
             /* send additional enter events until acknowleged */
-            State::AwaitingLeave => Event::Enter(),
+            State::AwaitAck => ProtoEvent::Enter(0),
             /* released capture */
-            State::Receiving => Event::Disconnect(),
+            State::Receiving => ProtoEvent::Leave(0),
         };
         sender_tx.send((event, addr)).await.expect("sender closed");
-    }
+    };
+
     Ok(())
 }
 

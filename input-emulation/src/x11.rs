@@ -123,7 +123,6 @@ impl Emulation for X11Emulation {
                 PointerEvent::AxisDiscrete120 { axis, value } => {
                     self.emulate_scroll(axis, value as f64);
                 }
-                PointerEvent::Frame {} => {}
             },
             Event::Keyboard(KeyboardEvent::Key {
                 time: _,

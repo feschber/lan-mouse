@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use lan_mouse_proto::ProtoEvent;
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -11,9 +12,8 @@ use crate::{
     server::State,
 };
 use input_emulation::{self, EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
-use input_event::Event;
 
-use super::{network_task::NetworkError, CaptureRequest, Server};
+use super::{network_task::NetworkError, Server};
 
 #[derive(Clone, Debug)]
 pub(crate) enum EmulationRequest {
@@ -28,23 +28,21 @@ pub(crate) enum EmulationRequest {
 pub(crate) fn new(
     server: Server,
     emulation_rx: Receiver<EmulationRequest>,
-    udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
-    sender_tx: Sender<(Event, SocketAddr)>,
-    capture_tx: Sender<CaptureRequest>,
+    udp_rx: Receiver<Result<(ProtoEvent, SocketAddr), NetworkError>>,
+    sender_tx: Sender<(ProtoEvent, SocketAddr)>,
 ) -> JoinHandle<()> {
-    let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx, capture_tx);
+    let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx);
     tokio::task::spawn_local(emulation_task)
 }
 
 async fn emulation_task(
     server: Server,
     mut rx: Receiver<EmulationRequest>,
-    mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
-    sender_tx: Sender<(Event, SocketAddr)>,
-    capture_tx: Sender<CaptureRequest>,
+    mut udp_rx: Receiver<Result<(ProtoEvent, SocketAddr), NetworkError>>,
+    sender_tx: Sender<(ProtoEvent, SocketAddr)>,
 ) {
     loop {
-        if let Err(e) = do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
+        if let Err(e) = do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx).await {
             log::warn!("input emulation exited: {e}");
         }
         server.set_emulation_status(Status::Disabled);
@@ -66,9 +64,8 @@ async fn emulation_task(
 async fn do_emulation(
     server: &Server,
     rx: &mut Receiver<EmulationRequest>,
-    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
-    sender_tx: &Sender<(Event, SocketAddr)>,
-    capture_tx: &Sender<CaptureRequest>,
+    udp_rx: &mut Receiver<Result<(ProtoEvent, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(ProtoEvent, SocketAddr)>,
 ) -> Result<(), InputEmulationError> {
     let backend = server.config.emulation_backend.map(|b| b.into());
     log::info!("creating input emulation...");
@@ -84,7 +81,7 @@ async fn do_emulation(
         emulation.create(handle).await;
     }
 
-    let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx, capture_tx).await;
+    let res = do_emulation_session(server, &mut emulation, rx, udp_rx, sender_tx).await;
     emulation.terminate().await; // manual drop
     res
 }
@@ -93,9 +90,8 @@ async fn do_emulation_session(
     server: &Server,
     emulation: &mut InputEmulation,
     rx: &mut Receiver<EmulationRequest>,
-    udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
-    sender_tx: &Sender<(Event, SocketAddr)>,
-    capture_tx: &Sender<CaptureRequest>,
+    udp_rx: &mut Receiver<Result<(ProtoEvent, SocketAddr), NetworkError>>,
+    sender_tx: &Sender<(ProtoEvent, SocketAddr)>,
 ) -> Result<(), InputEmulationError> {
     let mut last_ignored = None;
 
@@ -109,7 +105,7 @@ async fn do_emulation_session(
                         continue;
                     }
                 };
-                handle_udp_rx(server, capture_tx, emulation, sender_tx, &mut last_ignored, udp_event).await?;
+                handle_incoming_event(server, emulation, sender_tx, &mut last_ignored, udp_event).await?;
             }
             emulate_event = rx.recv() => {
                 match emulate_event.expect("channel closed") {
@@ -123,13 +119,12 @@ async fn do_emulation_session(
     }
 }
 
-async fn handle_udp_rx(
+async fn handle_incoming_event(
     server: &Server,
-    capture_tx: &Sender<CaptureRequest>,
     emulate: &mut InputEmulation,
-    sender_tx: &Sender<(Event, SocketAddr)>,
+    sender_tx: &Sender<(ProtoEvent, SocketAddr)>,
     last_ignored: &mut Option<SocketAddr>,
-    event: (Event, SocketAddr),
+    event: (ProtoEvent, SocketAddr),
 ) -> Result<(), EmulationError> {
     let (event, addr) = event;
 
@@ -143,55 +138,27 @@ async fn handle_udp_rx(
     };
 
     match (event, addr) {
-        (Event::Pong(), _) => { /* ignore pong events */ }
-        (Event::Ping(), addr) => {
-            let _ = sender_tx.send((Event::Pong(), addr)).await;
+        (ProtoEvent::Pong, _) => { /* ignore pong events */ }
+        (ProtoEvent::Ping, addr) => {
+            let _ = sender_tx.send((ProtoEvent::Pong, addr)).await;
         }
-        (Event::Disconnect(), _) => emulate.release_keys(handle).await?,
-        (event, addr) => {
-            // tell clients that we are ready to receive events
-            if let Event::Enter() = event {
-                let _ = sender_tx.send((Event::Leave(), addr)).await;
-            }
-
-            match server.state.get() {
-                State::Sending => {
-                    if let Event::Leave() = event {
-                        // ignore additional leave events that may
-                        // have been sent for redundancy
-                    } else {
-                        // upon receiving any event, we go back to receiving mode
-                        server.state.replace(State::Receiving);
-                        let _ = capture_tx.send(CaptureRequest::Release).await;
-                        log::trace!("STATE ===> Receiving");
-                    }
-                }
-                State::Receiving => {
-                    log::trace!("{event} => emulate");
-                    emulate.consume(event, handle).await?;
-                    let has_pressed_keys = emulate.has_pressed_keys(handle);
-                    server.update_pressed_keys(handle, has_pressed_keys);
-                    if has_pressed_keys {
-                        server.restart_ping_timer();
-                    }
-                }
-                State::AwaitingLeave => {
-                    // we just entered the deadzone of a client, so
-                    // we need to ignore events that may still
-                    // be on the way until a leave event occurs
-                    // telling us the client registered the enter
-                    if let Event::Leave() = event {
-                        server.state.replace(State::Sending);
-                        log::trace!("STATE ===> Sending");
-                    }
-
-                    // entering a client that is waiting for a leave
-                    // event should still be possible
-                    if let Event::Enter() = event {
-                        server.state.replace(State::Receiving);
-                        let _ = capture_tx.send(CaptureRequest::Release).await;
-                        log::trace!("STATE ===> Receiving");
-                    }
+        (ProtoEvent::Leave(_), _) => emulate.release_keys(handle).await?,
+        (ProtoEvent::Ack(_), _) => server.set_state(State::Sending),
+        (ProtoEvent::Enter(_), _) => {
+            server.set_state(State::Receiving);
+            sender_tx
+                .send((ProtoEvent::Ack(0), addr))
+                .await
+                .expect("no channel")
+        }
+        (ProtoEvent::Input(e), _) => {
+            if let State::Receiving = server.get_state() {
+                log::trace!("{event} => emulate");
+                emulate.consume(e, handle).await?;
+                let has_pressed_keys = emulate.has_pressed_keys(handle);
+                server.update_pressed_keys(handle, has_pressed_keys);
+                if has_pressed_keys {
+                    server.restart_ping_timer();
                 }
             }
         }

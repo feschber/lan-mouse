@@ -36,6 +36,8 @@ use once_cell::sync::Lazy;
 
 use input_event::Event;
 
+use crate::CaptureEvent;
+
 use super::{
     error::{CaptureError, LibeiCaptureCreationError, ReisConvertEventStreamError},
     Capture as LanMouseInputCapture, CaptureHandle, Position,
@@ -56,7 +58,7 @@ enum LibeiNotifyEvent {
 pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     capture_task: JoinHandle<Result<(), CaptureError>>,
-    event_rx: Receiver<(CaptureHandle, Event)>,
+    event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
     notify_capture: Sender<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     cancellation_token: CancellationToken,
@@ -201,7 +203,7 @@ async fn connect_to_eis(
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
-    event_tx: Sender<(CaptureHandle, Event)>,
+    event_tx: Sender<(CaptureHandle, CaptureEvent)>,
     release_session: Arc<Notify>,
     current_client: Rc<Cell<Option<CaptureHandle>>>,
 ) -> Result<(), CaptureError> {
@@ -258,7 +260,7 @@ async fn do_capture(
     mut capture_event: Receiver<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     session: Option<(Session<'_, InputCapture<'_>>, BitFlags<Capabilities>)>,
-    event_tx: Sender<(CaptureHandle, Event)>,
+    event_tx: Sender<(CaptureHandle, CaptureEvent)>,
     cancellation_token: CancellationToken,
 ) -> Result<(), CaptureError> {
     let mut session = session.map(|s| s.0);
@@ -354,7 +356,7 @@ async fn do_capture(
 async fn do_capture_session(
     input_capture: &InputCapture<'_>,
     session: &mut Session<'_, InputCapture<'_>>,
-    event_tx: &Sender<(CaptureHandle, Event)>,
+    event_tx: &Sender<(CaptureHandle, CaptureEvent)>,
     active_clients: &[(CaptureHandle, Position)],
     next_barrier_id: &mut u32,
     notify_release: &Notify,
@@ -423,7 +425,7 @@ async fn do_capture_session(
                     current_client.replace(Some(client));
 
                     // client entered => send event
-                    event_tx.send((client, Event::Enter())).await.expect("no channel");
+                    event_tx.send((client, CaptureEvent::Begin)).await.expect("no channel");
 
                     tokio::select! {
                         _ = notify_release.notified() => { /* capture release */
@@ -554,7 +556,7 @@ async fn handle_ei_event(
     ei_event: EiEvent,
     current_client: Option<CaptureHandle>,
     context: &ei::Context,
-    event_tx: &Sender<(CaptureHandle, Event)>,
+    event_tx: &Sender<(CaptureHandle, CaptureEvent)>,
     release_session: &Notify,
 ) -> Result<(), CaptureError> {
     match ei_event {
@@ -575,7 +577,7 @@ async fn handle_ei_event(
         _ => {
             if let Some(handle) = current_client {
                 for event in Event::from_ei_event(ei_event) {
-                    event_tx.send((handle, event)).await.expect("no channel");
+                    event_tx.send((handle, CaptureEvent::Input(event))).await.expect("no channel");
                 }
             }
         }
@@ -627,7 +629,7 @@ impl<'a> Drop for LibeiInputCapture<'a> {
 }
 
 impl<'a> Stream for LibeiInputCapture<'a> {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.capture_task.poll_unpin(cx) {
