@@ -1,5 +1,5 @@
-use capture_task::CaptureEvent;
-use emulation_task::EmulationEvent;
+use capture_task::CaptureRequest;
+use emulation_task::EmulationRequest;
 use log;
 use std::{
     cell::{Cell, RefCell},
@@ -306,8 +306,8 @@ impl Server {
 
     async fn handle_request(
         &self,
-        capture: &Sender<CaptureEvent>,
-        emulate: &Sender<EmulationEvent>,
+        capture: &Sender<CaptureRequest>,
+        emulate: &Sender<EmulationRequest>,
         event: FrontendRequest,
     ) -> bool {
         log::debug!("frontend: {event:?}");
@@ -372,8 +372,8 @@ impl Server {
 
     async fn deactivate_client(
         &self,
-        capture: &Sender<CaptureEvent>,
-        emulate: &Sender<EmulationEvent>,
+        capture: &Sender<CaptureRequest>,
+        emulate: &Sender<EmulationRequest>,
         handle: ClientHandle,
     ) {
         log::debug!("deactivating client {handle}");
@@ -382,15 +382,15 @@ impl Server {
             None => return,
         };
 
-        let _ = capture.send(CaptureEvent::Destroy(handle)).await;
-        let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
+        let _ = capture.send(CaptureRequest::Destroy(handle)).await;
+        let _ = emulate.send(EmulationRequest::Destroy(handle)).await;
         log::debug!("deactivating client {handle} done");
     }
 
     async fn activate_client(
         &self,
-        capture: &Sender<CaptureEvent>,
-        emulate: &Sender<EmulationEvent>,
+        capture: &Sender<CaptureRequest>,
+        emulate: &Sender<EmulationRequest>,
         handle: ClientHandle,
     ) {
         log::debug!("activating client");
@@ -415,15 +415,17 @@ impl Server {
         };
 
         /* notify emulation, capture and frontends */
-        let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
-        let _ = emulate.send(EmulationEvent::Create(handle)).await;
+        let _ = capture
+            .send(CaptureRequest::Create(handle, pos.into()))
+            .await;
+        let _ = emulate.send(EmulationRequest::Create(handle)).await;
         log::debug!("activating client {handle} done");
     }
 
     async fn remove_client(
         &self,
-        capture: &Sender<CaptureEvent>,
-        emulate: &Sender<EmulationEvent>,
+        capture: &Sender<CaptureRequest>,
+        emulate: &Sender<EmulationRequest>,
         handle: ClientHandle,
     ) {
         let Some(active) = self
@@ -436,8 +438,8 @@ impl Server {
         };
 
         if active {
-            let _ = capture.send(CaptureEvent::Destroy(handle)).await;
-            let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
+            let _ = capture.send(CaptureRequest::Destroy(handle)).await;
+            let _ = emulate.send(EmulationRequest::Destroy(handle)).await;
         }
     }
 
@@ -502,8 +504,8 @@ impl Server {
     async fn update_pos(
         &self,
         handle: ClientHandle,
-        capture: &Sender<CaptureEvent>,
-        emulate: &Sender<EmulationEvent>,
+        capture: &Sender<CaptureRequest>,
+        emulate: &Sender<EmulationRequest>,
         pos: Position,
     ) {
         let (changed, active) = {
@@ -520,11 +522,13 @@ impl Server {
         // update state in event input emulator & input capture
         if changed {
             if active {
-                let _ = capture.send(CaptureEvent::Destroy(handle)).await;
-                let _ = emulate.send(EmulationEvent::Destroy(handle)).await;
+                let _ = capture.send(CaptureRequest::Destroy(handle)).await;
+                let _ = emulate.send(EmulationRequest::Destroy(handle)).await;
             }
-            let _ = capture.send(CaptureEvent::Create(handle, pos.into())).await;
-            let _ = emulate.send(EmulationEvent::Create(handle)).await;
+            let _ = capture
+                .send(CaptureRequest::Create(handle, pos.into()))
+                .await;
+            let _ = emulate.send(EmulationRequest::Create(handle)).await;
         }
     }
 

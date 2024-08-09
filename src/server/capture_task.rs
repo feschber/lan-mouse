@@ -16,7 +16,7 @@ use crate::{client::ClientHandle, frontend::Status, server::State};
 use super::Server;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum CaptureEvent {
+pub(crate) enum CaptureRequest {
     /// capture must release the mouse
     Release,
     /// add a capture client
@@ -27,7 +27,7 @@ pub(crate) enum CaptureEvent {
 
 pub(crate) fn new(
     server: Server,
-    capture_rx: Receiver<CaptureEvent>,
+    capture_rx: Receiver<CaptureRequest>,
     udp_send: Sender<(Event, SocketAddr)>,
 ) -> JoinHandle<()> {
     let backend = server.config.capture_backend.map(|b| b.into());
@@ -38,7 +38,7 @@ async fn capture_task(
     server: Server,
     backend: Option<input_capture::Backend>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    mut notify_rx: Receiver<CaptureEvent>,
+    mut notify_rx: Receiver<CaptureRequest>,
 ) {
     loop {
         if let Err(e) = do_capture(backend, &server, &sender_tx, &mut notify_rx).await {
@@ -64,7 +64,7 @@ async fn do_capture(
     backend: Option<input_capture::Backend>,
     server: &Server,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    notify_rx: &mut Receiver<CaptureEvent>,
+    notify_rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
     /* allow cancelling capture request */
     let mut capture = tokio::select! {
@@ -100,12 +100,12 @@ async fn do_capture(
                 log::debug!("input capture notify rx: {e:?}");
                 match e {
                     Some(e) => match e {
-                        CaptureEvent::Release => {
+                        CaptureRequest::Release => {
                             capture.release().await?;
                             server.state.replace(State::Receiving);
                         }
-                        CaptureEvent::Create(h, p) => capture.create(h, p).await?,
-                        CaptureEvent::Destroy(h) => capture.destroy(h).await?,
+                        CaptureRequest::Create(h, p) => capture.create(h, p).await?,
+                        CaptureRequest::Destroy(h) => capture.destroy(h).await?,
                     },
                     None => break,
                 }

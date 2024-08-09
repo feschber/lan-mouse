@@ -6,15 +6,15 @@ use input_event::Event;
 
 use crate::client::ClientHandle;
 
-use super::{capture_task::CaptureEvent, emulation_task::EmulationEvent, Server, State};
+use super::{capture_task::CaptureRequest, emulation_task::EmulationRequest, Server, State};
 
 const MAX_RESPONSE_TIME: Duration = Duration::from_millis(500);
 
 pub(crate) fn new(
     server: Server,
     sender_ch: Sender<(Event, SocketAddr)>,
-    emulate_notify: Sender<EmulationEvent>,
-    capture_notify: Sender<CaptureEvent>,
+    emulate_notify: Sender<EmulationRequest>,
+    capture_notify: Sender<CaptureRequest>,
 ) -> JoinHandle<()> {
     // timer task
     tokio::task::spawn_local(async move {
@@ -28,8 +28,8 @@ pub(crate) fn new(
 async fn ping_task(
     server: &Server,
     sender_ch: Sender<(Event, SocketAddr)>,
-    emulate_notify: Sender<EmulationEvent>,
-    capture_notify: Sender<CaptureEvent>,
+    emulate_notify: Sender<EmulationRequest>,
+    capture_notify: Sender<CaptureRequest>,
 ) {
     loop {
         // wait for wake up signal
@@ -123,14 +123,14 @@ async fn ping_task(
             if receiving {
                 for h in unresponsive_clients {
                     log::warn!("device not responding, releasing keys!");
-                    let _ = emulate_notify.send(EmulationEvent::ReleaseKeys(h)).await;
+                    let _ = emulate_notify.send(EmulationRequest::ReleaseKeys(h)).await;
                 }
             } else {
                 // release pointer if the active client has not responded
                 if !unresponsive_clients.is_empty() {
                     log::warn!("client not responding, releasing pointer!");
                     server.state.replace(State::Receiving);
-                    let _ = capture_notify.send(CaptureEvent::Release).await;
+                    let _ = capture_notify.send(CaptureRequest::Release).await;
                 }
             }
         }

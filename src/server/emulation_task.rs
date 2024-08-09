@@ -13,10 +13,10 @@ use crate::{
 use input_emulation::{self, EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
 
-use super::{network_task::NetworkError, CaptureEvent, Server};
+use super::{network_task::NetworkError, CaptureRequest, Server};
 
 #[derive(Clone, Debug)]
-pub(crate) enum EmulationEvent {
+pub(crate) enum EmulationRequest {
     /// create a new client
     Create(EmulationHandle),
     /// destroy a client
@@ -27,10 +27,10 @@ pub(crate) enum EmulationEvent {
 
 pub(crate) fn new(
     server: Server,
-    emulation_rx: Receiver<EmulationEvent>,
+    emulation_rx: Receiver<EmulationRequest>,
     udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    capture_tx: Sender<CaptureEvent>,
+    capture_tx: Sender<CaptureRequest>,
 ) -> JoinHandle<()> {
     let emulation_task = emulation_task(server, emulation_rx, udp_rx, sender_tx, capture_tx);
     tokio::task::spawn_local(emulation_task)
@@ -38,10 +38,10 @@ pub(crate) fn new(
 
 async fn emulation_task(
     server: Server,
-    mut rx: Receiver<EmulationEvent>,
+    mut rx: Receiver<EmulationRequest>,
     mut udp_rx: Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: Sender<(Event, SocketAddr)>,
-    capture_tx: Sender<CaptureEvent>,
+    capture_tx: Sender<CaptureRequest>,
 ) {
     loop {
         if let Err(e) = do_emulation(&server, &mut rx, &mut udp_rx, &sender_tx, &capture_tx).await {
@@ -65,10 +65,10 @@ async fn emulation_task(
 
 async fn do_emulation(
     server: &Server,
-    rx: &mut Receiver<EmulationEvent>,
+    rx: &mut Receiver<EmulationRequest>,
     udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    capture_tx: &Sender<CaptureEvent>,
+    capture_tx: &Sender<CaptureRequest>,
 ) -> Result<(), InputEmulationError> {
     let backend = server.config.emulation_backend.map(|b| b.into());
     log::info!("creating input emulation...");
@@ -92,10 +92,10 @@ async fn do_emulation(
 async fn do_emulation_session(
     server: &Server,
     emulation: &mut InputEmulation,
-    rx: &mut Receiver<EmulationEvent>,
+    rx: &mut Receiver<EmulationRequest>,
     udp_rx: &mut Receiver<Result<(Event, SocketAddr), NetworkError>>,
     sender_tx: &Sender<(Event, SocketAddr)>,
-    capture_tx: &Sender<CaptureEvent>,
+    capture_tx: &Sender<CaptureRequest>,
 ) -> Result<(), InputEmulationError> {
     let mut last_ignored = None;
 
@@ -113,9 +113,9 @@ async fn do_emulation_session(
             }
             emulate_event = rx.recv() => {
                 match emulate_event.expect("channel closed") {
-                    EmulationEvent::Create(h) => { let _ = emulation.create(h).await; },
-                    EmulationEvent::Destroy(h) => emulation.destroy(h).await,
-                    EmulationEvent::ReleaseKeys(c) => emulation.release_keys(c).await?,
+                    EmulationRequest::Create(h) => { let _ = emulation.create(h).await; },
+                    EmulationRequest::Destroy(h) => emulation.destroy(h).await,
+                    EmulationRequest::ReleaseKeys(c) => emulation.release_keys(c).await?,
                 }
             }
             _ = server.notifies.cancel.cancelled() => break Ok(()),
@@ -125,7 +125,7 @@ async fn do_emulation_session(
 
 async fn handle_udp_rx(
     server: &Server,
-    capture_tx: &Sender<CaptureEvent>,
+    capture_tx: &Sender<CaptureRequest>,
     emulate: &mut InputEmulation,
     sender_tx: &Sender<(Event, SocketAddr)>,
     last_ignored: &mut Option<SocketAddr>,
@@ -162,7 +162,7 @@ async fn handle_udp_rx(
                     } else {
                         // upon receiving any event, we go back to receiving mode
                         server.state.replace(State::Receiving);
-                        let _ = capture_tx.send(CaptureEvent::Release).await;
+                        let _ = capture_tx.send(CaptureRequest::Release).await;
                         log::trace!("STATE ===> Receiving");
                     }
                 }
@@ -189,7 +189,7 @@ async fn handle_udp_rx(
                     // event should still be possible
                     if let Event::Enter() = event {
                         server.state.replace(State::Receiving);
-                        let _ = capture_tx.send(CaptureEvent::Release).await;
+                        let _ = capture_tx.send(CaptureRequest::Release).await;
                         log::trace!("STATE ===> Receiving");
                     }
                 }
