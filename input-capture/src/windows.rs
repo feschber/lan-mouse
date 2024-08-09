@@ -37,7 +37,7 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{CaptureError, CaptureHandle, InputCapture, Position};
+use super::{Capture, CaptureError, CaptureHandle, Position};
 
 enum Request {
     Create(CaptureHandle, Position),
@@ -64,7 +64,7 @@ unsafe fn signal_message_thread(event_type: EventType) {
 }
 
 #[async_trait]
-impl InputCapture for WindowsInputCapture {
+impl Capture for WindowsInputCapture {
     async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         unsafe {
             {

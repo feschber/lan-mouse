@@ -58,15 +58,13 @@ use wayland_client::{
     Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
 };
 
-use tempfile;
-
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use crate::CaptureError;
 
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},
-    CaptureHandle, InputCapture, Position,
+    Capture, CaptureHandle, Position,
 };
 
 struct Globals {
@@ -561,7 +559,7 @@ impl Inner {
 }
 
 #[async_trait]
-impl InputCapture for WaylandInputCapture {
+impl Capture for WaylandInputCapture {
     async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
         self.add_client(handle, pos);
         let inner = self.0.get_mut();
