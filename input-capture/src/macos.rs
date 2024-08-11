@@ -1,6 +1,7 @@
+use super::{
+    error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle, Position,
+};
 use async_trait::async_trait;
-use super::{error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle, Position};
-use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use bitflags::bitflags;
 use core_foundation::base::{kCFAllocatorDefault, CFRelease};
 use core_foundation::date::CFTimeInterval;
@@ -15,15 +16,16 @@ use core_graphics::event::{
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use futures_core::Stream;
+use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::thread::{self};
-use std::pin::Pin;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 
@@ -82,8 +84,8 @@ impl InputCaptureState {
 
     // Get the max bounds of all displays
     fn update_bounds(&mut self) -> Result<(), MacosCaptureCreationError> {
-        let active_ids =
-            CGDisplay::active_displays().map_err(|e| MacosCaptureCreationError::ActiveDisplays(e))?;
+        let active_ids = CGDisplay::active_displays()
+            .map_err(|e| MacosCaptureCreationError::ActiveDisplays(e))?;
         active_ids.iter().for_each(|d| {
             let bounds = CGDisplay::new(*d).bounds();
             self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
@@ -137,18 +139,23 @@ impl InputCaptureState {
         Err(CaptureError::ResetMouseWithoutClient)
     }
 
-    async fn handle_producer_event(&mut self, producer_event: ProducerEvent) -> Result<(), CaptureError> {
+    async fn handle_producer_event(
+        &mut self,
+        producer_event: ProducerEvent,
+    ) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
             ProducerEvent::Release => {
                 if self.current_client.is_some() {
-                    CGDisplay::show_cursor(&CGDisplay::main()).map_err(|e| CaptureError::CoreGraphics(e))?;
+                    CGDisplay::show_cursor(&CGDisplay::main())
+                        .map_err(|e| CaptureError::CoreGraphics(e))?;
                     self.current_client = None;
                 }
             }
             ProducerEvent::Grab(client) => {
                 if self.current_client.is_none() {
-                    CGDisplay::hide_cursor(&CGDisplay::main()).map_err(|e| CaptureError::CoreGraphics(e))?;
+                    CGDisplay::hide_cursor(&CGDisplay::main())
+                        .map_err(|e| CaptureError::CoreGraphics(e))?;
                     self.current_client = Some(client);
                 }
             }
@@ -164,7 +171,8 @@ impl InputCaptureState {
                 ] {
                     if let Some((current_c, _)) = self.current_client {
                         if current_c == c {
-                            CGDisplay::show_cursor(&CGDisplay::main()).map_err(|e| CaptureError::CoreGraphics(e))?;
+                            CGDisplay::show_cursor(&CGDisplay::main())
+                                .map_err(|e| CaptureError::CoreGraphics(e))?;
                             self.current_client = None;
                         };
                     }
@@ -179,7 +187,11 @@ impl InputCaptureState {
     }
 }
 
-fn get_events(ev_type: &CGEventType, ev: &CGEvent, result: &mut Vec<CaptureEvent>) -> Result<(), CaptureError> {
+fn get_events(
+    ev_type: &CGEventType,
+    ev: &CGEvent,
+    result: &mut Vec<CaptureEvent>,
+) -> Result<(), CaptureError> {
     fn map_pointer_event(ev: &CGEvent) -> PointerEvent {
         PointerEvent::Motion {
             time: 0,
@@ -244,40 +256,60 @@ fn get_events(ev_type: &CGEventType, ev: &CGEvent, result: &mut Vec<CaptureEvent
 
             result.push(CaptureEvent::Input(Event::Keyboard(modifier_event)));
         }
-        CGEventType::MouseMoved => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
-        CGEventType::LeftMouseDragged => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
-        CGEventType::RightMouseDragged => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
-        CGEventType::OtherMouseDragged => result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev)))),
-        CGEventType::LeftMouseDown => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_LEFT,
-            state: 1,
-        }))),
-        CGEventType::LeftMouseUp => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_LEFT,
-            state: 0,
-        }))),
-        CGEventType::RightMouseDown => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_RIGHT,
-            state: 1,
-        }))),
-        CGEventType::RightMouseUp => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_RIGHT,
-            state: 0,
-        }))),
-        CGEventType::OtherMouseDown => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_MIDDLE,
-            state: 1,
-        }))),
-        CGEventType::OtherMouseUp => result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
-            time: 0,
-            button: BTN_MIDDLE,
-            state: 0,
-        }))),
+        CGEventType::MouseMoved => {
+            result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev))))
+        }
+        CGEventType::LeftMouseDragged => {
+            result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev))))
+        }
+        CGEventType::RightMouseDragged => {
+            result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev))))
+        }
+        CGEventType::OtherMouseDragged => {
+            result.push(CaptureEvent::Input(Event::Pointer(map_pointer_event(ev))))
+        }
+        CGEventType::LeftMouseDown => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_LEFT,
+                state: 1,
+            })))
+        }
+        CGEventType::LeftMouseUp => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_LEFT,
+                state: 0,
+            })))
+        }
+        CGEventType::RightMouseDown => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_RIGHT,
+                state: 1,
+            })))
+        }
+        CGEventType::RightMouseUp => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_RIGHT,
+                state: 0,
+            })))
+        }
+        CGEventType::OtherMouseDown => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_MIDDLE,
+                state: 1,
+            })))
+        }
+        CGEventType::OtherMouseUp => {
+            result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
+                time: 0,
+                button: BTN_MIDDLE,
+                state: 0,
+            })))
+        }
         CGEventType::ScrollWheel => {
             let v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
             let h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
