@@ -1,7 +1,10 @@
 use input_event::{Event as InputEvent, KeyboardEvent, PointerEvent};
 use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 use paste::paste;
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    mem::size_of,
+};
 use thiserror::Error;
 
 /// defines the maximum size an encoded event can take up
