@@ -402,11 +402,7 @@ fn event_tap_thread(
 }
 
 pub struct MacOSInputCapture {
-<<<<<<< HEAD:input-capture/src/macos.rs
     event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
-=======
-    event_rx: Receiver<(ClientHandle, Event)>,
->>>>>>> c569ddd (fix issues):src/capture/macos.rs
     notify_tx: Sender<ProducerEvent>,
 }
 
@@ -528,13 +524,8 @@ extern "C" {
     );
 }
 
-<<<<<<< HEAD:input-capture/src/macos.rs
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
     // When we warp the cursor using CGWarpMouseCursorPosition local events are suppressed for a short time
-=======
-unsafe fn configure_cf_settings() -> Result<()> {
-    // When we warp the cursor using CGDisplay::warp_mouse_cursor_position local events are suppressed for a short time
->>>>>>> c569ddd (fix issues):src/capture/macos.rs
     // this leeds to the cursor not flowing when crossing back from a clinet, set this to to 0 stops the warp
     // from working, set a low value by trial and error, 0.05s seems good. 0.25s is the default
     let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
