@@ -53,7 +53,6 @@ impl Emulation for WindowsEmulation {
                     value,
                 } => scroll(axis, value as i32),
                 PointerEvent::AxisDiscrete120 { axis, value } => scroll(axis, value),
-                PointerEvent::Frame {} => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key {
@@ -71,7 +70,6 @@ impl Emulation for WindowsEmulation {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            _ => {}
         }
         // FIXME
         Ok(())

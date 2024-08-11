@@ -1,9 +1,9 @@
 use crate::{
-    error::MacOSInputCaptureCreationError, Capture, CaptureError, CaptureHandle, Position,
+    error::MacOSInputCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle,
+    Position,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
-use input_event::Event;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -16,7 +16,7 @@ impl MacOSInputCapture {
 }
 
 impl Stream for MacOSInputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending
