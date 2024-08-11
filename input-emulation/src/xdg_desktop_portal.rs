@@ -108,7 +108,6 @@ impl<'a> Emulation for DesktopPortalEmulation<'a> {
                         .notify_pointer_axis(&self.session, dx, dy, true)
                         .await?;
                 }
-                PointerEvent::Frame {} => {}
             },
             Keyboard(k) => {
                 match k {
@@ -130,7 +129,6 @@ impl<'a> Emulation for DesktopPortalEmulation<'a> {
                     }
                 }
             }
-            _ => {}
         }
         Ok(())
     }

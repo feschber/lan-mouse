@@ -4,11 +4,7 @@ use std::task::{Context, Poll};
 use async_trait::async_trait;
 use futures_core::Stream;
 
-use input_event::Event;
-
-use crate::CaptureError;
-
-use super::{Capture, CaptureHandle, Position};
+use super::{Capture, CaptureError, CaptureEvent, CaptureHandle, Position};
 
 pub struct DummyInputCapture {}
 
@@ -44,7 +40,7 @@ impl Capture for DummyInputCapture {
 }
 
 impl Stream for DummyInputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Pending

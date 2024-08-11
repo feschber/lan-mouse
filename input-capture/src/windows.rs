@@ -37,7 +37,7 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{Capture, CaptureError, CaptureHandle, Position};
+use super::{Capture, CaptureError, CaptureEvent, CaptureHandle, Position};
 
 enum Request {
     Create(CaptureHandle, Position),
@@ -45,7 +45,7 @@ enum Request {
 }
 
 pub struct WindowsInputCapture {
-    event_rx: Receiver<(CaptureHandle, Event)>,
+    event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
     msg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -100,7 +100,7 @@ impl Capture for WindowsInputCapture {
 static mut REQUEST_BUFFER: Mutex<Vec<Request>> = Mutex::new(Vec::new());
 static mut ACTIVE_CLIENT: Option<CaptureHandle> = None;
 static mut CLIENT_FOR_POS: Lazy<HashMap<Position, CaptureHandle>> = Lazy::new(HashMap::new);
-static mut EVENT_TX: Option<Sender<(CaptureHandle, Event)>> = None;
+static mut EVENT_TX: Option<Sender<(CaptureHandle, CaptureEvent)>> = None;
 static mut EVENT_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 unsafe fn set_event_tid(tid: u32) {
     EVENT_THREAD_ID.store(tid, Ordering::SeqCst);
@@ -249,7 +249,7 @@ fn clamp_to_display_bounds(prev_point: (i32, i32), point: (i32, i32)) -> (i32, i
     (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
 }
 
-unsafe fn send_blocking(event: Event) {
+unsafe fn send_blocking(event: CaptureEvent) {
     if let Some(active) = ACTIVE_CLIENT {
         block_on(async move {
             let _ = EVENT_TX.as_ref().unwrap().send((active, event)).await;
@@ -291,7 +291,7 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
-    send_blocking(Event::Enter());
+    send_blocking(CaptureEvent::Begin);
 
     ret
 }
@@ -313,7 +313,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     let Some(pointer_event) = to_mouse_event(wparam, lparam) else {
         return LRESULT(1);
     };
-    let event = (client, Event::Pointer(pointer_event));
+    let event = (client, CaptureEvent::Input(Event::Pointer(pointer_event)));
 
     /* notify mainthread (drop events if sending too fast) */
     if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
@@ -334,7 +334,7 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     let Some(key_event) = to_key_event(wparam, lparam) else {
         return LRESULT(1);
     };
-    let event = (client, Event::Keyboard(key_event));
+    let event = (client, CaptureEvent::Input(Event::Keyboard(key_event)));
 
     if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
         log::warn!("e: {e}");
@@ -614,7 +614,7 @@ impl WindowsInputCapture {
 }
 
 impl Stream for WindowsInputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),

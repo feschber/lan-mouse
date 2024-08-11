@@ -200,7 +200,6 @@ impl VirtualInput {
                             .axis_discrete(0, axis, value as f64 / 6., value / 120);
                         self.pointer.frame();
                     }
-                    PointerEvent::Frame {} => self.pointer.frame(),
                 }
                 self.pointer.frame();
             }
@@ -209,16 +208,15 @@ impl VirtualInput {
                     self.keyboard.key(time, key, state as u32);
                 }
                 KeyboardEvent::Modifiers {
-                    mods_depressed,
-                    mods_latched,
-                    mods_locked,
+                    depressed: mods_depressed,
+                    latched: mods_latched,
+                    locked: mods_locked,
                     group,
                 } => {
                     self.keyboard
                         .modifiers(mods_depressed, mods_latched, mods_locked, group);
                 }
             },
-            _ => {}
         }
         Ok(())
     }

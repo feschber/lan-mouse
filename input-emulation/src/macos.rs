@@ -262,7 +262,6 @@ impl Emulation for MacOSEmulation {
                     };
                     event.post(CGEventTapLocation::HID);
                 }
-                PointerEvent::Frame { .. } => {}
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key {
@@ -286,7 +285,6 @@ impl Emulation for MacOSEmulation {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
-            _ => (),
         }
         // FIXME
         Ok(())

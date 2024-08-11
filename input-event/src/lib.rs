@@ -1,8 +1,6 @@
-pub use error::ProtocolError;
 use std::fmt::{self, Display};
 
 pub mod error;
-pub mod proto;
 pub mod scancode;
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
@@ -25,8 +23,6 @@ pub enum PointerEvent {
     Axis { time: u32, axis: u8, value: f64 },
     /// discrete axis event, scroll event for mice - 120 = one scroll tick
     AxisDiscrete120 { axis: u8, value: i32 },
-    /// frame event
-    Frame {},
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -35,9 +31,9 @@ pub enum KeyboardEvent {
     Key { time: u32, key: u32, state: u8 },
     /// modifiers changed state
     Modifiers {
-        mods_depressed: u32,
-        mods_latched: u32,
-        mods_locked: u32,
+        depressed: u32,
+        latched: u32,
+        locked: u32,
         group: u32,
     },
 }
@@ -48,23 +44,6 @@ pub enum Event {
     Pointer(PointerEvent),
     /// keyboard events (key / modifiers)
     Keyboard(KeyboardEvent),
-    /// enter event: request to enter a client.
-    /// The client must release the pointer if it is grabbed
-    /// and reply with a leave event, as soon as its ready to
-    /// receive events
-    Enter(),
-    /// leave event: this client is now ready to receive events and will
-    /// not send any events after until it sends an enter event
-    Leave(),
-    /// ping a client, to see if it is still alive. A client that does
-    /// not respond with a pong event will be assumed to be offline.
-    Ping(),
-    /// response to a ping event: this event signals that a client
-    /// is still alive but must otherwise be ignored
-    Pong(),
-    /// explicit disconnect request. The client will no longer
-    /// send events until the next Enter event. All of its keys should be released.
-    Disconnect(),
 }
 
 impl Display for PointerEvent {
@@ -98,7 +77,6 @@ impl Display for PointerEvent {
             PointerEvent::AxisDiscrete120 { axis, value } => {
                 write!(f, "scroll-120 ({axis}, {value})")
             }
-            PointerEvent::Frame {} => write!(f, "frame()"),
         }
     }
 }
@@ -119,9 +97,9 @@ impl Display for KeyboardEvent {
                 }
             }
             KeyboardEvent::Modifiers {
-                mods_depressed,
-                mods_latched,
-                mods_locked,
+                depressed: mods_depressed,
+                latched: mods_latched,
+                locked: mods_locked,
                 group,
             } => write!(
                 f,
@@ -136,11 +114,6 @@ impl Display for Event {
         match self {
             Event::Pointer(p) => write!(f, "{}", p),
             Event::Keyboard(k) => write!(f, "{}", k),
-            Event::Enter() => write!(f, "enter"),
-            Event::Leave() => write!(f, "leave"),
-            Event::Ping() => write!(f, "ping"),
-            Event::Pong() => write!(f, "pong"),
-            Event::Disconnect() => write!(f, "disconnect"),
         }
     }
 }

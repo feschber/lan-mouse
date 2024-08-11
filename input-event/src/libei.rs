@@ -57,9 +57,9 @@ fn to_input_events(ei_event: EiEvent) -> Events {
     match ei_event {
         EiEvent::KeyboardModifiers(mods) => {
             let modifier_event = KeyboardEvent::Modifiers {
-                mods_depressed: mods.depressed,
-                mods_latched: mods.latched,
-                mods_locked: mods.locked,
+                depressed: mods.depressed,
+                latched: mods.latched,
+                locked: mods.locked,
                 group: mods.group,
             };
             Events::One(Event::Keyboard(modifier_event))

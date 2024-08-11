@@ -3,13 +3,10 @@ use std::task::Poll;
 use async_trait::async_trait;
 use futures_core::Stream;
 
-use crate::CaptureError;
-
-use super::Capture;
-use input_event::Event;
-
-use super::error::X11InputCaptureCreationError;
-use super::{CaptureHandle, Position};
+use super::{
+    error::X11InputCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle,
+    Position,
+};
 
 pub struct X11InputCapture {}
 
@@ -39,7 +36,7 @@ impl Capture for X11InputCapture {
 }
 
 impl Stream for X11InputCapture {
-    type Item = Result<(CaptureHandle, Event), CaptureError>;
+    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,

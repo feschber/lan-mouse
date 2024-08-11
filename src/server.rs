@@ -45,7 +45,7 @@ enum State {
     Receiving,
     /// Entered the deadzone of another device but waiting
     /// for acknowledgement (Leave event) from the device
-    AwaitingLeave,
+    AwaitAck,
 }
 
 #[derive(Clone)]
@@ -144,13 +144,8 @@ impl Server {
         let capture = capture_task::new(self.clone(), capture_rx, udp_send_tx.clone());
 
         // input emulation
-        let emulation = emulation_task::new(
-            self.clone(),
-            emulation_rx,
-            udp_recv_rx,
-            udp_send_tx.clone(),
-            capture_tx.clone(),
-        );
+        let emulation =
+            emulation_task::new(self.clone(), emulation_rx, udp_recv_rx, udp_send_tx.clone());
 
         // create dns resolver
         let resolver = DnsResolver::new(dns_rx)?;
