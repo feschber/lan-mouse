@@ -1,12 +1,9 @@
 use futures::StreamExt;
 use lan_mouse_proto::ProtoEvent;
+use local_channel::mpsc::{Receiver, Sender};
 use std::net::SocketAddr;
 
-use tokio::{
-    process::Command,
-    sync::mpsc::{Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::{process::Command, task::JoinHandle};
 
 use input_capture::{
     self, CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
@@ -161,7 +158,7 @@ async fn handle_capture_event(
             /* released capture */
             State::Receiving => ProtoEvent::Leave(0),
         };
-        sender_tx.send((event, addr)).await.expect("sender closed");
+        sender_tx.send((event, addr)).expect("sender closed");
     };
 
     Ok(())
