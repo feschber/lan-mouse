@@ -1,7 +1,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use lan_mouse_proto::ProtoEvent;
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use local_channel::mpsc::Sender;
+use tokio::task::JoinHandle;
 
 use crate::client::ClientHandle;
 
@@ -85,7 +86,7 @@ async fn ping_task(
 
             // ping clients
             for addr in ping_addrs {
-                if sender_ch.send((ProtoEvent::Ping, addr)).await.is_err() {
+                if sender_ch.send((ProtoEvent::Ping, addr)).is_err() {
                     break;
                 }
             }
@@ -122,14 +123,14 @@ async fn ping_task(
             if receiving {
                 for h in unresponsive_clients {
                     log::warn!("device not responding, releasing keys!");
-                    let _ = emulate_notify.send(EmulationRequest::ReleaseKeys(h)).await;
+                    let _ = emulate_notify.send(EmulationRequest::ReleaseKeys(h));
                 }
             } else {
                 // release pointer if the active client has not responded
                 if !unresponsive_clients.is_empty() {
                     log::warn!("client not responding, releasing pointer!");
                     server.state.replace(State::Receiving);
-                    let _ = capture_notify.send(CaptureRequest::Release).await;
+                    let _ = capture_notify.send(CaptureRequest::Release);
                 }
             }
         }

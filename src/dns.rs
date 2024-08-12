@@ -1,5 +1,5 @@
+use local_channel::mpsc::Receiver;
 use std::net::IpAddr;
-use tokio::sync::mpsc::Receiver;
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 

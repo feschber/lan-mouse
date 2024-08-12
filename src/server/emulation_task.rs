@@ -1,10 +1,8 @@
+use local_channel::mpsc::{Receiver, Sender};
 use std::net::SocketAddr;
 
 use lan_mouse_proto::ProtoEvent;
-use tokio::{
-    sync::mpsc::{Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 
 use crate::{
     client::{ClientHandle, ClientManager},
@@ -140,7 +138,7 @@ async fn handle_incoming_event(
     match (event, addr) {
         (ProtoEvent::Pong, _) => { /* ignore pong events */ }
         (ProtoEvent::Ping, addr) => {
-            let _ = sender_tx.send((ProtoEvent::Pong, addr)).await;
+            let _ = sender_tx.send((ProtoEvent::Pong, addr));
         }
         (ProtoEvent::Leave(_), _) => emulate.release_keys(handle).await?,
         (ProtoEvent::Ack(_), _) => server.set_state(State::Sending),
@@ -148,7 +146,6 @@ async fn handle_incoming_event(
             server.set_state(State::Receiving);
             sender_tx
                 .send((ProtoEvent::Ack(0), addr))
-                .await
                 .expect("no channel")
         }
         (ProtoEvent::Input(e), _) => {

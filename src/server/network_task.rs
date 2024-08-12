@@ -1,11 +1,8 @@
+use local_channel::mpsc::{Receiver, Sender};
 use std::{io, net::SocketAddr};
 
 use thiserror::Error;
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{Receiver, Sender},
-    task::JoinHandle,
-};
+use tokio::{net::UdpSocket, task::JoinHandle};
 
 use super::Server;
 use lan_mouse_proto::{ProtoEvent, ProtocolError};
@@ -65,7 +62,7 @@ async fn udp_receiver(
 ) {
     loop {
         let event = receive_event(socket).await;
-        receiver_tx.send(event).await.expect("channel closed");
+        receiver_tx.send(event).expect("channel closed");
     }
 }
 
