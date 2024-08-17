@@ -84,8 +84,8 @@ impl InputCaptureState {
 
     // Get the max bounds of all displays
     fn update_bounds(&mut self) -> Result<(), MacosCaptureCreationError> {
-        let active_ids = CGDisplay::active_displays()
-            .map_err(|e| MacosCaptureCreationError::ActiveDisplays(e))?;
+        let active_ids =
+            CGDisplay::active_displays().map_err(MacosCaptureCreationError::ActiveDisplays)?;
         active_ids.iter().for_each(|d| {
             let bounds = CGDisplay::new(*d).bounds();
             self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
@@ -133,7 +133,7 @@ impl InputCaptureState {
             log::trace!("Resetting cursor position to: {new_x}, {new_y}");
 
             return CGDisplay::warp_mouse_cursor_position(new_pos)
-                .map_err(|e| CaptureError::WarpCursor(e));
+                .map_err(CaptureError::WarpCursor);
         }
 
         Err(CaptureError::ResetMouseWithoutClient)
@@ -148,14 +148,14 @@ impl InputCaptureState {
             ProducerEvent::Release => {
                 if self.current_client.is_some() {
                     CGDisplay::show_cursor(&CGDisplay::main())
-                        .map_err(|e| CaptureError::CoreGraphics(e))?;
+                        .map_err(CaptureError::CoreGraphics)?;
                     self.current_client = None;
                 }
             }
             ProducerEvent::Grab(client) => {
                 if self.current_client.is_none() {
                     CGDisplay::hide_cursor(&CGDisplay::main())
-                        .map_err(|e| CaptureError::CoreGraphics(e))?;
+                        .map_err(CaptureError::CoreGraphics)?;
                     self.current_client = Some(client);
                 }
             }
@@ -172,7 +172,7 @@ impl InputCaptureState {
                     if let Some((current_c, _)) = self.current_client {
                         if current_c == c {
                             CGDisplay::show_cursor(&CGDisplay::main())
-                                .map_err(|e| CaptureError::CoreGraphics(e))?;
+                                .map_err(CaptureError::CoreGraphics)?;
                             self.current_client = None;
                         };
                     }
