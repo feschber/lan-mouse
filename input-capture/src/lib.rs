@@ -217,7 +217,7 @@ async fn create_backend(
         #[cfg(windows)]
         Backend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
         #[cfg(target_os = "macos")]
-        Backend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new()?)),
+        Backend::MacOs => Ok(Box::new(macos::MacOSInputCapture::new().await?)),
         Backend::Dummy => Ok(Box::new(dummy::DummyInputCapture::new())),
     }
 }
