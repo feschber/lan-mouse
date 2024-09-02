@@ -159,6 +159,7 @@ async fn handle_capture_event(
             /* released capture */
             State::Receiving => ProtoEvent::Leave(0),
         };
+        log::error!("SENDING: {event:?} -> {addr:?}");
         sender_tx.send((event, addr)).expect("sender closed");
     };
 
