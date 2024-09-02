@@ -53,7 +53,7 @@
           libadwaita
           librsvg
           xorg.libXtst
-        ] ++ lib.optionals stdenv.isDarwin 
+        ] ++ lib.optionals stdenv.isDarwin
         (with darwin.apple_sdk_11_0.frameworks; [
           CoreGraphics
           ApplicationServices
