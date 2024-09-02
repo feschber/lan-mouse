@@ -3,7 +3,7 @@ use std::{
     str::{FromStr, SplitWhitespace},
 };
 
-use crate::client::{ClientHandle, Position};
+use lan_mouse_ipc::{ClientHandle, Position};
 
 pub(super) enum CommandType {
     NoCommand,

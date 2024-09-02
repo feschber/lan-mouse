@@ -1,58 +1,41 @@
-use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, BufReader},
     task::LocalSet,
 };
 
-#[cfg(windows)]
-use tokio::net::tcp::{ReadHalf, WriteHalf};
-#[cfg(unix)]
-use tokio::net::unix::{ReadHalf, WriteHalf};
-
 use std::io::{self, Write};
-
-use crate::{
-    client::{ClientConfig, ClientHandle, ClientState},
-    config::DEFAULT_PORT,
-};
 
 use self::command::{Command, CommandType};
 
-use super::{FrontendEvent, FrontendRequest};
+use lan_mouse_ipc::{
+    AsyncFrontendEventReader, AsyncFrontendRequestWriter, ClientConfig, ClientHandle, ClientState,
+    FrontendEvent, FrontendRequest, IpcError, DEFAULT_PORT,
+};
 
 mod command;
 
-pub fn run() -> Result<()> {
-    let Ok(stream) = super::wait_for_service() else {
-        return Err(anyhow!("Could not connect to lan-mouse-socket"));
-    };
-
+pub fn run() -> Result<(), IpcError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
         .build()?;
     runtime.block_on(LocalSet::new().run_until(async move {
-        stream.set_nonblocking(true)?;
-        #[cfg(unix)]
-        let mut stream = tokio::net::UnixStream::from_std(stream)?;
-        #[cfg(windows)]
-        let mut stream = tokio::net::TcpStream::from_std(stream)?;
-        let (rx, tx) = stream.split();
-
+        let (rx, tx) = lan_mouse_ipc::connect_async().await?;
         let mut cli = Cli::new(rx, tx);
         cli.run().await
     }))?;
     Ok(())
 }
 
-struct Cli<'a> {
+struct Cli {
     clients: Vec<(ClientHandle, ClientConfig, ClientState)>,
-    rx: ReadHalf<'a>,
-    tx: WriteHalf<'a>,
+    rx: AsyncFrontendEventReader,
+    tx: AsyncFrontendRequestWriter,
 }
 
-impl<'a> Cli<'a> {
-    fn new(rx: ReadHalf<'a>, tx: WriteHalf<'a>) -> Cli<'a> {
+impl Cli {
+    fn new(rx: AsyncFrontendEventReader, tx: AsyncFrontendRequestWriter) -> Cli {
         Self {
             clients: vec![],
             rx,
@@ -60,19 +43,21 @@ impl<'a> Cli<'a> {
         }
     }
 
-    async fn run(&mut self) -> Result<()> {
+    async fn run(&mut self) -> Result<(), IpcError> {
         let stdin = tokio::io::stdin();
         let stdin = BufReader::new(stdin);
         let mut stdin = stdin.lines();
 
         /* initial state sync */
-        let request = FrontendRequest::Enumerate();
-        self.send_request(request).await?;
-
         self.clients = loop {
-            let event = self.await_event().await?;
-            if let FrontendEvent::Enumerate(clients) = event {
-                break clients;
+            match self.rx.next().await {
+                Some(Ok(e)) => {
+                    if let FrontendEvent::Enumerate(clients) = e {
+                        break clients;
+                    }
+                }
+                Some(Err(e)) => return Err(e),
+                None => return Ok(()),
             }
         };
 
@@ -92,18 +77,18 @@ impl<'a> Cli<'a> {
                     };
                     self.execute(cmd).await?;
                 }
-                event = self.await_event() => {
-                    let event = event?;
-                    self.handle_event(event);
+                event = self.rx.next() => {
+                    if let Some(event) = event {
+                        self.handle_event(event?);
+                    }
                 }
             }
         }
     }
 
-    async fn update_client(&mut self, handle: ClientHandle) -> Result<()> {
-        self.send_request(FrontendRequest::GetState(handle)).await?;
-        loop {
-            let event = self.await_event().await?;
+    async fn update_client(&mut self, handle: ClientHandle) -> Result<(), IpcError> {
+        self.tx.request(FrontendRequest::GetState(handle)).await?;
+        while let Some(Ok(event)) = self.rx.next().await {
             self.handle_event(event.clone());
             if let FrontendEvent::State(_, _, _) | FrontendEvent::NoSuchClient(_) = event {
                 break;
@@ -112,22 +97,23 @@ impl<'a> Cli<'a> {
         Ok(())
     }
 
-    async fn execute(&mut self, cmd: Command) -> Result<()> {
+    async fn execute(&mut self, cmd: Command) -> Result<(), IpcError> {
         match cmd {
             Command::None => {}
             Command::Connect(pos, host, port) => {
                 let request = FrontendRequest::Create;
-                self.send_request(request).await?;
+                self.tx.request(request).await?;
                 let handle = loop {
-                    let event = self.await_event().await?;
-                    match event {
-                        FrontendEvent::Created(h, c, s) => {
-                            self.clients.push((h, c, s));
-                            break h;
-                        }
-                        _ => {
-                            self.handle_event(event);
-                            continue;
+                    if let Some(Ok(event)) = self.rx.next().await {
+                        match event {
+                            FrontendEvent::Created(h, c, s) => {
+                                self.clients.push((h, c, s));
+                                break h;
+                            }
+                            _ => {
+                                self.handle_event(event);
+                                continue;
+                            }
                         }
                     }
                 };
@@ -136,35 +122,36 @@ impl<'a> Cli<'a> {
                     FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT)),
                     FrontendRequest::UpdatePosition(handle, pos),
                 ] {
-                    self.send_request(request).await?;
+                    self.tx.request(request).await?;
                 }
                 self.update_client(handle).await?;
             }
             Command::Disconnect(id) => {
-                self.send_request(FrontendRequest::Delete(id)).await?;
+                self.tx.request(FrontendRequest::Delete(id)).await?;
                 loop {
-                    let event = self.await_event().await?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::Deleted(_) = event {
-                        self.handle_event(event);
-                        break;
+                    if let Some(Ok(event)) = self.rx.next().await {
+                        self.handle_event(event.clone());
+                        if let FrontendEvent::Deleted(_) = event {
+                            self.handle_event(event);
+                            break;
+                        }
                     }
                 }
             }
             Command::Activate(id) => {
-                self.send_request(FrontendRequest::Activate(id, true))
-                    .await?;
+                self.tx.request(FrontendRequest::Activate(id, true)).await?;
                 self.update_client(id).await?;
             }
             Command::Deactivate(id) => {
-                self.send_request(FrontendRequest::Activate(id, false))
+                self.tx
+                    .request(FrontendRequest::Activate(id, false))
                     .await?;
                 self.update_client(id).await?;
             }
             Command::List => {
-                self.send_request(FrontendRequest::Enumerate()).await?;
-                loop {
-                    let event = self.await_event().await?;
+                self.tx.request(FrontendRequest::Enumerate()).await?;
+                while let Some(e) = self.rx.next().await {
+                    let event = e?;
                     self.handle_event(event.clone());
                     if let FrontendEvent::Enumerate(_) = event {
                         break;
@@ -173,12 +160,12 @@ impl<'a> Cli<'a> {
             }
             Command::SetHost(handle, host) => {
                 let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
-                self.send_request(request).await?;
+                self.tx.request(request).await?;
                 self.update_client(handle).await?;
             }
             Command::SetPort(handle, port) => {
                 let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
-                self.send_request(request).await?;
+                self.tx.request(request).await?;
                 self.update_client(handle).await?;
             }
             Command::Help => {
@@ -290,23 +277,6 @@ impl<'a> Cli<'a> {
             print_state(s);
             eprintln!();
         }
-    }
-
-    async fn send_request(&mut self, request: FrontendRequest) -> io::Result<()> {
-        let json = serde_json::to_string(&request).unwrap();
-        let bytes = json.as_bytes();
-        let len = bytes.len();
-        self.tx.write_u64(len as u64).await?;
-        self.tx.write_all(bytes).await?;
-        Ok(())
-    }
-
-    async fn await_event(&mut self) -> Result<FrontendEvent> {
-        let len = self.rx.read_u64().await?;
-        let mut buf = vec![0u8; len as usize];
-        self.rx.read_exact(&mut buf).await?;
-        let event: FrontendEvent = serde_json::from_slice(&buf)?;
-        Ok(event)
     }
 }
 

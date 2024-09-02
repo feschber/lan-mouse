@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use crate::config::DEFAULT_PORT;
+use lan_mouse_ipc::DEFAULT_PORT;
 
 use super::ClientObject;
 

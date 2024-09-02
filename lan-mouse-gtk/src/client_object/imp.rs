@@ -5,7 +5,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
-use crate::client::ClientHandle;
+use lan_mouse_ipc::ClientHandle;
 
 use super::ClientData;
 

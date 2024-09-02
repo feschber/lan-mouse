@@ -2,24 +2,19 @@ mod client_object;
 mod client_row;
 mod window;
 
-use std::{
-    env,
-    io::{ErrorKind, Read},
-    process, str,
-};
+use std::{env, process, str};
 
-use crate::frontend::gtk::window::Window;
+use window::Window;
+
+use lan_mouse_ipc::FrontendEvent;
 
 use adw::Application;
-use endi::{Endian, ReadBytes};
 use gtk::{
     gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, IconTheme,
 };
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
-
-use super::FrontendEvent;
 
 pub fn run() -> glib::ExitCode {
     log::debug!("running gtk frontend");
@@ -65,15 +60,8 @@ fn load_icons() {
 
 fn build_ui(app: &Application) {
     log::debug!("connecting to lan-mouse-socket");
-    let mut rx = match super::wait_for_service() {
-        Ok(stream) => stream,
-        Err(e) => {
-            log::error!("could not connect to lan-mouse-socket: {e}");
-            process::exit(1);
-        }
-    };
-    let tx = match rx.try_clone() {
-        Ok(sock) => sock,
+    let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
+        Ok(conn) => conn,
         Err(e) => {
             log::error!("{e}");
             process::exit(1);
@@ -84,35 +72,18 @@ fn build_ui(app: &Application) {
     let (sender, receiver) = async_channel::bounded(10);
 
     gio::spawn_blocking(move || {
-        match loop {
-            // read length
-            let len = match rx.read_u64(Endian::Big) {
-                Ok(l) => l,
-                Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
-                Err(e) => break Err(e),
-            };
-
-            // read payload
-            let mut buf = vec![0u8; len as usize];
-            match rx.read_exact(&mut buf) {
-                Ok(_) => (),
-                Err(e) if e.kind() == ErrorKind::UnexpectedEof => break Ok(()),
-                Err(e) => break Err(e),
-            };
-
-            // parse json
-            let json = str::from_utf8(&buf).unwrap();
-            match serde_json::from_str(json) {
-                Ok(notify) => sender.send_blocking(notify).unwrap(),
-                Err(e) => log::error!("{e}"),
+        while let Some(e) = frontend_rx.next_event() {
+            match e {
+                Ok(e) => sender.send_blocking(e).unwrap(),
+                Err(e) => {
+                    log::error!("{e}");
+                    break;
+                }
             }
-        } {
-            Ok(()) => {}
-            Err(e) => log::error!("{e}"),
         }
     });
 
-    let window = Window::new(app, tx);
+    let window = Window::new(app, frontend_tx);
 
     glib::spawn_future_local(clone!(
         #[weak]

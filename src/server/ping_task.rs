@@ -4,7 +4,7 @@ use lan_mouse_proto::ProtoEvent;
 use local_channel::mpsc::Sender;
 use tokio::task::JoinHandle;
 
-use crate::client::ClientHandle;
+use lan_mouse_ipc::ClientHandle;
 
 use super::{capture_task::CaptureRequest, emulation_task::EmulationRequest, Server, State};
 

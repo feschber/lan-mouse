@@ -1,16 +1,7 @@
 mod imp;
 
-use std::io::Write;
-
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-
-#[cfg(windows)]
-use std::net::TcpStream;
-
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use endi::{Endian, WriteBytes};
 use glib::{clone, Object};
 use gtk::{
     gio,
@@ -18,13 +9,12 @@ use gtk::{
     ListBox, NoSelection,
 };
 
-use crate::{
-    client::{ClientConfig, ClientHandle, ClientState, Position},
-    config::DEFAULT_PORT,
-    frontend::{gtk::client_object::ClientObject, FrontendRequest},
+use lan_mouse_ipc::{
+    ClientConfig, ClientHandle, ClientState, FrontendRequest, FrontendRequestWriter, Position,
+    DEFAULT_PORT,
 };
 
-use super::client_row::ClientRow;
+use super::{client_object::ClientObject, client_row::ClientRow};
 
 glib::wrapper! {
     pub struct Window(ObjectSubclass<imp::Window>)
@@ -34,13 +24,13 @@ glib::wrapper! {
 }
 
 impl Window {
-    pub(crate) fn new(
-        app: &adw::Application,
-        #[cfg(unix)] tx: UnixStream,
-        #[cfg(windows)] tx: TcpStream,
-    ) -> Self {
+    pub(crate) fn new(app: &adw::Application, conn: FrontendRequestWriter) -> Self {
         let window: Self = Object::builder().property("application", app).build();
-        window.imp().stream.borrow_mut().replace(tx);
+        window
+            .imp()
+            .frontend_request_writer
+            .borrow_mut()
+            .replace(conn);
         window
     }
 
@@ -292,16 +282,10 @@ impl Window {
         self.request(FrontendRequest::Delete(client.handle()));
     }
 
-    pub fn request(&self, event: FrontendRequest) {
-        let json = serde_json::to_string(&event).unwrap();
-        log::debug!("requesting: {json}");
-        let mut stream = self.imp().stream.borrow_mut();
-        let stream = stream.as_mut().unwrap();
-        let bytes = json.as_bytes();
-        if let Err(e) = stream.write_u64(Endian::Big, bytes.len() as u64) {
-            log::error!("error sending message: {e}");
-        };
-        if let Err(e) = stream.write(bytes) {
+    pub fn request(&self, request: FrontendRequest) {
+        let mut requester = self.imp().frontend_request_writer.borrow_mut();
+        let requester = requester.as_mut().unwrap();
+        if let Err(e) = requester.request(request) {
             log::error!("error sending message: {e}");
         };
     }

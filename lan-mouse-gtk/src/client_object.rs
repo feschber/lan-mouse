@@ -3,7 +3,7 @@ mod imp;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use crate::client::{ClientConfig, ClientHandle, ClientState};
+use lan_mouse_ipc::{ClientConfig, ClientHandle, ClientState};
 
 glib::wrapper! {
     pub struct ClientObject(ObjectSubclass<imp::ClientObject>);

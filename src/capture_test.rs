@@ -4,16 +4,17 @@ use input_capture::{self, CaptureError, CaptureEvent, InputCapture, InputCapture
 use input_event::{Event, KeyboardEvent};
 use tokio::task::LocalSet;
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run() -> Result<(), InputCaptureError> {
     log::info!("running input capture test");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
-        .build()?;
+        .build()
+        .unwrap();
 
-    let config = Config::new()?;
+    let config = Config::new().unwrap();
 
-    Ok(runtime.block_on(LocalSet::new().run_until(input_capture_test(config)))?)
+    runtime.block_on(LocalSet::new().run_until(input_capture_test(config)))
 }
 
 async fn input_capture_test(config: Config) -> Result<(), InputCaptureError> {
