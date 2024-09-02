@@ -12,6 +12,7 @@ rustPlatform.buildRustPackage {
   version = version;
 
   nativeBuildInputs = with pkgs; [
+    git
     pkg-config
     cmake
     makeWrapper

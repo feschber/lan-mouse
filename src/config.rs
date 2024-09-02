@@ -50,7 +50,7 @@ impl ConfigToml {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version=env!("GIT_DESCRIBE"), about, long_about = None)]
 struct CliArgs {
     /// the listen port for lan-mouse
     #[arg(short, long)]
