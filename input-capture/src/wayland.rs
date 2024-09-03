@@ -71,7 +71,7 @@ struct Globals {
     compositor: wl_compositor::WlCompositor,
     pointer_constraints: ZwpPointerConstraintsV1,
     relative_pointer_manager: ZwpRelativePointerManagerV1,
-    shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1,
+    shortcut_inhibit_manager: Option<ZwpKeyboardShortcutsInhibitManagerV1>,
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
     layer_shell: ZwlrLayerShellV1,
@@ -285,9 +285,18 @@ impl WaylandInputCapture {
         let relative_pointer_manager: ZwpRelativePointerManagerV1 = g
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "zwp_relative_pointer_manager_v1"))?;
-        let shortcut_inhibit_manager: ZwpKeyboardShortcutsInhibitManagerV1 = g
+        let shortcut_inhibit_manager: Result<
+            ZwpKeyboardShortcutsInhibitManagerV1,
+            WaylandBindError,
+        > = g
             .bind(&qh, 1..=1, ())
-            .map_err(|e| WaylandBindError::new(e, "zwp_keyboard_shortcuts_inhibit_manager_v1"))?;
+            .map_err(|e| WaylandBindError::new(e, "zwp_keyboard_shortcuts_inhibit_manager_v1"));
+        // layer-shell backend still works without this protocol so we make it an optional dependency
+        if let Err(e) = &shortcut_inhibit_manager {
+            log::warn!("shortcut_inhibit_manager not supported: {e}\nkeybinds handled by the compositor will not be passed
+                to the client");
+        }
+        let shortcut_inhibit_manager = shortcut_inhibit_manager.ok();
         let outputs = vec![];
 
         let g = Globals {
@@ -424,13 +433,11 @@ impl State {
         }
 
         // capture modifier keys
-        if self.shortcut_inhibitor.is_none() {
-            self.shortcut_inhibitor = Some(self.g.shortcut_inhibit_manager.inhibit_shortcuts(
-                surface,
-                &self.g.seat,
-                qh,
-                (),
-            ));
+        if let Some(shortcut_inhibit_manager) = &self.g.shortcut_inhibit_manager {
+            if self.shortcut_inhibitor.is_none() {
+                self.shortcut_inhibitor =
+                    Some(shortcut_inhibit_manager.inhibit_shortcuts(surface, &self.g.seat, qh, ()));
+            }
         }
     }
 
