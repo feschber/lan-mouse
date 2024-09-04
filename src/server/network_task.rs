@@ -78,11 +78,7 @@ async fn udp_sender(rx: Rc<RefCell<Receiver<(ProtoEvent, SocketAddr)>>>) {
     loop {
         log::error!("waiting for event to send ...");
         let (event, addr) = rx.borrow_mut().recv().await.expect("channel closed");
-
-        // FIXME
         let addr = SocketAddr::new(addr.ip(), 4242);
-
-        log::error!("{:20} ------>->->-> {addr}", event.to_string());
         if !connection_pool.contains_key(&addr) {
             let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
             socket.connect(addr).await.unwrap();
@@ -100,10 +96,7 @@ async fn udp_sender(rx: Rc<RefCell<Receiver<(ProtoEvent, SocketAddr)>>>) {
             connection_pool.insert(addr, conn);
         };
         let conn = connection_pool.get(&addr).unwrap();
-        log::error!("{:20} ------>->->-> {addr}", event.to_string());
         let (data, len): ([u8; lan_mouse_proto::MAX_EVENT_SIZE], usize) = event.into();
-        // When udp blocks, we dont want to block the event loop.
-        // Dropping events is better than potentially crashing the input capture.
         conn.send(&data[..len]).await.unwrap();
     }
 }
