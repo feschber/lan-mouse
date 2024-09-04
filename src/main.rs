@@ -1,4 +1,6 @@
 use env_logger::Env;
+use input_capture::InputCaptureError;
+use input_emulation::InputEmulationError;
 use lan_mouse::{
     capture_test,
     config::{Config, ConfigError, Frontend},
@@ -7,11 +9,28 @@ use lan_mouse::{
 };
 use lan_mouse_ipc::IpcError;
 use std::{
+    future::Future,
     io,
     process::{self, Child, Command},
 };
 use thiserror::Error;
 use tokio::task::LocalSet;
+
+#[derive(Debug, Error)]
+enum LanMouseError {
+    #[error(transparent)]
+    Service(#[from] ServiceError),
+    #[error(transparent)]
+    IpcError(#[from] IpcError),
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Capture(#[from] InputCaptureError),
+    #[error(transparent)]
+    Emulation(#[from] InputEmulationError),
+}
 
 pub fn main() {
     // init logging
@@ -24,26 +43,6 @@ pub fn main() {
     }
 }
 
-fn start_service() -> Result<Child, io::Error> {
-    let child = Command::new(std::env::current_exe()?)
-        .args(std::env::args().skip(1))
-        .arg("--daemon")
-        .spawn()?;
-    Ok(child)
-}
-
-#[derive(Debug, Error)]
-enum LanMouseError {
-    #[error(transparent)]
-    Service(#[from] ServiceError),
-    #[error(transparent)]
-    IpcError(#[from] IpcError),
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    #[error(transparent)]
-    Io(#[from] io::Error),
-}
-
 fn run() -> Result<(), LanMouseError> {
     // parse config file + cli args
     let config = Config::new()?;
@@ -51,12 +50,12 @@ fn run() -> Result<(), LanMouseError> {
     log::info!("release bind: {:?}", config.release_bind);
 
     if config.test_capture {
-        capture_test::run().unwrap();
+        run_async(capture_test::run(config))?;
     } else if config.test_emulation {
-        emulation_test::run().unwrap();
+        run_async(emulation_test::run(config))?;
     } else if config.daemon {
         // if daemon is specified we run the service
-        run_service(config)?;
+        run_async(run_service(config))?;
     } else {
         //  otherwise start the service as a child process and
         //  run a frontend
@@ -77,7 +76,11 @@ fn run() -> Result<(), LanMouseError> {
     Ok(())
 }
 
-fn run_service(config: Config) -> Result<(), ServiceError> {
+fn run_async<F, E>(f: F) -> Result<(), LanMouseError>
+where
+    F: Future<Output = Result<(), E>>,
+    LanMouseError: From<E>,
+{
     // create single threaded tokio runtime
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -85,16 +88,21 @@ fn run_service(config: Config) -> Result<(), ServiceError> {
         .build()?;
 
     // run async event loop
-    runtime.block_on(LocalSet::new().run_until(async {
-        // run main loop
-        log::info!("Press {:?} to release the mouse", config.release_bind);
+    Ok(runtime.block_on(LocalSet::new().run_until(f))?)
+}
 
-        let mut server = Server::new(config);
-        server.run().await?;
+fn start_service() -> Result<Child, io::Error> {
+    let child = Command::new(std::env::current_exe()?)
+        .args(std::env::args().skip(1))
+        .arg("--daemon")
+        .spawn()?;
+    Ok(child)
+}
 
-        log::debug!("service exiting");
-        Result::<(), ServiceError>::Ok(())
-    }))?;
+async fn run_service(config: Config) -> Result<(), ServiceError> {
+    log::info!("Press {:?} to release the mouse", config.release_bind);
+    Server::new(config).run().await?;
+    log::info!("service exited!");
     Ok(())
 }
 
