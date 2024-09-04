@@ -1,29 +1,26 @@
 use capture_task::CaptureRequest;
 use emulation_task::EmulationRequest;
+use futures::StreamExt;
+use hickory_resolver::error::ResolveError;
 use local_channel::mpsc::{channel, Sender};
 use log;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashSet, VecDeque},
-    io::ErrorKind,
+    io,
     net::{IpAddr, SocketAddr},
     rc::Rc,
 };
-use tokio::{io::ReadHalf, join, signal, sync::Notify, task::JoinHandle};
+use thiserror::Error;
+use tokio::{join, signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    client::{ClientConfig, ClientHandle, ClientManager, ClientState, Position},
-    config::Config,
-    dns::DnsResolver,
-    frontend::{self, FrontendEvent, FrontendListener, FrontendRequest, Status},
+use crate::{client::ClientManager, config::Config, dns::DnsResolver};
+
+use lan_mouse_ipc::{
+    AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
+    ListenerCreationError, Position, Status,
 };
-
-#[cfg(unix)]
-use tokio::net::UnixStream;
-
-#[cfg(windows)]
-use tokio::net::TcpStream;
 
 mod capture_task;
 mod emulation_task;
@@ -39,6 +36,16 @@ enum State {
     /// Entered the deadzone of another device but waiting
     /// for acknowledgement (Leave event) from the device
     AwaitAck,
+}
+
+#[derive(Debug, Error)]
+pub enum ServiceError {
+    #[error(transparent)]
+    Dns(#[from] ResolveError),
+    #[error(transparent)]
+    Listen(#[from] ListenerCreationError),
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }
 
 #[derive(Clone)]
@@ -113,21 +120,21 @@ impl Server {
         }
     }
 
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+    pub async fn run(&mut self) -> Result<(), ServiceError> {
         // create frontend communication adapter, exit if already running
-        let mut frontend = match FrontendListener::new().await {
-            Some(f) => f?,
-            None => {
+        let mut frontend = match AsyncFrontendListener::new().await {
+            Ok(f) => f,
+            Err(ListenerCreationError::AlreadyRunning) => {
                 log::info!("service already running, exiting");
                 return Ok(());
             }
+            e => e?,
         };
 
         let (capture_tx, capture_rx) = channel(); /* requests for input capture */
         let (emulation_tx, emulation_rx) = channel(); /* emulation requests */
         let (udp_recv_tx, udp_recv_rx) = channel(); /* udp receiver */
         let (udp_send_tx, udp_send_rx) = channel(); /* udp sender */
-        let (request_tx, mut request_rx) = channel(); /* frontend requests */
         let (dns_tx, dns_rx) = channel(); /* dns requests */
 
         // udp task
@@ -158,22 +165,17 @@ impl Server {
 
         log::info!("running service");
 
-        let mut join_handles = vec![];
-
         loop {
             tokio::select! {
-                stream = frontend.accept() => {
-                    match stream {
-                        Ok(s) => join_handles.push(handle_frontend_stream(self.notifies.cancel.clone(), s, request_tx.clone())),
-                        Err(e) => log::warn!("error accepting frontend connection: {e}"),
+                request = frontend.next() => {
+                    let request = match request {
+                        Some(Ok(r)) => r,
+                        Some(Err(e)) => {
+                            log::error!("error receiving request: {e}");
+                            continue;
+                        }
+                        None => break,
                     };
-                    self.enumerate();
-                    self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
-                    self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
-                    self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
-                }
-                request = request_rx.recv() => {
-                    let request = request.expect("channel closed");
                     log::debug!("received frontend request: {request:?}");
                     self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request).await;
                     log::debug!("handled frontend request");
@@ -207,7 +209,6 @@ impl Server {
         log::info!("terminating service");
 
         self.cancel();
-        futures::future::join_all(join_handles).await;
         let _ = join!(capture, dns_task, emulation, network, ping);
 
         Ok(())
@@ -329,6 +330,12 @@ impl Server {
                 self.update_pos(handle, capture, emulate, pos).await;
             }
             FrontendRequest::ResolveDns(handle) => self.request_dns(handle),
+            FrontendRequest::Sync => {
+                self.enumerate();
+                self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
+                self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
+                self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
+            }
         };
         false
     }
@@ -396,7 +403,7 @@ impl Server {
         };
 
         /* notify emulation, capture and frontends */
-        let _ = capture.send(CaptureRequest::Create(handle, pos.into()));
+        let _ = capture.send(CaptureRequest::Create(handle, to_capture_pos(pos)));
         let _ = emulate.send(EmulationRequest::Create(handle));
         log::debug!("activating client {handle} done");
     }
@@ -504,7 +511,7 @@ impl Server {
                 let _ = capture.send(CaptureRequest::Destroy(handle));
                 let _ = emulate.send(EmulationRequest::Destroy(handle));
             }
-            let _ = capture.send(CaptureRequest::Create(handle, pos.into()));
+            let _ = capture.send(CaptureRequest::Create(handle, to_capture_pos(pos)));
             let _ = emulate.send(EmulationRequest::Create(handle));
         }
     }
@@ -567,41 +574,11 @@ impl Server {
     }
 }
 
-async fn listen_frontend(
-    request_tx: Sender<FrontendRequest>,
-    #[cfg(unix)] mut stream: ReadHalf<UnixStream>,
-    #[cfg(windows)] mut stream: ReadHalf<TcpStream>,
-) {
-    use std::io;
-    loop {
-        let request = frontend::wait_for_request(&mut stream).await;
-        match request {
-            Ok(request) => {
-                let _ = request_tx.send(request);
-            }
-            Err(e) => {
-                if let Some(e) = e.downcast_ref::<io::Error>() {
-                    if e.kind() == ErrorKind::UnexpectedEof {
-                        return;
-                    }
-                }
-                log::error!("error reading frontend event: {e}");
-                return;
-            }
-        }
+fn to_capture_pos(pos: Position) -> input_capture::Position {
+    match pos {
+        Position::Left => input_capture::Position::Left,
+        Position::Right => input_capture::Position::Right,
+        Position::Top => input_capture::Position::Top,
+        Position::Bottom => input_capture::Position::Bottom,
     }
-}
-
-fn handle_frontend_stream(
-    cancel: CancellationToken,
-    #[cfg(unix)] stream: ReadHalf<UnixStream>,
-    #[cfg(windows)] stream: ReadHalf<TcpStream>,
-    request_tx: Sender<FrontendRequest>,
-) -> JoinHandle<()> {
-    tokio::task::spawn_local(async move {
-        tokio::select! {
-            _ = listen_frontend(request_tx, stream) => {},
-            _ = cancel.cancelled() => {},
-        }
-    })
 }

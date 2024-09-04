@@ -5,4 +5,3 @@ pub mod server;
 
 pub mod capture_test;
 pub mod emulation_test;
-pub mod frontend;

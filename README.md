@@ -116,7 +116,7 @@ sudo cp target/release/lan-mouse /usr/local/bin/
 
 # install app icon
 sudo mkdir -p /usr/local/share/icons/hicolor/scalable/apps
-sudo cp resources/de.feschber.LanMouse.svg /usr/local/share/icons/hicolor/scalable/apps
+sudo cp lan-mouse-gtk/resources/de.feschber.LanMouse.svg /usr/local/share/icons/hicolor/scalable/apps
 
 # update icon cache
 gtk-update-icon-cache /usr/local/share/icons/hicolor/

@@ -1,5 +1,13 @@
 [workspace]
-members = ["input-capture", "input-emulation", "input-event", "lan-mouse-proto"]
+members = [
+    "input-capture",
+    "input-emulation",
+    "input-event",
+    "lan-mouse-ipc",
+    "lan-mouse-cli",
+    "lan-mouse-gtk",
+    "lan-mouse-proto",
+]
 
 [package]
 name = "lan-mouse"
@@ -17,12 +25,14 @@ lto = "fat"
 input-event = { path = "input-event", version = "0.2.1" }
 input-emulation = { path = "input-emulation", version = "0.2.1", default-features = false }
 input-capture = { path = "input-capture", version = "0.2.0", default-features = false }
+lan-mouse-cli = { path = "lan-mouse-cli", version = "0.1.0" }
+lan-mouse-gtk = { path = "lan-mouse-gtk", version = "0.1.0", optional = true }
+lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.1.0" }
 lan-mouse-proto = { path = "lan-mouse-proto", version = "0.1.0" }
 
 hickory-resolver = "0.24.1"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
-anyhow = "1.0.71"
 log = "0.4.20"
 env_logger = "0.11.3"
 serde_json = "1.0.107"
@@ -38,16 +48,7 @@ tokio = { version = "1.32.0", features = [
 ] }
 futures = "0.3.28"
 clap = { version = "4.4.11", features = ["derive"] }
-gtk = { package = "gtk4", version = "0.9.0", features = [
-    "v4_2",
-], optional = true }
-adw = { package = "libadwaita", version = "0.7.0", features = [
-    "v1_1",
-], optional = true }
-async-channel = { version = "2.1.1", optional = true }
-hostname = "0.4.0"
 slab = "0.4.9"
-endi = "1.1.0"
 thiserror = "1.0.61"
 tokio-util = "0.7.11"
 local-channel = "0.1.5"
@@ -55,13 +56,10 @@ local-channel = "0.1.5"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
-[build-dependencies]
-glib-build-tools = { version = "0.20.0", optional = true }
-
 [features]
 default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
 wayland = ["input-capture/wayland", "input-emulation/wayland"]
 x11 = ["input-capture/x11", "input-emulation/x11"]
 xdg_desktop_portal = ["input-emulation/xdg_desktop_portal"]
 libei = ["input-event/libei", "input-capture/libei", "input-emulation/libei"]
-gtk = ["dep:gtk", "dep:adw", "dep:async-channel", "dep:glib-build-tools"]
+gtk = ["dep:lan-mouse-gtk"]

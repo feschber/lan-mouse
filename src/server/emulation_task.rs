@@ -4,12 +4,11 @@ use std::net::SocketAddr;
 use lan_mouse_proto::ProtoEvent;
 use tokio::task::JoinHandle;
 
-use crate::{
-    client::{ClientHandle, ClientManager},
-    frontend::Status,
-    server::State,
-};
+use lan_mouse_ipc::ClientHandle;
+
+use crate::{client::ClientManager, server::State};
 use input_emulation::{self, EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
+use lan_mouse_ipc::Status;
 
 use super::{network_task::NetworkError, Server};
 

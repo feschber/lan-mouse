@@ -1,17 +1,12 @@
 use std::cell::{Cell, RefCell};
 
-#[cfg(windows)]
-use std::net::TcpStream;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-
 use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
 use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
 
-use crate::config::DEFAULT_PORT;
+use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
@@ -41,10 +36,7 @@ pub struct Window {
     #[template_child]
     pub input_capture_button: TemplateChild<Button>,
     pub clients: RefCell<Option<gio::ListStore>>,
-    #[cfg(unix)]
-    pub stream: RefCell<Option<UnixStream>>,
-    #[cfg(windows)]
-    pub stream: RefCell<Option<TcpStream>>,
+    pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
     pub port: Cell<u16>,
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,

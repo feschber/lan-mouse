@@ -1,19 +1,19 @@
 use crate::config::Config;
-use anyhow::Result;
-use input_emulation::InputEmulation;
+use input_emulation::{InputEmulation, InputEmulationError};
 use input_event::{Event, PointerEvent};
 use std::f64::consts::PI;
 use std::time::{Duration, Instant};
 use tokio::task::LocalSet;
 
-pub fn run() -> Result<()> {
+pub fn run() -> Result<(), InputEmulationError> {
     log::info!("running input emulation test");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
-        .build()?;
+        .build()
+        .unwrap();
 
-    let config = Config::new()?;
+    let config = Config::new().unwrap();
 
     runtime.block_on(LocalSet::new().run_until(input_emulation_test(config)))
 }
@@ -21,7 +21,7 @@ pub fn run() -> Result<()> {
 const FREQUENCY_HZ: f64 = 1.0;
 const RADIUS: f64 = 100.0;
 
-async fn input_emulation_test(config: Config) -> Result<()> {
+async fn input_emulation_test(config: Config) -> Result<(), InputEmulationError> {
     let backend = config.emulation_backend.map(|b| b.into());
     let mut emulation = InputEmulation::new(backend).await?;
     emulation.create(0).await;

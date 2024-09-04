@@ -3,7 +3,8 @@ use std::net::IpAddr;
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 
-use crate::{client::ClientHandle, server::Server};
+use crate::server::Server;
+use lan_mouse_ipc::ClientHandle;
 
 pub(crate) struct DnsResolver {
     resolver: TokioAsyncResolver,

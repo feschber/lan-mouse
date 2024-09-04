@@ -1,21 +1,19 @@
-use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::env;
+use std::env::{self, VarError};
 use std::fmt::Display;
+use std::fs;
 use std::net::IpAddr;
-use std::{error::Error, fs};
+use std::{collections::HashSet, io};
+use thiserror::Error;
 use toml;
 
-use crate::client::Position;
+use lan_mouse_ipc::{Position, DEFAULT_PORT};
 
 use input_event::scancode::{
     self,
     Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift},
 };
-
-pub const DEFAULT_PORT: u16 = 4242;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
@@ -42,7 +40,7 @@ pub struct TomlClient {
 }
 
 impl ConfigToml {
-    pub fn new(path: &str) -> Result<ConfigToml, Box<dyn Error>> {
+    pub fn new(path: &str) -> Result<ConfigToml, ConfigError> {
         let config = fs::read_to_string(path)?;
         log::info!("using config: \"{path}\"");
         Ok(toml::from_str::<_>(&config)?)
@@ -231,11 +229,21 @@ pub struct ConfigClient {
     pub enter_hook: Option<String>,
 }
 
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error(transparent)]
+    Toml(#[from] toml::de::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Var(#[from] VarError),
+}
+
 const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
     [KeyLeftCtrl, KeyLeftShift, KeyLeftMeta, KeyLeftAlt];
 
 impl Config {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, ConfigError> {
         let args = CliArgs::parse();
         let config_file = "config.toml";
         #[cfg(unix)]

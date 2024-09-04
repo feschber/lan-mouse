@@ -9,7 +9,8 @@ use input_capture::{
     self, CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
 };
 
-use crate::{client::ClientHandle, frontend::Status, server::State};
+use crate::server::State;
+use lan_mouse_ipc::{ClientHandle, Status};
 
 use super::Server;
 
@@ -85,7 +86,7 @@ async fn do_capture(
         )
     });
     for (handle, pos) in clients {
-        capture.create(handle, pos.into()).await?;
+        capture.create(handle, to_capture_pos(pos)).await?;
     }
 
     loop {
@@ -193,4 +194,13 @@ fn spawn_hook_command(server: &Server, handle: ClientHandle) {
             Err(e) => log::warn!("{cmd}: {e}"),
         }
     });
+}
+
+fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
+    match pos {
+        lan_mouse_ipc::Position::Left => input_capture::Position::Left,
+        lan_mouse_ipc::Position::Right => input_capture::Position::Right,
+        lan_mouse_ipc::Position::Top => input_capture::Position::Top,
+        lan_mouse_ipc::Position::Bottom => input_capture::Position::Bottom,
+    }
 }
