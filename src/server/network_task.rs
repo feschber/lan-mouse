@@ -3,6 +3,7 @@ use std::{cell::RefCell, collections::HashMap, io, net::SocketAddr, rc::Rc, sync
 use webrtc_dtls::{
     config::{ClientAuthType, Config, ExtendedMasterSecretType},
     conn::DTLSConn,
+    crypto::Certificate,
     listener::listen,
 };
 use webrtc_util::{conn::Listener, Conn};
@@ -45,17 +46,10 @@ async fn listen_dtls(
     listen_addr: SocketAddr,
     udp_recv_tx: Sender<Result<(ProtoEvent, SocketAddr), NetworkError>>,
 ) -> Result<(), NetworkError> {
-    let server_cert = crypto::load_key_and_certificate("alice.pem".into(), "alice.pub.pem".into())?;
-    let mut cert_pool = rustls::RootCertStore::empty();
-    let certs = crypto::load_certificate("alice.pub.pem".into())?;
-    for cert in certs.into_iter() {
-        cert_pool.add(cert)?;
-    }
+    let certificate = Certificate::generate_self_signed(vec!["localhost".to_owned()]).unwrap();
     let cfg = Config {
-        certificates: vec![server_cert],
+        certificates: vec![certificate],
         extended_master_secret: ExtendedMasterSecretType::Require,
-        client_auth: ClientAuthType::RequireAndVerifyClientCert,
-        client_cas: cert_pool,
         ..Default::default()
     };
     let listener = Arc::new(listen(listen_addr, cfg).await?);
@@ -89,17 +83,11 @@ async fn udp_sender(rx: Rc<RefCell<Receiver<(ProtoEvent, SocketAddr)>>>) {
             let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
             socket.connect(addr).await.unwrap();
             let certificate =
-                crypto::load_key_and_certificate("bob.pem".into(), "bob.pub.pem".into()).unwrap();
-            let mut cert_pool = rustls::RootCertStore::empty();
-            let certs = crypto::load_certificate("alice.pub.pem".into()).unwrap();
-            for cert in certs.into_iter() {
-                cert_pool.add(cert.to_owned()).unwrap();
-            }
+                Certificate::generate_self_signed(vec!["localhost".to_owned()]).unwrap();
             let config = Config {
                 certificates: vec![certificate],
+                insecure_skip_verify: true,
                 extended_master_secret: ExtendedMasterSecretType::Require,
-                roots_cas: cert_pool,
-                server_name: "webrtc.rs".to_owned(),
                 ..Default::default()
             };
             log::error!("connecting to {addr}");
@@ -112,7 +100,7 @@ async fn udp_sender(rx: Rc<RefCell<Receiver<(ProtoEvent, SocketAddr)>>>) {
         let (data, len): ([u8; lan_mouse_proto::MAX_EVENT_SIZE], usize) = event.into();
         // When udp blocks, we dont want to block the event loop.
         // Dropping events is better than potentially crashing the input capture.
-        conn.send_to(&data[..len], addr).await.unwrap();
+        conn.send(&data[..len]).await.unwrap();
     }
 }
 
