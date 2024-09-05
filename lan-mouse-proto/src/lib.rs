@@ -2,7 +2,7 @@ use input_event::{Event as InputEvent, KeyboardEvent, PointerEvent};
 use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 use paste::paste;
 use std::{
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Formatter},
     mem::size_of,
 };
 use thiserror::Error;
@@ -18,6 +18,31 @@ pub enum ProtocolError {
     /// event type does not exist
     #[error("invalid event id: `{0}`")]
     InvalidEventId(#[from] TryFromPrimitiveError<EventType>),
+    /// position type does not exist
+    #[error("invalid event id: `{0}`")]
+    InvalidPosition(#[from] TryFromPrimitiveError<Position>),
+}
+
+/// Position of a client
+#[derive(Clone, Copy, Debug, TryFromPrimitive, IntoPrimitive)]
+#[repr(u8)]
+pub enum Position {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl Display for Position {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let pos = match self {
+            Position::Left => "left",
+            Position::Right => "right",
+            Position::Top => "top",
+            Position::Bottom => "bottom",
+        };
+        write!(f, "{pos}")
+    }
 }
 
 /// main lan-mouse protocol event type
@@ -25,7 +50,7 @@ pub enum ProtocolError {
 pub enum ProtoEvent {
     /// notify a client that the cursor entered its region
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
-    Enter(u32),
+    Enter(Position),
     /// notify a client that the cursor left its region
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
     Leave(u32),
@@ -41,7 +66,7 @@ pub enum ProtoEvent {
 }
 
 impl Display for ProtoEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ProtoEvent::Enter(s) => write!(f, "Enter({s})"),
             ProtoEvent::Leave(s) => write!(f, "Leave({s})"),
@@ -140,7 +165,7 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             ))),
             EventType::Ping => Ok(Self::Ping),
             EventType::Pong => Ok(Self::Pong),
-            EventType::Enter => Ok(Self::Enter(decode_u32(&mut buf)?)),
+            EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
             EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
         }
@@ -204,7 +229,7 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 },
                 ProtoEvent::Ping => {}
                 ProtoEvent::Pong => {}
-                ProtoEvent::Enter(serial) => encode_u32(buf, len, serial),
+                ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
                 ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
             }

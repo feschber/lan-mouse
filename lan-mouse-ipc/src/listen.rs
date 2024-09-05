@@ -20,7 +20,7 @@ use tokio::net::TcpListener;
 #[cfg(windows)]
 use tokio::net::TcpStream;
 
-use crate::{FrontendEvent, FrontendRequest, IpcError, ListenerCreationError};
+use crate::{FrontendEvent, FrontendRequest, IpcError, IpcListenerCreationError};
 
 pub struct AsyncFrontendListener {
     #[cfg(windows)]
@@ -40,7 +40,7 @@ pub struct AsyncFrontendListener {
 }
 
 impl AsyncFrontendListener {
-    pub async fn new() -> Result<Self, ListenerCreationError> {
+    pub async fn new() -> Result<Self, IpcListenerCreationError> {
         #[cfg(unix)]
         let (socket_path, listener) = {
             let socket_path = crate::default_socket_path()?;
@@ -51,7 +51,7 @@ impl AsyncFrontendListener {
                 // of lan-mouse is already running
                 match UnixStream::connect(&socket_path).await {
                     // connected -> lan-mouse is already running
-                    Ok(_) => return Err(ListenerCreationError::AlreadyRunning),
+                    Ok(_) => return Err(IpcListenerCreationError::AlreadyRunning),
                     // lan-mouse is not running but a socket was left behind
                     Err(e) => {
                         log::debug!("{socket_path:?}: {e} - removing left behind socket");
@@ -63,9 +63,9 @@ impl AsyncFrontendListener {
                 Ok(ls) => ls,
                 // some other lan-mouse instance has bound the socket in the meantime
                 Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                    return Err(ListenerCreationError::AlreadyRunning)
+                    return Err(IpcListenerCreationError::AlreadyRunning)
                 }
-                Err(e) => return Err(ListenerCreationError::Bind(e)),
+                Err(e) => return Err(IpcListenerCreationError::Bind(e)),
             };
             (socket_path, listener)
         };
@@ -75,9 +75,9 @@ impl AsyncFrontendListener {
             Ok(ls) => ls,
             // some other lan-mouse instance has bound the socket in the meantime
             Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                return Err(ListenerCreationError::AlreadyRunning)
+                return Err(IpcListenerCreationError::AlreadyRunning)
             }
-            Err(e) => return Err(ListenerCreationError::Bind(e)),
+            Err(e) => return Err(IpcListenerCreationError::Bind(e)),
         };
 
         let adapter = Self {
