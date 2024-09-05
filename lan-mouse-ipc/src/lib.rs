@@ -166,6 +166,8 @@ pub struct ClientState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
+    /// client state has changed, new state must be requested via [`FrontendRequest::GetState`]
+    Changed(ClientHandle),
     /// a client was created
     Created(ClientHandle, ClientConfig, ClientState),
     /// no such client

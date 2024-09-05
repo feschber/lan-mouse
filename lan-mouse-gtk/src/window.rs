@@ -247,7 +247,11 @@ impl Window {
     }
 
     pub fn request_client_state(&self, client: &ClientObject) {
-        self.request(FrontendRequest::GetState(client.handle()));
+        self.request_client_state_for(client.handle());
+    }
+
+    pub fn request_client_state_for(&self, handle: ClientHandle) {
+        self.request(FrontendRequest::GetState(handle));
     }
 
     pub fn request_client_create(&self) {

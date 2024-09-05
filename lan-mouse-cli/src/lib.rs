@@ -30,6 +30,7 @@ pub fn run() -> Result<(), IpcError> {
 
 struct Cli {
     clients: Vec<(ClientHandle, ClientConfig, ClientState)>,
+    changed: Option<ClientHandle>,
     rx: AsyncFrontendEventReader,
     tx: AsyncFrontendRequestWriter,
 }
@@ -38,6 +39,7 @@ impl Cli {
     fn new(rx: AsyncFrontendEventReader, tx: AsyncFrontendRequestWriter) -> Cli {
         Self {
             clients: vec![],
+            changed: None,
             rx,
             tx,
         }
@@ -80,8 +82,13 @@ impl Cli {
                 event = self.rx.next() => {
                     if let Some(event) = event {
                         self.handle_event(event?);
+                    } else {
+                        break Ok(());
                     }
                 }
+            }
+            if let Some(handle) = self.changed.take() {
+                self.update_client(handle).await?;
             }
         }
     }
@@ -202,6 +209,7 @@ impl Cli {
 
     fn handle_event(&mut self, event: FrontendEvent) {
         match event {
+            FrontendEvent::Changed(h) => self.changed = Some(h),
             FrontendEvent::Created(h, c, s) => {
                 eprint!("client added ({h}): ");
                 print_config(&c);
