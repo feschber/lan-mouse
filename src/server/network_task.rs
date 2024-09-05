@@ -29,15 +29,13 @@ pub(crate) async fn new(
 
     Ok(spawn_local(async move {
         let sender_rx = Rc::new(RefCell::new(udp_send_rx));
-        loop {
-            let udp_receiver = spawn_local(listen_dtls(listen_addr, udp_recv_tx.clone()));
-            let udp_sender = spawn_local(udp_sender(sender_rx.clone()));
-            log::info!("starting sender + receiver");
-            tokio::select! {
-                e = udp_receiver => panic!("{e:?}"), /* channel closed */
-                _ = udp_sender => break, /* channel closed */
-                _ = server.cancelled() => break, /* cancellation requested */
-            }
+        let udp_receiver = spawn_local(listen_dtls(listen_addr, udp_recv_tx.clone()));
+        let udp_sender = spawn_local(udp_sender(sender_rx.clone()));
+        log::info!("starting sender + receiver");
+        tokio::select! {
+            e = udp_receiver => panic!("{e:?}"), /* channel closed */
+            _ = udp_sender => {}, /* channel closed */
+            _ = server.cancelled() => {}, /* cancellation requested */
         }
     }))
 }
