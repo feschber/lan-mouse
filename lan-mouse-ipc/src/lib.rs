@@ -33,7 +33,7 @@ pub enum ConnectionError {
 }
 
 #[derive(Debug, Error)]
-pub enum ListenerCreationError {
+pub enum IpcListenerCreationError {
     #[error("could not determine socket-path: `{0}`")]
     SocketPath(#[from] SocketPathError),
     #[error("service already running!")]
@@ -51,7 +51,7 @@ pub enum IpcError {
     #[error(transparent)]
     Connection(#[from] ConnectionError),
     #[error(transparent)]
-    Listen(#[from] ListenerCreationError),
+    Listen(#[from] IpcListenerCreationError),
 }
 
 pub const DEFAULT_PORT: u16 = 4242;
