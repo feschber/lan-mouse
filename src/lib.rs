@@ -3,6 +3,8 @@ pub mod config;
 pub mod dns;
 pub mod server;
 
-pub mod capture_test;
-pub mod crypto;
-pub mod emulation_test;
+mod capture_test;
+mod connect;
+mod crypto;
+mod emulation;
+mod listen;

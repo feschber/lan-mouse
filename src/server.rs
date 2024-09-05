@@ -15,17 +15,21 @@ use thiserror::Error;
 use tokio::{join, signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
 
-use crate::{client::ClientManager, config::Config, dns::DnsResolver};
+use crate::{
+    client::ClientManager,
+    config::Config,
+    dns::DnsResolver,
+    emulation::Emulation,
+    listen::{LanMouseListener, ListenerCreationError},
+};
 
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
-    ListenerCreationError, Position, Status,
+    IpcListenerCreationError, Position, Status,
 };
 
 mod capture_task;
 mod emulation_task;
-mod network_task;
-mod ping_task;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum State {
@@ -43,9 +47,11 @@ pub enum ServiceError {
     #[error(transparent)]
     Dns(#[from] ResolveError),
     #[error(transparent)]
-    Listen(#[from] ListenerCreationError),
+    IpcListen(#[from] IpcListenerCreationError),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    ListenError(#[from] ListenerCreationError),
 }
 
 #[derive(Clone)]
@@ -56,17 +62,16 @@ pub struct Server {
     state: Rc<Cell<State>>,
     release_bind: Vec<input_event::scancode::Linux>,
     notifies: Rc<Notifies>,
-    config: Rc<Config>,
+    pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
     capture_status: Rc<Cell<Status>>,
-    emulation_status: Rc<Cell<Status>>,
+    pub(crate) emulation_status: Rc<Cell<Status>>,
 }
 
 #[derive(Default)]
 struct Notifies {
     capture: Notify,
     emulation: Notify,
-    ping: Notify,
     port_changed: Notify,
     frontend_event_pending: Notify,
     cancel: CancellationToken,
@@ -121,7 +126,7 @@ impl Server {
         // create frontend communication adapter, exit if already running
         let mut frontend = match AsyncFrontendListener::new().await {
             Ok(f) => f,
-            Err(ListenerCreationError::AlreadyRunning) => {
+            Err(IpcListenerCreationError::AlreadyRunning) => {
                 log::info!("service already running, exiting");
                 return Ok(());
             }
@@ -130,24 +135,20 @@ impl Server {
 
         let (capture_tx, capture_rx) = channel(); /* requests for input capture */
         let (emulation_tx, emulation_rx) = channel(); /* emulation requests */
-        let (udp_recv_tx, udp_recv_rx) = channel(); /* udp receiver */
-        let (udp_send_tx, udp_send_rx) = channel(); /* udp sender */
         let (dns_tx, dns_rx) = channel(); /* dns requests */
 
-        let network = network_task::new(self.clone(), udp_recv_tx.clone(), udp_send_rx).await?;
-        let capture = capture_task::new(self.clone(), capture_rx, udp_send_tx.clone());
-        let emulation =
-            emulation_task::new(self.clone(), emulation_rx, udp_recv_rx, udp_send_tx.clone());
+        // udp task
+        let listener = LanMouseListener::new(self.config.port).await?;
+
+        // input capture
+        // let capture = capture_task::new(self.clone(), capture_rx);
+
+        // input emulation
+        let emulation = Emulation::new(self.clone(), listener);
+
+        // create dns resolver
         let resolver = DnsResolver::new(dns_rx)?;
         let dns_task = tokio::task::spawn_local(resolver.run(self.clone()));
-
-        // task that pings clients to see if they are responding
-        let ping = ping_task::new(
-            self.clone(),
-            udp_send_tx.clone(),
-            emulation_tx.clone(),
-            capture_tx.clone(),
-        );
 
         for handle in self.active_clients() {
             dns_tx.send(handle).expect("channel closed");
@@ -187,7 +188,7 @@ impl Server {
         log::info!("terminating service");
 
         self.cancel();
-        let _ = join!(capture, dns_task, emulation, network, ping);
+        let _ = join!(dns_task);
 
         Ok(())
     }
@@ -205,7 +206,7 @@ impl Server {
         self.notifies.cancel.cancelled().await
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.notifies.cancel.is_cancelled()
     }
 
@@ -223,16 +224,8 @@ impl Server {
         self.notifies.emulation.notify_waiters()
     }
 
-    async fn emulation_notified(&self) {
+    pub(crate) async fn emulation_notified(&self) {
         self.notifies.emulation.notified().await
-    }
-
-    fn restart_ping_timer(&self) {
-        self.notifies.ping.notify_waiters()
-    }
-
-    async fn ping_timer_notified(&self) {
-        self.notifies.ping.notified().await
     }
 
     fn request_port_change(&self, port: u16) {
@@ -396,12 +389,6 @@ impl Server {
         }
     }
 
-    fn update_pressed_keys(&self, handle: ClientHandle, has_pressed_keys: bool) {
-        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.has_pressed_keys = has_pressed_keys;
-        }
-    }
-
     fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
         if let Some((c, _)) = self.client_manager.borrow_mut().get_mut(handle) {
             c.fix_ips = fix_ips;
@@ -504,7 +491,7 @@ impl Server {
         self.notify_frontend(event);
     }
 
-    fn set_emulation_status(&self, status: Status) {
+    pub(crate) fn set_emulation_status(&self, status: Status) {
         self.emulation_status.replace(status);
         let status = FrontendEvent::EmulationStatus(status);
         self.notify_frontend(status);
@@ -549,6 +536,10 @@ impl Server {
             .borrow()
             .get(handle)
             .and_then(|(_, s)| s.active_addr)
+    }
+
+    pub(crate) fn release_capture(&self) {
+        todo!()
     }
 }
 
