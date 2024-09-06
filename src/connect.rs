@@ -23,45 +23,39 @@ pub(crate) enum LanMouseConnectionError {
     NoIps,
 }
 
-pub(crate) struct LanMouseConnection {}
-
-impl LanMouseConnection {
-    pub(crate) async fn connect(
-        addr: SocketAddr,
-    ) -> Result<Arc<dyn Conn + Sync + Send>, LanMouseConnectionError> {
-        let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-        conn.connect(addr).await;
-        log::info!("connected to {addr}, establishing secure dtls channel ...");
-        let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
-        let config = Config {
-            certificates: vec![certificate],
-            insecure_skip_verify: true,
-            extended_master_secret: ExtendedMasterSecretType::Require,
-            ..Default::default()
-        };
-        let dtls_conn: Arc<dyn Conn + Send + Sync> =
-            Arc::new(DTLSConn::new(conn, config, true, None).await?);
-        Ok(dtls_conn)
-    }
-
-    pub(crate) async fn connect_any(
-        addrs: &[SocketAddr],
-    ) -> Result<Arc<dyn Conn + Send + Sync>, LanMouseConnectionError> {
-        let mut joinset = JoinSet::new();
-        for &addr in addrs {
-            joinset.spawn_local(Self::connect(addr));
-        }
-        let conn = joinset.join_next().await;
-        conn.expect("no addrs to connect").expect("failed to join")
-    }
+async fn connect(addr: SocketAddr) -> Result<Arc<dyn Conn + Sync + Send>, LanMouseConnectionError> {
+    let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
+    conn.connect(addr).await;
+    log::info!("connected to {addr}, establishing secure dtls channel ...");
+    let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
+    let config = Config {
+        certificates: vec![certificate],
+        insecure_skip_verify: true,
+        extended_master_secret: ExtendedMasterSecretType::Require,
+        ..Default::default()
+    };
+    let dtls_conn: Arc<dyn Conn + Send + Sync> =
+        Arc::new(DTLSConn::new(conn, config, true, None).await?);
+    Ok(dtls_conn)
 }
 
-struct ConnectionProxy {
+async fn connect_any(
+    addrs: &[SocketAddr],
+) -> Result<Arc<dyn Conn + Send + Sync>, LanMouseConnectionError> {
+    let mut joinset = JoinSet::new();
+    for &addr in addrs {
+        joinset.spawn_local(connect(addr));
+    }
+    let conn = joinset.join_next().await;
+    conn.expect("no addrs to connect").expect("failed to join")
+}
+
+pub(crate) struct LanMouseConnection {
     server: Server,
     conns: HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>,
 }
 
-impl ConnectionProxy {
+impl LanMouseConnection {
     fn find_conn(&self, addrs: &[SocketAddr]) -> Vec<Arc<dyn Conn + Send + Sync>> {
         let mut conns = vec![];
         for addr in addrs {
@@ -72,7 +66,7 @@ impl ConnectionProxy {
         conns
     }
 
-    async fn send(
+    pub(crate) async fn send(
         &self,
         event: ProtoEvent,
         handle: ClientHandle,
@@ -93,7 +87,7 @@ impl ConnectionProxy {
                 .into_iter()
                 .map(|a| SocketAddr::new(a, port))
                 .collect::<Vec<_>>();
-            let conn = LanMouseConnection::connect_any(&addrs).await?;
+            let conn = connect_any(&addrs).await?;
             let addr = conn.remote_addr().expect("no remote addr");
             self.server.set_active_addr(handle, addr);
             conn.send(buf).await?;

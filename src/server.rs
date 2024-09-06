@@ -1,5 +1,4 @@
 use capture_task::CaptureRequest;
-use emulation_task::EmulationRequest;
 use futures::StreamExt;
 use hickory_resolver::error::ResolveError;
 use local_channel::mpsc::{channel, Sender};
@@ -31,17 +30,6 @@ use lan_mouse_ipc::{
 mod capture_task;
 mod emulation_task;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum State {
-    /// Currently sending events to another device
-    Sending,
-    /// Currently receiving events from other devices
-    Receiving,
-    /// Entered the deadzone of another device but waiting
-    /// for acknowledgement (Leave event) from the device
-    AwaitAck,
-}
-
 #[derive(Debug, Error)]
 pub enum ServiceError {
     #[error(transparent)]
@@ -54,18 +42,19 @@ pub enum ServiceError {
     ListenError(#[from] ListenerCreationError),
 }
 
+pub struct ReleaseToken;
+
 #[derive(Clone)]
 pub struct Server {
-    active_client: Rc<Cell<Option<ClientHandle>>>,
     pub(crate) client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
-    state: Rc<Cell<State>>,
     release_bind: Vec<input_event::scancode::Linux>,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
+    pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
 }
 
 #[derive(Default)]
@@ -79,9 +68,7 @@ struct Notifies {
 
 impl Server {
     pub fn new(config: Config) -> Self {
-        let active_client = Rc::new(Cell::new(None));
         let client_manager = Rc::new(RefCell::new(ClientManager::default()));
-        let state = Rc::new(Cell::new(State::Receiving));
         let port = Rc::new(Cell::new(config.port));
         for config_client in config.get_clients() {
             let client = ClientConfig {
@@ -110,10 +97,8 @@ impl Server {
 
         Self {
             config,
-            active_client,
             client_manager,
             port,
-            state,
             release_bind,
             notifies,
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
@@ -215,7 +200,7 @@ impl Server {
         self.notifies.capture.notify_waiters()
     }
 
-    async fn capture_enabled(&self) {
+    pub(crate) async fn capture_enabled(&self) {
         self.notifies.capture.notified().await
     }
 
@@ -242,7 +227,7 @@ impl Server {
         self.notify_frontend(FrontendEvent::Changed(handle));
     }
 
-    fn active_clients(&self) -> Vec<ClientHandle> {
+    pub(crate) fn active_clients(&self) -> Vec<ClientHandle> {
         self.client_manager
             .borrow()
             .get_client_states()
@@ -488,7 +473,7 @@ impl Server {
         self.notify_frontend(status);
     }
 
-    fn set_capture_status(&self, status: Status) {
+    pub(crate) fn set_capture_status(&self, status: Status) {
         self.capture_status.replace(status);
         let status = FrontendEvent::CaptureStatus(status);
         self.notify_frontend(status);
@@ -508,18 +493,8 @@ impl Server {
             .and_then(|(c, _)| c.hostname.clone())
     }
 
-    fn get_state(&self) -> State {
-        self.state.get()
-    }
-
-    fn set_state(&self, state: State) {
-        log::debug!("state => {state:?}");
-        self.state.replace(state);
-    }
-
-    fn set_active(&self, handle: Option<ClientHandle>) {
-        log::debug!("active client => {handle:?}");
-        self.active_client.replace(handle);
+    pub(crate) fn get_pos(&self, handle: ClientHandle) -> Option<Position> {
+        self.client_manager.borrow().get(handle).map(|(c, _)| c.pos)
     }
 
     pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: SocketAddr) {
@@ -536,7 +511,7 @@ impl Server {
     }
 
     pub(crate) fn release_capture(&self) {
-        todo!()
+        self.should_release.replace(Some(ReleaseToken));
     }
 }
 
