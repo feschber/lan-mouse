@@ -10,32 +10,29 @@ use tokio::task::{spawn_local, JoinHandle};
 
 /// emulation handling events received from a listener
 pub(crate) struct Emulation {
-    server: Server,
-    listener: LanMouseListener,
-    emulation_proxy: EmulationProxy,
+    _tx: Sender<ProxyEvent>,
+    _task: JoinHandle<()>,
 }
 
 impl Emulation {
     pub(crate) fn new(server: Server, listener: LanMouseListener) -> Self {
+        let (_tx, _rx) = channel();
         let emulation_proxy = EmulationProxy::new(server.clone());
-        Self {
-            server,
-            listener,
-            emulation_proxy,
-        }
+        let _task = spawn_local(Self::run(server, listener, emulation_proxy));
+        Self { _tx, _task }
     }
 
-    async fn run(&mut self) {
-        while let Some((event, addr)) = self.listener.next().await {
+    async fn run(server: Server, mut listener: LanMouseListener, emulation_proxy: EmulationProxy) {
+        while let Some((event, addr)) = listener.next().await {
             match event {
                 ProtoEvent::Enter(_) => {
-                    self.server.release_capture();
-                    self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                    server.release_capture();
+                    listener.reply(addr, ProtoEvent::Ack(0)).await;
                 }
-                ProtoEvent::Leave(_) => self.emulation_proxy.release_keys(addr).await,
+                ProtoEvent::Leave(_) => emulation_proxy.release_keys(addr).await,
                 ProtoEvent::Ack(_) => {}
-                ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr).await,
-                ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong).await,
+                ProtoEvent::Input(event) => emulation_proxy.consume(event, addr).await,
+                ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong).await,
                 ProtoEvent::Pong => todo!(),
             }
         }
@@ -47,6 +44,7 @@ impl Emulation {
 pub(crate) struct EmulationProxy {
     server: Server,
     tx: Sender<(ProxyEvent, SocketAddr)>,
+    #[allow(unused)]
     task: JoinHandle<()>,
 }
 
@@ -60,6 +58,21 @@ impl EmulationProxy {
         let (tx, rx) = channel();
         let task = spawn_local(Self::emulation_task(server.clone(), rx));
         Self { server, tx, task }
+    }
+
+    async fn consume(&self, event: Event, addr: SocketAddr) {
+        // ignore events if emulation is currently disabled
+        if let Status::Enabled = self.server.emulation_status.get() {
+            self.tx
+                .send((ProxyEvent::Input(event), addr))
+                .expect("channel closed");
+        }
+    }
+
+    async fn release_keys(&self, addr: SocketAddr) {
+        self.tx
+            .send((ProxyEvent::ReleaseKeys, addr))
+            .expect("channel closed");
     }
 
     async fn emulation_task(server: Server, mut rx: Receiver<(ProxyEvent, SocketAddr)>) {
@@ -132,16 +145,5 @@ impl EmulationProxy {
                 _ = server.cancelled() => break Ok(()),
             }
         }
-    }
-
-    async fn consume(&self, event: Event, addr: SocketAddr) {
-        // ignore events if emulation is currently disabled
-        if let Status::Enabled = self.server.emulation_status.get() {
-            self.tx.send((ProxyEvent::Input(event), addr));
-        }
-    }
-
-    async fn release_keys(&self, addr: SocketAddr) {
-        self.tx.send((ProxyEvent::ReleaseKeys, addr));
     }
 }

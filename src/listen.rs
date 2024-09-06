@@ -15,7 +15,7 @@ use webrtc_dtls::{
 use webrtc_util::{conn::Listener, Conn, Error};
 
 #[derive(Error, Debug)]
-pub(crate) enum ListenerCreationError {
+pub enum ListenerCreationError {
     #[error(transparent)]
     WebrtcUtil(#[from] webrtc_util::Error),
     #[error(transparent)]
@@ -24,7 +24,7 @@ pub(crate) enum ListenerCreationError {
 
 pub(crate) struct LanMouseListener {
     listen_rx: Receiver<(ProtoEvent, SocketAddr)>,
-    listen_task: JoinHandle<()>,
+    _listen_task: JoinHandle<()>,
     conns: Rc<Mutex<Vec<Arc<dyn Conn + Send + Sync>>>>,
 }
 
@@ -49,7 +49,7 @@ impl LanMouseListener {
 
         let conns_clone = conns.clone();
 
-        let listen_task: JoinHandle<()> = spawn_local(async move {
+        let _listen_task: JoinHandle<()> = spawn_local(async move {
             loop {
                 let (conn, _addr) = match listener.accept().await {
                     Ok(c) => c,
@@ -67,15 +67,16 @@ impl LanMouseListener {
         Ok(Self {
             conns,
             listen_rx,
-            listen_task,
+            _listen_task,
         })
     }
 
+    #[allow(unused)]
     pub(crate) async fn broadcast(&self, event: ProtoEvent) {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let conns = self.conns.lock().await;
         for conn in conns.iter() {
-            conn.send(&buf[..len]).await;
+            let _ = conn.send(&buf[..len]).await;
         }
     }
 
@@ -84,7 +85,7 @@ impl LanMouseListener {
         let conns = self.conns.lock().await;
         for conn in conns.iter() {
             if conn.remote_addr() == Some(addr) {
-                conn.send(&buf[..len]).await;
+                let _ = conn.send(&buf[..len]).await;
             }
         }
     }

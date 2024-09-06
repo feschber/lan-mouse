@@ -1,4 +1,3 @@
-use capture_task::CaptureRequest;
 use futures::StreamExt;
 use hickory_resolver::error::ResolveError;
 use local_channel::mpsc::{channel, Sender};
@@ -15,8 +14,10 @@ use tokio::{join, signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    capture::CaptureProxy,
     client::ClientManager,
     config::Config,
+    connect::LanMouseConnection,
     dns::DnsResolver,
     emulation::Emulation,
     listen::{LanMouseListener, ListenerCreationError},
@@ -26,9 +27,6 @@ use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
     IpcListenerCreationError, Position, Status,
 };
-
-mod capture_task;
-mod emulation_task;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -48,6 +46,7 @@ pub struct ReleaseToken;
 pub struct Server {
     pub(crate) client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
+    #[allow(unused)]
     release_bind: Vec<input_event::scancode::Linux>,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
@@ -104,6 +103,7 @@ impl Server {
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
+            should_release: Default::default(),
         }
     }
 
@@ -118,17 +118,15 @@ impl Server {
             e => e?,
         };
 
-        let (capture_tx, capture_rx) = channel(); /* requests for input capture */
         let (dns_tx, dns_rx) = channel(); /* dns requests */
 
-        // udp task
+        // listener + connection
         let listener = LanMouseListener::new(self.config.port).await?;
+        let conn = LanMouseConnection::new(self.clone());
 
-        // input capture
-        // let capture = capture_task::new(self.clone(), capture_rx);
-
-        // input emulation
-        let emulation = Emulation::new(self.clone(), listener);
+        // input capture + emulation
+        let capture = CaptureProxy::new(self.clone(), conn);
+        let _emulation = Emulation::new(self.clone(), listener);
 
         // create dns resolver
         let resolver = DnsResolver::new(dns_rx)?;
@@ -150,7 +148,7 @@ impl Server {
                         None => break,
                     };
                     log::debug!("received frontend request: {request:?}");
-                    self.handle_request(&capture_tx.clone(), request);
+                    self.handle_request(&capture, request, &dns_tx);
                     log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
@@ -191,10 +189,6 @@ impl Server {
         self.notifies.cancel.cancelled().await
     }
 
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.notifies.cancel.is_cancelled()
-    }
-
     fn notify_capture(&self) {
         log::info!("received capture enable request");
         self.notifies.capture.notify_waiters()
@@ -218,6 +212,7 @@ impl Server {
         self.notifies.port_changed.notify_one();
     }
 
+    #[allow(unused)]
     fn notify_port_changed(&self, port: u16, msg: Option<String>) {
         self.port.replace(port);
         self.notify_frontend(FrontendEvent::PortChanged(port, msg));
@@ -238,7 +233,7 @@ impl Server {
 
     fn handle_request(
         &self,
-        capture: &Sender<CaptureRequest>,
+        capture: &CaptureProxy,
         event: FrontendRequest,
         dns: &Sender<ClientHandle>,
     ) -> bool {
@@ -300,7 +295,7 @@ impl Server {
         handle
     }
 
-    fn deactivate_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
+    fn deactivate_client(&self, capture: &CaptureProxy, handle: ClientHandle) {
         log::debug!("deactivating client {handle}");
         match self.client_manager.borrow_mut().get_mut(handle) {
             None => return,
@@ -308,12 +303,12 @@ impl Server {
             Some((_, s)) => s.active = false,
         };
 
-        let _ = capture.send(CaptureRequest::Destroy(handle));
+        capture.destroy(handle);
         self.client_updated(handle);
         log::info!("deactivated client {handle}");
     }
 
-    fn activate_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
+    fn activate_client(&self, capture: &CaptureProxy, handle: ClientHandle) {
         log::debug!("activating client");
         /* deactivate potential other client at this position */
         let pos = match self.client_manager.borrow().get(handle) {
@@ -335,12 +330,12 @@ impl Server {
         };
 
         /* notify capture and frontends */
-        let _ = capture.send(CaptureRequest::Create(handle, to_capture_pos(pos)));
+        capture.create(handle, to_capture_pos(pos));
         self.client_updated(handle);
         log::info!("activated client {handle} ({pos})");
     }
 
-    fn remove_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
+    fn remove_client(&self, capture: &CaptureProxy, handle: ClientHandle) {
         let Some(active) = self
             .client_manager
             .borrow_mut()
@@ -351,7 +346,7 @@ impl Server {
         };
 
         if active {
-            let _ = capture.send(CaptureRequest::Destroy(handle));
+            capture.destroy(handle);
         }
     }
 
@@ -433,7 +428,7 @@ impl Server {
         }
     }
 
-    fn update_pos(&self, handle: ClientHandle, capture: &Sender<CaptureRequest>, pos: Position) {
+    fn update_pos(&self, handle: ClientHandle, capture: &CaptureProxy, pos: Position) {
         let (changed, active) = {
             let mut client_manager = self.client_manager.borrow_mut();
             let Some((c, s)) = client_manager.get_mut(handle) else {

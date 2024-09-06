@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use input_capture::{
-    Backend, CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
+    CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
 };
 use lan_mouse_ipc::{ClientHandle, Status};
 use lan_mouse_proto::ProtoEvent;
@@ -13,9 +13,8 @@ use tokio::{
 use crate::{connect::LanMouseConnection, server::Server};
 
 pub(crate) struct CaptureProxy {
-    server: Server,
     tx: Sender<CaptureRequest>,
-    task: JoinHandle<()>,
+    _task: JoinHandle<()>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -29,20 +28,34 @@ enum CaptureRequest {
 }
 
 impl CaptureProxy {
-    pub(crate) fn new(server: Server, backend: Option<Backend>, conn: LanMouseConnection) -> Self {
+    pub(crate) fn new(server: Server, conn: LanMouseConnection) -> Self {
         let (tx, rx) = channel();
-        let task = spawn_local(Self::run(server.clone(), backend, rx, conn));
-        Self { server, tx, task }
+        let _task = spawn_local(Self::run(server.clone(), rx, conn));
+        Self { tx, _task }
     }
 
-    pub(crate) async fn run(
-        server: Server,
-        backend: Option<Backend>,
-        mut rx: Receiver<CaptureRequest>,
-        conn: LanMouseConnection,
-    ) {
+    pub(crate) fn create(&self, handle: CaptureHandle, pos: Position) {
+        self.tx
+            .send(CaptureRequest::Create(handle, pos))
+            .expect("channel closed");
+    }
+
+    pub(crate) fn destroy(&self, handle: CaptureHandle) {
+        self.tx
+            .send(CaptureRequest::Destroy(handle))
+            .expect("channel closed");
+    }
+
+    #[allow(unused)]
+    pub(crate) fn release(&self) {
+        self.tx
+            .send(CaptureRequest::Release)
+            .expect("channel closed");
+    }
+
+    async fn run(server: Server, mut rx: Receiver<CaptureRequest>, conn: LanMouseConnection) {
         loop {
-            if let Err(e) = do_capture(backend, &server, &conn, &mut rx).await {
+            if let Err(e) = do_capture(&server, &conn, &mut rx).await {
                 log::warn!("input capture exited: {e}");
             }
             server.set_capture_status(Status::Disabled);
@@ -56,11 +69,12 @@ impl CaptureProxy {
 }
 
 async fn do_capture(
-    backend: Option<Backend>,
     server: &Server,
     conn: &LanMouseConnection,
     rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
+    let backend = server.config.capture_backend.map(|b| b.into());
+
     /* allow cancelling capture request */
     let mut capture = tokio::select! {
         r = InputCapture::new(backend) => r?,
@@ -82,7 +96,7 @@ async fn do_capture(
     loop {
         tokio::select! {
             event = capture.next() => match event {
-                Some(event) => handle_capture_event(server, &mut capture, sender_tx, event?).await?,
+                Some(event) => handle_capture_event(server, &mut capture, conn, event?).await?,
                 None => return Ok(()),
             },
             e = rx.recv() => {
@@ -106,7 +120,7 @@ async fn do_capture(
 async fn handle_capture_event(
     server: &Server,
     capture: &mut InputCapture,
-    conn: &mut LanMouseConnection,
+    conn: &LanMouseConnection,
     event: (CaptureHandle, CaptureEvent),
 ) -> Result<(), CaptureError> {
     let (handle, event) = event;
@@ -125,7 +139,10 @@ async fn handle_capture_event(
         CaptureEvent::Input(e) => ProtoEvent::Input(e),
     };
 
-    conn.send(event, handle).await;
+    if let Err(e) = conn.send(event, handle).await {
+        log::warn!("failed to connect, releasing capture: {e}");
+        capture.release().await?;
+    }
     Ok(())
 }
 

@@ -25,7 +25,7 @@ pub(crate) enum LanMouseConnectionError {
 
 async fn connect(addr: SocketAddr) -> Result<Arc<dyn Conn + Sync + Send>, LanMouseConnectionError> {
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-    conn.connect(addr).await;
+    conn.connect(addr).await?;
     log::info!("connected to {addr}, establishing secure dtls channel ...");
     let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
     let config = Config {
@@ -56,14 +56,11 @@ pub(crate) struct LanMouseConnection {
 }
 
 impl LanMouseConnection {
-    fn find_conn(&self, addrs: &[SocketAddr]) -> Vec<Arc<dyn Conn + Send + Sync>> {
-        let mut conns = vec![];
-        for addr in addrs {
-            if let Some(conn) = self.conns.get(&addr) {
-                conns.push(conn.clone());
-            }
+    pub(crate) fn new(server: Server) -> Self {
+        Self {
+            server,
+            conns: Default::default(),
         }
-        conns
     }
 
     pub(crate) async fn send(
