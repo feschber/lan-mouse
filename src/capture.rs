@@ -12,7 +12,7 @@ use tokio::{
 
 use crate::{connect::LanMouseConnection, server::Server};
 
-pub(crate) struct CaptureProxy {
+pub(crate) struct Capture {
     tx: Sender<CaptureRequest>,
     _task: JoinHandle<()>,
 }
@@ -27,7 +27,7 @@ enum CaptureRequest {
     Destroy(CaptureHandle),
 }
 
-impl CaptureProxy {
+impl Capture {
     pub(crate) fn new(server: Server, conn: LanMouseConnection) -> Self {
         let (tx, rx) = channel();
         let _task = spawn_local(Self::run(server.clone(), rx, conn));
@@ -126,7 +126,9 @@ async fn handle_capture_event(
     let (handle, event) = event;
     log::trace!("({handle}): {event:?}");
 
-    if server.should_release.borrow_mut().take().is_some() {
+    if server.should_release.borrow_mut().take().is_some()
+        || capture.keys_pressed(&server.release_bind)
+    {
         return capture.release().await;
     }
 
