@@ -1,11 +1,12 @@
+mod capture;
+pub mod capture_test;
 pub mod client;
 pub mod config;
-pub mod dns;
-pub mod server;
-
-mod capture;
-mod capture_test;
 mod connect;
+#[allow(unused)]
 mod crypto;
+mod dns;
 mod emulation;
+pub mod emulation_test;
 mod listen;
+pub mod server;
