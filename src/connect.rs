@@ -29,8 +29,6 @@ pub(crate) enum LanMouseConnectionError {
     Dtls(#[from] webrtc_dtls::Error),
     #[error(transparent)]
     Webrtc(#[from] webrtc_util::Error),
-    #[error("no ips associated with the client")]
-    NoIps,
     #[error("not connected")]
     NotConnected,
 }
