@@ -134,7 +134,6 @@ impl Server {
         };
 
         let (capture_tx, capture_rx) = channel(); /* requests for input capture */
-        let (emulation_tx, emulation_rx) = channel(); /* emulation requests */
         let (dns_tx, dns_rx) = channel(); /* dns requests */
 
         // udp task
@@ -165,8 +164,9 @@ impl Server {
                         }
                         None => break,
                     };
-                    log::debug!("handle frontend request: {request:?}");
-                    self.handle_request(&capture_tx.clone(), &emulation_tx.clone(), request, &dns_tx);
+                    log::debug!("received frontend request: {request:?}");
+                    self.handle_request(&capture_tx.clone(), request);
+                    log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
                     while let Some(event) = {
@@ -254,7 +254,6 @@ impl Server {
     fn handle_request(
         &self,
         capture: &Sender<CaptureRequest>,
-        emulate: &Sender<EmulationRequest>,
         event: FrontendRequest,
         dns: &Sender<ClientHandle>,
     ) -> bool {
@@ -267,14 +266,14 @@ impl Server {
             }
             FrontendRequest::Activate(handle, active) => {
                 if active {
-                    self.activate_client(capture, emulate, handle);
+                    self.activate_client(capture, handle);
                 } else {
-                    self.deactivate_client(capture, emulate, handle);
+                    self.deactivate_client(capture, handle);
                 }
             }
             FrontendRequest::ChangePort(port) => self.request_port_change(port),
             FrontendRequest::Delete(handle) => {
-                self.remove_client(capture, emulate, handle);
+                self.remove_client(capture, handle);
                 self.notify_frontend(FrontendEvent::Deleted(handle));
             }
             FrontendRequest::Enumerate() => self.enumerate(),
@@ -285,7 +284,7 @@ impl Server {
             }
             FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
             FrontendRequest::UpdatePosition(handle, pos) => {
-                self.update_pos(handle, capture, emulate, pos)
+                self.update_pos(handle, capture, pos);
             }
             FrontendRequest::ResolveDns(handle) => dns.send(handle).expect("channel closed"),
             FrontendRequest::Sync => {
@@ -316,12 +315,8 @@ impl Server {
         handle
     }
 
-    fn deactivate_client(
-        &self,
-        capture: &Sender<CaptureRequest>,
-        emulate: &Sender<EmulationRequest>,
-        handle: ClientHandle,
-    ) {
+    fn deactivate_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
+        log::debug!("deactivating client {handle}");
         match self.client_manager.borrow_mut().get_mut(handle) {
             None => return,
             Some((_, s)) if !s.active => return,
@@ -329,17 +324,12 @@ impl Server {
         };
 
         let _ = capture.send(CaptureRequest::Destroy(handle));
-        let _ = emulate.send(EmulationRequest::Destroy(handle));
         self.client_updated(handle);
         log::info!("deactivated client {handle}");
     }
 
-    fn activate_client(
-        &self,
-        capture: &Sender<CaptureRequest>,
-        emulate: &Sender<EmulationRequest>,
-        handle: ClientHandle,
-    ) {
+    fn activate_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
+        log::debug!("activating client");
         /* deactivate potential other client at this position */
         let pos = match self.client_manager.borrow().get(handle) {
             None => return,
@@ -349,7 +339,7 @@ impl Server {
 
         let other = self.client_manager.borrow_mut().find_client(pos);
         if let Some(other) = other {
-            self.deactivate_client(capture, emulate, other);
+            self.deactivate_client(capture, other);
         }
 
         /* activate the client */
@@ -359,21 +349,13 @@ impl Server {
             return;
         };
 
-        /* notify emulation, capture and frontends */
+        /* notify capture and frontends */
         let _ = capture.send(CaptureRequest::Create(handle, to_capture_pos(pos)));
-        let _ = emulate.send(EmulationRequest::Create(handle));
-
         self.client_updated(handle);
-
         log::info!("activated client {handle} ({pos})");
     }
 
-    fn remove_client(
-        &self,
-        capture: &Sender<CaptureRequest>,
-        emulate: &Sender<EmulationRequest>,
-        handle: ClientHandle,
-    ) {
+    fn remove_client(&self, capture: &Sender<CaptureRequest>, handle: ClientHandle) {
         let Some(active) = self
             .client_manager
             .borrow_mut()
@@ -385,7 +367,6 @@ impl Server {
 
         if active {
             let _ = capture.send(CaptureRequest::Destroy(handle));
-            let _ = emulate.send(EmulationRequest::Destroy(handle));
         }
     }
 
@@ -413,6 +394,22 @@ impl Server {
                 .cloned()
                 .chain(s.dns_ips.iter().cloned())
                 .collect::<HashSet<_>>();
+        }
+    }
+
+    pub(crate) fn get_ips(&self, handle: ClientHandle) -> Option<Vec<IpAddr>> {
+        if let Some((_, s)) = self.client_manager.borrow().get(handle) {
+            Some(s.ips.iter().copied().collect())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_port(&self, handle: ClientHandle) -> Option<u16> {
+        if let Some((c, _)) = self.client_manager.borrow().get(handle) {
+            Some(c.port)
+        } else {
+            None
         }
     }
 
@@ -451,13 +448,7 @@ impl Server {
         }
     }
 
-    fn update_pos(
-        &self,
-        handle: ClientHandle,
-        capture: &Sender<CaptureRequest>,
-        emulate: &Sender<EmulationRequest>,
-        pos: Position,
-    ) {
+    fn update_pos(&self, handle: ClientHandle, capture: &Sender<CaptureRequest>, pos: Position) {
         let (changed, active) = {
             let mut client_manager = self.client_manager.borrow_mut();
             let Some((c, s)) = client_manager.get_mut(handle) else {
@@ -474,9 +465,9 @@ impl Server {
 
         // update state in event input emulator & input capture
         if changed {
-            self.deactivate_client(capture, emulate, handle);
+            self.deactivate_client(capture, handle);
             if active {
-                self.activate_client(capture, emulate, handle);
+                self.activate_client(capture, handle);
             }
         }
     }
@@ -531,7 +522,13 @@ impl Server {
         self.active_client.replace(handle);
     }
 
-    fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
+    pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: SocketAddr) {
+        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
+            s.active_addr.replace(addr);
+        }
+    }
+
+    pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
         self.client_manager
             .borrow()
             .get(handle)
