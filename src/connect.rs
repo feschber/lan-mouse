@@ -23,7 +23,9 @@ pub(crate) enum LanMouseConnectionError {
     NoIps,
 }
 
-async fn connect(addr: SocketAddr) -> Result<Arc<dyn Conn + Sync + Send>, LanMouseConnectionError> {
+async fn connect(
+    addr: SocketAddr,
+) -> Result<(Arc<dyn Conn + Sync + Send>, SocketAddr), LanMouseConnectionError> {
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     conn.connect(addr).await?;
     log::info!("connected to {addr}, establishing secure dtls channel ...");
@@ -36,12 +38,12 @@ async fn connect(addr: SocketAddr) -> Result<Arc<dyn Conn + Sync + Send>, LanMou
     };
     let dtls_conn: Arc<dyn Conn + Send + Sync> =
         Arc::new(DTLSConn::new(conn, config, true, None).await?);
-    Ok(dtls_conn)
+    Ok((dtls_conn, addr))
 }
 
 async fn connect_any(
     addrs: &[SocketAddr],
-) -> Result<Arc<dyn Conn + Send + Sync>, LanMouseConnectionError> {
+) -> Result<(Arc<dyn Conn + Send + Sync>, SocketAddr), LanMouseConnectionError> {
     let mut joinset = JoinSet::new();
     for &addr in addrs {
         joinset.spawn_local(connect(addr));
@@ -84,8 +86,7 @@ impl LanMouseConnection {
                 .into_iter()
                 .map(|a| SocketAddr::new(a, port))
                 .collect::<Vec<_>>();
-            let conn = connect_any(&addrs).await?;
-            let addr = conn.remote_addr().expect("no remote addr");
+            let (conn, addr) = connect_any(&addrs).await?;
             self.server.set_active_addr(handle, addr);
             conn.send(buf).await?;
             return Ok(());
