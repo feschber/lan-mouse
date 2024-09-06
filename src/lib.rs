@@ -3,6 +3,7 @@ pub mod config;
 pub mod dns;
 pub mod server;
 
+mod capture;
 mod capture_test;
 mod connect;
 mod crypto;
