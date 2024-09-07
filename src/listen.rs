@@ -51,13 +51,14 @@ impl LanMouseListener {
 
         let _listen_task: JoinHandle<()> = spawn_local(async move {
             loop {
-                let (conn, _addr) = match listener.accept().await {
+                let (conn, addr) = match listener.accept().await {
                     Ok(c) => c,
                     Err(e) => {
                         log::warn!("accept: {e}");
                         continue;
                     }
                 };
+                log::info!("dtls client connected, ip: {addr}");
                 let mut conns = conns_clone.lock().await;
                 conns.push(conn.clone());
                 spawn_local(read_loop(conns_clone.clone(), conn, listen_tx.clone()));
@@ -120,6 +121,7 @@ async fn read_loop(
             }
         }
     }
+    log::info!("dtls client disconnected {:?}", conn.remote_addr());
     let mut conns = conns.lock().await;
     let index = conns
         .iter()

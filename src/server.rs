@@ -485,9 +485,9 @@ impl Server {
         self.client_manager.borrow().get(handle).map(|(c, _)| c.pos)
     }
 
-    pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: SocketAddr) {
+    pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: Option<SocketAddr>) {
         if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.active_addr.replace(addr);
+            s.active_addr = addr;
         }
     }
 
