@@ -1,3 +1,8 @@
+use std::{
+    cell::Cell,
+    time::{Duration, Instant},
+};
+
 use futures::StreamExt;
 use input_capture::{
     CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
@@ -117,6 +122,27 @@ async fn do_capture(
     Ok(())
 }
 
+thread_local! {
+    static PREV_LOG: Cell<Option<Instant>> = Cell::new(None);
+}
+
+/// debounce a statement `$st`, i.e. the statement is executed only if the
+/// time since the previous execution is at most `$dur`.
+/// `$prev` is used to keep track of this timestamp
+macro_rules! debounce {
+    ($prev:ident, $dur:expr, $st:stmt) => {
+        let exec = match $prev.get() {
+            None => true,
+            Some(instant) if instant.elapsed() > $dur => true,
+            _ => false,
+        };
+        if exec {
+            $prev.replace(Some(Instant::now()));
+            $st
+        }
+    };
+}
+
 async fn handle_capture_event(
     server: &Server,
     capture: &mut InputCapture,
@@ -142,7 +168,8 @@ async fn handle_capture_event(
     };
 
     if let Err(e) = conn.send(event, handle).await {
-        log::warn!("releasing capture: {e}");
+        const DUR: Duration = Duration::from_millis(500);
+        debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
         capture.release().await?;
     }
     Ok(())

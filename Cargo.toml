@@ -18,8 +18,10 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/feschber/lan-mouse"
 
 [profile.release]
-strip = true
+codegen-units = 1
 lto = "fat"
+strip = true
+panic = "abort"
 
 [dependencies]
 input-event = { path = "input-event", version = "0.2.1" }
