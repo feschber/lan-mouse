@@ -13,7 +13,6 @@ use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
     IpcListenerCreationError, Position, Status,
 };
-use local_channel::mpsc::{channel, Sender};
 use log;
 use std::{
     cell::{Cell, RefCell},
@@ -23,7 +22,7 @@ use std::{
     rc::Rc,
 };
 use thiserror::Error;
-use tokio::{join, signal, sync::Notify};
+use tokio::{signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Error)]
@@ -116,8 +115,6 @@ impl Server {
             e => e?,
         };
 
-        let (dns_tx, dns_rx) = channel(); /* dns requests */
-
         // listener + connection
         let listener = LanMouseListener::new(self.config.port).await?;
         let conn = LanMouseConnection::new(self.clone());
@@ -127,11 +124,10 @@ impl Server {
         let _emulation = Emulation::new(self.clone(), listener);
 
         // create dns resolver
-        let resolver = DnsResolver::new(dns_rx)?;
-        let dns_task = tokio::task::spawn_local(resolver.run(self.clone()));
+        let resolver = DnsResolver::new(self.clone())?;
 
         for handle in self.active_clients() {
-            dns_tx.send(handle).expect("channel closed");
+            resolver.resolve(handle);
         }
 
         loop {
@@ -146,7 +142,7 @@ impl Server {
                         None => break,
                     };
                     log::debug!("received frontend request: {request:?}");
-                    self.handle_request(&capture, request, &dns_tx);
+                    self.handle_request(&capture, request, &resolver);
                     log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
@@ -169,7 +165,6 @@ impl Server {
         log::info!("terminating service");
 
         self.cancel();
-        let _ = join!(dns_task);
 
         Ok(())
     }
@@ -233,7 +228,7 @@ impl Server {
         &self,
         capture: &Capture,
         event: FrontendRequest,
-        dns: &Sender<ClientHandle>,
+        dns: &DnsResolver,
     ) -> bool {
         log::debug!("frontend: {event:?}");
         match event {
@@ -264,7 +259,7 @@ impl Server {
             FrontendRequest::UpdatePosition(handle, pos) => {
                 self.update_pos(handle, capture, pos);
             }
-            FrontendRequest::ResolveDns(handle) => dns.send(handle).expect("channel closed"),
+            FrontendRequest::ResolveDns(handle) => dns.resolve(handle),
             FrontendRequest::Sync => {
                 self.enumerate();
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
@@ -395,7 +390,7 @@ impl Server {
         &self,
         handle: ClientHandle,
         hostname: Option<String>,
-        dns: &Sender<ClientHandle>,
+        dns: &DnsResolver,
     ) {
         let mut client_manager = self.client_manager.borrow_mut();
         let Some((c, s)) = client_manager.get_mut(handle) else {
@@ -409,7 +404,7 @@ impl Server {
             s.dns_ips.clear();
             drop(client_manager);
             self.update_ips(handle);
-            dns.send(handle).expect("channel closed");
+            dns.resolve(handle);
         }
         self.client_updated(handle);
     }
