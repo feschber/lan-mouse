@@ -89,7 +89,7 @@ impl LanMouseConnection {
                 match conn.send(buf).await {
                     Ok(_) => return Ok(()),
                     Err(e) => {
-                        log::warn!("failed to connect: {e}");
+                        log::warn!("client {handle} failed to connect: {e}");
                         self.conns.lock().await.remove(&addr);
                         self.server.set_active_addr(handle, None);
                     }
