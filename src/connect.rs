@@ -120,7 +120,14 @@ impl LanMouseConnection {
                     .map(|a| SocketAddr::new(a, port))
                     .collect::<Vec<_>>();
                 log::info!("client ({handle}) connecting ... (ips: {addrs:?})");
-                let (conn, addr) = connect_any(&addrs).await?;
+                let res = connect_any(&addrs).await;
+                let (conn, addr) = match res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        connecting.lock().await.remove(&handle);
+                        return Err(e);
+                    }
+                };
                 log::info!("client ({handle}) connected @ {addr}");
                 server.set_active_addr(handle, Some(addr));
                 conns.lock().await.insert(addr, conn);
