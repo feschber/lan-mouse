@@ -142,7 +142,7 @@ async fn handle_capture_event(
     };
 
     if let Err(e) = conn.send(event, handle).await {
-        log::warn!("failed to connect, releasing capture: {e}");
+        log::warn!("releasing capture: {e}");
         capture.release().await?;
     }
     Ok(())
