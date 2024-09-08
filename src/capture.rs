@@ -64,10 +64,12 @@ impl Capture {
                 log::warn!("input capture exited: {e}");
             }
             server.set_capture_status(Status::Disabled);
-            tokio::select! {
-                _ = rx.recv() => continue,
-                _ = server.capture_enabled() => break,
-                _ = server.cancelled() => return,
+            loop {
+                tokio::select! {
+                    _ = rx.recv() => continue,
+                    _ = server.capture_enabled() => break,
+                    _ = server.cancelled() => return,
+                }
             }
         }
     }
