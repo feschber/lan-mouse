@@ -129,7 +129,7 @@ thread_local! {
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
-/// time since the previous execution is at most `$dur`.
+/// time since the previous execution is at least `$dur`.
 /// `$prev` is used to keep track of this timestamp
 macro_rules! debounce {
     ($prev:ident, $dur:expr, $st:stmt) => {
