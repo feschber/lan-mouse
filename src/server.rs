@@ -43,7 +43,6 @@ pub struct ReleaseToken;
 pub struct Server {
     pub(crate) client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
-    #[allow(unused)]
     pub(crate) release_bind: Vec<input_event::scancode::Linux>,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
@@ -120,8 +119,8 @@ impl Server {
         let conn = LanMouseConnection::new(self.clone());
 
         // input capture + emulation
-        let capture = Capture::new(self.clone(), conn);
-        let _emulation = Emulation::new(self.clone(), listener);
+        let mut capture = Capture::new(self.clone(), conn);
+        let mut emulation = Emulation::new(self.clone(), listener);
 
         // create dns resolver
         let resolver = DnsResolver::new(self.clone())?;
@@ -165,6 +164,9 @@ impl Server {
         log::info!("terminating service");
 
         self.cancel();
+
+        capture.terminate().await;
+        emulation.terminate().await;
 
         Ok(())
     }
@@ -224,12 +226,7 @@ impl Server {
             .collect()
     }
 
-    fn handle_request(
-        &self,
-        capture: &Capture,
-        event: FrontendRequest,
-        dns: &DnsResolver,
-    ) -> bool {
+    fn handle_request(&self, capture: &Capture, event: FrontendRequest, dns: &DnsResolver) -> bool {
         log::debug!("frontend: {event:?}");
         match event {
             FrontendRequest::EnableCapture => self.notify_capture(),
@@ -386,12 +383,7 @@ impl Server {
         }
     }
 
-    fn update_hostname(
-        &self,
-        handle: ClientHandle,
-        hostname: Option<String>,
-        dns: &DnsResolver,
-    ) {
+    fn update_hostname(&self, handle: ClientHandle, hostname: Option<String>, dns: &DnsResolver) {
         let mut client_manager = self.client_manager.borrow_mut();
         let Some((c, s)) = client_manager.get_mut(handle) else {
             return;

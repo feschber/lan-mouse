@@ -5,36 +5,78 @@ use input_event::Event;
 use lan_mouse_ipc::Status;
 use lan_mouse_proto::ProtoEvent;
 use local_channel::mpsc::{channel, Receiver, Sender};
-use std::{collections::HashMap, net::SocketAddr};
-use tokio::task::{spawn_local, JoinHandle};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+use tokio::{
+    select,
+    task::{spawn_local, JoinHandle},
+};
 
 /// emulation handling events received from a listener
 pub(crate) struct Emulation {
-    _tx: Sender<ProxyEvent>,
-    _task: JoinHandle<()>,
+    task: JoinHandle<()>,
 }
 
 impl Emulation {
     pub(crate) fn new(server: Server, listener: LanMouseListener) -> Self {
-        let (_tx, _rx) = channel();
         let emulation_proxy = EmulationProxy::new(server.clone());
-        let _task = spawn_local(Self::run(server, listener, emulation_proxy));
-        Self { _tx, _task }
+        let task = spawn_local(Self::run(server, listener, emulation_proxy));
+        Self { task }
     }
 
-    async fn run(server: Server, mut listener: LanMouseListener, emulation_proxy: EmulationProxy) {
-        while let Some((event, addr)) = listener.next().await {
-            match event {
-                ProtoEvent::Enter(_) => {
-                    server.release_capture();
-                    listener.reply(addr, ProtoEvent::Ack(0)).await;
+    async fn run(
+        server: Server,
+        mut listener: LanMouseListener,
+        mut emulation_proxy: EmulationProxy,
+    ) {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut last_response = HashMap::new();
+        loop {
+            select! {
+                e = listener.next() =>  {
+                    let (event, addr) = match e {
+                        Some(e) => e,
+                        None => break,
+                    };
+                    last_response.insert(addr, Instant::now());
+                    match event {
+                        ProtoEvent::Enter(_) => {
+                            server.release_capture();
+                            listener.reply(addr, ProtoEvent::Ack(0)).await;
+                        }
+                        ProtoEvent::Leave(_) => {
+                            emulation_proxy.release_keys(addr);
+                            listener.reply(addr, ProtoEvent::Ack(0)).await;
+                        }
+                        ProtoEvent::Ack(_) => {}
+                        ProtoEvent::Input(event) => emulation_proxy.consume(event, addr),
+                        ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong).await,
+                        ProtoEvent::Pong => {},
+                    }
                 }
-                ProtoEvent::Leave(_) => emulation_proxy.release_keys(addr).await,
-                ProtoEvent::Ack(_) => {}
-                ProtoEvent::Input(event) => emulation_proxy.consume(event, addr).await,
-                ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong).await,
-                ProtoEvent::Pong => todo!(),
+                _ = interval.tick() => {
+                    for (addr, last_response) in last_response.iter() {
+                        if last_response.elapsed() > Duration::from_secs(5) {
+                            log::warn!("{addr} is not responding, releasing keys!");
+                            emulation_proxy.release_keys(*addr);
+                        }
+                    }
+                }
+                _ = server.cancelled() => break,
             }
+        }
+        listener.terminate().await;
+        emulation_proxy.terminate().await;
+    }
+
+    /// wait for termination
+    pub(crate) async fn terminate(&mut self) {
+        log::debug!("terminating emulation");
+        if let Err(e) = (&mut self.task).await {
+            log::warn!("{e}");
         }
     }
 }
@@ -44,7 +86,6 @@ impl Emulation {
 pub(crate) struct EmulationProxy {
     server: Server,
     tx: Sender<(ProxyEvent, SocketAddr)>,
-    #[allow(unused)]
     task: JoinHandle<()>,
 }
 
@@ -60,7 +101,7 @@ impl EmulationProxy {
         Self { server, tx, task }
     }
 
-    async fn consume(&self, event: Event, addr: SocketAddr) {
+    fn consume(&self, event: Event, addr: SocketAddr) {
         // ignore events if emulation is currently disabled
         if let Status::Enabled = self.server.emulation_status.get() {
             self.tx
@@ -69,7 +110,7 @@ impl EmulationProxy {
         }
     }
 
-    async fn release_keys(&self, addr: SocketAddr) {
+    fn release_keys(&self, addr: SocketAddr) {
         self.tx
             .send((ProxyEvent::ReleaseKeys, addr))
             .expect("channel closed");
@@ -145,5 +186,9 @@ impl EmulationProxy {
                 _ = server.cancelled() => break Ok(()),
             }
         }
+    }
+
+    async fn terminate(&mut self) {
+        let _ = (&mut self.task).await;
     }
 }
