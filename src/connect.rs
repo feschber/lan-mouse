@@ -86,7 +86,11 @@ impl LanMouseConnection {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
         if let Some(addr) = self.server.active_addr(handle) {
-            if let Some(conn) = self.conns.lock().await.get(&addr) {
+            let conn = {
+                let conns = self.conns.lock().await;
+                conns.get(&addr).cloned()
+            };
+            if let Some(conn) = conn {
                 match conn.send(buf).await {
                     Ok(_) => return Ok(()),
                     Err(e) => {
