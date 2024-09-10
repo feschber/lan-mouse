@@ -1728,6 +1728,7 @@ dependencies = [
  "local-channel",
  "log",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-pemfile",
  "serde",
