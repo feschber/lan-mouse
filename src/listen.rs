@@ -24,16 +24,14 @@ pub enum ListenerCreationError {
 
 pub(crate) struct LanMouseListener {
     listen_rx: Receiver<(ProtoEvent, SocketAddr)>,
-    _listen_task: JoinHandle<()>,
+    listen_tx: Sender<(ProtoEvent, SocketAddr)>,
+    listen_task: JoinHandle<()>,
     conns: Rc<Mutex<Vec<Arc<dyn Conn + Send + Sync>>>>,
 }
 
 impl LanMouseListener {
     pub(crate) async fn new(port: u16) -> Result<Self, ListenerCreationError> {
-        let (listen_tx, listen_rx): (
-            Sender<(ProtoEvent, SocketAddr)>,
-            Receiver<(ProtoEvent, SocketAddr)>,
-        ) = channel();
+        let (listen_tx, listen_rx) = channel();
 
         let listen_addr = SocketAddr::new("0.0.0.0".parse().expect("invalid ip"), port);
         let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
@@ -49,7 +47,8 @@ impl LanMouseListener {
 
         let conns_clone = conns.clone();
 
-        let _listen_task: JoinHandle<()> = spawn_local(async move {
+        let tx = listen_tx.clone();
+        let listen_task: JoinHandle<()> = spawn_local(async move {
             loop {
                 let (conn, addr) = match listener.accept().await {
                     Ok(c) => c,
@@ -61,15 +60,25 @@ impl LanMouseListener {
                 log::info!("dtls client connected, ip: {addr}");
                 let mut conns = conns_clone.lock().await;
                 conns.push(conn.clone());
-                spawn_local(read_loop(conns_clone.clone(), conn, listen_tx.clone()));
+                spawn_local(read_loop(conns_clone.clone(), conn, tx.clone()));
             }
         });
 
         Ok(Self {
             conns,
             listen_rx,
-            _listen_task,
+            listen_tx,
+            listen_task,
         })
+    }
+
+    pub(crate) async fn terminate(&mut self) {
+        self.listen_task.abort();
+        let conns = self.conns.lock().await;
+        for conn in conns.iter() {
+            let _ = conn.close().await;
+        }
+        self.listen_tx.close();
     }
 
     #[allow(unused)]

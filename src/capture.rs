@@ -19,7 +19,7 @@ use crate::{connect::LanMouseConnection, server::Server};
 
 pub(crate) struct Capture {
     tx: Sender<CaptureRequest>,
-    _task: JoinHandle<()>,
+    task: JoinHandle<()>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -35,8 +35,16 @@ enum CaptureRequest {
 impl Capture {
     pub(crate) fn new(server: Server, conn: LanMouseConnection) -> Self {
         let (tx, rx) = channel();
-        let _task = spawn_local(Self::run(server.clone(), rx, conn));
-        Self { tx, _task }
+        let task = spawn_local(Self::run(server.clone(), rx, conn));
+        Self { tx, task }
+    }
+
+    pub(crate) async fn terminate(&mut self) {
+        log::debug!("terminating capture");
+        self.tx.close();
+        if let Err(e) = (&mut self.task).await {
+            log::warn!("{e}");
+        }
     }
 
     pub(crate) fn create(&self, handle: CaptureHandle, pos: Position) {
@@ -66,7 +74,10 @@ impl Capture {
             server.set_capture_status(Status::Disabled);
             loop {
                 tokio::select! {
-                    _ = rx.recv() => continue,
+                    e = rx.recv() => match e {
+                        Some(_) => continue,
+                        None => break,
+                    },
                     _ = server.capture_enabled() => break,
                     _ = server.cancelled() => return,
                 }
