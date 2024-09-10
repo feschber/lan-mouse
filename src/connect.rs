@@ -140,6 +140,7 @@ impl LanMouseConnection {
                             log::warn!("client ({handle}) @ {addr} connection closed: {e}");
                             conns.lock().await.remove(&addr);
                             server.set_active_addr(handle, None);
+                            break;
                         }
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
