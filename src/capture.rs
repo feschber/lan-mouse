@@ -136,7 +136,7 @@ async fn do_capture(
 }
 
 thread_local! {
-    static PREV_LOG: Cell<Option<Instant>> = Cell::new(None);
+    static PREV_LOG: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the

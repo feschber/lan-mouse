@@ -119,7 +119,7 @@ async fn read_loop(
 ) -> Result<(), Error> {
     let mut b = [0u8; MAX_EVENT_SIZE];
 
-    while let Ok(_) = conn.recv(&mut b).await {
+    while conn.recv(&mut b).await.is_ok() {
         match b.try_into() {
             Ok(event) => dtls_tx
                 .send((event, conn.remote_addr().expect("no remote addr")))
