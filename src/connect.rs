@@ -7,6 +7,7 @@ use std::{
     net::SocketAddr,
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use thiserror::Error;
 use tokio::{
@@ -130,8 +131,18 @@ impl LanMouseConnection {
                 };
                 log::info!("client ({handle}) connected @ {addr}");
                 server.set_active_addr(handle, Some(addr));
-                conns.lock().await.insert(addr, conn);
+                conns.lock().await.insert(addr, conn.clone());
                 connecting.lock().await.remove(&handle);
+                spawn_local(async move {
+                    loop {
+                        let (buf, len) = ProtoEvent::Ping.into();
+                        if let Err(e) = conn.send(&buf[..len]).await {
+                            log::warn!("client ({handle}) @ {addr} connection closed: {e}");
+                            conns.lock().await.remove(&addr);
+                        }
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                });
             }
             Result::<(), LanMouseConnectionError>::Ok(())
         });
