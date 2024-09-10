@@ -139,6 +139,7 @@ impl LanMouseConnection {
                         if let Err(e) = conn.send(&buf[..len]).await {
                             log::warn!("client ({handle}) @ {addr} connection closed: {e}");
                             conns.lock().await.remove(&addr);
+                            server.set_active_addr(handle, None);
                         }
                         tokio::time::sleep(Duration::from_millis(500)).await;
                     }
