@@ -58,7 +58,7 @@ impl Emulation {
                     }
                 }
                 _ = interval.tick() => {
-                    let _ = last_response.retain(|addr,instant| {
+                    last_response.retain(|addr,instant| {
                         if instant.elapsed() > Duration::from_secs(5) {
                             log::warn!("{addr} is not responding, releasing keys!");
                             emulation_proxy.release_keys(*addr);
