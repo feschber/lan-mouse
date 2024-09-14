@@ -1,5 +1,5 @@
 use local_channel::mpsc::{channel, Receiver, Sender};
-use tokio::task::{JoinHandle, spawn_local};
+use tokio::task::{spawn_local, JoinHandle};
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 
@@ -16,10 +16,7 @@ impl DnsResolver {
         let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
         let (tx, rx) = channel();
         let _task = spawn_local(Self::run(server, resolver, rx));
-        Ok(Self {
-            _task,
-            tx,
-        })
+        Ok(Self { _task, tx })
     }
 
     pub(crate) fn resolve(&self, host: ClientHandle) {
@@ -33,7 +30,11 @@ impl DnsResolver {
         }
     }
 
-    async fn do_dns(server: &Server, resolver: &TokioAsyncResolver, rx: &mut Receiver<ClientHandle>) {
+    async fn do_dns(
+        server: &Server,
+        resolver: &TokioAsyncResolver,
+        rx: &mut Receiver<ClientHandle>,
+    ) {
         loop {
             let handle = rx.recv().await.expect("channel closed");
 
