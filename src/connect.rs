@@ -144,9 +144,14 @@ impl LanMouseConnection {
                             log::warn!("client ({handle}) @ {addr} connection closed: {e}");
                             conns.lock().await.remove(&addr);
                             server.set_active_addr(handle, None);
+                            let active: Vec<SocketAddr> =
+                                conns.lock().await.keys().copied().collect();
+                            log::info!("active connections: {active:?}");
                             break;
                         }
                         tokio::time::sleep(Duration::from_millis(500)).await;
+                        let mut buf = [0u8; MAX_EVENT_SIZE];
+                        conn.recv(&mut buf).await;
                     }
                 });
             }

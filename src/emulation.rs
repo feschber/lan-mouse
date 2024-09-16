@@ -60,7 +60,7 @@ impl Emulation {
                 _ = interval.tick() => {
                     last_response.retain(|addr,instant| {
                         if instant.elapsed() > Duration::from_secs(5) {
-                            log::warn!("{addr} is not responding, releasing keys!");
+                            log::warn!("releasing keys: {addr} not responding!");
                             emulation_proxy.release_keys(*addr);
                             false
                         } else {
