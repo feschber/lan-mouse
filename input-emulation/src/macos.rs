@@ -1,6 +1,9 @@
 use super::{error::EmulationError, Emulation, EmulationHandle};
 use async_trait::async_trait;
-use core_graphics::display::{CGDisplayBounds, CGMainDisplayID, CGPoint};
+use core_graphics::base::CGFloat;
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
+};
 use core_graphics::event::{
     CGEvent, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField, ScrollEventUnit,
 };
@@ -105,6 +108,77 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8) {
     event.post(CGEventTapLocation::HID);
 }
 
+fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
+    let mut displays: [CGDirectDisplayID; 16] = [0; 16];
+    let mut display_count: u32 = 0;
+    let rect = CGRect::new(&CGPoint::new(x, y), &CGSize::new(0.0, 0.0));
+
+    let error = unsafe {
+        CGGetDisplaysWithRect(
+            rect,
+            1,
+            displays.as_mut_ptr(),
+            &mut display_count as *mut u32,
+        )
+    };
+
+    if error != 0 {
+        log::warn!("error getting displays at point ({}, {}): {}", x, y, error);
+        return Option::None;
+    }
+
+    if display_count == 0 {
+        log::debug!("no displays found at point ({}, {})", x, y);
+        return Option::None;
+    }
+
+    return displays.first().copied();
+}
+
+fn get_display_bounds(display: CGDirectDisplayID) -> (CGFloat, CGFloat, CGFloat, CGFloat) {
+    unsafe {
+        let bounds = CGDisplayBounds(display);
+        let min_x = bounds.origin.x;
+        let max_x = bounds.origin.x + bounds.size.width;
+        let min_y = bounds.origin.y;
+        let max_y = bounds.origin.y + bounds.size.height;
+        (min_x as f64, min_y as f64, max_x as f64, max_y as f64)
+    }
+}
+
+fn clamp_to_screen_space(
+    current_x: CGFloat,
+    current_y: CGFloat,
+    dx: CGFloat,
+    dy: CGFloat,
+) -> (CGFloat, CGFloat) {
+    // Check which display the mouse is currently on
+    // Determine what the location of the mouse would be after applying the move
+    // Get the display at the new location
+    // If the point is not on a display
+    //   Clamp the mouse to the current display
+    // Else If the point is on a display
+    //   Clamp the mouse to the new display
+    let current_display = match get_display_at_point(current_x, current_y) {
+        Some(display) => display,
+        None => {
+            log::warn!("could not get current display!");
+            return (current_x, current_y);
+        }
+    };
+
+    let new_x = current_x + dx;
+    let new_y = current_y + dy;
+
+    let final_display = get_display_at_point(new_x, new_y).unwrap_or(current_display);
+    let (min_x, min_y, max_x, max_y) = get_display_bounds(final_display);
+
+    (
+        new_x.clamp(min_x, max_x - 1.),
+        new_y.clamp(min_y, max_y - 1.),
+    )
+}
+
 #[async_trait]
 impl Emulation for MacOSEmulation {
     async fn consume(
@@ -115,16 +189,6 @@ impl Emulation for MacOSEmulation {
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion { time: _, dx, dy } => {
-                    // FIXME secondary displays?
-                    let (min_x, min_y, max_x, max_y) = unsafe {
-                        let display = CGMainDisplayID();
-                        let bounds = CGDisplayBounds(display);
-                        let min_x = bounds.origin.x;
-                        let max_x = bounds.origin.x + bounds.size.width;
-                        let min_y = bounds.origin.y;
-                        let max_y = bounds.origin.y + bounds.size.height;
-                        (min_x as f64, min_y as f64, max_x as f64, max_y as f64)
-                    };
                     let mut mouse_location = match self.get_mouse_location() {
                         Some(l) => l,
                         None => {
@@ -133,8 +197,11 @@ impl Emulation for MacOSEmulation {
                         }
                     };
 
-                    mouse_location.x = (mouse_location.x + dx).clamp(min_x, max_x - 1.);
-                    mouse_location.y = (mouse_location.y + dy).clamp(min_y, max_y - 1.);
+                    let (new_mouse_x, new_mouse_y) =
+                        clamp_to_screen_space(mouse_location.x, mouse_location.y, dx, dy);
+
+                    mouse_location.x = new_mouse_x;
+                    mouse_location.y = new_mouse_y;
 
                     let mut event_type = CGEventType::MouseMoved;
                     if self.button_state.left {
