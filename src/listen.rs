@@ -1,7 +1,7 @@
 use futures::{Stream, StreamExt};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
-use std::{net::SocketAddr, rc::Rc, sync::Arc};
+use std::{net::SocketAddr, rc::Rc, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{
     sync::Mutex,
@@ -50,12 +50,17 @@ impl LanMouseListener {
         let tx = listen_tx.clone();
         let listen_task: JoinHandle<()> = spawn_local(async move {
             loop {
-                let (conn, addr) = match listener.accept().await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        log::warn!("accept: {e}");
-                        continue;
-                    }
+                log::info!("accepting ...");
+                let sleep = tokio::time::sleep(Duration::from_secs(2));
+                let (conn, addr) = tokio::select! {
+                    _ = sleep => continue,
+                    c = listener.accept() => match c {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("accept: {e}");
+                            continue;
+                        }
+                    },
                 };
                 log::info!("dtls client connected, ip: {addr}");
                 let mut conns = conns_clone.lock().await;
