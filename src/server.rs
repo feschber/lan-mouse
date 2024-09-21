@@ -92,6 +92,7 @@ impl Server {
         let config = Rc::new(config);
 
         Self {
+            active: Rc::new(Cell::new(None)),
             config,
             client_manager,
             port,

@@ -1,6 +1,5 @@
 use std::{
     cell::Cell,
-    future,
     time::{Duration, Instant},
 };
 

@@ -211,7 +211,7 @@ async fn receive_loop(
     let mut buf = [0u8; MAX_EVENT_SIZE];
     while let Ok(_) = conn.recv(&mut buf).await {
         if let Ok(event) = buf.try_into() {
-            tx.send((handle, event));
+            tx.send((handle, event)).expect("channel closed");
         }
     }
 }
