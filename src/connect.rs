@@ -96,19 +96,19 @@ impl LanMouseConnection {
     ) -> Result<(), LanMouseConnectionError> {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
+        log::info!("{event} =>=>=>=>=>=> {handle}");
         if let Some(addr) = self.server.active_addr(handle) {
             let conn = {
                 let conns = self.conns.lock().await;
                 conns.get(&addr).cloned()
             };
             if let Some(conn) = conn {
-                log::trace!("{event} >->->->->- {addr}");
+                log::info!("{event} >->->->->- {addr}");
                 match conn.send(buf).await {
                     Ok(_) => return Ok(()),
                     Err(e) => {
                         log::warn!("client {handle} failed to send: {e}");
-                        self.conns.lock().await.remove(&addr);
-                        self.server.set_active_addr(handle, None);
+                        disconnect(&self.server, handle, addr, &self.conns).await;
                     }
                 }
             }
@@ -186,6 +186,7 @@ async fn ping_pong(
 ) {
     loop {
         let (buf, len) = ProtoEvent::Ping.into();
+        log::trace!("PING >->->->->- {addr}");
         if let Err(e) = conn.send(&buf[..len]).await {
             log::warn!("send: {e}");
             disconnect(&server, handle, addr, &conns).await;

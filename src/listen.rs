@@ -51,7 +51,6 @@ impl LanMouseListener {
         let tx = listen_tx.clone();
         let listen_task: JoinHandle<()> = spawn_local(async move {
             loop {
-                log::info!("accepting ...");
                 let sleep = tokio::time::sleep(Duration::from_secs(2));
                 let (conn, addr) = tokio::select! {
                     _ = sleep => continue,
@@ -97,6 +96,11 @@ impl LanMouseListener {
     }
 
     pub(crate) async fn reply(&self, addr: SocketAddr, event: ProtoEvent) {
+        if let ProtoEvent::Pong = event {
+            log::trace!("reply {event} >=>=>=>=>=> {addr}");
+        } else {
+            log::info!("reply {event} >=>=>=>=>=> {addr}");
+        }
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let conns = self.conns.lock().await;
         for (a, conn) in conns.iter() {
