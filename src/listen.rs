@@ -26,7 +26,7 @@ pub(crate) struct LanMouseListener {
     listen_rx: Receiver<(ProtoEvent, SocketAddr)>,
     listen_tx: Sender<(ProtoEvent, SocketAddr)>,
     listen_task: JoinHandle<()>,
-    conns: Rc<Mutex<Vec<Arc<dyn Conn + Send + Sync>>>>,
+    conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>>,
 }
 
 impl LanMouseListener {
@@ -43,7 +43,8 @@ impl LanMouseListener {
 
         let listener = listen(listen_addr, cfg).await?;
 
-        let conns: Rc<Mutex<Vec<Arc<dyn Conn + Send + Sync>>>> = Rc::new(Mutex::new(Vec::new()));
+        let conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>> =
+            Rc::new(Mutex::new(Vec::new()));
 
         let conns_clone = conns.clone();
 
@@ -64,8 +65,8 @@ impl LanMouseListener {
                 };
                 log::info!("dtls client connected, ip: {addr}");
                 let mut conns = conns_clone.lock().await;
-                conns.push(conn.clone());
-                spawn_local(read_loop(conns_clone.clone(), conn, tx.clone()));
+                conns.push((addr, conn.clone()));
+                spawn_local(read_loop(conns_clone.clone(), addr, conn, tx.clone()));
             }
         });
 
@@ -80,7 +81,7 @@ impl LanMouseListener {
     pub(crate) async fn terminate(&mut self) {
         self.listen_task.abort();
         let conns = self.conns.lock().await;
-        for conn in conns.iter() {
+        for (_, conn) in conns.iter() {
             let _ = conn.close().await;
         }
         self.listen_tx.close();
@@ -90,7 +91,7 @@ impl LanMouseListener {
     pub(crate) async fn broadcast(&self, event: ProtoEvent) {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let conns = self.conns.lock().await;
-        for conn in conns.iter() {
+        for (_, conn) in conns.iter() {
             let _ = conn.send(&buf[..len]).await;
         }
     }
@@ -98,8 +99,8 @@ impl LanMouseListener {
     pub(crate) async fn reply(&self, addr: SocketAddr, event: ProtoEvent) {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let conns = self.conns.lock().await;
-        for conn in conns.iter() {
-            if conn.remote_addr() == Some(addr) {
+        for (a, conn) in conns.iter() {
+            if *a == addr {
                 let _ = conn.send(&buf[..len]).await;
             }
         }
@@ -118,7 +119,8 @@ impl Stream for LanMouseListener {
 }
 
 async fn read_loop(
-    conns: Rc<Mutex<Vec<Arc<dyn Conn + Send + Sync>>>>,
+    conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>>,
+    addr: SocketAddr,
     conn: Arc<dyn Conn + Send + Sync>,
     dtls_tx: Sender<(ProtoEvent, SocketAddr)>,
 ) -> Result<(), Error> {
@@ -126,20 +128,18 @@ async fn read_loop(
 
     while conn.recv(&mut b).await.is_ok() {
         match b.try_into() {
-            Ok(event) => dtls_tx
-                .send((event, conn.remote_addr().expect("no remote addr")))
-                .expect("channel closed"),
+            Ok(event) => dtls_tx.send((event, addr)).expect("channel closed"),
             Err(e) => {
                 log::warn!("error receiving event: {e}");
                 break;
             }
         }
     }
-    log::info!("dtls client disconnected {:?}", conn.remote_addr());
+    log::info!("dtls client disconnected {:?}", addr);
     let mut conns = conns.lock().await;
     let index = conns
         .iter()
-        .position(|c| c.remote_addr() == conn.remote_addr())
+        .position(|(a, _)| *a == addr)
         .expect("connection not found");
     conns.remove(index);
     Ok(())
