@@ -186,7 +186,8 @@ async fn ping_pong(
 ) {
     loop {
         let (buf, len) = ProtoEvent::Ping.into();
-        if let Err(_) = conn.send(&buf[..len]).await {
+        if let Err(e) = conn.send(&buf[..len]).await {
+            log::warn!("send: {e}");
             disconnect(&server, handle, addr, &conns).await;
             break;
         }
@@ -194,6 +195,7 @@ async fn ping_pong(
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         if server.active_addr(handle).is_none() {
+            log::warn!("no active addr");
             disconnect(&server, handle, addr, &conns).await;
         }
     }
@@ -211,11 +213,12 @@ async fn receive_loop(
     while let Ok(_) = conn.recv(&mut buf).await {
         if let Ok(event) = buf.try_into() {
             match event {
-                ProtoEvent::Pong => server.set_active_addr(handle, None),
+                ProtoEvent::Pong => server.set_active_addr(handle, Some(addr)),
                 event => tx.send((handle, event)).expect("channel closed"),
             }
         }
     }
+    log::warn!("recv error");
     disconnect(&server, handle, addr, &conns).await;
 }
 
