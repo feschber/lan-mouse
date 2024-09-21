@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    future,
     time::{Duration, Instant},
 };
 
@@ -66,9 +67,9 @@ impl Capture {
             .expect("channel closed");
     }
 
-    async fn run(server: Server, mut rx: Receiver<CaptureRequest>, conn: LanMouseConnection) {
+    async fn run(server: Server, mut rx: Receiver<CaptureRequest>, mut conn: LanMouseConnection) {
         loop {
-            if let Err(e) = do_capture(&server, &conn, &mut rx).await {
+            if let Err(e) = do_capture(&server, &mut conn, &mut rx).await {
                 log::warn!("input capture exited: {e}");
             }
             server.set_capture_status(Status::Disabled);
@@ -88,7 +89,7 @@ impl Capture {
 
 async fn do_capture(
     server: &Server,
-    conn: &LanMouseConnection,
+    conn: &mut LanMouseConnection,
     rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
     let backend = server.config.capture_backend.map(|b| b.into());
@@ -111,16 +112,33 @@ async fn do_capture(
         capture.create(handle, to_capture_pos(pos)).await?;
     }
 
+    let mut state = State::Idle;
+
     loop {
         tokio::select! {
             event = capture.next() => match event {
-                Some(event) => handle_capture_event(server, &mut capture, conn, event?).await?,
+                Some(event) => handle_capture_event(server, &mut capture, conn, event?, &mut state).await?,
                 None => return Ok(()),
+            },
+            (handle, event) = conn.recv() => if let Some(active) = server.get_active() {
+                if handle != active {
+                    // we only care about events coming from the client we are currently connected to
+                    // only `Ack` and `Leave` are relevant
+                    continue
+                }
+
+                match event {
+                    // connection acknowlegded => set state to Sending
+                    ProtoEvent::Ack(_) => state = State::Sending,
+                    // client disconnected
+                    ProtoEvent::Leave(_) => release_capture(&mut capture, server, &mut state).await?,
+                    _ => {}
+                }
             },
             e = rx.recv() => {
                 match e {
                     Some(e) => match e {
-                        CaptureRequest::Release => capture.release().await?,
+                        CaptureRequest::Release => release_capture(&mut capture, server, &mut state).await?,
                         CaptureRequest::Create(h, p) => capture.create(h, p).await?,
                         CaptureRequest::Destroy(h) => capture.destroy(h).await?,
                     },
@@ -156,11 +174,18 @@ macro_rules! debounce {
     };
 }
 
+enum State {
+    Idle,
+    WaitingForAck,
+    Sending,
+}
+
 async fn handle_capture_event(
     server: &Server,
     capture: &mut InputCapture,
     conn: &LanMouseConnection,
     event: (CaptureHandle, CaptureEvent),
+    state: &mut State,
 ) -> Result<(), CaptureError> {
     let (handle, event) = event;
     log::trace!("({handle}): {event:?}");
@@ -168,16 +193,22 @@ async fn handle_capture_event(
     if server.should_release.borrow_mut().take().is_some()
         || capture.keys_pressed(&server.release_bind)
     {
-        return capture.release().await;
+        return release_capture(capture, server, state).await;
     }
 
     if event == CaptureEvent::Begin {
+        *state = State::WaitingForAck;
+        server.set_active(Some(handle));
         spawn_hook_command(server, handle);
     }
 
     let event = match event {
         CaptureEvent::Begin => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
-        CaptureEvent::Input(e) => ProtoEvent::Input(e),
+        CaptureEvent::Input(e) => match state {
+            State::Sending => ProtoEvent::Input(e),
+            // connection not acknowledged, repeat `Enter` event
+            _ => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+        },
     };
 
     if let Err(e) = conn.send(event, handle).await {
@@ -186,6 +217,16 @@ async fn handle_capture_event(
         capture.release().await?;
     }
     Ok(())
+}
+
+async fn release_capture(
+    capture: &mut InputCapture,
+    server: &Server,
+    state: &mut State,
+) -> Result<(), CaptureError> {
+    *state = State::Idle;
+    server.set_active(None);
+    capture.release().await
 }
 
 fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
