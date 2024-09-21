@@ -203,10 +203,9 @@ async fn handle_capture_event(
         return release_capture(capture, server).await;
     }
 
-    if event == CaptureEvent::Begin {
-        if *state != State::Sending {
-            *state = State::WaitingForAck;
-        }
+    // activated a new client
+    if event == CaptureEvent::Begin && Some(handle) != server.get_active() {
+        *state = State::WaitingForAck;
         server.set_active(Some(handle));
         spawn_hook_command(server, handle);
     }
