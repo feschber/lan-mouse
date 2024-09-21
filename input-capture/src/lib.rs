@@ -167,6 +167,7 @@ impl InputCapture {
 
     /// release mouse
     pub async fn release(&mut self) -> Result<(), CaptureError> {
+        log::info!("RELEASE CAPTURE");
         self.pressed_keys.clear();
         self.capture.release().await
     }

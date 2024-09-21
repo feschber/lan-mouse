@@ -111,7 +111,7 @@ async fn do_capture(
         capture.create(handle, to_capture_pos(pos)).await?;
     }
 
-    let mut state = State::Idle;
+    let mut state = State::Receiving;
 
     loop {
         tokio::select! {
@@ -119,25 +119,27 @@ async fn do_capture(
                 Some(event) => handle_capture_event(server, &mut capture, conn, event?, &mut state).await?,
                 None => return Ok(()),
             },
-            (handle, event) = conn.recv() => if let Some(active) = server.get_active() {
-                if handle != active {
-                    // we only care about events coming from the client we are currently connected to
-                    // only `Ack` and `Leave` are relevant
-                    continue
+            (handle, event) = conn.recv() => {
+                if let Some(active) = server.get_active() {
+                    if handle != active {
+                        // we only care about events coming from the client we are currently connected to
+                        // only `Ack` and `Leave` are relevant
+                        continue
+                    }
                 }
 
                 match event {
                     // connection acknowlegded => set state to Sending
                     ProtoEvent::Ack(_) => state = State::Sending,
                     // client disconnected
-                    ProtoEvent::Leave(_) => release_capture(&mut capture, server, &mut state).await?,
+                    ProtoEvent::Leave(_) => release_capture(&mut capture, server).await?,
                     _ => {}
                 }
             },
             e = rx.recv() => {
                 match e {
                     Some(e) => match e {
-                        CaptureRequest::Release => release_capture(&mut capture, server, &mut state).await?,
+                        CaptureRequest::Release => release_capture(&mut capture, server).await?,
                         CaptureRequest::Create(h, p) => capture.create(h, p).await?,
                         CaptureRequest::Destroy(h) => capture.destroy(h).await?,
                     },
@@ -173,8 +175,9 @@ macro_rules! debounce {
     };
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
-    Idle,
+    Receiving,
     WaitingForAck,
     Sending,
 }
@@ -189,14 +192,21 @@ async fn handle_capture_event(
     let (handle, event) = event;
     log::trace!("({handle}): {event:?}");
 
-    if server.should_release.borrow_mut().take().is_some()
-        || capture.keys_pressed(&server.release_bind)
-    {
-        return release_capture(capture, server, state).await;
+    if server.should_release.borrow_mut().take().is_some() && *state != State::Receiving {
+        log::info!("releasing capture: a client entered the device");
+        *state = State::Receiving;
+        return release_capture(capture, server).await;
+    }
+
+    if capture.keys_pressed(&server.release_bind) {
+        log::info!("releasing capture: release-bind pressed");
+        return release_capture(capture, server).await;
     }
 
     if event == CaptureEvent::Begin {
-        *state = State::WaitingForAck;
+        if *state != State::Sending {
+            *state = State::WaitingForAck;
+        }
         server.set_active(Some(handle));
         spawn_hook_command(server, handle);
     }
@@ -204,26 +214,23 @@ async fn handle_capture_event(
     let event = match event {
         CaptureEvent::Begin => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
         CaptureEvent::Input(e) => match state {
-            State::Sending => ProtoEvent::Input(e),
             // connection not acknowledged, repeat `Enter` event
-            _ => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+            State::WaitingForAck => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+            _ => ProtoEvent::Input(e),
         },
     };
 
+    log::info!("CAPTURE {event} >=>=>=>=>=> {handle}");
     if let Err(e) = conn.send(event, handle).await {
-        const DUR: Duration = Duration::from_millis(500);
-        debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
+        // const DUR: Duration = Duration::from_millis(500);
+        log::warn!("releasing capture: {e}");
+        // debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
         capture.release().await?;
     }
     Ok(())
 }
 
-async fn release_capture(
-    capture: &mut InputCapture,
-    server: &Server,
-    state: &mut State,
-) -> Result<(), CaptureError> {
-    *state = State::Idle;
+async fn release_capture(capture: &mut InputCapture, server: &Server) -> Result<(), CaptureError> {
     server.set_active(None);
     capture.release().await
 }

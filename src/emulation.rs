@@ -41,9 +41,15 @@ impl Emulation {
                         Some(e) => e,
                         None => break,
                     };
+                    if let ProtoEvent::Ping = event {
+                        log::trace!("{event} <-<-<-<-<- {addr}");
+                    } else {
+                        log::info!("{event} <-<-<-<-<- {addr}");
+                    }
                     last_response.insert(addr, Instant::now());
                     match event {
                         ProtoEvent::Enter(_) => {
+                            log::info!("A CLIENT ENTERED THE DEVICE!");
                             server.release_capture();
                             listener.reply(addr, ProtoEvent::Ack(0)).await;
                         }
