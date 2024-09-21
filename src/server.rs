@@ -41,6 +41,7 @@ pub struct ReleaseToken;
 
 #[derive(Clone)]
 pub struct Server {
+    active: Rc<Cell<Option<ClientHandle>>>,
     pub(crate) client_manager: Rc<RefCell<ClientManager>>,
     port: Rc<Cell<u16>>,
     pub(crate) release_bind: Vec<input_event::scancode::Linux>,
@@ -492,6 +493,14 @@ impl Server {
 
     pub(crate) fn release_capture(&self) {
         self.should_release.replace(Some(ReleaseToken));
+    }
+
+    pub(crate) fn set_active(&self, handle: Option<ClientHandle>) {
+        self.active.replace(handle);
+    }
+
+    pub(crate) fn get_active(&self) -> Option<ClientHandle> {
+        self.active.get()
     }
 }
 
