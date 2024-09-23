@@ -217,13 +217,15 @@ impl InputEmulation {
             return false;
         };
 
-        if state == 0 {
+        let ret = if state == 0 {
             // currently pressed => can release
             pressed_keys.remove(&key)
         } else {
             // currently not pressed => can press
             pressed_keys.insert(key)
-        }
+        };
+        log::info!("client {handle}: pressed keys: {:?}", pressed_keys);
+        ret
     }
 }
 

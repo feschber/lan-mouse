@@ -160,6 +160,7 @@ impl InputCapture {
                 _ => self.pressed_keys.remove(&scancode),
             };
         }
+        log::info!("pressed keys: {:?}", self.pressed_keys);
     }
 }
 
