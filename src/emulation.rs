@@ -45,7 +45,7 @@ impl Emulation {
                     last_response.insert(addr, Instant::now());
                     match event {
                         ProtoEvent::Enter(_) => {
-                            log::info!("A CLIENT ENTERED THE DEVICE!");
+                            log::info!("{addr} entered this device");
                             server.release_capture();
                             listener.reply(addr, ProtoEvent::Ack(0)).await;
                         }

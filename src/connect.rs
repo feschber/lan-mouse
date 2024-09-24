@@ -125,7 +125,7 @@ impl LanMouseConnection {
                 conns.get(&addr).cloned()
             };
             if let Some(conn) = conn {
-                log::info!("{event} >->->->->- {addr}");
+                log::trace!("{event} >->->->->- {addr}");
                 match conn.send(buf).await {
                     Ok(_) => return Ok(()),
                     Err(e) => {
