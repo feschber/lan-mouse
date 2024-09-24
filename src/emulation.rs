@@ -41,11 +41,7 @@ impl Emulation {
                         Some(e) => e,
                         None => break,
                     };
-                    if let ProtoEvent::Ping = event {
-                        log::trace!("{event} <-<-<-<-<- {addr}");
-                    } else {
-                        log::info!("{event} <-<-<-<-<- {addr}");
-                    }
+                    log::trace!("{event} <-<-<-<-<- {addr}");
                     last_response.insert(addr, Instant::now());
                     match event {
                         ProtoEvent::Enter(_) => {

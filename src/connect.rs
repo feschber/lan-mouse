@@ -96,7 +96,6 @@ impl LanMouseConnection {
     ) -> Result<(), LanMouseConnectionError> {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
-        log::info!("{event} =>=>=>=>=>=> {handle}");
         if let Some(addr) = self.server.active_addr(handle) {
             let conn = {
                 let conns = self.conns.lock().await;
