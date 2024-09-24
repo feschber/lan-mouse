@@ -96,11 +96,7 @@ impl LanMouseListener {
     }
 
     pub(crate) async fn reply(&self, addr: SocketAddr, event: ProtoEvent) {
-        if let ProtoEvent::Pong = event {
-            log::trace!("reply {event} >=>=>=>=>=> {addr}");
-        } else {
-            log::info!("reply {event} >=>=>=>=>=> {addr}");
-        }
+        log::trace!("reply {event} >=>=>=>=>=> {addr}");
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let conns = self.conns.lock().await;
         for (a, conn) in conns.iter() {

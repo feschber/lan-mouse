@@ -130,7 +130,10 @@ async fn do_capture(
 
                 match event {
                     // connection acknowlegded => set state to Sending
-                    ProtoEvent::Ack(_) => state = State::Sending,
+                    ProtoEvent::Ack(_) => {
+                        log::info!("client {handle} acknowledged the connection!");
+                        state = State::Sending;
+                    }
                     // client disconnected
                     ProtoEvent::Leave(_) => release_capture(&mut capture, server).await?,
                     _ => {}
@@ -207,6 +210,7 @@ async fn handle_capture_event(
     if event == CaptureEvent::Begin && Some(handle) != server.get_active() {
         *state = State::WaitingForAck;
         server.set_active(Some(handle));
+        log::info!("entering client {handle} ...");
         spawn_hook_command(server, handle);
     }
 
@@ -219,11 +223,9 @@ async fn handle_capture_event(
         },
     };
 
-    log::info!("CAPTURE {event} >=>=>=>=>=> {handle}");
     if let Err(e) = conn.send(event, handle).await {
-        // const DUR: Duration = Duration::from_millis(500);
-        log::warn!("releasing capture: {e}");
-        // debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
+        const DUR: Duration = Duration::from_millis(500);
+        debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
         capture.release().await?;
     }
     Ok(())
