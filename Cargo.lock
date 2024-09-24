@@ -1732,6 +1732,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "sha2",
  "slab",
  "thiserror",
  "tokio",

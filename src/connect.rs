@@ -2,6 +2,7 @@ use crate::server::Server;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -48,10 +49,32 @@ async fn connect(
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };
-    let dtls_conn: Arc<dyn Conn + Send + Sync> =
-        Arc::new(DTLSConn::new(conn, config, true, None).await?);
+    let dtls_conn = DTLSConn::new(conn, config, true, None).await?;
     log::info!("{addr} connected successfully!");
-    Ok((dtls_conn, addr))
+    let peer_certificates = dtls_conn.connection_state().await.peer_certificates;
+    verify_peer_certificates(peer_certificates)?;
+    Ok((Arc::new(dtls_conn), addr))
+}
+
+fn verify_peer_certificates(
+    peer_certificates: Vec<Vec<u8>>,
+) -> Result<(), LanMouseConnectionError> {
+    let fingerprints = peer_certificates
+        .into_iter()
+        .map(|cert| {
+            let mut hash = Sha256::new();
+            hash.update(cert);
+            let bytes = hash
+                .finalize()
+                .iter()
+                .map(|x| format!("{x:02x}"))
+                .collect::<Vec<_>>();
+            let fingerprint = bytes.join(":").to_lowercase();
+            fingerprint
+        })
+        .collect::<Vec<_>>();
+    log::info!("fingerprints: {fingerprints:?}");
+    Ok(())
 }
 
 async fn connect_any(
