@@ -1,6 +1,8 @@
 use futures::{Stream, StreamExt};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
+use rustls::pki_types::CertificateDer;
+use sha2::{Digest, Sha256};
 use std::{net::SocketAddr, rc::Rc, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{
@@ -29,15 +31,42 @@ pub(crate) struct LanMouseListener {
     conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>>,
 }
 
+type VerifyPeerCertificateFn = Arc<
+    dyn (Fn(&[Vec<u8>], &[CertificateDer<'static>]) -> Result<(), webrtc_dtls::Error>)
+        + Send
+        + Sync,
+>;
+
 impl LanMouseListener {
     pub(crate) async fn new(port: u16) -> Result<Self, ListenerCreationError> {
         let (listen_tx, listen_rx) = channel();
 
         let listen_addr = SocketAddr::new("0.0.0.0".parse().expect("invalid ip"), port);
         let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
+        let verify_peer_certificate: Option<VerifyPeerCertificateFn> = Some(Arc::new(
+            |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
+                let fingerprints = certs
+                    .into_iter()
+                    .map(|cert| {
+                        let mut hash = Sha256::new();
+                        hash.update(cert);
+                        let bytes = hash
+                            .finalize()
+                            .iter()
+                            .map(|x| format!("{x:02x}"))
+                            .collect::<Vec<_>>();
+                        let fingerprint = bytes.join(":").to_lowercase();
+                        fingerprint
+                    })
+                    .collect::<Vec<_>>();
+                log::info!("fingerprints: {fingerprints:?}");
+                Ok(())
+            },
+        ));
         let cfg = Config {
             certificates: vec![certificate],
             extended_master_secret: ExtendedMasterSecretType::Require,
+            verify_peer_certificate,
             ..Default::default()
         };
 
