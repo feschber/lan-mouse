@@ -51,6 +51,7 @@ pub struct Server {
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
+    incoming_conns: Rc<RefCell<Vec<(SocketAddr, Position)>>>,
 }
 
 #[derive(Default)]
@@ -101,6 +102,7 @@ impl Server {
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
+            incoming_conns: Rc::new(RefCell::new(Vec::new())),
             should_release: Default::default(),
         }
     }
@@ -502,6 +504,10 @@ impl Server {
 
     pub(crate) fn get_active(&self) -> Option<ClientHandle> {
         self.active.get()
+    }
+
+    pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position) {
+        self.incoming_conns.borrow_mut().push((addr, pos));
     }
 }
 

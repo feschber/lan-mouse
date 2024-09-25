@@ -118,6 +118,11 @@ impl Window {
         self.obj().request_capture();
     }
 
+    #[template_callback]
+    fn handle_add_cert_fingerprint(&self, _button: &Button) {
+        log::info!("TODO: impl add certificate fingerprint");
+    }
+
     pub fn set_port(&self, port: u16) {
         self.port.set(port);
         if port == DEFAULT_PORT {

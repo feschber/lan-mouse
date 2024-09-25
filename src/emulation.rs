@@ -3,7 +3,7 @@ use futures::StreamExt;
 use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
 use lan_mouse_ipc::Status;
-use lan_mouse_proto::ProtoEvent;
+use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{channel, Receiver, Sender};
 use std::{
     collections::HashMap,
@@ -44,10 +44,11 @@ impl Emulation {
                     log::trace!("{event} <-<-<-<-<- {addr}");
                     last_response.insert(addr, Instant::now());
                     match event {
-                        ProtoEvent::Enter(_) => {
+                        ProtoEvent::Enter(pos) => {
                             log::info!("{addr} entered this device");
                             server.release_capture();
                             listener.reply(addr, ProtoEvent::Ack(0)).await;
+                            server.register_incoming(addr, to_ipc_pos(pos));
                         }
                         ProtoEvent::Leave(_) => {
                             emulation_proxy.release_keys(addr);
@@ -194,5 +195,14 @@ impl EmulationProxy {
 
     async fn terminate(&mut self) {
         let _ = (&mut self.task).await;
+    }
+}
+
+fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
+    match pos {
+        Position::Left => lan_mouse_ipc::Position::Left,
+        Position::Right => lan_mouse_ipc::Position::Right,
+        Position::Top => lan_mouse_ipc::Position::Top,
+        Position::Bottom => lan_mouse_ipc::Position::Bottom,
     }
 }
