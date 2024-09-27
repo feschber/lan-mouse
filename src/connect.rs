@@ -37,13 +37,13 @@ pub(crate) enum LanMouseConnectionError {
 
 async fn connect(
     addr: SocketAddr,
+    cert: Certificate,
 ) -> Result<(Arc<dyn Conn + Sync + Send>, SocketAddr), LanMouseConnectionError> {
     log::info!("connecting to {addr} ...");
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     conn.connect(addr).await?;
-    let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
     let config = Config {
-        certificates: vec![certificate],
+        certificates: vec![cert],
         insecure_skip_verify: true,
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
@@ -55,10 +55,11 @@ async fn connect(
 
 async fn connect_any(
     addrs: &[SocketAddr],
+    cert: Certificate,
 ) -> Result<(Arc<dyn Conn + Send + Sync>, SocketAddr), LanMouseConnectionError> {
     let mut joinset = JoinSet::new();
     for &addr in addrs {
-        joinset.spawn_local(connect(addr));
+        joinset.spawn_local(connect(addr, cert.clone()));
     }
     let conn = joinset.join_next().await;
     conn.expect("no addrs to connect").expect("failed to join")
@@ -66,6 +67,7 @@ async fn connect_any(
 
 pub(crate) struct LanMouseConnection {
     server: Server,
+    cert: Certificate,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
     recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
@@ -73,10 +75,11 @@ pub(crate) struct LanMouseConnection {
 }
 
 impl LanMouseConnection {
-    pub(crate) fn new(server: Server) -> Self {
+    pub(crate) fn new(server: Server, cert: Certificate) -> Self {
         let (recv_tx, recv_rx) = channel();
         Self {
             server,
+            cert,
             conns: Default::default(),
             connecting: Default::default(),
             recv_rx,
@@ -119,6 +122,7 @@ impl LanMouseConnection {
             // connect in the background
             spawn_local(connect_to_handle(
                 self.server.clone(),
+                self.cert.clone(),
                 handle,
                 self.conns.clone(),
                 self.connecting.clone(),
@@ -131,6 +135,7 @@ impl LanMouseConnection {
 
 async fn connect_to_handle(
     server: Server,
+    cert: Certificate,
     handle: ClientHandle,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
@@ -148,7 +153,7 @@ async fn connect_to_handle(
             .map(|a| SocketAddr::new(a, port))
             .collect::<Vec<_>>();
         log::info!("client ({handle}) connecting ... (ips: {addrs:?})");
-        let res = connect_any(&addrs).await;
+        let res = connect_any(&addrs, cert).await;
         let (conn, addr) = match res {
             Ok(c) => c,
             Err(e) => {
