@@ -416,7 +416,7 @@ impl Window {
         // clear list
         authorized.remove_all();
         // insert fingerprints
-        for (description, fingerprint) in fingerprints {
+        for (fingerprint, description) in fingerprints {
             let key_obj = KeyObject::new(description, fingerprint);
             authorized.append(&key_obj);
         }
