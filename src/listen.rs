@@ -55,14 +55,11 @@ impl LanMouseListener {
         let listen_addr = SocketAddr::new("0.0.0.0".parse().expect("invalid ip"), port);
         let verify_peer_certificate: Option<VerifyPeerCertificateFn> = Some(Arc::new(
             move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
-                log::error!("verifying device fingerprint!");
                 assert!(certs.len() == 1);
                 let fingerprints = certs
                     .into_iter()
                     .map(|c| crypto::generate_fingerprint(c))
                     .collect::<Vec<_>>();
-                log::info!("fingerprints: {fingerprints:?}");
-                log::info!("authorized: {:?}", authorized_keys.read().expect("lock"));
                 if authorized_keys
                     .read()
                     .expect("lock")
