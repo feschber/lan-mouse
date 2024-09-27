@@ -2,6 +2,9 @@ use std::io::{self, BufWriter, Read, Write};
 use std::path::Path;
 use std::{fs::File, io::BufReader};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use webrtc_dtls::crypto::Certificate;
@@ -70,6 +73,13 @@ pub(crate) fn generate_key_and_cert(path: &Path) -> Result<Certificate, Error> {
     let cert = Certificate::generate_self_signed(["ignored".to_owned()])?;
     let serialized = cert.serialize_pem();
     let f = File::create(path)?;
+    #[cfg(unix)]
+    {
+        let mut perm = f.metadata()?.permissions();
+        perm.set_mode(0o400); /* r-- --- --- */
+        f.set_permissions(perm)?;
+    }
+    /* FIXME windows permissions */
     let mut writer = BufWriter::new(f);
     writer.write(serialized.as_bytes())?;
     Ok(cert)
