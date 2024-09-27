@@ -274,6 +274,12 @@ impl Cli {
             FrontendEvent::EmulationStatus(s) => {
                 eprintln!("emulation status: {s:?}")
             }
+            FrontendEvent::AuthorizedUpdated(keys) => {
+                eprintln!("authorized keys changed:");
+                for key in keys {
+                    eprintln!("{key}");
+                }
+            }
         }
     }
 

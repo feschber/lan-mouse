@@ -12,6 +12,8 @@ use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
 pub struct Window {
     #[template_child]
+    pub authorized_placeholder: TemplateChild<ActionRow>,
+    #[template_child]
     pub port_edit_apply: TemplateChild<Button>,
     #[template_child]
     pub port_edit_cancel: TemplateChild<Button>,
@@ -35,7 +37,10 @@ pub struct Window {
     pub input_emulation_button: TemplateChild<Button>,
     #[template_child]
     pub input_capture_button: TemplateChild<Button>,
+    #[template_child]
+    pub authorized_list: TemplateChild<ListBox>,
     pub clients: RefCell<Option<gio::ListStore>>,
+    pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
     pub port: Cell<u16>,
     pub capture_active: Cell<bool>,
@@ -146,6 +151,7 @@ impl ObjectImpl for Window {
         let obj = self.obj();
         obj.setup_icon();
         obj.setup_clients();
+        obj.setup_authorized();
     }
 }
 

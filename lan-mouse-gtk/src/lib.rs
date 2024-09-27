@@ -1,6 +1,8 @@
 mod client_object;
 mod client_row;
 mod fingerprint_window;
+mod key_object;
+mod key_row;
 mod window;
 
 use std::{env, process, str};
@@ -16,6 +18,7 @@ use gtk::{
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
+use self::key_object::KeyObject;
 
 pub fn run() -> glib::ExitCode {
     log::debug!("running gtk frontend");
@@ -132,6 +135,9 @@ fn build_ui(app: &Application) {
                     }
                     FrontendEvent::EmulationStatus(s) => {
                         window.set_emulation(s.into());
+                    }
+                    FrontendEvent::AuthorizedUpdated(keys) => {
+                        window.set_authorized_keys(keys);
                     }
                 }
             }

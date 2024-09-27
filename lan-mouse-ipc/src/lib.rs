@@ -197,6 +197,7 @@ pub enum FrontendEvent {
     CaptureStatus(Status),
     /// emulation status
     EmulationStatus(Status),
+    AuthorizedUpdated(HashSet<String>),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]

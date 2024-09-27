@@ -270,10 +270,16 @@ impl Server {
 
     fn add_authorized_key(&self, key: String) {
         self.authorized_keys.borrow_mut().insert(key);
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(
+            self.authorized_keys.borrow().clone(),
+        ));
     }
 
     fn remove_authorized_key(&self, key: String) {
         self.authorized_keys.borrow_mut().remove(&key);
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(
+            self.authorized_keys.borrow().clone(),
+        ));
     }
 
     fn enumerate(&self) {
