@@ -47,7 +47,8 @@
                     <property name="orientation">vertical</property>
                     <property name="halign">center</property>
                     <child>
-                      <object class="GtkButton">
+                      <object class="GtkButton" id="confirm_button">
+                        <signal name="clicked" handler="handle_confirm" swapped="true"/>
                         <property name="label" translatable="yes">Confirm</property>
                         <property name="can-shrink">True</property>
                         <style>

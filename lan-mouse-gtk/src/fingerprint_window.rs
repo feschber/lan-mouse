@@ -1,13 +1,7 @@
 mod imp;
 
-use adw::prelude::*;
-use adw::subclass::prelude::*;
-use glib::{clone, Object};
-use gtk::{
-    gio,
-    glib::{self, closure_local},
-    ListBox, NoSelection,
-};
+use glib::Object;
+use gtk::{gio, glib};
 
 glib::wrapper! {
     pub struct FingerprintWindow(ObjectSubclass<imp::FingerprintWindow>)
