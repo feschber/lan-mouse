@@ -41,9 +41,9 @@ impl ObjectSubclass for FingerprintWindow {
 impl FingerprintWindow {
     #[template_callback]
     fn handle_confirm(&self, _button: Button) {
-        let desc = self.description.text().to_string();
-        let fp = self.fingerprint.text().to_string();
-        self.obj().emit_by_name("confirm-clicked", &[&fp, &desc])
+        let desc = self.description.text().as_str().trim().to_owned();
+        let fp = self.fingerprint.text().as_str().trim().to_owned();
+        self.obj().emit_by_name("confirm-clicked", &[&desc, &fp])
     }
 }
 

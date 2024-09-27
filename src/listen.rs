@@ -62,6 +62,7 @@ impl LanMouseListener {
                     .map(|c| crypto::generate_fingerprint(c))
                     .collect::<Vec<_>>();
                 log::info!("fingerprints: {fingerprints:?}");
+                log::info!("authorized: {:?}", authorized_keys.read().expect("lock"));
                 if authorized_keys
                     .read()
                     .expect("lock")
