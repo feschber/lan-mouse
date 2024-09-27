@@ -3390,6 +3390,7 @@ dependencies = [
  "log",
  "p256",
  "p384",
+ "pem",
  "portable-atomic",
  "rand",
  "rand_core",
