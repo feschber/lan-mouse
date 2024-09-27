@@ -65,6 +65,17 @@ pub enum Position {
     Bottom,
 }
 
+impl Position {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Position::Left => Position::Right,
+            Position::Right => Position::Left,
+            Position::Top => Position::Bottom,
+            Position::Bottom => Position::Top,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 #[error("not a valid position: {pos}")]
 pub struct PositionParseError {
@@ -218,6 +229,10 @@ pub enum FrontendRequest {
     EnableEmulation,
     /// synchronize all state
     Sync,
+    /// authorize fingerprint
+    FingerprintAdd(String),
+    /// remove fingerprint
+    FingerprintRemove(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

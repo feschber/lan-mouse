@@ -47,9 +47,9 @@ impl Capture {
         }
     }
 
-    pub(crate) fn create(&self, handle: CaptureHandle, pos: Position) {
+    pub(crate) fn create(&self, handle: CaptureHandle, pos: lan_mouse_ipc::Position) {
         self.tx
-            .send(CaptureRequest::Create(handle, pos))
+            .send(CaptureRequest::Create(handle, to_capture_pos(pos)))
             .expect("channel closed");
     }
 
@@ -100,11 +100,16 @@ async fn do_capture(
     };
     server.set_capture_status(Status::Enabled);
 
-    let clients = server.active_clients();
-    let clients = clients
-        .iter()
-        .copied()
-        .map(|handle| (handle, server.get_pos(handle).expect("no such client")));
+    let clients = server.client_manager.active_clients();
+    let clients = clients.iter().copied().map(|handle| {
+        (
+            handle,
+            server
+                .client_manager
+                .get_pos(handle)
+                .expect("no such client"),
+        )
+    });
 
     /* create barriers for active clients */
     for (handle, pos) in clients {
@@ -201,7 +206,7 @@ async fn handle_capture_event(
         return release_capture(capture, server).await;
     }
 
-    if capture.keys_pressed(&server.release_bind) {
+    if capture.keys_pressed(&server.config.release_bind) {
         log::info!("releasing capture: release-bind pressed");
         return release_capture(capture, server).await;
     }
@@ -214,11 +219,16 @@ async fn handle_capture_event(
         spawn_hook_command(server, handle);
     }
 
+    let pos = match server.client_manager.get_pos(handle) {
+        Some(pos) => to_proto_pos(pos.opposite()),
+        None => return release_capture(capture, server).await,
+    };
+
     let event = match event {
-        CaptureEvent::Begin => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+        CaptureEvent::Begin => ProtoEvent::Enter(pos),
         CaptureEvent::Input(e) => match state {
             // connection not acknowledged, repeat `Enter` event
-            State::WaitingForAck => ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+            State::WaitingForAck => ProtoEvent::Enter(pos),
             _ => ProtoEvent::Input(e),
         },
     };
@@ -245,13 +255,17 @@ fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
     }
 }
 
+fn to_proto_pos(pos: lan_mouse_ipc::Position) -> lan_mouse_proto::Position {
+    match pos {
+        lan_mouse_ipc::Position::Left => lan_mouse_proto::Position::Left,
+        lan_mouse_ipc::Position::Right => lan_mouse_proto::Position::Right,
+        lan_mouse_ipc::Position::Top => lan_mouse_proto::Position::Top,
+        lan_mouse_ipc::Position::Bottom => lan_mouse_proto::Position::Bottom,
+    }
+}
+
 fn spawn_hook_command(server: &Server, handle: ClientHandle) {
-    let Some(cmd) = server
-        .client_manager
-        .borrow()
-        .get(handle)
-        .and_then(|(c, _)| c.cmd.clone())
-    else {
+    let Some(cmd) = server.client_manager.get_enter_cmd(handle) else {
         return;
     };
     tokio::task::spawn_local(async move {
