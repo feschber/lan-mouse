@@ -54,7 +54,7 @@ slab = "0.4.9"
 thiserror = "1.0.61"
 tokio-util = "0.7.11"
 local-channel = "0.1.5"
-webrtc-dtls = "0.10.0"
+webrtc-dtls = { version = "0.10.0", features = ["pem"] }
 webrtc-util = "0.9.0"
 rustls = { version = "0.23.12", default-features = false, features = [
     "std",

@@ -47,12 +47,12 @@ type VerifyPeerCertificateFn = Arc<
 impl LanMouseListener {
     pub(crate) async fn new(
         port: u16,
+        cert: Certificate,
         authorized_keys: Arc<RwLock<HashMap<String, String>>>,
     ) -> Result<Self, ListenerCreationError> {
         let (listen_tx, listen_rx) = channel();
 
         let listen_addr = SocketAddr::new("0.0.0.0".parse().expect("invalid ip"), port);
-        let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
         let verify_peer_certificate: Option<VerifyPeerCertificateFn> = Some(Arc::new(
             move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
                 log::error!("verifying device fingerprint!");
@@ -74,7 +74,7 @@ impl LanMouseListener {
             },
         ));
         let cfg = Config {
-            certificates: vec![certificate],
+            certificates: vec![cert],
             extended_master_secret: ExtendedMasterSecretType::Require,
             client_auth: RequireAnyClientCert,
             verify_peer_certificate,

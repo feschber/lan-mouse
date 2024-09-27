@@ -3,6 +3,7 @@ use crate::{
     client::ClientManager,
     config::Config,
     connect::LanMouseConnection,
+    crypto,
     dns::DnsResolver,
     emulation::Emulation,
     listen::{LanMouseListener, ListenerCreationError},
@@ -36,6 +37,8 @@ pub enum ServiceError {
     Io(#[from] io::Error),
     #[error(transparent)]
     ListenError(#[from] ListenerCreationError),
+    #[error("failed to load certificate: `{0}`")]
+    Certificate(#[from] crypto::Error),
 }
 
 pub struct ReleaseToken;
@@ -44,10 +47,10 @@ pub struct ReleaseToken;
 pub struct Server {
     active: Rc<Cell<Option<ClientHandle>>>,
     authorized_keys: Arc<RwLock<HashMap<String, String>>>,
-    known_hosts: Rc<RefCell<HashSet<String>>>,
+    _known_hosts: Rc<RefCell<HashSet<String>>>,
     pub(crate) client_manager: ClientManager,
     port: Rc<Cell<u16>>,
-    public_key_fingerprint: String,
+    public_key_fingerprint: Option<String>,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
@@ -96,8 +99,8 @@ impl Server {
         Self {
             active: Rc::new(Cell::new(None)),
             authorized_keys: Default::default(),
-            known_hosts: Default::default(),
-            public_key_fingerprint: "87:f9:d9:a6:c4:a1:14:d2:c8:25:4f:72:b7:01:86:65:73:cc:bc:a1:37:cc:96:69:f8:f4:72:8a:60:9a:3b:4d".to_owned(),
+            _known_hosts: Default::default(),
+            public_key_fingerprint: None,
             config,
             client_manager,
             port,
@@ -121,11 +124,14 @@ impl Server {
             e => e?,
         };
 
-        // let cert = crypto::load_key_and_certificate(config.sk_path, config.pk_path)?;
+        // load certificate
+        let cert = crypto::load_or_generate_key_and_cert(&self.config.cert_path)?;
+        let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
+        self.public_key_fingerprint.replace(public_key_fingerprint);
 
         // listener + connection
         let listener =
-            LanMouseListener::new(self.config.port, self.authorized_keys.clone()).await?;
+            LanMouseListener::new(self.config.port, cert, self.authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(self.clone());
 
         // input capture + emulation
@@ -264,7 +270,10 @@ impl Server {
                 self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
                 self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
-                    self.public_key_fingerprint.clone(),
+                    self.public_key_fingerprint
+                        .as_ref()
+                        .expect("fingerprint")
+                        .clone(),
                 ));
                 self.notify_frontend(FrontendEvent::AuthorizedUpdated(
                     self.authorized_keys.read().expect("lock").clone(),
