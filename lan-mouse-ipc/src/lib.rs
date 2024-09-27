@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env::VarError,
     fmt::Display,
     io,
@@ -197,7 +197,10 @@ pub enum FrontendEvent {
     CaptureStatus(Status),
     /// emulation status
     EmulationStatus(Status),
-    AuthorizedUpdated(HashSet<String>),
+    /// authorized public key fingerprints have been updated
+    AuthorizedUpdated(HashMap<String, String>),
+    /// public key fingerprint of this device
+    PublicKeyFingerprint(String),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -230,10 +233,10 @@ pub enum FrontendRequest {
     EnableEmulation,
     /// synchronize all state
     Sync,
-    /// authorize fingerprint
-    FingerprintAdd(String),
-    /// remove fingerprint
-    FingerprintRemove(String),
+    /// authorize fingerprint (description, fingerprint)
+    AuthorizeKey(String, String),
+    /// remove fingerprint (fingerprint)
+    RemoveAuthorizedKey(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

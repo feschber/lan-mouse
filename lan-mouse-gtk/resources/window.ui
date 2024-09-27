@@ -178,6 +178,19 @@
                             </child>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwActionRow" id="fingerprint_row">
+                            <property name="title">public key fingerprint</property>
+                            <property name="icon-name">auth-fingerprint-symbolic</property>
+                            <child>
+                              <object class="GtkButton" id="copy-fingerprint-button">
+                                <property name="icon-name">edit-copy-symbolic</property>
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="handle_copy_fingerprint" swapped="true"/>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <child>

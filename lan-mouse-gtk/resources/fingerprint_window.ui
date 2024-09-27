@@ -6,7 +6,8 @@
     <property name="modal">True</property>
     <property name="width-request">880</property>
     <property name="default-width">880</property>
-    <property name="default-height">240</property>
+    <property name="height-request">340</property>
+    <property name="default-height">340</property>
     <property name="title" translatable="yes">Add Public Key Fingerprint</property>
     <property name="content">
       <object class="AdwToolbarView">
@@ -22,12 +23,38 @@
                 <property name="orientation">vertical</property>
                 <property name="spacing">18</property>
                 <child>
+                  <object class="GtkLabel">
+                    <property name="label">you can find the fingerprint of a device under the `General` section</property>
+                  </object>
+                </child>
+                <child>
                   <object class="AdwPreferencesGroup">
+                    <property name="title">description</property>
                     <child>
                       <object class="AdwActionRow">
-                        <property name="title" translatable="yes">fingerprint</property>
                         <property name="child">
-                          <object class="GtkText" id="text">
+                          <object class="GtkText" id="description">
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <property name="margin-start">10</property>
+                            <property name="margin-end">10</property>
+                            <property name="enable-undo">True</property>
+                            <property name="hexpand">True</property>
+                            <property name="vexpand">True</property>
+                            <property name="max-length">0</property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <property name="title">sha256 fingerprint</property>
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="child">
+                          <object class="GtkText" id="fingerprint">
                             <property name="margin-top">10</property>
                             <property name="margin-bottom">10</property>
                             <property name="margin-start">10</property>

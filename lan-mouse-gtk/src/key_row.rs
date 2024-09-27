@@ -21,11 +21,17 @@ impl KeyRow {
         let mut bindings = self.imp().bindings.borrow_mut();
 
         let title_binding = key_object
-            .bind_property("fingerprint", self, "title")
+            .bind_property("description", self, "title")
+            .sync_create()
+            .build();
+
+        let subtitle_binding = key_object
+            .bind_property("fingerprint", self, "subtitle")
             .sync_create()
             .build();
 
         bindings.push(title_binding);
+        bindings.push(subtitle_binding);
     }
 
     pub fn unbind(&self) {

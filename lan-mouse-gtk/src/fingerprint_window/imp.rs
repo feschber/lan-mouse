@@ -12,7 +12,9 @@ use gtk::{
 #[template(resource = "/de/feschber/LanMouse/fingerprint_window.ui")]
 pub struct FingerprintWindow {
     #[template_child]
-    pub text: TemplateChild<Text>,
+    pub description: TemplateChild<Text>,
+    #[template_child]
+    pub fingerprint: TemplateChild<Text>,
     #[template_child]
     pub confirm_button: TemplateChild<Button>,
 }
@@ -39,8 +41,9 @@ impl ObjectSubclass for FingerprintWindow {
 impl FingerprintWindow {
     #[template_callback]
     fn handle_confirm(&self, _button: Button) {
-        let fp = self.text.text().to_string();
-        self.obj().emit_by_name("confirm-clicked", &[&fp])
+        let desc = self.description.text().to_string();
+        let fp = self.fingerprint.text().to_string();
+        self.obj().emit_by_name("confirm-clicked", &[&fp, &desc])
     }
 }
 
@@ -49,7 +52,7 @@ impl ObjectImpl for FingerprintWindow {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
         SIGNALS.get_or_init(|| {
             vec![Signal::builder("confirm-clicked")
-                .param_types([String::static_type()])
+                .param_types([String::static_type(), String::static_type()])
                 .build()]
         })
     }

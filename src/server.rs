@@ -3,6 +3,7 @@ use crate::{
     client::ClientManager,
     config::Config,
     connect::LanMouseConnection,
+    crypto,
     dns::DnsResolver,
     emulation::Emulation,
     listen::{LanMouseListener, ListenerCreationError},
@@ -20,6 +21,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     rc::Rc,
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 use tokio::{signal, sync::Notify};
@@ -42,10 +44,11 @@ pub struct ReleaseToken;
 #[derive(Clone)]
 pub struct Server {
     active: Rc<Cell<Option<ClientHandle>>>,
-    authorized_keys: Rc<RefCell<HashSet<String>>>,
+    authorized_keys: Arc<RwLock<HashMap<String, String>>>,
     known_hosts: Rc<RefCell<HashSet<String>>>,
     pub(crate) client_manager: ClientManager,
     port: Rc<Cell<u16>>,
+    public_key_fingerprint: String,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
@@ -95,6 +98,7 @@ impl Server {
             active: Rc::new(Cell::new(None)),
             authorized_keys: Default::default(),
             known_hosts: Default::default(),
+            public_key_fingerprint: "87:f9:d9:a6:c4:a1:14:d2:c8:25:4f:72:b7:01:86:65:73:cc:bc:a1:37:cc:96:69:f8:f4:72:8a:60:9a:3b:4d".to_owned(),
             config,
             client_manager,
             port,
@@ -118,8 +122,11 @@ impl Server {
             e => e?,
         };
 
+        // let cert = crypto::load_key_and_certificate(config.sk_path, config.pk_path)?;
+
         // listener + connection
-        let listener = LanMouseListener::new(self.config.port).await?;
+        let listener =
+            LanMouseListener::new(self.config.port, self.authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(self.clone());
 
         // input capture + emulation
@@ -257,28 +264,34 @@ impl Server {
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
                 self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
+                self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
+                    self.public_key_fingerprint.clone(),
+                ));
+                self.notify_frontend(FrontendEvent::AuthorizedUpdated(
+                    self.authorized_keys.read().expect("lock").clone(),
+                ));
             }
-            FrontendRequest::FingerprintAdd(key) => {
-                self.add_authorized_key(key);
+            FrontendRequest::AuthorizeKey(desc, fp) => {
+                self.add_authorized_key(desc, fp);
             }
-            FrontendRequest::FingerprintRemove(key) => {
+            FrontendRequest::RemoveAuthorizedKey(key) => {
                 self.remove_authorized_key(key);
             }
         };
         false
     }
 
-    fn add_authorized_key(&self, key: String) {
-        self.authorized_keys.borrow_mut().insert(key);
+    fn add_authorized_key(&self, desc: String, fp: String) {
+        self.authorized_keys.write().expect("lock").insert(fp, desc);
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(
-            self.authorized_keys.borrow().clone(),
+            self.authorized_keys.read().expect("lock").clone(),
         ));
     }
 
-    fn remove_authorized_key(&self, key: String) {
-        self.authorized_keys.borrow_mut().remove(&key);
+    fn remove_authorized_key(&self, fp: String) {
+        self.authorized_keys.write().expect("lock").remove(&fp);
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(
-            self.authorized_keys.borrow().clone(),
+            self.authorized_keys.read().expect("lock").clone(),
         ));
     }
 
