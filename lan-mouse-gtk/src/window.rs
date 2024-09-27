@@ -6,13 +6,15 @@ use glib::{clone, Object};
 use gtk::{
     gio,
     glib::{self, closure_local},
-    ListBox, NoSelection,
+    ListBox, NoSelection, Widget,
 };
 
 use lan_mouse_ipc::{
     ClientConfig, ClientHandle, ClientState, FrontendRequest, FrontendRequestWriter, Position,
     DEFAULT_PORT,
 };
+
+use crate::fingerprint_window::FingerprintWindow;
 
 use super::{client_object::ClientObject, client_row::ClientRow};
 
@@ -284,6 +286,16 @@ impl Window {
 
     pub fn request_client_delete(&self, client: &ClientObject) {
         self.request(FrontendRequest::Delete(client.handle()));
+    }
+
+    pub fn open_fingerprint_dialog(&self) {
+        let window = FingerprintWindow::new();
+        window.set_transient_for(Some(self));
+        window.present();
+    }
+
+    pub fn request_fingerprint_add(&self, fp: String) {
+        self.request(FrontendRequest::FingerprintAdd(fp));
     }
 
     pub fn request(&self, request: FrontendRequest) {

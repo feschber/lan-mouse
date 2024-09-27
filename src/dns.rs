@@ -39,7 +39,7 @@ impl DnsResolver {
             let handle = rx.recv().await.expect("channel closed");
 
             /* update resolving status */
-            let hostname = match server.get_hostname(handle) {
+            let hostname = match server.client_manager.get_hostname(handle) {
                 Some(hostname) => hostname,
                 None => continue,
             };

@@ -120,7 +120,7 @@ impl Window {
 
     #[template_callback]
     fn handle_add_cert_fingerprint(&self, _button: &Button) {
-        log::info!("TODO: impl add certificate fingerprint");
+        self.obj().open_fingerprint_dialog();
     }
 
     pub fn set_port(&self, port: u16) {

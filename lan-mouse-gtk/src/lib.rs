@@ -1,5 +1,6 @@
 mod client_object;
 mod client_row;
+mod fingerprint_window;
 mod window;
 
 use std::{env, process, str};

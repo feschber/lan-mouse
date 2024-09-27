@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="FingerprintWindow" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="width-request">880</property>
+    <property name="default-width">880</property>
+    <property name="default-height">240</property>
+    <property name="title" translatable="yes">Add Public Key Fingerprint</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+            <object class="AdwHeaderBar"/>
+        </child>
+        <property name="content">
+          <object class="AdwClamp">
+            <property name="maximum-size">770</property>
+            <property name="tightening-threshold">0</property>
+            <property name="child">
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <property name="spacing">18</property>
+                <child>
+                  <object class="AdwPreferencesGroup">
+                    <child>
+                      <object class="AdwActionRow">
+                        <property name="title" translatable="yes">fingerprint</property>
+                        <property name="child">
+                          <object class="GtkText" id="text">
+                            <property name="margin-top">10</property>
+                            <property name="margin-bottom">10</property>
+                            <property name="margin-start">10</property>
+                            <property name="margin-end">10</property>
+                            <property name="enable-undo">True</property>
+                            <property name="hexpand">True</property>
+                            <property name="vexpand">True</property>
+                            <property name="max-length">0</property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="halign">center</property>
+                    <child>
+                      <object class="GtkButton">
+                        <property name="label" translatable="yes">Confirm</property>
+                        <property name="can-shrink">True</property>
+                        <style>
+                            <class name="pill"/>
+                            <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

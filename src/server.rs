@@ -16,7 +16,7 @@ use lan_mouse_ipc::{
 use log;
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io,
     net::{IpAddr, SocketAddr},
     rc::Rc,
@@ -42,16 +42,17 @@ pub struct ReleaseToken;
 #[derive(Clone)]
 pub struct Server {
     active: Rc<Cell<Option<ClientHandle>>>,
-    pub(crate) client_manager: Rc<RefCell<ClientManager>>,
+    authorized_keys: Rc<RefCell<HashSet<String>>>,
+    known_hosts: Rc<RefCell<HashSet<String>>>,
+    pub(crate) client_manager: ClientManager,
     port: Rc<Cell<u16>>,
-    pub(crate) release_bind: Vec<input_event::scancode::Linux>,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
-    incoming_conns: Rc<RefCell<Vec<(SocketAddr, Position)>>>,
+    incoming_conns: Rc<RefCell<HashMap<SocketAddr, Position>>>,
 }
 
 #[derive(Default)]
@@ -65,44 +66,43 @@ struct Notifies {
 
 impl Server {
     pub fn new(config: Config) -> Self {
-        let client_manager = Rc::new(RefCell::new(ClientManager::default()));
+        let client_manager = ClientManager::default();
         let port = Rc::new(Cell::new(config.port));
-        for config_client in config.get_clients() {
-            let client = ClientConfig {
-                hostname: config_client.hostname,
-                fix_ips: config_client.ips.into_iter().collect(),
-                port: config_client.port,
-                pos: config_client.pos,
-                cmd: config_client.enter_hook,
+        for client in config.get_clients() {
+            let config = ClientConfig {
+                hostname: client.hostname,
+                fix_ips: client.ips.into_iter().collect(),
+                port: client.port,
+                pos: client.pos,
+                cmd: client.enter_hook,
             };
             let state = ClientState {
-                active: config_client.active,
-                ips: HashSet::from_iter(client.fix_ips.iter().cloned()),
+                active: client.active,
+                ips: HashSet::from_iter(config.fix_ips.iter().cloned()),
                 ..Default::default()
             };
-            let mut client_manager = client_manager.borrow_mut();
             let handle = client_manager.add_client();
-            let c = client_manager.get_mut(handle).expect("invalid handle");
-            *c = (client, state);
+            client_manager.set_config(handle, config);
+            client_manager.set_state(handle, state);
         }
 
         // task notification tokens
         let notifies = Rc::new(Notifies::default());
-        let release_bind = config.release_bind.clone();
 
         let config = Rc::new(config);
 
         Self {
             active: Rc::new(Cell::new(None)),
+            authorized_keys: Default::default(),
+            known_hosts: Default::default(),
             config,
             client_manager,
             port,
-            release_bind,
             notifies,
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
-            incoming_conns: Rc::new(RefCell::new(Vec::new())),
+            incoming_conns: Rc::new(RefCell::new(HashMap::new())),
             should_release: Default::default(),
         }
     }
@@ -129,7 +129,7 @@ impl Server {
         // create dns resolver
         let resolver = DnsResolver::new(self.clone())?;
 
-        for handle in self.active_clients() {
+        for handle in self.client_manager.active_clients() {
             resolver.resolve(handle);
         }
 
@@ -221,15 +221,6 @@ impl Server {
         self.notify_frontend(FrontendEvent::Changed(handle));
     }
 
-    pub(crate) fn active_clients(&self) -> Vec<ClientHandle> {
-        self.client_manager
-            .borrow()
-            .get_client_states()
-            .filter(|(_, (_, s))| s.active)
-            .map(|(h, _)| h)
-            .collect()
-    }
-
     fn handle_request(&self, capture: &Capture, event: FrontendRequest, dns: &DnsResolver) -> bool {
         log::debug!("frontend: {event:?}");
         match event {
@@ -267,183 +258,109 @@ impl Server {
                 self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
             }
+            FrontendRequest::FingerprintAdd(key) => {
+                self.add_authorized_key(key);
+            }
+            FrontendRequest::FingerprintRemove(key) => {
+                self.remove_authorized_key(key);
+            }
         };
         false
     }
 
+    fn add_authorized_key(&self, key: String) {
+        self.authorized_keys.borrow_mut().insert(key);
+    }
+
+    fn remove_authorized_key(&self, key: String) {
+        self.authorized_keys.borrow_mut().remove(&key);
+    }
+
     fn enumerate(&self) {
-        let clients = self
-            .client_manager
-            .borrow()
-            .get_client_states()
-            .map(|(h, (c, s))| (h, c.clone(), s.clone()))
-            .collect();
+        let clients = self.client_manager.get_client_states();
         self.notify_frontend(FrontendEvent::Enumerate(clients));
     }
 
     fn add_client(&self) -> ClientHandle {
-        let handle = self.client_manager.borrow_mut().add_client();
+        let handle = self.client_manager.add_client();
         log::info!("added client {handle}");
-        let (c, s) = self.client_manager.borrow().get(handle).unwrap().clone();
+        let (c, s) = self.client_manager.get_state(handle).unwrap();
         self.notify_frontend(FrontendEvent::Created(handle, c, s));
         handle
     }
 
     fn deactivate_client(&self, capture: &Capture, handle: ClientHandle) {
         log::debug!("deactivating client {handle}");
-        match self.client_manager.borrow_mut().get_mut(handle) {
-            None => return,
-            Some((_, s)) if !s.active => return,
-            Some((_, s)) => s.active = false,
-        };
-
-        capture.destroy(handle);
-        self.client_updated(handle);
-        log::info!("deactivated client {handle}");
+        if self.client_manager.deactivate_client(handle) {
+            capture.destroy(handle);
+            self.client_updated(handle);
+            log::info!("deactivated client {handle}");
+        }
     }
 
     fn activate_client(&self, capture: &Capture, handle: ClientHandle) {
         log::debug!("activating client");
         /* deactivate potential other client at this position */
-        let pos = match self.client_manager.borrow().get(handle) {
-            None => return,
-            Some((_, s)) if s.active => return,
-            Some((client, _)) => client.pos,
+        let Some(pos) = self.client_manager.get_pos(handle) else {
+            return;
         };
 
-        let other = self.client_manager.borrow_mut().find_client(pos);
-        if let Some(other) = other {
-            self.deactivate_client(capture, other);
+        if let Some(other) = self.client_manager.client_at(pos) {
+            if other != handle {
+                self.deactivate_client(capture, other);
+            }
         }
 
         /* activate the client */
-        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.active = true;
-        } else {
-            return;
-        };
-
-        /* notify capture and frontends */
-        capture.create(handle, to_capture_pos(pos));
-        self.client_updated(handle);
-        log::info!("activated client {handle} ({pos})");
+        if self.client_manager.activate_client(handle) {
+            /* notify capture and frontends */
+            capture.create(handle, pos);
+            self.client_updated(handle);
+            log::info!("activated client {handle} ({pos})");
+        }
     }
 
     fn remove_client(&self, capture: &Capture, handle: ClientHandle) {
-        let Some(active) = self
+        if let Some(true) = self
             .client_manager
-            .borrow_mut()
             .remove_client(handle)
             .map(|(_, s)| s.active)
-        else {
-            return;
-        };
-
-        if active {
+        {
             capture.destroy(handle);
         }
     }
 
     fn update_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
-        if let Some((c, _)) = self.client_manager.borrow_mut().get_mut(handle) {
-            c.fix_ips = fix_ips;
-        };
-        self.update_ips(handle);
+        self.client_manager.set_fix_ips(handle, fix_ips);
         self.client_updated(handle);
     }
 
     pub(crate) fn update_dns_ips(&self, handle: ClientHandle, dns_ips: Vec<IpAddr>) {
-        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.dns_ips = dns_ips;
-        };
-        self.update_ips(handle);
+        self.client_manager.set_dns_ips(handle, dns_ips);
         self.client_updated(handle);
-    }
-
-    fn update_ips(&self, handle: ClientHandle) {
-        if let Some((c, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.ips = c
-                .fix_ips
-                .iter()
-                .cloned()
-                .chain(s.dns_ips.iter().cloned())
-                .collect::<HashSet<_>>();
-        }
-    }
-
-    pub(crate) fn get_ips(&self, handle: ClientHandle) -> Option<Vec<IpAddr>> {
-        if let Some((_, s)) = self.client_manager.borrow().get(handle) {
-            Some(s.ips.iter().copied().collect())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn get_port(&self, handle: ClientHandle) -> Option<u16> {
-        if let Some((c, _)) = self.client_manager.borrow().get(handle) {
-            Some(c.port)
-        } else {
-            None
-        }
     }
 
     fn update_hostname(&self, handle: ClientHandle, hostname: Option<String>, dns: &DnsResolver) {
-        let mut client_manager = self.client_manager.borrow_mut();
-        let Some((c, s)) = client_manager.get_mut(handle) else {
-            return;
-        };
-
-        // hostname changed
-        if c.hostname != hostname {
-            c.hostname = hostname;
-            s.active_addr = None;
-            s.dns_ips.clear();
-            drop(client_manager);
-            self.update_ips(handle);
+        if self.client_manager.set_hostname(handle, hostname) {
             dns.resolve(handle);
+            self.client_updated(handle);
         }
-        self.client_updated(handle);
     }
 
     fn update_port(&self, handle: ClientHandle, port: u16) {
-        let mut client_manager = self.client_manager.borrow_mut();
-        let Some((c, s)) = client_manager.get_mut(handle) else {
-            return;
-        };
-
-        if c.port != port {
-            c.port = port;
-            s.active_addr = s.active_addr.map(|a| SocketAddr::new(a.ip(), port));
-        }
+        self.client_manager.set_port(handle, port);
     }
 
     fn update_pos(&self, handle: ClientHandle, capture: &Capture, pos: Position) {
-        let (changed, active) = {
-            let mut client_manager = self.client_manager.borrow_mut();
-            let Some((c, s)) = client_manager.get_mut(handle) else {
-                return;
-            };
-
-            let changed = c.pos != pos;
-            if changed {
-                log::info!("update pos {handle} {} -> {}", c.pos, pos);
-            }
-            c.pos = pos;
-            (changed, s.active)
-        };
-
         // update state in event input emulator & input capture
-        if changed {
+        if self.client_manager.set_pos(handle, pos) {
             self.deactivate_client(capture, handle);
-            if active {
-                self.activate_client(capture, handle);
-            }
+            self.activate_client(capture, handle);
         }
     }
 
     fn broadcast_client(&self, handle: ClientHandle) {
-        let client = self.client_manager.borrow().get(handle).cloned();
-        let event = if let Some((config, state)) = client {
+        let event = if let Some((config, state)) = self.client_manager.get_state(handle) {
             FrontendEvent::State(handle, config, state)
         } else {
             FrontendEvent::NoSuchClient(handle)
@@ -464,34 +381,8 @@ impl Server {
     }
 
     pub(crate) fn set_resolving(&self, handle: ClientHandle, status: bool) {
-        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.resolving = status;
-        }
+        self.client_manager.set_resolving(handle, status);
         self.client_updated(handle);
-    }
-
-    pub(crate) fn get_hostname(&self, handle: ClientHandle) -> Option<String> {
-        self.client_manager
-            .borrow_mut()
-            .get_mut(handle)
-            .and_then(|(c, _)| c.hostname.clone())
-    }
-
-    pub(crate) fn get_pos(&self, handle: ClientHandle) -> Option<Position> {
-        self.client_manager.borrow().get(handle).map(|(c, _)| c.pos)
-    }
-
-    pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: Option<SocketAddr>) {
-        if let Some((_, s)) = self.client_manager.borrow_mut().get_mut(handle) {
-            s.active_addr = addr;
-        }
-    }
-
-    pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
-        self.client_manager
-            .borrow()
-            .get(handle)
-            .and_then(|(_, s)| s.active_addr)
     }
 
     pub(crate) fn release_capture(&self) {
@@ -507,15 +398,6 @@ impl Server {
     }
 
     pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position) {
-        self.incoming_conns.borrow_mut().push((addr, pos));
-    }
-}
-
-fn to_capture_pos(pos: Position) -> input_capture::Position {
-    match pos {
-        Position::Left => input_capture::Position::Left,
-        Position::Right => input_capture::Position::Right,
-        Position::Top => input_capture::Position::Top,
-        Position::Bottom => input_capture::Position::Bottom,
+        self.incoming_conns.borrow_mut().insert(addr, pos);
     }
 }

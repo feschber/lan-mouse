@@ -95,7 +95,7 @@ impl LanMouseConnection {
     ) -> Result<(), LanMouseConnectionError> {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
-        if let Some(addr) = self.server.active_addr(handle) {
+        if let Some(addr) = self.server.client_manager.active_addr(handle) {
             let conn = {
                 let conns = self.conns.lock().await;
                 conns.get(&addr).cloned()
@@ -138,8 +138,11 @@ async fn connect_to_handle(
 ) -> Result<(), LanMouseConnectionError> {
     log::info!("client {handle} connecting ...");
     // sending did not work, figure out active conn.
-    if let Some(addrs) = server.get_ips(handle) {
-        let port = server.get_port(handle).unwrap_or(DEFAULT_PORT);
+    if let Some(addrs) = server.client_manager.get_ips(handle) {
+        let port = server
+            .client_manager
+            .get_port(handle)
+            .unwrap_or(DEFAULT_PORT);
         let addrs = addrs
             .into_iter()
             .map(|a| SocketAddr::new(a, port))
@@ -154,7 +157,7 @@ async fn connect_to_handle(
             }
         };
         log::info!("client ({handle}) connected @ {addr}");
-        server.set_active_addr(handle, Some(addr));
+        server.client_manager.set_active_addr(handle, Some(addr));
         conns.lock().await.insert(addr, conn.clone());
         connecting.lock().await.remove(&handle);
 
@@ -193,7 +196,7 @@ async fn ping_pong(
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        if server.active_addr(handle).is_none() {
+        if server.client_manager.active_addr(handle).is_none() {
             log::warn!("no active addr");
             disconnect(&server, handle, addr, &conns).await;
         }
@@ -212,7 +215,7 @@ async fn receive_loop(
     while let Ok(_) = conn.recv(&mut buf).await {
         if let Ok(event) = buf.try_into() {
             match event {
-                ProtoEvent::Pong => server.set_active_addr(handle, Some(addr)),
+                ProtoEvent::Pong => server.client_manager.set_active_addr(handle, Some(addr)),
                 event => tx.send((handle, event)).expect("channel closed"),
             }
         }
@@ -229,7 +232,7 @@ async fn disconnect(
 ) {
     log::warn!("client ({handle}) @ {addr} connection closed");
     conns.lock().await.remove(&addr);
-    server.set_active_addr(handle, None);
+    server.client_manager.set_active_addr(handle, None);
     let active: Vec<SocketAddr> = conns.lock().await.keys().copied().collect();
     log::info!("active connections: {active:?}");
 }

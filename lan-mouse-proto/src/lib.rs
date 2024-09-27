@@ -48,7 +48,7 @@ impl Display for Position {
 /// main lan-mouse protocol event type
 #[derive(Clone, Copy, Debug)]
 pub enum ProtoEvent {
-    /// notify a client that the cursor entered its region
+    /// notify a client that the cursor entered its region at the given position
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
     Enter(Position),
     /// notify a client that the cursor left its region
