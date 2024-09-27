@@ -8,6 +8,8 @@ use gtk::subclass::prelude::*;
 #[derive(Properties, Default)]
 #[properties(wrapper_type = super::KeyObject)]
 pub struct KeyObject {
+    #[property(name = "description", get, set, type = String)]
+    pub description: RefCell<String>,
     #[property(name = "fingerprint", get, set, type = String)]
     pub fingerprint: RefCell<String>,
 }

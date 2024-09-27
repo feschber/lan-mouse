@@ -1,6 +1,6 @@
 mod imp;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -360,8 +360,8 @@ impl Window {
             closure_local!(
                 #[strong(rename_to = parent)]
                 self,
-                move |w: FingerprintWindow, fp: String| {
-                    parent.request_fingerprint_add(fp);
+                move |w: FingerprintWindow, desc: String, fp: String| {
+                    parent.request_fingerprint_add(desc, fp);
                     w.close();
                 }
             ),
@@ -369,12 +369,12 @@ impl Window {
         window.present();
     }
 
-    pub fn request_fingerprint_add(&self, fp: String) {
-        self.request(FrontendRequest::FingerprintAdd(fp));
+    pub fn request_fingerprint_add(&self, desc: String, fp: String) {
+        self.request(FrontendRequest::AuthorizeKey(desc, fp));
     }
 
     pub fn request_fingerprint_remove(&self, fp: String) {
-        self.request(FrontendRequest::FingerprintRemove(fp));
+        self.request(FrontendRequest::RemoveAuthorizedKey(fp));
     }
 
     pub fn request(&self, request: FrontendRequest) {
@@ -411,15 +411,19 @@ impl Window {
             .set_visible(!capture || !emulation);
     }
 
-    pub(crate) fn set_authorized_keys(&self, fingerprints: HashSet<String>) {
+    pub(crate) fn set_authorized_keys(&self, fingerprints: HashMap<String, String>) {
         let authorized = self.authorized();
         // clear list
         authorized.remove_all();
         // insert fingerprints
-        for fingerprint in fingerprints {
-            let key_obj = KeyObject::new(fingerprint);
+        for (description, fingerprint) in fingerprints {
+            let key_obj = KeyObject::new(description, fingerprint);
             authorized.append(&key_obj);
         }
         self.update_auth_placeholder_visibility();
+    }
+
+    pub(crate) fn set_pk_fp(&self, fingerprint: &str) {
+        self.imp().fingerprint_row.set_subtitle(fingerprint);
     }
 }

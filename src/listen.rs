@@ -2,8 +2,13 @@ use futures::{Stream, StreamExt};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
 use rustls::pki_types::CertificateDer;
-use sha2::{Digest, Sha256};
-use std::{net::SocketAddr, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    rc::Rc,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use thiserror::Error;
 use tokio::{
     sync::Mutex,
@@ -15,6 +20,8 @@ use webrtc_dtls::{
     listener::listen,
 };
 use webrtc_util::{conn::Listener, Conn, Error};
+
+use crate::crypto;
 
 #[derive(Error, Debug)]
 pub enum ListenerCreationError {
@@ -38,29 +45,31 @@ type VerifyPeerCertificateFn = Arc<
 >;
 
 impl LanMouseListener {
-    pub(crate) async fn new(port: u16) -> Result<Self, ListenerCreationError> {
+    pub(crate) async fn new(
+        port: u16,
+        authorized_keys: Arc<RwLock<HashMap<String, String>>>,
+    ) -> Result<Self, ListenerCreationError> {
         let (listen_tx, listen_rx) = channel();
 
         let listen_addr = SocketAddr::new("0.0.0.0".parse().expect("invalid ip"), port);
         let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
         let verify_peer_certificate: Option<VerifyPeerCertificateFn> = Some(Arc::new(
-            |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
+            move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
+                assert!(certs.len() == 1);
                 let fingerprints = certs
                     .into_iter()
-                    .map(|cert| {
-                        let mut hash = Sha256::new();
-                        hash.update(cert);
-                        let bytes = hash
-                            .finalize()
-                            .iter()
-                            .map(|x| format!("{x:02x}"))
-                            .collect::<Vec<_>>();
-                        let fingerprint = bytes.join(":").to_lowercase();
-                        fingerprint
-                    })
+                    .map(|c| crypto::generate_fingerprint(c))
                     .collect::<Vec<_>>();
                 log::info!("fingerprints: {fingerprints:?}");
-                Ok(())
+                if authorized_keys
+                    .read()
+                    .expect("lock")
+                    .contains_key(&fingerprints[0])
+                {
+                    Ok(())
+                } else {
+                    Err(webrtc_dtls::Error::ErrVerifyDataMismatch)
+                }
             },
         ));
         let cfg = Config {

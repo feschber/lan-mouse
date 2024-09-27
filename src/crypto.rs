@@ -4,6 +4,7 @@ use std::{fs::File, io::BufReader};
 
 use rcgen::KeyPair;
 use rustls::pki_types::CertificateDer;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use webrtc_dtls::crypto::{Certificate, CryptoPrivateKey};
 
@@ -26,6 +27,18 @@ pub enum Error {
     Dtls(#[from] webrtc_dtls::Error),
     #[error("{0}")]
     Other(String),
+}
+
+pub fn generate_fingerprint(cert: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(cert);
+    let bytes = hash
+        .finalize()
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect::<Vec<_>>();
+    let fingerprint = bytes.join(":").to_lowercase();
+    fingerprint
 }
 
 /// load_key_and_certificate reads certificates or key from file

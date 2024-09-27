@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
 	<template class="KeyRow" parent="AdwActionRow">
-		<property name="title">hostname</property>
 		<child type="prefix">
 			<object class="GtkButton" id="delete_button">
 				<property name="valign">center</property>

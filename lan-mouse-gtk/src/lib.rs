@@ -139,6 +139,9 @@ fn build_ui(app: &Application) {
                     FrontendEvent::AuthorizedUpdated(keys) => {
                         window.set_authorized_keys(keys);
                     }
+                    FrontendEvent::PublicKeyFingerprint(fp) => {
+                        window.set_pk_fp(&fp);
+                    }
                 }
             }
         }

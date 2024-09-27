@@ -14,6 +14,8 @@ pub struct Window {
     #[template_child]
     pub authorized_placeholder: TemplateChild<ActionRow>,
     #[template_child]
+    pub fingerprint_row: TemplateChild<ActionRow>,
+    #[template_child]
     pub port_edit_apply: TemplateChild<Button>,
     #[template_child]
     pub port_edit_cancel: TemplateChild<Button>,
@@ -91,6 +93,25 @@ impl Window {
                 }
             ));
         }
+    }
+
+    #[template_callback]
+    fn handle_copy_fingerprint(&self, button: &Button) {
+        let fingerprint: String = self.fingerprint_row.property("subtitle");
+        let display = gdk::Display::default().unwrap();
+        let clipboard = display.clipboard();
+        clipboard.set_text(&fingerprint);
+        button.set_icon_name("emblem-ok-symbolic");
+        button.set_css_classes(&["success"]);
+        glib::spawn_future_local(clone!(
+            #[weak]
+            button,
+            async move {
+                glib::timeout_future_seconds(1).await;
+                button.set_icon_name("edit-copy-symbolic");
+                button.set_css_classes(&[]);
+            }
+        ));
     }
 
     #[template_callback]
