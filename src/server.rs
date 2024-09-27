@@ -131,8 +131,9 @@ impl Server {
 
         // listener + connection
         let listener =
-            LanMouseListener::new(self.config.port, cert, self.authorized_keys.clone()).await?;
-        let conn = LanMouseConnection::new(self.clone());
+            LanMouseListener::new(self.config.port, cert.clone(), self.authorized_keys.clone())
+                .await?;
+        let conn = LanMouseConnection::new(self.clone(), cert);
 
         // input capture + emulation
         let mut capture = Capture::new(self.clone(), conn);
