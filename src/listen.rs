@@ -15,7 +15,7 @@ use tokio::{
     task::{spawn_local, JoinHandle},
 };
 use webrtc_dtls::{
-    config::{Config, ExtendedMasterSecretType},
+    config::{ClientAuthType::RequireAnyClientCert, Config, ExtendedMasterSecretType},
     crypto::Certificate,
     listener::listen,
 };
@@ -55,6 +55,7 @@ impl LanMouseListener {
         let certificate = Certificate::generate_self_signed(["localhost".to_owned()])?;
         let verify_peer_certificate: Option<VerifyPeerCertificateFn> = Some(Arc::new(
             move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
+                log::error!("verifying device fingerprint!");
                 assert!(certs.len() == 1);
                 let fingerprints = certs
                     .into_iter()
@@ -75,6 +76,7 @@ impl LanMouseListener {
         let cfg = Config {
             certificates: vec![certificate],
             extended_master_secret: ExtendedMasterSecretType::Require,
+            client_auth: RequireAnyClientCert,
             verify_peer_certificate,
             ..Default::default()
         };

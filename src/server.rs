@@ -3,7 +3,6 @@ use crate::{
     client::ClientManager,
     config::Config,
     connect::LanMouseConnection,
-    crypto,
     dns::DnsResolver,
     emulation::Emulation,
     listen::{LanMouseListener, ListenerCreationError},
