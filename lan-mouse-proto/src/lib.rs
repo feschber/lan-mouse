@@ -61,8 +61,8 @@ pub enum ProtoEvent {
     /// Ping event for tracking unresponsive clients.
     /// A client has to respond with [`ProtoEvent::Pong`].
     Ping,
-    /// Response to [`ProtoEvent::Ping`]
-    Pong,
+    /// Response to [`ProtoEvent::Ping`], true if emulation is enabled / available
+    Pong(bool),
 }
 
 impl Display for ProtoEvent {
@@ -73,7 +73,13 @@ impl Display for ProtoEvent {
             ProtoEvent::Ack(s) => write!(f, "Ack({s})"),
             ProtoEvent::Input(e) => write!(f, "{e}"),
             ProtoEvent::Ping => write!(f, "ping"),
-            ProtoEvent::Pong => write!(f, "pong"),
+            ProtoEvent::Pong(alive) => {
+                write!(
+                    f,
+                    "pong: {}",
+                    if *alive { "alive" } else { "not available" }
+                )
+            }
         }
     }
 }
@@ -110,7 +116,7 @@ impl ProtoEvent {
                 },
             },
             ProtoEvent::Ping => EventType::Ping,
-            ProtoEvent::Pong => EventType::Pong,
+            ProtoEvent::Pong(_) => EventType::Pong,
             ProtoEvent::Enter(_) => EventType::Enter,
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
@@ -164,7 +170,7 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
                 },
             ))),
             EventType::Ping => Ok(Self::Ping),
-            EventType::Pong => Ok(Self::Pong),
+            EventType::Pong => Ok(Self::Pong(decode_u8(&mut buf)? != 0)),
             EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
             EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
@@ -228,7 +234,7 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                     },
                 },
                 ProtoEvent::Ping => {}
-                ProtoEvent::Pong => {}
+                ProtoEvent::Pong(alive) => encode_u8(buf, len, alive as u8),
                 ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
                 ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
