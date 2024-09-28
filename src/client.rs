@@ -224,27 +224,41 @@ impl ClientManager {
             .collect()
     }
 
-    pub(crate) fn set_active_addr(&self, handle: u64, addr: Option<SocketAddr>) {
+    pub(crate) fn set_active_addr(&self, handle: ClientHandle, addr: Option<SocketAddr>) {
         if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
             s.active_addr = addr;
         }
     }
 
-    pub(crate) fn active_addr(&self, handle: u64) -> Option<SocketAddr> {
+    pub(crate) fn set_alive(&self, handle: ClientHandle, alive: bool) {
+        if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            s.alive = alive;
+        }
+    }
+
+    pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
         self.clients
             .borrow()
             .get(handle as usize)
             .and_then(|(_, s)| s.active_addr)
     }
 
-    pub(crate) fn get_port(&self, handle: u64) -> Option<u16> {
+    pub(crate) fn alive(&self, handle: ClientHandle) -> bool {
+        self.clients
+            .borrow()
+            .get(handle as usize)
+            .map(|(_, s)| s.alive)
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn get_port(&self, handle: ClientHandle) -> Option<u16> {
         self.clients
             .borrow()
             .get(handle as usize)
             .map(|(c, _)| c.port)
     }
 
-    pub(crate) fn get_ips(&self, handle: u64) -> Option<HashSet<IpAddr>> {
+    pub(crate) fn get_ips(&self, handle: ClientHandle) -> Option<HashSet<IpAddr>> {
         self.clients
             .borrow()
             .get(handle as usize)

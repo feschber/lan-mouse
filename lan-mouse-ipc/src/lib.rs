@@ -161,7 +161,7 @@ pub struct ClientState {
     /// This should generally be the socket address where data
     /// was last received from.
     pub active_addr: Option<SocketAddr>,
-    /// tracks whether or not the client is responding to pings
+    /// tracks whether or not the client is available for emulation
     pub alive: bool,
     /// ips from dns
     pub dns_ips: Vec<IpAddr>,
@@ -239,7 +239,7 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum Status {
     #[default]
     Disabled,

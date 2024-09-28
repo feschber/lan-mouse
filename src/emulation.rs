@@ -55,7 +55,7 @@ impl Emulation {
                             listener.reply(addr, ProtoEvent::Ack(0)).await;
                         }
                         ProtoEvent::Input(event) => emulation_proxy.consume(event, addr),
-                        ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong).await,
+                        ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong(server.emulation_status.get() == Status::Enabled)).await,
                         _ => {}
                     }
                 }

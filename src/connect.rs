@@ -33,6 +33,8 @@ pub(crate) enum LanMouseConnectionError {
     Webrtc(#[from] webrtc_util::Error),
     #[error("not connected")]
     NotConnected,
+    #[error("emulation is disabled on the target device")]
+    TargetEmulationDisabled,
 }
 
 async fn connect(
@@ -104,6 +106,9 @@ impl LanMouseConnection {
                 conns.get(&addr).cloned()
             };
             if let Some(conn) = conn {
+                if !self.server.client_manager.alive(handle) {
+                    return Err(LanMouseConnectionError::TargetEmulationDisabled);
+                }
                 log::trace!("{event} >->->->->- {addr}");
                 match conn.send(buf).await {
                     Ok(_) => return Ok(()),
@@ -220,7 +225,10 @@ async fn receive_loop(
     while let Ok(_) = conn.recv(&mut buf).await {
         if let Ok(event) = buf.try_into() {
             match event {
-                ProtoEvent::Pong => server.client_manager.set_active_addr(handle, Some(addr)),
+                ProtoEvent::Pong(b) => {
+                    server.client_manager.set_active_addr(handle, Some(addr));
+                    server.client_manager.set_alive(handle, b);
+                }
                 event => tx.send((handle, event)).expect("channel closed"),
             }
         }
