@@ -5,7 +5,7 @@
 			<object class="GtkButton" id="delete_button">
 				<property name="valign">center</property>
 				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">enable</property>
+				<property name="tooltip-text" translatable="yes">revoke authorization</property>
                 <property name="icon-name">edit-delete-symbolic</property>
 				<style>
                     <class name="flat"/>
