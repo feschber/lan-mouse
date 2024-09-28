@@ -4,7 +4,7 @@ use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
+use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Image, Label, ListBox};
 
 use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
 
@@ -25,6 +25,8 @@ pub struct Window {
     pub client_placeholder: TemplateChild<ActionRow>,
     #[template_child]
     pub port_entry: TemplateChild<Entry>,
+    #[template_child]
+    pub hostname_copy_icon: TemplateChild<Image>,
     #[template_child]
     pub hostname_label: TemplateChild<Label>,
     #[template_child]
@@ -76,20 +78,21 @@ impl Window {
     }
 
     #[template_callback]
-    fn handle_copy_hostname(&self, button: &Button) {
+    fn handle_copy_hostname(&self, _: &Button) {
         if let Ok(hostname) = hostname::get() {
             let display = gdk::Display::default().unwrap();
             let clipboard = display.clipboard();
             clipboard.set_text(hostname.to_str().expect("hostname: invalid utf8"));
-            button.set_icon_name("emblem-ok-symbolic");
-            button.set_css_classes(&["success"]);
+            let icon = self.hostname_copy_icon.clone();
+            icon.set_icon_name(Some("emblem-ok-symbolic"));
+            icon.set_css_classes(&["success"]);
             glib::spawn_future_local(clone!(
                 #[weak]
-                button,
+                icon,
                 async move {
                     glib::timeout_future_seconds(1).await;
-                    button.set_icon_name("edit-copy-symbolic");
-                    button.set_css_classes(&[]);
+                    icon.set_icon_name(Some("edit-copy-symbolic"));
+                    icon.set_css_classes(&[]);
                 }
             ));
         }
