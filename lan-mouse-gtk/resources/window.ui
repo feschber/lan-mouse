@@ -121,7 +121,31 @@
                         -->
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">port</property>
+                            <property name="title">hostname &#38;amp; port</property>
+                            <child>
+                              <object class="GtkButton" id="copy-hostname-button">
+                                    <!--<property name="icon-name">edit-copy-symbolic</property>-->
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="handle_copy_hostname" swapped="true"/>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="spacing">30</property>
+                                    <child>
+                                      <object class="GtkLabel" id="hostname_label">
+                                        <property name="label">&lt;span font_style=&quot;italic&quot; font_weight=&quot;light&quot; foreground=&quot;darkgrey&quot;&gt;could not determine hostname&lt;/span&gt;</property>
+                                        <property name="use-markup">true</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage" id="hostname_copy_icon">
+                                        <property name="icon-name">edit-copy-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                             <child>
                               <object class="GtkEntry" id="port_entry">
                                 <property name="max-width-chars">5</property>
@@ -155,25 +179,6 @@
                                 <property name="visible">false</property>
                                 <property name="name">port-edit-cancel</property>
                                 <style><class name="error"/></style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title">hostname</property>
-                            <child>
-                              <object class="GtkLabel" id="hostname_label">
-                                <property name="label">&lt;span font_style=&quot;italic&quot; font_weight=&quot;light&quot; foreground=&quot;darkgrey&quot;&gt;could not determine hostname&lt;/span&gt;</property>
-                                <property name="use-markup">true</property>
-                                <property name="valign">center</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="copy-hostname-button">
-                                <property name="icon-name">edit-copy-symbolic</property>
-                                <property name="valign">center</property>
-                                <signal name="clicked" handler="handle_copy_hostname" swapped="true"/>
                               </object>
                             </child>
                           </object>
