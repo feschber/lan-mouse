@@ -6,9 +6,9 @@
     <property name="modal">True</property>
     <property name="width-request">880</property>
     <property name="default-width">880</property>
-    <property name="height-request">340</property>
-    <property name="default-height">340</property>
-    <property name="title" translatable="yes">Add Public Key Fingerprint</property>
+    <property name="height-request">380</property>
+    <property name="default-height">380</property>
+    <property name="title" translatable="yes">Add Certificate Fingerprint</property>
     <property name="content">
       <object class="AdwToolbarView">
         <child type="top">
@@ -24,7 +24,12 @@
                 <property name="spacing">18</property>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label">you can find the fingerprint of a device under the `General` section</property>
+                    <property name="label">The certificate fingerprint serves as a unique identifier for your device.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">You can find it under the `General` section of the device you want to connect</property>
                   </object>
                 </child>
                 <child>

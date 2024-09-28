@@ -11,27 +11,10 @@ use webrtc_dtls::crypto::Certificate;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("block is not a private key, unable to load key")]
-    ErrBlockIsNotPrivateKey,
-    #[error("unknown key time in PKCS#8 wrapping, unable to load key")]
-    ErrUnknownKeyTime,
-    #[error("no private key found, unable to load key")]
-    ErrNoPrivateKeyFound,
-    #[error("block is not a certificate, unable to load certificates")]
-    ErrBlockIsNotCertificate,
-    #[error("no certificate found, unable to load certificates")]
-    ErrNoCertificateFound,
-
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
     Dtls(#[from] webrtc_dtls::Error),
-    #[error("{0}")]
-    Other(String),
-    #[error("a file containing the public key is missing")]
-    PkMissing,
-    #[error("a file containing the private key is missing")]
-    SkMissing,
 }
 
 pub fn generate_fingerprint(cert: &[u8]) -> String {
