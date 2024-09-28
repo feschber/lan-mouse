@@ -180,7 +180,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="fingerprint_row">
-                            <property name="title">public key fingerprint</property>
+                            <property name="title">certificate fingerprint</property>
                             <property name="icon-name">auth-fingerprint-symbolic</property>
                             <child>
                               <object class="GtkButton" id="copy-fingerprint-button">
@@ -229,32 +229,13 @@
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Incoming Connections</property>
-                        <child>
-                          <object class="GtkListBox" id="connection_list">
-                            <property name="selection-mode">none</property>
-                            <child type="placeholder">
-                              <object class="AdwActionRow">
-                                <property name="title">no incoming connections!</property>
-                                <property name="subtitle">devices that control this pc will show up here</property>
-                              </object>
-                            </child>
-                            <style>
-                              <class name="boxed-list" />
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Authorized Keys</property>
                         <property name="header-suffix">
                           <object class="GtkButton">
                             <signal name="clicked" handler="handle_add_cert_fingerprint" swapped="true"/>
                             <property name="child">
                               <object class="AdwButtonContent">
                                 <property name="icon-name">auth-fingerprint-symbolic</property>
-                                <property name="label" translatable="yes">Add</property>
+                                <property name="label" translatable="yes">Authorize</property>
                               </object>
                             </property>
                             <style>
@@ -267,8 +248,8 @@
                             <property name="selection-mode">none</property>
                             <child type="placeholder">
                               <object class="AdwActionRow" id="authorized_placeholder">
-                                <property name="title">no fingerprints!</property>
-                                <property name="subtitle">add a public key fingerprint via the + button</property>
+                                <property name="title">no devices registered!</property>
+                                <property name="subtitle">authorize a new device via the "Authorize" button</property>
                               </object>
                             </child>
                             <style>
