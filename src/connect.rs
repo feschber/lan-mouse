@@ -1,4 +1,4 @@
-use crate::server::Server;
+use crate::service::Service;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
@@ -68,7 +68,7 @@ async fn connect_any(
 }
 
 pub(crate) struct LanMouseConnection {
-    server: Server,
+    server: Service,
     cert: Certificate,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
@@ -77,7 +77,7 @@ pub(crate) struct LanMouseConnection {
 }
 
 impl LanMouseConnection {
-    pub(crate) fn new(server: Server, cert: Certificate) -> Self {
+    pub(crate) fn new(server: Service, cert: Certificate) -> Self {
         let (recv_tx, recv_rx) = channel();
         Self {
             server,
@@ -139,7 +139,7 @@ impl LanMouseConnection {
 }
 
 async fn connect_to_handle(
-    server: Server,
+    server: Service,
     cert: Certificate,
     handle: ClientHandle,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
@@ -189,7 +189,7 @@ async fn connect_to_handle(
 }
 
 async fn ping_pong(
-    server: Server,
+    server: Service,
     handle: ClientHandle,
     addr: SocketAddr,
     conn: Arc<dyn Conn + Send + Sync>,
@@ -214,7 +214,7 @@ async fn ping_pong(
 }
 
 async fn receive_loop(
-    server: Server,
+    server: Service,
     handle: ClientHandle,
     addr: SocketAddr,
     conn: Arc<dyn Conn + Send + Sync>,
@@ -238,7 +238,7 @@ async fn receive_loop(
 }
 
 async fn disconnect(
-    server: &Server,
+    server: &Service,
     handle: ClientHandle,
     addr: SocketAddr,
     conns: &Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>,

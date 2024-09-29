@@ -64,6 +64,6 @@ pub(crate) fn generate_key_and_cert(path: &Path) -> Result<Certificate, Error> {
     }
     /* FIXME windows permissions */
     let mut writer = BufWriter::new(f);
-    writer.write(serialized.as_bytes())?;
+    writer.write_all(serialized.as_bytes())?;
     Ok(cert)
 }

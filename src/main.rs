@@ -5,7 +5,7 @@ use lan_mouse::{
     capture_test,
     config::{Config, ConfigError, Frontend},
     emulation_test,
-    server::{Server, ServiceError},
+    service::{Service, ServiceError},
 };
 use lan_mouse_ipc::IpcError;
 use std::{
@@ -101,7 +101,8 @@ fn start_service() -> Result<Child, io::Error> {
 
 async fn run_service(config: Config) -> Result<(), ServiceError> {
     log::info!("Press {:?} to release the mouse", config.release_bind);
-    Server::new(config).run().await?;
+    let mut server = Service::new(config).await?;
+    server.run().await?;
     log::info!("service exited!");
     Ok(())
 }
