@@ -1,5 +1,6 @@
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env::{self, VarError};
 use std::fmt::Display;
 use std::fs;
@@ -23,12 +24,12 @@ pub struct ConfigToml {
     pub port: Option<u16>,
     pub frontend: Option<Frontend>,
     pub release_bind: Option<Vec<scancode::Linux>>,
-    pub pk_path: Option<PathBuf>,
-    pub sk_path: Option<PathBuf>,
+    pub cert_path: Option<PathBuf>,
     pub left: Option<TomlClient>,
     pub right: Option<TomlClient>,
     pub top: Option<TomlClient>,
     pub bottom: Option<TomlClient>,
+    pub authorized_fingerprints: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -216,6 +217,7 @@ impl Default for Frontend {
 
 #[derive(Debug)]
 pub struct Config {
+    pub authorized_fingerprints: HashMap<String, String>,
     pub capture_backend: Option<CaptureBackend>,
     pub emulation_backend: Option<EmulationBackend>,
     pub frontend: Frontend,
@@ -276,7 +278,7 @@ impl Config {
         // --config <file> overrules default location
         let config_file = args.config.map(PathBuf::from).unwrap_or(config_file);
 
-        let config_toml = match ConfigToml::new(&config_file) {
+        let mut config_toml = match ConfigToml::new(&config_file) {
             Err(e) => {
                 log::warn!("{config_file:?}: {e}");
                 log::warn!("Continuing without config file ...");
@@ -310,8 +312,14 @@ impl Config {
 
         let cert_path = args
             .cert_path
-            .or(config_toml.as_ref().and_then(|c| c.pk_path.clone()))
+            .or(config_toml.as_ref().and_then(|c| c.cert_path.clone()))
             .unwrap_or(config_path.join(CERT_FILE_NAME));
+
+        let authorized_fingerprints = config_toml
+            .as_mut()
+            .map(|c| std::mem::take(&mut c.authorized_fingerprints))
+            .flatten()
+            .unwrap_or_default();
 
         let mut clients: Vec<(TomlClient, Position)> = vec![];
 
@@ -335,6 +343,7 @@ impl Config {
         let test_emulation = args.test_emulation;
 
         Ok(Config {
+            authorized_fingerprints,
             capture_backend,
             emulation_backend,
             daemon,
