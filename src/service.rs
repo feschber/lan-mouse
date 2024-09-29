@@ -105,7 +105,7 @@ impl Service {
 
         let service = Self {
             active: Rc::new(Cell::new(None)),
-            authorized_keys: Default::default(),
+            authorized_keys: Arc::new(RwLock::new(config.authorized_fingerprints.clone())),
             cert,
             public_key_fingerprint,
             config,
