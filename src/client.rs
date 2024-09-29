@@ -39,7 +39,7 @@ impl ClientManager {
     pub fn activate_client(&self, handle: ClientHandle) -> bool {
         let mut clients = self.clients.borrow_mut();
         match clients.get_mut(handle as usize) {
-            Some((_, s)) if s.active == false => {
+            Some((_, s)) if !s.active => {
                 s.active = true;
                 true
             }

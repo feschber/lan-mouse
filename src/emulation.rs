@@ -1,4 +1,4 @@
-use crate::{listen::LanMouseListener, server::Server};
+use crate::{listen::LanMouseListener, service::Service};
 use futures::StreamExt;
 use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
@@ -21,14 +21,14 @@ pub(crate) struct Emulation {
 }
 
 impl Emulation {
-    pub(crate) fn new(server: Server, listener: LanMouseListener) -> Self {
+    pub(crate) fn new(server: Service, listener: LanMouseListener) -> Self {
         let emulation_proxy = EmulationProxy::new(server.clone());
         let task = spawn_local(Self::run(server, listener, emulation_proxy));
         Self { task }
     }
 
     async fn run(
-        server: Server,
+        server: Service,
         mut listener: LanMouseListener,
         mut emulation_proxy: EmulationProxy,
     ) {
@@ -45,10 +45,12 @@ impl Emulation {
                     last_response.insert(addr, Instant::now());
                     match event {
                         ProtoEvent::Enter(pos) => {
-                            log::info!("{addr} entered this device");
-                            server.release_capture();
-                            listener.reply(addr, ProtoEvent::Ack(0)).await;
-                            server.register_incoming(addr, to_ipc_pos(pos));
+                            if let Some(cert) = listener.get_certificate_fingerprint(addr).await {
+                                log::info!("{addr} entered this device");
+                                server.release_capture();
+                                listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                server.register_incoming(addr, to_ipc_pos(pos), cert);
+                            }
                         }
                         ProtoEvent::Leave(_) => {
                             emulation_proxy.release_keys(addr);
@@ -89,7 +91,7 @@ impl Emulation {
 /// proxy handling the actual input emulation,
 /// discarding events when it is disabled
 pub(crate) struct EmulationProxy {
-    server: Server,
+    server: Service,
     tx: Sender<(ProxyEvent, SocketAddr)>,
     task: JoinHandle<()>,
 }
@@ -100,7 +102,7 @@ enum ProxyEvent {
 }
 
 impl EmulationProxy {
-    fn new(server: Server) -> Self {
+    fn new(server: Service) -> Self {
         let (tx, rx) = channel();
         let task = spawn_local(Self::emulation_task(server.clone(), rx));
         Self { server, tx, task }
@@ -121,7 +123,7 @@ impl EmulationProxy {
             .expect("channel closed");
     }
 
-    async fn emulation_task(server: Server, mut rx: Receiver<(ProxyEvent, SocketAddr)>) {
+    async fn emulation_task(server: Service, mut rx: Receiver<(ProxyEvent, SocketAddr)>) {
         let mut handles = HashMap::new();
         let mut next_id = 0;
         loop {
@@ -136,7 +138,7 @@ impl EmulationProxy {
     }
 
     async fn do_emulation(
-        server: &Server,
+        server: &Service,
         handles: &mut HashMap<SocketAddr, EmulationHandle>,
         next_id: &mut EmulationHandle,
         rx: &mut Receiver<(ProxyEvent, SocketAddr)>,
@@ -163,7 +165,7 @@ impl EmulationProxy {
     }
 
     async fn do_emulation_session(
-        server: &Server,
+        server: &Service,
         emulation: &mut InputEmulation,
         handles: &mut HashMap<SocketAddr, EmulationHandle>,
         next_id: &mut EmulationHandle,

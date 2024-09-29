@@ -15,7 +15,7 @@ use tokio::{
     task::{spawn_local, JoinHandle},
 };
 
-use crate::{connect::LanMouseConnection, server::Server};
+use crate::{connect::LanMouseConnection, service::Service};
 
 pub(crate) struct Capture {
     tx: Sender<CaptureRequest>,
@@ -33,7 +33,7 @@ enum CaptureRequest {
 }
 
 impl Capture {
-    pub(crate) fn new(server: Server, conn: LanMouseConnection) -> Self {
+    pub(crate) fn new(server: Service, conn: LanMouseConnection) -> Self {
         let (tx, rx) = channel();
         let task = spawn_local(Self::run(server.clone(), rx, conn));
         Self { tx, task }
@@ -66,7 +66,7 @@ impl Capture {
             .expect("channel closed");
     }
 
-    async fn run(server: Server, mut rx: Receiver<CaptureRequest>, mut conn: LanMouseConnection) {
+    async fn run(server: Service, mut rx: Receiver<CaptureRequest>, mut conn: LanMouseConnection) {
         loop {
             if let Err(e) = do_capture(&server, &mut conn, &mut rx).await {
                 log::warn!("input capture exited: {e}");
@@ -87,7 +87,7 @@ impl Capture {
 }
 
 async fn do_capture(
-    server: &Server,
+    server: &Service,
     conn: &mut LanMouseConnection,
     rx: &mut Receiver<CaptureRequest>,
 ) -> Result<(), InputCaptureError> {
@@ -191,7 +191,7 @@ enum State {
 }
 
 async fn handle_capture_event(
-    server: &Server,
+    server: &Service,
     capture: &mut InputCapture,
     conn: &LanMouseConnection,
     event: (CaptureHandle, CaptureEvent),
@@ -241,7 +241,7 @@ async fn handle_capture_event(
     Ok(())
 }
 
-async fn release_capture(capture: &mut InputCapture, server: &Server) -> Result<(), CaptureError> {
+async fn release_capture(capture: &mut InputCapture, server: &Service) -> Result<(), CaptureError> {
     server.set_active(None);
     capture.release().await
 }
@@ -264,7 +264,7 @@ fn to_proto_pos(pos: lan_mouse_ipc::Position) -> lan_mouse_proto::Position {
     }
 }
 
-fn spawn_hook_command(server: &Server, handle: ClientHandle) {
+fn spawn_hook_command(server: &Service, handle: ClientHandle) {
     let Some(cmd) = server.client_manager.get_enter_cmd(handle) else {
         return;
     };

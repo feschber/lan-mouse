@@ -16,6 +16,7 @@ use tokio::{
 };
 use webrtc_dtls::{
     config::{ClientAuthType::RequireAnyClientCert, Config, ExtendedMasterSecretType},
+    conn::DTLSConn,
     crypto::Certificate,
     listener::listen,
 };
@@ -57,7 +58,7 @@ impl LanMouseListener {
             move |certs: &[Vec<u8>], _chains: &[CertificateDer<'static>]| {
                 assert!(certs.len() == 1);
                 let fingerprints = certs
-                    .into_iter()
+                    .iter()
                     .map(|c| crypto::generate_fingerprint(c))
                     .collect::<Vec<_>>();
                 if authorized_keys
@@ -141,6 +142,25 @@ impl LanMouseListener {
             if *a == addr {
                 let _ = conn.send(&buf[..len]).await;
             }
+        }
+    }
+
+    pub(crate) async fn get_certificate_fingerprint(&self, addr: SocketAddr) -> Option<String> {
+        if let Some(conn) = self
+            .conns
+            .lock()
+            .await
+            .iter()
+            .find(|(a, _)| *a == addr)
+            .map(|(_, c)| c.clone())
+        {
+            let conn: &DTLSConn = conn.as_any().downcast_ref().expect("dtls conn");
+            let certs = conn.connection_state().await.peer_certificates;
+            let cert = certs.get(0)?;
+            let fingerprint = crypto::generate_fingerprint(cert);
+            Some(fingerprint)
+        } else {
+            None
         }
     }
 }

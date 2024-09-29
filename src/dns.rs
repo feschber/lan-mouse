@@ -3,7 +3,7 @@ use tokio::task::{spawn_local, JoinHandle};
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
 
-use crate::server::Server;
+use crate::service::Service;
 use lan_mouse_ipc::ClientHandle;
 
 pub(crate) struct DnsResolver {
@@ -12,7 +12,7 @@ pub(crate) struct DnsResolver {
 }
 
 impl DnsResolver {
-    pub(crate) fn new(server: Server) -> Result<Self, ResolveError> {
+    pub(crate) fn new(server: Service) -> Result<Self, ResolveError> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
         let (tx, rx) = channel();
         let _task = spawn_local(Self::run(server, resolver, rx));
@@ -23,7 +23,7 @@ impl DnsResolver {
         self.tx.send(host).expect("channel closed");
     }
 
-    async fn run(server: Server, resolver: TokioAsyncResolver, mut rx: Receiver<ClientHandle>) {
+    async fn run(server: Service, resolver: TokioAsyncResolver, mut rx: Receiver<ClientHandle>) {
         tokio::select! {
             _ = server.cancelled() => {},
             _ = Self::do_dns(&server, &resolver, &mut rx) => {},
@@ -31,7 +31,7 @@ impl DnsResolver {
     }
 
     async fn do_dns(
-        server: &Server,
+        server: &Service,
         resolver: &TokioAsyncResolver,
         rx: &mut Receiver<ClientHandle>,
     ) {

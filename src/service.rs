@@ -26,6 +26,7 @@ use std::{
 use thiserror::Error;
 use tokio::{signal, sync::Notify};
 use tokio_util::sync::CancellationToken;
+use webrtc_dtls::crypto::Certificate;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -44,33 +45,35 @@ pub enum ServiceError {
 pub struct ReleaseToken;
 
 #[derive(Clone)]
-pub struct Server {
+pub struct Service {
     active: Rc<Cell<Option<ClientHandle>>>,
     authorized_keys: Arc<RwLock<HashMap<String, String>>>,
-    _known_hosts: Rc<RefCell<HashSet<String>>>,
     pub(crate) client_manager: ClientManager,
     port: Rc<Cell<u16>>,
-    public_key_fingerprint: Option<String>,
+    public_key_fingerprint: String,
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
+    pending_incoming: Rc<RefCell<VecDeque<(SocketAddr, Position, String)>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
     incoming_conns: Rc<RefCell<HashMap<SocketAddr, Position>>>,
+    cert: Certificate,
 }
 
 #[derive(Default)]
 struct Notifies {
     capture: Notify,
     emulation: Notify,
+    incoming: Notify,
     port_changed: Notify,
     frontend_event_pending: Notify,
     cancel: CancellationToken,
 }
 
-impl Server {
-    pub fn new(config: Config) -> Self {
+impl Service {
+    pub async fn new(config: Config) -> Result<Self, ServiceError> {
         let client_manager = ClientManager::default();
         let port = Rc::new(Cell::new(config.port));
         for client in config.get_clients() {
@@ -96,13 +99,18 @@ impl Server {
 
         let config = Rc::new(config);
 
-        Self {
+        // load certificate
+        let cert = crypto::load_or_generate_key_and_cert(&config.cert_path)?;
+        let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
+
+        let service = Self {
             active: Rc::new(Cell::new(None)),
             authorized_keys: Default::default(),
-            _known_hosts: Default::default(),
-            public_key_fingerprint: None,
+            cert,
+            public_key_fingerprint,
             config,
             client_manager,
+            pending_incoming: Default::default(),
             port,
             notifies,
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
@@ -110,30 +118,22 @@ impl Server {
             emulation_status: Default::default(),
             incoming_conns: Rc::new(RefCell::new(HashMap::new())),
             should_release: Default::default(),
-        }
+        };
+        Ok(service)
     }
 
     pub async fn run(&mut self) -> Result<(), ServiceError> {
         // create frontend communication adapter, exit if already running
-        let mut frontend = match AsyncFrontendListener::new().await {
-            Ok(f) => f,
-            Err(IpcListenerCreationError::AlreadyRunning) => {
-                log::info!("service already running, exiting");
-                return Ok(());
-            }
-            e => e?,
-        };
-
-        // load certificate
-        let cert = crypto::load_or_generate_key_and_cert(&self.config.cert_path)?;
-        let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
-        self.public_key_fingerprint.replace(public_key_fingerprint);
+        let mut frontend_listener = AsyncFrontendListener::new().await?;
 
         // listener + connection
-        let listener =
-            LanMouseListener::new(self.config.port, cert.clone(), self.authorized_keys.clone())
-                .await?;
-        let conn = LanMouseConnection::new(self.clone(), cert);
+        let listener = LanMouseListener::new(
+            self.config.port,
+            self.cert.clone(),
+            self.authorized_keys.clone(),
+        )
+        .await?;
+        let conn = LanMouseConnection::new(self.clone(), self.cert.clone());
 
         // input capture + emulation
         let mut capture = Capture::new(self.clone(), conn);
@@ -148,7 +148,7 @@ impl Server {
 
         loop {
             tokio::select! {
-                request = frontend.next() => {
+                request = frontend_listener.next() => {
                     let request = match request {
                         Some(Ok(r)) => r,
                         Some(Err(e)) => {
@@ -167,7 +167,15 @@ impl Server {
                         let event = self.pending_frontend_events.borrow_mut().pop_front();
                         event
                     } {
-                        frontend.broadcast(event).await;
+                        frontend_listener.broadcast(event).await;
+                    }
+                },
+                _ = self.notifies.incoming.notified() => {
+                    while let Some((addr, pos, fingerprint)) = {
+                        let incoming = self.pending_incoming.borrow_mut().pop_front();
+                        incoming
+                    } {
+                        // capture.register(addr, pos);
                     }
                 },
                 _ = self.cancelled() => break,
@@ -271,10 +279,7 @@ impl Server {
                 self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
                 self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
                 self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
-                    self.public_key_fingerprint
-                        .as_ref()
-                        .expect("fingerprint")
-                        .clone(),
+                    self.public_key_fingerprint.clone(),
                 ));
                 self.notify_frontend(FrontendEvent::AuthorizedUpdated(
                     self.authorized_keys.read().expect("lock").clone(),
@@ -425,7 +430,10 @@ impl Server {
         self.active.get()
     }
 
-    pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position) {
-        self.incoming_conns.borrow_mut().insert(addr, pos);
+    pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position, fingerprint: String) {
+        self.pending_incoming
+            .borrow_mut()
+            .push_back((addr, pos, fingerprint));
+        self.notifies.incoming.notify_one();
     }
 }
