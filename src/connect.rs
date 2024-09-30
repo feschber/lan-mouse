@@ -46,6 +46,7 @@ async fn connect(
     conn.connect(addr).await?;
     let config = Config {
         certificates: vec![cert],
+        server_name: "ignored".to_owned(),
         insecure_skip_verify: true,
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
