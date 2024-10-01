@@ -269,7 +269,7 @@ impl Config {
         let config_path = {
             let app_data =
                 env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
-            format!("{app_data}\\lan-mouse\\{config_file}")
+            format!("{app_data}\\lan-mouse\\")
         };
 
         let config_path = PathBuf::from(config_path);
