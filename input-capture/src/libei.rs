@@ -40,7 +40,7 @@ use crate::CaptureEvent;
 
 use super::{
     error::{CaptureError, LibeiCaptureCreationError, ReisConvertEventStreamError},
-    Capture as LanMouseInputCapture, CaptureHandle, Position,
+    Capture as LanMouseInputCapture, Position,
 };
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
@@ -50,15 +50,15 @@ use super::{
 /// events that necessitate restarting the capture session
 #[derive(Clone, Copy, Debug)]
 enum LibeiNotifyEvent {
-    Create(CaptureHandle, Position),
-    Destroy(CaptureHandle),
+    Create(Position),
+    Destroy(Position),
 }
 
 #[allow(dead_code)]
 pub struct LibeiInputCapture<'a> {
     input_capture: Pin<Box<InputCapture<'a>>>,
     capture_task: JoinHandle<Result<(), CaptureError>>,
-    event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
+    event_rx: Receiver<(Position, CaptureEvent)>,
     notify_capture: Sender<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     cancellation_token: CancellationToken,
@@ -117,13 +117,13 @@ impl From<ICBarrier> for Barrier {
 
 fn select_barriers(
     zones: &Zones,
-    clients: &[(CaptureHandle, Position)],
+    clients: &[Position],
     next_barrier_id: &mut u32,
-) -> (Vec<ICBarrier>, HashMap<BarrierID, CaptureHandle>) {
-    let mut client_for_barrier = HashMap::new();
+) -> (Vec<ICBarrier>, HashMap<BarrierID, Position>) {
+    let mut pos_for_barrier = HashMap::new();
     let mut barriers: Vec<ICBarrier> = vec![];
 
-    for (handle, pos) in clients {
+    for pos in clients {
         let mut client_barriers = zones
             .regions()
             .iter()
@@ -131,21 +131,21 @@ fn select_barriers(
                 let id = *next_barrier_id;
                 *next_barrier_id = id + 1;
                 let position = pos_to_barrier(r, *pos);
-                client_for_barrier.insert(id, *handle);
+                pos_for_barrier.insert(id, *pos);
                 ICBarrier::new(id, position)
             })
             .collect();
         barriers.append(&mut client_barriers);
     }
-    (barriers, client_for_barrier)
+    (barriers, pos_for_barrier)
 }
 
 async fn update_barriers(
     input_capture: &InputCapture<'_>,
     session: &Session<'_, InputCapture<'_>>,
-    active_clients: &[(CaptureHandle, Position)],
+    active_clients: &[Position],
     next_barrier_id: &mut u32,
-) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, CaptureHandle>), ashpd::Error> {
+) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, Position>), ashpd::Error> {
     let zones = input_capture.zones(session).await?.response()?;
     log::debug!("zones: {zones:?}");
 
@@ -203,9 +203,9 @@ async fn connect_to_eis(
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
-    event_tx: Sender<(CaptureHandle, CaptureEvent)>,
+    event_tx: Sender<(Position, CaptureEvent)>,
     release_session: Arc<Notify>,
-    current_client: Rc<Cell<Option<CaptureHandle>>>,
+    current_pos: Rc<Cell<Option<Position>>>,
 ) -> Result<(), CaptureError> {
     loop {
         let ei_event = ei_event_stream
@@ -214,7 +214,7 @@ async fn libei_event_handler(
             .ok_or(CaptureError::EndOfStream)?
             .map_err(ReisConvertEventStreamError::from)?;
         log::trace!("from ei: {ei_event:?}");
-        let client = current_client.get();
+        let client = current_pos.get();
         handle_ei_event(ei_event, client, &context, &event_tx, &release_session).await?;
     }
 }
@@ -260,14 +260,14 @@ async fn do_capture(
     mut capture_event: Receiver<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     session: Option<(Session<'_, InputCapture<'_>>, BitFlags<Capabilities>)>,
-    event_tx: Sender<(CaptureHandle, CaptureEvent)>,
+    event_tx: Sender<(Position, CaptureEvent)>,
     cancellation_token: CancellationToken,
 ) -> Result<(), CaptureError> {
     let mut session = session.map(|s| s.0);
 
     /* safety: libei_task does not outlive Self */
     let input_capture = unsafe { &*input_capture };
-    let mut active_clients: Vec<(CaptureHandle, Position)> = vec![];
+    let mut active_clients: Vec<Position> = vec![];
     let mut next_barrier_id = 1u32;
 
     let mut zones_changed = input_capture.receive_zones_changed().await?;
@@ -341,8 +341,8 @@ async fn do_capture(
         // update clients if requested
         if let Some(event) = capture_event_occured.take() {
             match event {
-                LibeiNotifyEvent::Create(c, p) => active_clients.push((c, p)),
-                LibeiNotifyEvent::Destroy(c) => active_clients.retain(|(h, _)| *h != c),
+                LibeiNotifyEvent::Create(p) => active_clients.push(p),
+                LibeiNotifyEvent::Destroy(p) => active_clients.retain(|&pos| pos != p),
             }
         }
 
@@ -356,21 +356,21 @@ async fn do_capture(
 async fn do_capture_session(
     input_capture: &InputCapture<'_>,
     session: &mut Session<'_, InputCapture<'_>>,
-    event_tx: &Sender<(CaptureHandle, CaptureEvent)>,
-    active_clients: &[(CaptureHandle, Position)],
+    event_tx: &Sender<(Position, CaptureEvent)>,
+    active_clients: &[Position],
     next_barrier_id: &mut u32,
     notify_release: &Notify,
     cancel: (CancellationToken, CancellationToken),
 ) -> Result<(), CaptureError> {
     let (cancel_session, cancel_update) = cancel;
     // current client
-    let current_client = Rc::new(Cell::new(None));
+    let current_pos = Rc::new(Cell::new(None));
 
     // connect to eis server
     let (context, ei_event_stream) = connect_to_eis(input_capture, session).await?;
 
     // set barriers
-    let (barriers, client_for_barrier_id) =
+    let (barriers, pos_for_barrier_id) =
         update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
 
     log::debug!("enabling session");
@@ -382,7 +382,7 @@ async fn do_capture_session(
     // async event task
     let cancel_ei_handler = CancellationToken::new();
     let event_chan = event_tx.clone();
-    let client = current_client.clone();
+    let pos = current_pos.clone();
     let cancel_session_clone = cancel_session.clone();
     let release_session_clone = release_session.clone();
     let cancel_ei_handler_clone = cancel_ei_handler.clone();
@@ -393,7 +393,7 @@ async fn do_capture_session(
                 context,
                 event_chan,
                 release_session_clone,
-                client,
+                pos,
             ) => {
                 log::debug!("libei exited: {r:?} cancelling session task");
                 cancel_session_clone.cancel();
@@ -421,11 +421,11 @@ async fn do_capture_session(
                     };
 
                     // find client corresponding to barrier
-                    let client = *client_for_barrier_id.get(&barrier_id).expect("invalid barrier id");
-                    current_client.replace(Some(client));
+                    let pos = *pos_for_barrier_id.get(&barrier_id).expect("invalid barrier id");
+                    current_pos.replace(Some(pos));
 
                     // client entered => send event
-                    event_tx.send((client, CaptureEvent::Begin)).await.expect("no channel");
+                    event_tx.send((pos, CaptureEvent::Begin)).await.expect("no channel");
 
                     tokio::select! {
                         _ = notify_release.notified() => { /* capture release */
@@ -441,7 +441,7 @@ async fn do_capture_session(
                         },
                     }
 
-                    release_capture(input_capture, session, activated, client, active_clients).await?;
+                    release_capture(input_capture, session, activated, pos).await?;
 
                 }
                 _ = notify_release.notified() => { /* capture release -> we are not capturing anyway, so ignore */
@@ -484,8 +484,7 @@ async fn release_capture<'a>(
     input_capture: &InputCapture<'a>,
     session: &Session<'a, InputCapture<'a>>,
     activated: Activated,
-    current_client: CaptureHandle,
-    active_clients: &[(CaptureHandle, Position)],
+    current_pos: Position,
 ) -> Result<(), CaptureError> {
     if let Some(activation_id) = activated.activation_id() {
         log::debug!("releasing input capture {activation_id}");
@@ -494,13 +493,7 @@ async fn release_capture<'a>(
         .cursor_position()
         .expect("compositor did not report cursor position!");
     log::debug!("client entered @ ({x}, {y})");
-    let pos = active_clients
-        .iter()
-        .filter(|(c, _)| *c == current_client)
-        .map(|(_, p)| p)
-        .next()
-        .unwrap(); // FIXME
-    let (dx, dy) = match pos {
+    let (dx, dy) = match current_pos {
         // offset cursor position to not enter again immediately
         Position::Left => (1., 0.),
         Position::Right => (-1., 0.),
@@ -554,9 +547,9 @@ static ALL_CAPABILITIES: &[DeviceCapability] = &[
 
 async fn handle_ei_event(
     ei_event: EiEvent,
-    current_client: Option<CaptureHandle>,
+    current_client: Option<Position>,
     context: &ei::Context,
-    event_tx: &Sender<(CaptureHandle, CaptureEvent)>,
+    event_tx: &Sender<(Position, CaptureEvent)>,
     release_session: &Notify,
 ) -> Result<(), CaptureError> {
     match ei_event {
@@ -575,9 +568,9 @@ async fn handle_ei_event(
             return Err(CaptureError::Disconnected(format!("{:?}", d.reason)))
         }
         _ => {
-            if let Some(handle) = current_client {
+            if let Some(pos) = current_client {
                 for event in Event::from_ei_event(ei_event) {
-                    event_tx.send((handle, CaptureEvent::Input(event))).await.expect("no channel");
+                    event_tx.send((pos, CaptureEvent::Input(event))).await.expect("no channel");
                 }
             }
         }
@@ -587,18 +580,18 @@ async fn handle_ei_event(
 
 #[async_trait]
 impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+    async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
-            .send(LibeiNotifyEvent::Create(handle, pos))
+            .send(LibeiNotifyEvent::Create(pos))
             .await;
         Ok(())
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
+    async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
-            .send(LibeiNotifyEvent::Destroy(handle))
+            .send(LibeiNotifyEvent::Destroy(pos))
             .await;
         Ok(())
     }
@@ -629,7 +622,7 @@ impl<'a> Drop for LibeiInputCapture<'a> {
 }
 
 impl<'a> Stream for LibeiInputCapture<'a> {
-    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
+    type Item = Result<(Position, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.capture_task.poll_unpin(cx) {

@@ -3,7 +3,7 @@ use core::task::{Context, Poll};
 use futures::Stream;
 use once_cell::unsync::Lazy;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ptr::{addr_of, addr_of_mut};
 
 use futures::executor::block_on;
@@ -37,15 +37,15 @@ use input_event::{
     Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{Capture, CaptureError, CaptureEvent, CaptureHandle, Position};
+use super::{Capture, CaptureError, CaptureEvent, Position};
 
 enum Request {
-    Create(CaptureHandle, Position),
-    Destroy(CaptureHandle),
+    Create(Position),
+    Destroy(Position),
 }
 
 pub struct WindowsInputCapture {
-    event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
+    event_rx: Receiver<(Position, CaptureEvent)>,
     msg_thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -65,22 +65,22 @@ unsafe fn signal_message_thread(event_type: EventType) {
 
 #[async_trait]
 impl Capture for WindowsInputCapture {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+    async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
-                requests.push(Request::Create(handle, pos));
+                requests.push(Request::Create(pos));
             }
             signal_message_thread(EventType::Request);
         }
         Ok(())
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
+    async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError> {
         unsafe {
             {
                 let mut requests = REQUEST_BUFFER.lock().unwrap();
-                requests.push(Request::Destroy(handle));
+                requests.push(Request::Destroy(pos));
             }
             signal_message_thread(EventType::Request);
         }
@@ -98,9 +98,9 @@ impl Capture for WindowsInputCapture {
 }
 
 static mut REQUEST_BUFFER: Mutex<Vec<Request>> = Mutex::new(Vec::new());
-static mut ACTIVE_CLIENT: Option<CaptureHandle> = None;
-static mut CLIENT_FOR_POS: Lazy<HashMap<Position, CaptureHandle>> = Lazy::new(HashMap::new);
-static mut EVENT_TX: Option<Sender<(CaptureHandle, CaptureEvent)>> = None;
+static mut ACTIVE_CLIENT: Option<Position> = None;
+static mut CLIENTS: Lazy<HashSet<Position>> = Lazy::new(HashSet::new);
+static mut EVENT_TX: Option<Sender<(Position, CaptureEvent)>> = None;
 static mut EVENT_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 unsafe fn set_event_tid(tid: u32) {
     EVENT_THREAD_ID.store(tid, Ordering::SeqCst);
@@ -281,12 +281,12 @@ unsafe fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     };
 
     /* check if a client is registered for the barrier */
-    let Some(client) = CLIENT_FOR_POS.get(&pos) else {
+    if !CLIENTS.contains(&pos) {
         return ret;
-    };
+    }
 
     /* update active client and entry point */
-    ACTIVE_CLIENT.replace(*client);
+    ACTIVE_CLIENT.replace(pos);
     ENTRY_POINT = clamp_to_display_bounds(prev_pos, curr_pos);
 
     /* notify main thread */
@@ -305,7 +305,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     }
 
     /* get active client if any */
-    let Some(client) = ACTIVE_CLIENT else {
+    let Some(pos) = ACTIVE_CLIENT else {
         return LRESULT(1);
     };
 
@@ -313,7 +313,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     let Some(pointer_event) = to_mouse_event(wparam, lparam) else {
         return LRESULT(1);
     };
-    let event = (client, CaptureEvent::Input(Event::Pointer(pointer_event)));
+    let event = (pos, CaptureEvent::Input(Event::Pointer(pointer_event)));
 
     /* notify mainthread (drop events if sending too fast) */
     if let Err(e) = EVENT_TX.as_ref().unwrap().try_send(event) {
@@ -575,23 +575,16 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
 
 fn update_clients(request: Request) {
     match request {
-        Request::Create(handle, pos) => {
-            unsafe { CLIENT_FOR_POS.insert(pos, handle) };
+        Request::Create(pos) => {
+            unsafe { CLIENTS.insert(pos) };
         }
-        Request::Destroy(handle) => unsafe {
-            for pos in [
-                Position::Left,
-                Position::Right,
-                Position::Top,
-                Position::Bottom,
-            ] {
-                if ACTIVE_CLIENT == Some(handle) {
-                    ACTIVE_CLIENT.take();
-                }
-                if CLIENT_FOR_POS.get(&pos).copied() == Some(handle) {
-                    CLIENT_FOR_POS.remove(&pos);
+        Request::Destroy(pos) => unsafe {
+            if let Some(active_pos) = ACTIVE_CLIENT {
+                if pos == active_pos {
+                    let _ = ACTIVE_CLIENT.take();
                 }
             }
+            CLIENTS.remove(&pos);
         },
     }
 }
@@ -614,7 +607,7 @@ impl WindowsInputCapture {
 }
 
 impl Stream for WindowsInputCapture {
-    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
+    type Item = Result<(Position, CaptureEvent), CaptureError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),
