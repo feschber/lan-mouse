@@ -11,8 +11,9 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use input_event::{Event, KeyboardEvent, PointerEvent};
 use keycode::{KeyMap, KeyMapping};
 use std::ops::{Index, IndexMut};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::task::AbortHandle;
+use tokio::{sync::Notify, task::JoinHandle};
 
 use super::error::MacOSEmulationCreationError;
 
@@ -21,8 +22,9 @@ const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
 pub(crate) struct MacOSEmulation {
     event_source: CGEventSource,
-    repeat_task: Option<AbortHandle>,
+    repeat_task: Option<JoinHandle<()>>,
     button_state: ButtonState,
+    notify_repeat_task: Arc<Notify>,
 }
 
 struct ButtonState {
@@ -68,6 +70,7 @@ impl MacOSEmulation {
             event_source,
             button_state,
             repeat_task: None,
+            notify_repeat_task: Arc::new(Notify::new()),
         })
     }
 
@@ -79,20 +82,33 @@ impl MacOSEmulation {
     async fn spawn_repeat_task(&mut self, key: u16) {
         // there can only be one repeating key and it's
         // always the last to be pressed
-        self.kill_repeat_task();
+        self.cancel_repeat_task().await;
         let event_source = self.event_source.clone();
+        let notify = self.notify_repeat_task.clone();
         let repeat_task = tokio::task::spawn_local(async move {
-            tokio::time::sleep(DEFAULT_REPEAT_DELAY).await;
-            loop {
-                key_event(event_source.clone(), key, 1);
-                tokio::time::sleep(DEFAULT_REPEAT_INTERVAL).await;
+            let stop = tokio::select! {
+                _ = tokio::time::sleep(DEFAULT_REPEAT_DELAY) => false,
+                _ = notify.notified() => true,
+            };
+            if !stop {
+                loop {
+                    key_event(event_source.clone(), key, 1);
+                    tokio::select! {
+                        _ = tokio::time::sleep(DEFAULT_REPEAT_INTERVAL) => {},
+                        _ = notify.notified() => break,
+                    }
+                }
             }
+            // release key when cancelled
+            key_event(event_source.clone(), key, 0);
         });
-        self.repeat_task = Some(repeat_task.abort_handle());
+        self.repeat_task = Some(repeat_task);
     }
-    fn kill_repeat_task(&mut self) {
+
+    async fn cancel_repeat_task(&mut self) {
         if let Some(task) = self.repeat_task.take() {
-            task.abort();
+            self.notify_repeat_task.notify_waiters();
+            let _ = task.await;
         }
     }
 }
@@ -346,7 +362,7 @@ impl Emulation for MacOSEmulation {
                     match state {
                         // pressed
                         1 => self.spawn_repeat_task(code).await,
-                        _ => self.kill_repeat_task(),
+                        _ => self.cancel_repeat_task().await,
                     }
                     key_event(self.event_source.clone(), code, state)
                 }
