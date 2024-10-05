@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt::Display, task::Poll};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::Display,
+    mem::swap,
+    task::{ready, Poll},
+};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -112,19 +117,48 @@ impl Display for Backend {
 }
 
 pub struct InputCapture {
+    /// capture backend
     capture: Box<dyn Capture>,
+    /// keys pressed by active capture
     pressed_keys: HashSet<scancode::Linux>,
+    /// map from position to ids
+    position_map: HashMap<Position, Vec<CaptureHandle>>,
+    /// map from id to position
+    id_map: HashMap<CaptureHandle, Position>,
+    /// pending events
+    pending: VecDeque<(CaptureHandle, CaptureEvent)>,
 }
 
 impl InputCapture {
     /// create a new client with the given id
     pub async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
-        self.capture.create(id, pos).await
+        if let Some(v) = self.position_map.get_mut(&pos) {
+            v.push(id);
+            Ok(())
+        } else {
+            self.position_map.insert(pos, vec![id]);
+            self.id_map.insert(id, pos);
+            self.capture.create(pos).await
+        }
     }
 
     /// destroy the client with the given id, if it exists
     pub async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
-        self.capture.destroy(id).await
+        if let Some(pos) = self.id_map.remove(&id) {
+            let destroy = if let Some(v) = self.position_map.get_mut(&pos) {
+                v.retain(|&i| i != id);
+                // we were the last id registered at this position
+                v.is_empty()
+            } else {
+                // nothing to destroy
+                false
+            };
+            if destroy {
+                self.position_map.remove(&pos);
+                self.capture.destroy(pos).await?;
+            }
+        }
+        Ok(())
     }
 
     /// release mouse
@@ -143,6 +177,9 @@ impl InputCapture {
         let capture = create(backend).await?;
         Ok(Self {
             capture,
+            id_map: Default::default(),
+            pending: Default::default(),
+            position_map: Default::default(),
             pressed_keys: HashSet::new(),
         })
     }
@@ -170,29 +207,65 @@ impl Stream for InputCapture {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        match self.capture.poll_next_unpin(cx) {
-            Poll::Ready(e) => {
-                if let Some(Ok((
-                    _,
-                    CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })),
-                ))) = e
+        if let Some(e) = self.pending.pop_front() {
+            return Poll::Ready(Some(Ok(e)));
+        }
+
+        // ready
+        let event = ready!(self.capture.poll_next_unpin(cx));
+
+        // stream closed
+        let event = match event {
+            Some(e) => e,
+            None => return Poll::Ready(None),
+        };
+
+        // error occurred
+        let (pos, event) = match event {
+            Ok(e) => e,
+            Err(e) => return Poll::Ready(Some(Err(e))),
+        };
+
+        // handle key presses
+        if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })) = event {
+            self.update_pressed_keys(key, state);
+        }
+
+        let len = self
+            .position_map
+            .get(&pos)
+            .map(|ids| ids.len())
+            .unwrap_or(0);
+
+        match len {
+            0 => Poll::Pending,
+            1 => Poll::Ready(Some(Ok((
+                self.position_map.get(&pos).expect("no id")[0],
+                event,
+            )))),
+            _ => {
+                let mut position_map = HashMap::new();
+                swap(&mut self.position_map, &mut position_map);
                 {
-                    self.update_pressed_keys(key, state);
+                    for &id in position_map.get(&pos).expect("position") {
+                        self.pending.push_back((id, event));
+                    }
                 }
-                Poll::Ready(e)
+                swap(&mut self.position_map, &mut position_map);
+
+                Poll::Ready(Some(Ok(self.pending.pop_front().expect("event"))))
             }
-            Poll::Pending => Poll::Pending,
         }
     }
 }
 
 #[async_trait]
-trait Capture: Stream<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>> + Unpin {
+trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + Unpin {
     /// create a new client with the given id
-    async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError>;
+    async fn create(&mut self, pos: Position) -> Result<(), CaptureError>;
 
     /// destroy the client with the given id, if it exists
-    async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError>;
+    async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError>;
 
     /// release mouse
     async fn release(&mut self) -> Result<(), CaptureError>;
@@ -204,14 +277,14 @@ trait Capture: Stream<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>
 async fn create_backend(
     backend: Backend,
 ) -> Result<
-    Box<dyn Capture<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(Position, CaptureEvent), CaptureError>>>,
     CaptureCreationError,
 > {
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
         #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        Backend::LayerShell => Ok(Box::new(wayland::WaylandInputCapture::new()?)),
+        Backend::LayerShell => Ok(Box::new(wayland::LayerShellInputCapture::new()?)),
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
         Backend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
         #[cfg(windows)]
@@ -225,7 +298,7 @@ async fn create_backend(
 async fn create(
     backend: Option<Backend>,
 ) -> Result<
-    Box<dyn Capture<Item = Result<(CaptureHandle, CaptureEvent), CaptureError>>>,
+    Box<dyn Capture<Item = Result<(Position, CaptureEvent), CaptureError>>>,
     CaptureCreationError,
 > {
     if let Some(backend) = backend {

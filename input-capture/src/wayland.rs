@@ -64,7 +64,7 @@ use crate::{CaptureError, CaptureEvent};
 
 use super::{
     error::{LayerShellCaptureCreationError, WaylandBindError},
-    Capture, CaptureHandle, Position,
+    Capture, Position,
 };
 
 struct Globals {
@@ -102,13 +102,13 @@ struct State {
     pointer_lock: Option<ZwpLockedPointerV1>,
     rel_pointer: Option<ZwpRelativePointerV1>,
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
-    client_for_window: Vec<(Arc<Window>, CaptureHandle)>,
-    focused: Option<(Arc<Window>, CaptureHandle)>,
+    active_windows: Vec<Arc<Window>>,
+    focused: Option<Arc<Window>>,
     g: Globals,
     wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
-    pending_events: VecDeque<(CaptureHandle, CaptureEvent)>,
+    pending_events: VecDeque<(Position, CaptureEvent)>,
     output_info: Vec<(WlOutput, OutputInfo)>,
     scroll_discrete_pending: bool,
 }
@@ -124,7 +124,7 @@ impl AsRawFd for Inner {
     }
 }
 
-pub struct WaylandInputCapture(AsyncFd<Inner>);
+pub struct LayerShellInputCapture(AsyncFd<Inner>);
 
 struct Window {
     buffer: wl_buffer::WlBuffer,
@@ -256,7 +256,7 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
     }
 }
 
-impl WaylandInputCapture {
+impl LayerShellInputCapture {
     pub fn new() -> std::result::Result<Self, LayerShellCaptureCreationError> {
         let conn = Connection::connect_to_env()?;
         let (g, mut queue) = registry_queue_init::<State>(&conn)?;
@@ -323,7 +323,7 @@ impl WaylandInputCapture {
             pointer_lock: None,
             rel_pointer: None,
             shortcut_inhibitor: None,
-            client_for_window: Vec::new(),
+            active_windows: Vec::new(),
             focused: None,
             qh,
             wayland_fd,
@@ -370,23 +370,18 @@ impl WaylandInputCapture {
 
         let inner = AsyncFd::new(Inner { queue, state })?;
 
-        Ok(WaylandInputCapture(inner))
+        Ok(LayerShellInputCapture(inner))
     }
 
-    fn add_client(&mut self, handle: CaptureHandle, pos: Position) {
-        self.0.get_mut().state.add_client(handle, pos);
+    fn add_client(&mut self, pos: Position) {
+        self.0.get_mut().state.add_client(pos);
     }
 
-    fn delete_client(&mut self, handle: CaptureHandle) {
+    fn delete_client(&mut self, pos: Position) {
         let inner = self.0.get_mut();
         // remove all windows corresponding to this client
-        while let Some(i) = inner
-            .state
-            .client_for_window
-            .iter()
-            .position(|(_, c)| *c == handle)
-        {
-            inner.state.client_for_window.remove(i);
+        while let Some(i) = inner.state.active_windows.iter().position(|w| w.pos == pos) {
+            inner.state.active_windows.remove(i);
             inner.state.focused = None;
         }
     }
@@ -400,7 +395,7 @@ impl State {
         serial: u32,
         qh: &QueueHandle<State>,
     ) {
-        let (window, _) = self.focused.as_ref().unwrap();
+        let window = self.focused.as_ref().unwrap();
 
         // hide the cursor
         pointer.set_cursor(serial, None, 0, 0);
@@ -443,7 +438,7 @@ impl State {
 
     fn ungrab(&mut self) {
         // get focused client
-        let (window, _client) = match self.focused.as_ref() {
+        let window = match self.focused.as_ref() {
             Some(focused) => focused,
             None => return,
         };
@@ -473,27 +468,23 @@ impl State {
         }
     }
 
-    fn add_client(&mut self, client: CaptureHandle, pos: Position) {
+    fn add_client(&mut self, pos: Position) {
         let outputs = get_output_configuration(self, pos);
 
         log::debug!("outputs: {outputs:?}");
         outputs.iter().for_each(|(o, i)| {
             let window = Window::new(self, &self.qh, o, pos, i.size);
             let window = Arc::new(window);
-            self.client_for_window.push((window, client));
+            self.active_windows.push(window);
         });
     }
 
     fn update_windows(&mut self) {
         log::debug!("updating windows");
         log::debug!("output info: {:?}", self.output_info);
-        let clients: Vec<_> = self
-            .client_for_window
-            .drain(..)
-            .map(|(w, c)| (c, w.pos))
-            .collect();
-        for (client, pos) in clients {
-            self.add_client(client, pos);
+        let clients: Vec<_> = self.active_windows.drain(..).map(|w| w.pos).collect();
+        for pos in clients {
+            self.add_client(pos);
         }
     }
 }
@@ -566,15 +557,15 @@ impl Inner {
 }
 
 #[async_trait]
-impl Capture for WaylandInputCapture {
-    async fn create(&mut self, handle: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
-        self.add_client(handle, pos);
+impl Capture for LayerShellInputCapture {
+    async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
+        self.add_client(pos);
         let inner = self.0.get_mut();
         Ok(inner.flush_events()?)
     }
 
-    async fn destroy(&mut self, handle: CaptureHandle) -> Result<(), CaptureError> {
-        self.delete_client(handle);
+    async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError> {
+        self.delete_client(pos);
         let inner = self.0.get_mut();
         Ok(inner.flush_events()?)
     }
@@ -591,8 +582,8 @@ impl Capture for WaylandInputCapture {
     }
 }
 
-impl Stream for WaylandInputCapture {
-    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
+impl Stream for LayerShellInputCapture {
+    type Item = Result<(Position, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.0.get_mut().state.pending_events.pop_front() {
@@ -685,23 +676,20 @@ impl Dispatch<WlPointer, ()> for State {
             } => {
                 // get client corresponding to the focused surface
                 {
-                    if let Some((window, client)) = app
-                        .client_for_window
-                        .iter()
-                        .find(|(w, _c)| w.surface == surface)
-                    {
-                        app.focused = Some((window.clone(), *client));
+                    if let Some(window) = app.active_windows.iter().find(|w| w.surface == surface) {
+                        app.focused = Some(window.clone());
                         app.grab(&surface, pointer, serial, qh);
                     } else {
                         return;
                     }
                 }
-                let (_, client) = app
-                    .client_for_window
+                let pos = app
+                    .active_windows
                     .iter()
-                    .find(|(w, _c)| w.surface == surface)
+                    .find(|w| w.surface == surface)
+                    .map(|w| w.pos)
                     .unwrap();
-                app.pending_events.push_back((*client, CaptureEvent::Begin));
+                app.pending_events.push_back((pos, CaptureEvent::Begin));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in
@@ -722,9 +710,9 @@ impl Dispatch<WlPointer, ()> for State {
                 button,
                 state,
             } => {
-                let (_, client) = app.focused.as_ref().unwrap();
+                let window = app.focused.as_ref().unwrap();
                 app.pending_events.push_back((
-                    *client,
+                    window.pos,
                     CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                         time,
                         button,
@@ -733,7 +721,7 @@ impl Dispatch<WlPointer, ()> for State {
                 ));
             }
             wl_pointer::Event::Axis { time, axis, value } => {
-                let (_, client) = app.focused.as_ref().unwrap();
+                let window = app.focused.as_ref().unwrap();
                 if app.scroll_discrete_pending {
                     // each axisvalue120 event is coupled with
                     // a corresponding axis event, which needs to
@@ -741,7 +729,7 @@ impl Dispatch<WlPointer, ()> for State {
                     app.scroll_discrete_pending = false;
                 } else {
                     app.pending_events.push_back((
-                        *client,
+                        window.pos,
                         CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                             time,
                             axis: u32::from(axis) as u8,
@@ -751,10 +739,10 @@ impl Dispatch<WlPointer, ()> for State {
                 }
             }
             wl_pointer::Event::AxisValue120 { axis, value120 } => {
-                let (_, client) = app.focused.as_ref().unwrap();
+                let window = app.focused.as_ref().unwrap();
                 app.scroll_discrete_pending = true;
                 app.pending_events.push_back((
-                    *client,
+                    window.pos,
                     CaptureEvent::Input(Event::Pointer(PointerEvent::AxisDiscrete120 {
                         axis: u32::from(axis) as u8,
                         value: value120,
@@ -780,10 +768,7 @@ impl Dispatch<WlKeyboard, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let (_window, client) = match &app.focused {
-            Some(focused) => (Some(&focused.0), Some(&focused.1)),
-            None => (None, None),
-        };
+        let window = &app.focused;
         match event {
             wl_keyboard::Event::Key {
                 serial: _,
@@ -791,9 +776,9 @@ impl Dispatch<WlKeyboard, ()> for State {
                 key,
                 state,
             } => {
-                if let Some(client) = client {
+                if let Some(window) = window {
                     app.pending_events.push_back((
-                        *client,
+                        window.pos,
                         CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                             time,
                             key,
@@ -809,9 +794,9 @@ impl Dispatch<WlKeyboard, ()> for State {
                 mods_locked,
                 group,
             } => {
-                if let Some(client) = client {
+                if let Some(window) = window {
                     app.pending_events.push_back((
-                        *client,
+                        window.pos,
                         CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Modifiers {
                             depressed: mods_depressed,
                             latched: mods_latched,
@@ -843,10 +828,10 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
             ..
         } = event
         {
-            if let Some((_window, client)) = &app.focused {
+            if let Some(window) = &app.focused {
                 let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
                 app.pending_events.push_back((
-                    *client,
+                    window.pos,
                     CaptureEvent::Input(Event::Pointer(PointerEvent::Motion { time, dx, dy })),
                 ));
             }
@@ -864,10 +849,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         if let zwlr_layer_surface_v1::Event::Configure { serial, .. } = event {
-            if let Some((window, _client)) = app
-                .client_for_window
+            if let Some(window) = app
+                .active_windows
                 .iter()
-                .find(|(w, _c)| &w.layer_surface == layer_surface)
+                .find(|w| &w.layer_surface == layer_surface)
             {
                 // client corresponding to the layer_surface
                 let surface = &window.surface;

@@ -11,6 +11,7 @@ pub async fn run(config: Config) -> Result<(), InputCaptureError> {
         let mut input_capture = InputCapture::new(backend).await?;
         log::info!("creating clients");
         input_capture.create(0, Position::Left).await?;
+        input_capture.create(4, Position::Left).await?;
         input_capture.create(1, Position::Right).await?;
         input_capture.create(2, Position::Top).await?;
         input_capture.create(3, Position::Bottom).await?;
@@ -28,12 +29,13 @@ async fn do_capture(input_capture: &mut InputCapture) -> Result<(), CaptureError
             .await
             .ok_or(CaptureError::EndOfStream)??;
         let pos = match client {
-            0 => Position::Left,
+            0 | 4 => Position::Left,
             1 => Position::Right,
             2 => Position::Top,
-            _ => Position::Bottom,
+            3 => Position::Bottom,
+            _ => panic!(),
         };
-        log::info!("position: {pos}, event: {event}");
+        log::info!("position: {client} ({pos}), event: {event}");
         if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key: 1, .. })) = event {
             input_capture.release().await?;
             break Ok(());

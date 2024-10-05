@@ -1,6 +1,4 @@
-use super::{
-    error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, CaptureHandle, Position,
-};
+use super::{error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, Position};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_foundation::base::{kCFAllocatorDefault, CFRelease};
@@ -20,7 +18,7 @@ use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::{c_char, CString};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -39,44 +37,44 @@ struct Bounds {
 
 #[derive(Debug)]
 struct InputCaptureState {
-    client_for_pos: Lazy<HashMap<Position, CaptureHandle>>,
-    current_client: Option<(CaptureHandle, Position)>,
+    active_clients: Lazy<HashSet<Position>>,
+    current_pos: Option<Position>,
     bounds: Bounds,
 }
 
 #[derive(Debug)]
 enum ProducerEvent {
     Release,
-    Create(CaptureHandle, Position),
-    Destroy(CaptureHandle),
-    Grab((CaptureHandle, Position)),
+    Create(Position),
+    Destroy(Position),
+    Grab(Position),
     EventTapDisabled,
 }
 
 impl InputCaptureState {
     fn new() -> Result<Self, MacosCaptureCreationError> {
         let mut res = Self {
-            client_for_pos: Lazy::new(HashMap::new),
-            current_client: None,
+            active_clients: Lazy::new(HashSet::new),
+            current_pos: None,
             bounds: Bounds::default(),
         };
         res.update_bounds()?;
         Ok(res)
     }
 
-    fn crossed(&mut self, event: &CGEvent) -> Option<(CaptureHandle, Position)> {
+    fn crossed(&mut self, event: &CGEvent) -> Option<Position> {
         let location = event.location();
         let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
         let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
 
-        for (position, client) in self.client_for_pos.iter() {
-            if (position == &Position::Left && (location.x + relative_x) <= self.bounds.xmin)
-                || (position == &Position::Right && (location.x + relative_x) >= self.bounds.xmax)
-                || (position == &Position::Top && (location.y + relative_y) <= self.bounds.ymin)
-                || (position == &Position::Bottom && (location.y + relative_y) >= self.bounds.ymax)
+        for &position in self.active_clients.iter() {
+            if (position == Position::Left && (location.x + relative_x) <= self.bounds.xmin)
+                || (position == Position::Right && (location.x + relative_x) >= self.bounds.xmax)
+                || (position == Position::Top && (location.y + relative_y) <= self.bounds.ymin)
+                || (position == Position::Bottom && (location.y + relative_y) >= self.bounds.ymax)
             {
-                log::debug!("Crossed barrier into client: {client}, {position:?}");
-                return Some((*client, *position));
+                log::debug!("Crossed barrier into position: {position:?}");
+                return Some(position);
             }
         }
         None
@@ -102,7 +100,7 @@ impl InputCaptureState {
     // to the edge of the screen, the cursor will be hidden but we dont want it to appear in a
     // random location when we exit the client
     fn reset_mouse_position(&self, event: &CGEvent) -> Result<(), CaptureError> {
-        if let Some((_, pos)) = self.current_client {
+        if let Some(pos) = self.current_pos {
             let location = event.location();
             let edge_offset = 1.0;
 
@@ -146,40 +144,31 @@ impl InputCaptureState {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
             ProducerEvent::Release => {
-                if self.current_client.is_some() {
+                if self.current_pos.is_some() {
                     CGDisplay::show_cursor(&CGDisplay::main())
                         .map_err(CaptureError::CoreGraphics)?;
-                    self.current_client = None;
+                    self.current_pos = None;
                 }
             }
-            ProducerEvent::Grab(client) => {
-                if self.current_client.is_none() {
+            ProducerEvent::Grab(pos) => {
+                if self.current_pos.is_none() {
                     CGDisplay::hide_cursor(&CGDisplay::main())
                         .map_err(CaptureError::CoreGraphics)?;
-                    self.current_client = Some(client);
+                    self.current_pos = Some(pos);
                 }
             }
-            ProducerEvent::Create(c, p) => {
-                self.client_for_pos.insert(p, c);
+            ProducerEvent::Create(p) => {
+                self.active_clients.insert(p);
             }
-            ProducerEvent::Destroy(c) => {
-                for pos in [
-                    Position::Left,
-                    Position::Right,
-                    Position::Top,
-                    Position::Bottom,
-                ] {
-                    if let Some((current_c, _)) = self.current_client {
-                        if current_c == c {
-                            CGDisplay::show_cursor(&CGDisplay::main())
-                                .map_err(CaptureError::CoreGraphics)?;
-                            self.current_client = None;
-                        };
-                    }
-                    if self.client_for_pos.get(&pos).copied() == Some(c) {
-                        self.client_for_pos.remove(&pos);
-                    }
+            ProducerEvent::Destroy(p) => {
+                if let Some(current) = self.current_pos {
+                    if current == p {
+                        CGDisplay::show_cursor(&CGDisplay::main())
+                            .map_err(CaptureError::CoreGraphics)?;
+                        self.current_pos = None;
+                    };
                 }
+                self.active_clients.remove(&p);
             }
             ProducerEvent::EventTapDisabled => return Err(CaptureError::EventTapDisabled),
         };
@@ -335,7 +324,7 @@ fn get_events(
 
 fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
-    event_tx: Sender<(CaptureHandle, CaptureEvent)>,
+    event_tx: Sender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
     exit: tokio::sync::oneshot::Sender<Result<(), &'static str>>,
 ) {
@@ -364,7 +353,7 @@ fn event_tap_thread(
         |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
             log::trace!("Got event from tap: {event_type:?}");
             let mut state = client_state.blocking_lock();
-            let mut client = None;
+            let mut pos = None;
             let mut res_events = vec![];
 
             if matches!(
@@ -380,8 +369,8 @@ fn event_tap_thread(
             }
 
             // Are we in a client?
-            if let Some((current_client, _)) = state.current_client {
-                client = Some(current_client);
+            if let Some(current_pos) = state.current_pos {
+                pos = Some(current_pos);
                 get_events(&event_type, cg_ev, &mut res_events).unwrap_or_else(|e| {
                     log::error!("Failed to get events: {e}");
                 });
@@ -395,19 +384,19 @@ fn event_tap_thread(
             }
             // Did we cross a barrier?
             else if matches!(event_type, CGEventType::MouseMoved) {
-                if let Some((new_client, pos)) = state.crossed(cg_ev) {
-                    client = Some(new_client);
+                if let Some(new_pos) = state.crossed(cg_ev) {
+                    pos = Some(new_pos);
                     res_events.push(CaptureEvent::Begin);
                     notify_tx
-                        .blocking_send(ProducerEvent::Grab((new_client, pos)))
+                        .blocking_send(ProducerEvent::Grab(new_pos))
                         .expect("Failed to send notification");
                 }
             }
 
-            if let Some(client) = client {
+            if let Some(pos) = pos {
                 res_events.iter().for_each(|e| {
                     event_tx
-                        .blocking_send((client, *e))
+                        .blocking_send((pos, *e))
                         .expect("Failed to send event");
                 });
                 // Returning None should stop the event from being processed
@@ -434,7 +423,7 @@ fn event_tap_thread(
 }
 
 pub struct MacOSInputCapture {
-    event_rx: Receiver<(CaptureHandle, CaptureEvent)>,
+    event_rx: Receiver<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
 }
 
@@ -491,21 +480,21 @@ impl MacOSInputCapture {
 
 #[async_trait]
 impl Capture for MacOSInputCapture {
-    async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+    async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            log::debug!("creating client {id}, {pos}");
-            let _ = notify_tx.send(ProducerEvent::Create(id, pos)).await;
+            log::debug!("creating capture, {pos}");
+            let _ = notify_tx.send(ProducerEvent::Create(pos)).await;
             log::debug!("done !");
         });
         Ok(())
     }
 
-    async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
+    async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
-            log::debug!("destroying client {id}");
-            let _ = notify_tx.send(ProducerEvent::Destroy(id)).await;
+            log::debug!("destroying capture {pos}");
+            let _ = notify_tx.send(ProducerEvent::Destroy(pos)).await;
             log::debug!("done !");
         });
         Ok(())
@@ -526,7 +515,7 @@ impl Capture for MacOSInputCapture {
 }
 
 impl Stream for MacOSInputCapture {
-    type Item = Result<(CaptureHandle, CaptureEvent), CaptureError>;
+    type Item = Result<(Position, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
