@@ -515,8 +515,10 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
             ..Default::default()
         };
 
-
-        if WINDOW_CLASS_REGISTERED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if WINDOW_CLASS_REGISTERED
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             /* register window class if not yet done so */
             let ret = RegisterClassW(&window_class);
             if ret == 0 {
