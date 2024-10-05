@@ -8,7 +8,7 @@ use std::ptr::{addr_of, addr_of_mut};
 
 use futures::executor::block_on;
 use std::default::Default;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::task::ready;
 use std::{pin::Pin, thread};
@@ -493,6 +493,8 @@ fn get_msg() -> Option<MSG> {
     }
 }
 
+static WINDOW_CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
+
 fn message_thread(ready_tx: mpsc::Sender<()>) {
     unsafe {
         set_event_tid(GetCurrentThreadId());
@@ -513,9 +515,13 @@ fn message_thread(ready_tx: mpsc::Sender<()>) {
             ..Default::default()
         };
 
-        let ret = RegisterClassW(&window_class);
-        if ret == 0 {
-            panic!("RegisterClassW");
+
+        if WINDOW_CLASS_REGISTERED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            /* register window class if not yet done so */
+            let ret = RegisterClassW(&window_class);
+            if ret == 0 {
+                panic!("RegisterClassW");
+            }
         }
 
         /* window is used ro receive WM_DISPLAYCHANGE messages */
