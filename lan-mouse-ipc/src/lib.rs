@@ -201,6 +201,10 @@ pub enum FrontendEvent {
     AuthorizedUpdated(HashMap<String, String>),
     /// public key fingerprint of this device
     PublicKeyFingerprint(String),
+    /// incoming connected
+    IncomingConnected(String, SocketAddr, Position),
+    /// incoming disconnected
+    IncomingDisconnected(String),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]

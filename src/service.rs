@@ -22,6 +22,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     rc::Rc,
     sync::{Arc, RwLock},
+    u64,
 };
 use thiserror::Error;
 use tokio::{signal, sync::Notify};
@@ -44,6 +45,17 @@ pub enum ServiceError {
 
 pub struct ReleaseToken;
 
+enum IncomingEvent {
+    Connected {
+        addr: SocketAddr,
+        pos: Position,
+        fingerprint: String,
+    },
+    Disconnected {
+        addr: SocketAddr,
+    },
+}
+
 #[derive(Clone)]
 pub struct Service {
     active: Rc<Cell<Option<ClientHandle>>>,
@@ -54,12 +66,13 @@ pub struct Service {
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
-    pending_incoming: Rc<RefCell<VecDeque<(SocketAddr, Position, String)>>>,
+    pending_incoming: Rc<RefCell<VecDeque<IncomingEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
-    incoming_conns: Rc<RefCell<HashMap<SocketAddr, Position>>>,
+    incoming_conns: Rc<RefCell<HashMap<ClientHandle, (String, SocketAddr)>>>,
     cert: Certificate,
+    next_trigger_handle: u64,
 }
 
 #[derive(Default)]
@@ -118,6 +131,7 @@ impl Service {
             emulation_status: Default::default(),
             incoming_conns: Rc::new(RefCell::new(HashMap::new())),
             should_release: Default::default(),
+            next_trigger_handle: 0,
         };
         Ok(service)
     }
@@ -171,11 +185,26 @@ impl Service {
                     }
                 },
                 _ = self.notifies.incoming.notified() => {
-                    while let Some((addr, pos, fingerprint)) = {
+                    while let Some(incoming) = {
                         let incoming = self.pending_incoming.borrow_mut().pop_front();
                         incoming
                     } {
-                        // capture.register(addr, pos);
+                        match incoming {
+                            IncomingEvent::Connected { addr, pos, fingerprint } => {
+                                self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                                self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                            },
+                            IncomingEvent::Disconnected { addr } => {
+                                if let Some(fp) = self.remove_incoming(addr, &capture) {
+                                    self.notify_frontend(FrontendEvent::IncomingDisconnected(fp));
+                                }
+                            },
+                        }
+                    }
+                },
+                handle = capture.entered() => {
+                    if let Some((_fp, addr)) = self.incoming_conns.borrow().get(&handle) {
+                        emulation.notify_release(*addr);
                     }
                 },
                 _ = self.cancelled() => break,
@@ -194,6 +223,36 @@ impl Service {
         emulation.terminate().await;
 
         Ok(())
+    }
+
+    fn add_incoming(
+        &mut self,
+        addr: SocketAddr,
+        pos: Position,
+        fingerprint: String,
+        capture: &Capture,
+    ) {
+        const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
+        let handle = ENTER_HANDLE_BEGIN + self.next_trigger_handle;
+        self.next_trigger_handle += 1;
+        capture.create(handle, pos);
+        self.incoming_conns
+            .borrow_mut()
+            .insert(handle, (fingerprint, addr));
+    }
+
+    fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<String> {
+        let handle = self
+            .incoming_conns
+            .borrow()
+            .iter()
+            .find(|(_, (_, a))| *a == addr)
+            .map(|(k, _)| *k)?;
+        capture.destroy(handle);
+        self.incoming_conns
+            .borrow_mut()
+            .remove(&handle)
+            .map(|(f, _)| f)
     }
 
     fn notify_frontend(&self, event: FrontendEvent) {
@@ -433,7 +492,17 @@ impl Service {
     pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position, fingerprint: String) {
         self.pending_incoming
             .borrow_mut()
-            .push_back((addr, pos, fingerprint));
+            .push_back(IncomingEvent::Connected {
+                addr,
+                pos,
+                fingerprint,
+            });
         self.notifies.incoming.notify_one();
+    }
+
+    pub(crate) fn deregister_incoming(&self, addr: SocketAddr) {
+        self.pending_incoming
+            .borrow_mut()
+            .push_back(IncomingEvent::Disconnected { addr });
     }
 }

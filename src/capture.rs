@@ -20,6 +20,7 @@ use crate::{connect::LanMouseConnection, service::Service};
 pub(crate) struct Capture {
     tx: Sender<CaptureRequest>,
     task: JoinHandle<()>,
+    enter_rx: Receiver<CaptureHandle>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -35,8 +36,9 @@ enum CaptureRequest {
 impl Capture {
     pub(crate) fn new(server: Service, conn: LanMouseConnection) -> Self {
         let (tx, rx) = channel();
-        let task = spawn_local(Self::run(server.clone(), rx, conn));
-        Self { tx, task }
+        let (enter_tx, enter_rx) = channel();
+        let task = spawn_local(Self::run(server.clone(), rx, conn, enter_tx));
+        Self { tx, task, enter_rx }
     }
 
     pub(crate) async fn terminate(&mut self) {
@@ -66,9 +68,18 @@ impl Capture {
             .expect("channel closed");
     }
 
-    async fn run(server: Service, mut rx: Receiver<CaptureRequest>, mut conn: LanMouseConnection) {
+    pub(crate) async fn entered(&mut self) -> CaptureHandle {
+        self.enter_rx.recv().await.expect("channel closed")
+    }
+
+    async fn run(
+        server: Service,
+        mut rx: Receiver<CaptureRequest>,
+        mut conn: LanMouseConnection,
+        mut enter_tx: Sender<CaptureHandle>,
+    ) {
         loop {
-            if let Err(e) = do_capture(&server, &mut conn, &mut rx).await {
+            if let Err(e) = do_capture(&server, &mut conn, &mut rx, &mut enter_tx).await {
                 log::warn!("input capture exited: {e}");
             }
             server.set_capture_status(Status::Disabled);
@@ -90,6 +101,7 @@ async fn do_capture(
     server: &Service,
     conn: &mut LanMouseConnection,
     rx: &mut Receiver<CaptureRequest>,
+    enter_tx: &mut Sender<CaptureHandle>,
 ) -> Result<(), InputCaptureError> {
     let backend = server.config.capture_backend.map(|b| b.into());
 
@@ -121,7 +133,7 @@ async fn do_capture(
     loop {
         tokio::select! {
             event = capture.next() => match event {
-                Some(event) => handle_capture_event(server, &mut capture, conn, event?, &mut state).await?,
+                Some(event) => handle_capture_event(server, &mut capture, conn, event?, &mut state, enter_tx).await?,
                 None => return Ok(()),
             },
             (handle, event) = conn.recv() => {
@@ -196,6 +208,7 @@ async fn handle_capture_event(
     conn: &LanMouseConnection,
     event: (CaptureHandle, CaptureEvent),
     state: &mut State,
+    enter_tx: &mut Sender<CaptureHandle>,
 ) -> Result<(), CaptureError> {
     let (handle, event) = event;
     log::trace!("({handle}): {event:?}");
@@ -209,6 +222,10 @@ async fn handle_capture_event(
     if capture.keys_pressed(&server.config.release_bind) {
         log::info!("releasing capture: release-bind pressed");
         return release_capture(capture, server).await;
+    }
+
+    if event == CaptureEvent::Begin {
+        enter_tx.send(handle).expect("channel closed");
     }
 
     // activated a new client
