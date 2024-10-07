@@ -94,6 +94,13 @@ paru -S lan-mouse-bin
 - nixpkgs: [search.nixos.org](https://search.nixos.org/packages?channel=unstable&show=lan-mouse&from=0&size=50&sort=relevance&type=packages&query=lan-mouse)
 - flake: [README.md](./nix/README.md)
 
+### Building from source with Nix
+In the root of the project to build Lan Mouse, run
+```sh
+nix-build
+```
+
+You can find the executable in `result/bin/lan-mouse` .
 
 ### Manual Installation
 
