@@ -18,19 +18,26 @@ use tokio::{
 /// emulation handling events received from a listener
 pub(crate) struct Emulation {
     task: JoinHandle<()>,
+    release_tx: Sender<SocketAddr>,
 }
 
 impl Emulation {
     pub(crate) fn new(server: Service, listener: LanMouseListener) -> Self {
         let emulation_proxy = EmulationProxy::new(server.clone());
-        let task = spawn_local(Self::run(server, listener, emulation_proxy));
-        Self { task }
+        let (release_tx, release_rx) = channel();
+        let task = spawn_local(Self::run(server, listener, emulation_proxy, release_rx));
+        Self { task, release_tx }
+    }
+
+    pub(crate) fn notify_release(&self, addr: SocketAddr) {
+        self.release_tx.send(addr).expect("channel closed");
     }
 
     async fn run(
-        server: Service,
+        service: Service,
         mut listener: LanMouseListener,
         mut emulation_proxy: EmulationProxy,
+        mut release_rx: Receiver<SocketAddr>,
     ) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_response = HashMap::new();
@@ -47,9 +54,9 @@ impl Emulation {
                         ProtoEvent::Enter(pos) => {
                             if let Some(cert) = listener.get_certificate_fingerprint(addr).await {
                                 log::info!("{addr} entered this device");
-                                server.release_capture();
+                                service.release_capture();
                                 listener.reply(addr, ProtoEvent::Ack(0)).await;
-                                server.register_incoming(addr, to_ipc_pos(pos), cert);
+                                service.register_incoming(addr, to_ipc_pos(pos), cert);
                             }
                         }
                         ProtoEvent::Leave(_) => {
@@ -57,22 +64,27 @@ impl Emulation {
                             listener.reply(addr, ProtoEvent::Ack(0)).await;
                         }
                         ProtoEvent::Input(event) => emulation_proxy.consume(event, addr),
-                        ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong(server.emulation_status.get() == Status::Enabled)).await,
+                        ProtoEvent::Ping => listener.reply(addr, ProtoEvent::Pong(service.emulation_status.get() == Status::Enabled)).await,
                         _ => {}
                     }
                 }
+                addr = release_rx.recv() => {
+                    let addr = addr.expect("channel closed");
+                    listener.reply(addr, ProtoEvent::Leave(0)).await;
+                }
                 _ = interval.tick() => {
-                    last_response.retain(|addr,instant| {
+                    last_response.retain(|&addr,instant| {
                         if instant.elapsed() > Duration::from_secs(5) {
                             log::warn!("releasing keys: {addr} not responding!");
-                            emulation_proxy.release_keys(*addr);
+                            emulation_proxy.release_keys(addr);
+                            service.deregister_incoming(addr);
                             false
                         } else {
                             true
                         }
                     });
                 }
-                _ = server.cancelled() => break,
+                _ = service.cancelled() => break,
             }
         }
         listener.terminate().await;

@@ -283,6 +283,8 @@ impl Cli {
             FrontendEvent::PublicKeyFingerprint(fp) => {
                 eprintln!("the public key fingerprint of this device is {fp}");
             }
+            FrontendEvent::IncomingConnected(fp, addr, pos) => {}
+            FrontendEvent::IncomingDisconnected(fp) => {}
         }
     }
 
