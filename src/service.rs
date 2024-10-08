@@ -70,7 +70,7 @@ pub struct Service {
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
-    incoming_conns: Rc<RefCell<HashMap<ClientHandle, (String, SocketAddr)>>>,
+    incoming_conns: Rc<RefCell<HashMap<ClientHandle, (String, SocketAddr, Position)>>>,
     cert: Certificate,
     next_trigger_handle: u64,
 }
@@ -203,7 +203,7 @@ impl Service {
                     }
                 },
                 handle = capture.entered() => {
-                    if let Some((_fp, addr)) = self.incoming_conns.borrow().get(&handle) {
+                    if let Some((_fp, addr, _pos)) = self.incoming_conns.borrow().get(&handle) {
                         emulation.notify_release(*addr);
                     }
                 },
@@ -225,6 +225,8 @@ impl Service {
         Ok(())
     }
 
+    pub(crate) const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
+
     fn add_incoming(
         &mut self,
         addr: SocketAddr,
@@ -232,13 +234,12 @@ impl Service {
         fingerprint: String,
         capture: &Capture,
     ) {
-        const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
-        let handle = ENTER_HANDLE_BEGIN + self.next_trigger_handle;
+        let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
         capture.create(handle, pos);
         self.incoming_conns
             .borrow_mut()
-            .insert(handle, (fingerprint, addr));
+            .insert(handle, (fingerprint, addr, pos));
     }
 
     fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<String> {
@@ -246,13 +247,20 @@ impl Service {
             .incoming_conns
             .borrow()
             .iter()
-            .find(|(_, (_, a))| *a == addr)
+            .find(|(_, (_, a, _))| *a == addr)
             .map(|(k, _)| *k)?;
         capture.destroy(handle);
         self.incoming_conns
             .borrow_mut()
             .remove(&handle)
-            .map(|(f, _)| f)
+            .map(|(f, _, _)| f)
+    }
+
+    pub(crate) fn get_incoming_pos(&self, handle: ClientHandle) -> Option<Position> {
+        self.incoming_conns
+            .borrow()
+            .get(&handle)
+            .map(|&(_, _, p)| p)
     }
 
     fn notify_frontend(&self, event: FrontendEvent) {
