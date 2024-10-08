@@ -22,7 +22,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     rc::Rc,
     sync::{Arc, RwLock},
-    u64,
 };
 use thiserror::Error;
 use tokio::{signal, sync::Notify};
@@ -56,6 +55,13 @@ enum IncomingEvent {
     },
 }
 
+#[derive(Debug)]
+pub struct Incoming {
+    fingerprint: String,
+    addr: SocketAddr,
+    pos: Position,
+}
+
 #[derive(Clone)]
 pub struct Service {
     active: Rc<Cell<Option<ClientHandle>>>,
@@ -70,7 +76,7 @@ pub struct Service {
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
-    incoming_conns: Rc<RefCell<HashMap<ClientHandle, (String, SocketAddr, Position)>>>,
+    incoming_conns: Rc<RefCell<HashMap<ClientHandle, Incoming>>>,
     cert: Certificate,
     next_trigger_handle: u64,
 }
@@ -203,8 +209,8 @@ impl Service {
                     }
                 },
                 handle = capture.entered() => {
-                    if let Some((_fp, addr, _pos)) = self.incoming_conns.borrow().get(&handle) {
-                        emulation.notify_release(*addr);
+                    if let Some(incoming) = self.incoming_conns.borrow().get(&handle) {
+                        emulation.notify_release(incoming.addr);
                     }
                 },
                 _ = self.cancelled() => break,
@@ -237,9 +243,14 @@ impl Service {
         let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
         capture.create(handle, pos);
-        self.incoming_conns
-            .borrow_mut()
-            .insert(handle, (fingerprint, addr, pos));
+        self.incoming_conns.borrow_mut().insert(
+            handle,
+            Incoming {
+                fingerprint,
+                addr,
+                pos,
+            },
+        );
     }
 
     fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<String> {
@@ -247,20 +258,20 @@ impl Service {
             .incoming_conns
             .borrow()
             .iter()
-            .find(|(_, (_, a, _))| *a == addr)
+            .find(|(_, incoming)| incoming.addr == addr)
             .map(|(k, _)| *k)?;
         capture.destroy(handle);
         self.incoming_conns
             .borrow_mut()
             .remove(&handle)
-            .map(|(f, _, _)| f)
+            .map(|incoming| incoming.fingerprint)
     }
 
     pub(crate) fn get_incoming_pos(&self, handle: ClientHandle) -> Option<Position> {
         self.incoming_conns
             .borrow()
             .get(&handle)
-            .map(|&(_, _, p)| p)
+            .map(|incoming| incoming.pos)
     }
 
     fn notify_frontend(&self, event: FrontendEvent) {

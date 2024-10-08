@@ -25,12 +25,11 @@ pub fn generate_fingerprint(cert: &[u8]) -> String {
         .iter()
         .map(|x| format!("{x:02x}"))
         .collect::<Vec<_>>();
-    let fingerprint = bytes.join(":").to_lowercase();
-    fingerprint
+    bytes.join(":").to_lowercase()
 }
 
 pub fn certificate_fingerprint(cert: &Certificate) -> String {
-    let certificate = cert.certificate.get(0).expect("certificate missing");
+    let certificate = cert.certificate.first().expect("certificate missing");
     generate_fingerprint(certificate)
 }
 
@@ -46,9 +45,9 @@ pub fn load_certificate(path: &Path) -> Result<Certificate, Error> {
 
 pub(crate) fn load_or_generate_key_and_cert(path: &Path) -> Result<Certificate, Error> {
     if path.exists() && path.is_file() {
-        return Ok(load_certificate(path)?);
+        Ok(load_certificate(path)?)
     } else {
-        return Ok(generate_key_and_cert(path)?);
+        generate_key_and_cert(path)
     }
 }
 

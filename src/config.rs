@@ -332,8 +332,7 @@ impl Config {
 
         let authorized_fingerprints = config_toml
             .as_mut()
-            .map(|c| std::mem::take(&mut c.authorized_fingerprints))
-            .flatten()
+            .and_then(|c| std::mem::take(&mut c.authorized_fingerprints))
             .unwrap_or_default();
 
         let mut clients: Vec<(TomlClient, Position)> = vec![];

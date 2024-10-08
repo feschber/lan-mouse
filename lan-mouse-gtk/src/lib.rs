@@ -142,8 +142,8 @@ fn build_ui(app: &Application) {
                     FrontendEvent::PublicKeyFingerprint(fp) => {
                         window.set_pk_fp(&fp);
                     }
-                    FrontendEvent::IncomingConnected(fp, addr, pos) => {}
-                    FrontendEvent::IncomingDisconnected(fp) => {}
+                    FrontendEvent::IncomingConnected(..) => {}
+                    FrontendEvent::IncomingDisconnected(..) => {}
                 }
             }
         }

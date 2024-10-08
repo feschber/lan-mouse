@@ -223,7 +223,7 @@ async fn receive_loop(
     tx: Sender<(ClientHandle, ProtoEvent)>,
 ) {
     let mut buf = [0u8; MAX_EVENT_SIZE];
-    while let Ok(_) = conn.recv(&mut buf).await {
+    while conn.recv(&mut buf).await.is_ok() {
         if let Ok(event) = buf.try_into() {
             match event {
                 ProtoEvent::Pong(b) => {
