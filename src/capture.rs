@@ -228,6 +228,19 @@ async fn handle_capture_event(
         enter_tx.send(handle).expect("channel closed");
     }
 
+    // incoming connection
+    if handle >= Service::ENTER_HANDLE_BEGIN {
+        // if there is no active outgoing connection at the current capture,
+        // we release the capture
+        if let Some(pos) = server.get_incoming_pos(handle) {
+            if server.client_manager.client_at(pos).is_none() {
+                capture.release().await?;
+            }
+        }
+        // we dont care about events from incoming handles except for releasing the capture
+        return Ok(());
+    }
+
     // activated a new client
     if event == CaptureEvent::Begin && Some(handle) != server.get_active() {
         *state = State::WaitingForAck;
