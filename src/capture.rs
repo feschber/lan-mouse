@@ -234,6 +234,7 @@ async fn handle_capture_event(
         // we release the capture
         if let Some(pos) = server.get_incoming_pos(handle) {
             if server.client_manager.client_at(pos).is_none() {
+                log::info!("releasing capture: no active client at this position");
                 capture.release().await?;
             }
         }
