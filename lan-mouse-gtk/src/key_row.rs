@@ -12,6 +12,12 @@ glib::wrapper! {
     @implements gtk::Accessible, gtk::Actionable, gtk::Buildable, gtk::ConstraintTarget;
 }
 
+impl Default for KeyRow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyRow {
     pub fn new() -> Self {
         Object::builder().build()

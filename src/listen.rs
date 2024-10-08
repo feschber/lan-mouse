@@ -32,11 +32,13 @@ pub enum ListenerCreationError {
     WebrtcDtls(#[from] webrtc_dtls::Error),
 }
 
+type ArcConn = Arc<dyn Conn + Send + Sync>;
+
 pub(crate) struct LanMouseListener {
     listen_rx: Receiver<(ProtoEvent, SocketAddr)>,
     listen_tx: Sender<(ProtoEvent, SocketAddr)>,
     listen_task: JoinHandle<()>,
-    conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>>,
+    conns: Rc<Mutex<Vec<(SocketAddr, ArcConn)>>>,
 }
 
 type VerifyPeerCertificateFn = Arc<
@@ -82,8 +84,7 @@ impl LanMouseListener {
 
         let listener = listen(listen_addr, cfg).await?;
 
-        let conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>> =
-            Rc::new(Mutex::new(Vec::new()));
+        let conns: Rc<Mutex<Vec<(SocketAddr, ArcConn)>>> = Rc::new(Mutex::new(Vec::new()));
 
         let conns_clone = conns.clone();
 
@@ -156,7 +157,7 @@ impl LanMouseListener {
         {
             let conn: &DTLSConn = conn.as_any().downcast_ref().expect("dtls conn");
             let certs = conn.connection_state().await.peer_certificates;
-            let cert = certs.get(0)?;
+            let cert = certs.first()?;
             let fingerprint = crypto::generate_fingerprint(cert);
             Some(fingerprint)
         } else {
@@ -177,9 +178,9 @@ impl Stream for LanMouseListener {
 }
 
 async fn read_loop(
-    conns: Rc<Mutex<Vec<(SocketAddr, Arc<dyn Conn + Send + Sync>)>>>,
+    conns: Rc<Mutex<Vec<(SocketAddr, ArcConn)>>>,
     addr: SocketAddr,
-    conn: Arc<dyn Conn + Send + Sync>,
+    conn: ArcConn,
     dtls_tx: Sender<(ProtoEvent, SocketAddr)>,
 ) -> Result<(), Error> {
     let mut b = [0u8; MAX_EVENT_SIZE];
