@@ -53,7 +53,7 @@ impl Emulation {
                     match event {
                         ProtoEvent::Enter(pos) => {
                             if let Some(cert) = listener.get_certificate_fingerprint(addr).await {
-                                log::info!("{addr} entered this device");
+                                log::info!("releasing capture: {addr} entered this device");
                                 service.release_capture();
                                 listener.reply(addr, ProtoEvent::Ack(0)).await;
                                 service.register_incoming(addr, to_ipc_pos(pos), cert);
@@ -69,6 +69,7 @@ impl Emulation {
                     }
                 }
                 addr = release_rx.recv() => {
+                    // notify the other end that we hit a barrier (should release capture)
                     let addr = addr.expect("channel closed");
                     listener.reply(addr, ProtoEvent::Leave(0)).await;
                 }

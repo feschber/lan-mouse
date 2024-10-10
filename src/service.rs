@@ -75,7 +75,6 @@ pub struct Service {
     pending_incoming: Rc<RefCell<VecDeque<IncomingEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
-    pub(crate) should_release: Rc<RefCell<Option<ReleaseToken>>>,
     incoming_conns: Rc<RefCell<HashMap<ClientHandle, Incoming>>>,
     cert: Certificate,
     next_trigger_handle: u64,
@@ -89,6 +88,7 @@ struct Notifies {
     port_changed: Notify,
     frontend_event_pending: Notify,
     cancel: CancellationToken,
+    release: Notify,
 }
 
 impl Service {
@@ -136,7 +136,6 @@ impl Service {
             capture_status: Default::default(),
             emulation_status: Default::default(),
             incoming_conns: Rc::new(RefCell::new(HashMap::new())),
-            should_release: Default::default(),
             next_trigger_handle: 0,
         };
         Ok(service)
@@ -208,7 +207,13 @@ impl Service {
                         }
                     }
                 },
+                _ = self.notifies.release.notified() => {
+                    self.set_active(None);
+                    capture.release();
+                }
                 handle = capture.entered() => {
+                    // we entered the capture zone for an incoming connection
+                    // => notify it that its capture should be released
                     if let Some(incoming) = self.incoming_conns.borrow().get(&handle) {
                         emulation.notify_release(incoming.addr);
                     }
@@ -497,7 +502,7 @@ impl Service {
     }
 
     pub(crate) fn release_capture(&self) {
-        self.should_release.replace(Some(ReleaseToken));
+        self.notifies.release.notify_one();
     }
 
     pub(crate) fn set_active(&self, handle: Option<ClientHandle>) {
