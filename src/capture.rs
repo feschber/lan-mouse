@@ -128,7 +128,7 @@ async fn do_capture(
         capture.create(handle, to_capture_pos(pos)).await?;
     }
 
-    let mut state = State::Receiving;
+    let mut state = State::WaitingForAck;
 
     loop {
         tokio::select! {
@@ -152,7 +152,10 @@ async fn do_capture(
                         state = State::Sending;
                     }
                     // client disconnected
-                    ProtoEvent::Leave(_) => release_capture(&mut capture, server).await?,
+                    ProtoEvent::Leave(_) => {
+                        log::info!("releasing capture: Server notified Leave");
+                        release_capture(&mut capture, server).await?;
+                    },
                     _ => {}
                 }
             },
@@ -197,7 +200,6 @@ macro_rules! debounce {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
-    Receiving,
     WaitingForAck,
     Sending,
 }
@@ -212,12 +214,6 @@ async fn handle_capture_event(
 ) -> Result<(), CaptureError> {
     let (handle, event) = event;
     log::trace!("({handle}): {event:?}");
-
-    if server.should_release.borrow_mut().take().is_some() && *state != State::Receiving {
-        log::info!("releasing capture: a client entered the device");
-        *state = State::Receiving;
-        return release_capture(capture, server).await;
-    }
 
     if capture.keys_pressed(&server.config.release_bind) {
         log::info!("releasing capture: release-bind pressed");
