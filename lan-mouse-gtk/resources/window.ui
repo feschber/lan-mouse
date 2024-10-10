@@ -121,7 +121,31 @@
                         -->
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">port</property>
+                            <property name="title">hostname &#38;amp; port</property>
+                            <child>
+                              <object class="GtkButton" id="copy-hostname-button">
+                                    <!--<property name="icon-name">edit-copy-symbolic</property>-->
+                                <property name="valign">center</property>
+                                <signal name="clicked" handler="handle_copy_hostname" swapped="true"/>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="spacing">30</property>
+                                    <child>
+                                      <object class="GtkLabel" id="hostname_label">
+                                        <property name="label">&lt;span font_style=&quot;italic&quot; font_weight=&quot;light&quot; foreground=&quot;darkgrey&quot;&gt;could not determine hostname&lt;/span&gt;</property>
+                                        <property name="use-markup">true</property>
+                                        <property name="valign">center</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage" id="hostname_copy_icon">
+                                        <property name="icon-name">edit-copy-symbolic</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                             <child>
                               <object class="GtkEntry" id="port_entry">
                                 <property name="max-width-chars">5</property>
@@ -160,20 +184,14 @@
                           </object>
                         </child>
                         <child>
-                          <object class="AdwActionRow">
-                            <property name="title">hostname</property>
+                          <object class="AdwActionRow" id="fingerprint_row">
+                            <property name="title">certificate fingerprint</property>
+                            <property name="icon-name">auth-fingerprint-symbolic</property>
                             <child>
-                              <object class="GtkLabel" id="hostname_label">
-                                <property name="label">&lt;span font_style=&quot;italic&quot; font_weight=&quot;light&quot; foreground=&quot;darkgrey&quot;&gt;could not determine hostname&lt;/span&gt;</property>
-                                <property name="use-markup">true</property>
-                                <property name="valign">center</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="copy-hostname-button">
+                              <object class="GtkButton" id="copy-fingerprint-button">
                                 <property name="icon-name">edit-copy-symbolic</property>
                                 <property name="valign">center</property>
-                                <signal name="clicked" handler="handle_copy_hostname" swapped="true"/>
+                                <signal name="clicked" handler="handle_copy_fingerprint" swapped="true"/>
                               </object>
                             </child>
                           </object>
@@ -204,6 +222,39 @@
                               <object class="AdwActionRow" id="client_placeholder">
                                 <property name="title">No connections!</property>
                                 <property name="subtitle">add a new client via the + button</property>
+                              </object>
+                            </child>
+                            <style>
+                              <class name="boxed-list" />
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Incoming Connections</property>
+                        <property name="header-suffix">
+                          <object class="GtkButton">
+                            <signal name="clicked" handler="handle_add_cert_fingerprint" swapped="true"/>
+                            <property name="child">
+                              <object class="AdwButtonContent">
+                                <property name="icon-name">auth-fingerprint-symbolic</property>
+                                <property name="label" translatable="yes">Authorize</property>
+                              </object>
+                            </property>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </property>
+                        <child>
+                          <object class="GtkListBox" id="authorized_list">
+                            <property name="selection-mode">none</property>
+                            <child type="placeholder">
+                              <object class="AdwActionRow" id="authorized_placeholder">
+                                <property name="title">no devices registered!</property>
+                                <property name="subtitle">authorize a new device via the "Authorize" button</property>
                               </object>
                             </child>
                             <style>

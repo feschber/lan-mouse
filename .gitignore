@@ -5,3 +5,6 @@
 .vscode/
 .direnv/
 result
+*.pem
+*.csr
+extfile.conf

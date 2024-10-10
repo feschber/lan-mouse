@@ -1,5 +1,7 @@
 mod imp;
 
+use std::collections::HashMap;
+
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::{clone, Object};
@@ -13,6 +15,8 @@ use lan_mouse_ipc::{
     ClientConfig, ClientHandle, ClientState, FrontendRequest, FrontendRequestWriter, Position,
     DEFAULT_PORT,
 };
+
+use crate::{fingerprint_window::FingerprintWindow, key_object::KeyObject, key_row::KeyRow};
 
 use super::{client_object::ClientObject, client_row::ClientRow};
 
@@ -42,8 +46,53 @@ impl Window {
             .expect("Could not get clients")
     }
 
+    pub fn authorized(&self) -> gio::ListStore {
+        self.imp()
+            .authorized
+            .borrow()
+            .clone()
+            .expect("Could not get authorized")
+    }
+
     fn client_by_idx(&self, idx: u32) -> Option<ClientObject> {
         self.clients().item(idx).map(|o| o.downcast().unwrap())
+    }
+
+    fn authorized_by_idx(&self, idx: u32) -> Option<KeyObject> {
+        self.authorized().item(idx).map(|o| o.downcast().unwrap())
+    }
+
+    fn setup_authorized(&self) {
+        let store = gio::ListStore::new::<KeyObject>();
+        self.imp().authorized.replace(Some(store));
+        let selection_model = NoSelection::new(Some(self.authorized()));
+        self.imp().authorized_list.bind_model(
+            Some(&selection_model),
+            clone!(
+                #[weak(rename_to = window)]
+                self,
+                #[upgrade_or_panic]
+                move |obj| {
+                    let key_obj = obj.downcast_ref().expect("object of type `KeyObject`");
+                    let row = window.create_key_row(key_obj);
+                    row.connect_closure(
+                        "request-delete",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: KeyRow| {
+                                if let Some(key_obj) = window.authorized_by_idx(row.index() as u32)
+                                {
+                                    window.request_fingerprint_remove(key_obj.get_fingerprint());
+                                }
+                            }
+                        ),
+                    );
+                    row.upcast()
+                }
+            ),
+        )
     }
 
     fn setup_clients(&self) {
@@ -114,9 +163,19 @@ impl Window {
     /// workaround for a bug in libadwaita that shows an ugly line beneath
     /// the last element if a placeholder is set.
     /// https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/6308
-    pub fn set_placeholder_visible(&self, visible: bool) {
+    pub fn update_placeholder_visibility(&self) {
+        let visible = self.clients().n_items() == 0;
         let placeholder = self.imp().client_placeholder.get();
         self.imp().client_list.set_placeholder(match visible {
+            true => Some(&placeholder),
+            false => None,
+        });
+    }
+
+    pub fn update_auth_placeholder_visibility(&self) {
+        let visible = self.authorized().n_items() == 0;
+        let placeholder = self.imp().authorized_placeholder.get();
+        self.imp().authorized_list.set_placeholder(match visible {
             true => Some(&placeholder),
             false => None,
         });
@@ -132,10 +191,16 @@ impl Window {
         row
     }
 
+    fn create_key_row(&self, key_object: &KeyObject) -> KeyRow {
+        let row = KeyRow::new();
+        row.bind(key_object);
+        row
+    }
+
     pub fn new_client(&self, handle: ClientHandle, client: ClientConfig, state: ClientState) {
         let client = ClientObject::new(handle, client, state.clone());
         self.clients().append(&client);
-        self.set_placeholder_visible(false);
+        self.update_placeholder_visibility();
         self.update_dns_state(handle, !state.ips.is_empty());
     }
 
@@ -157,7 +222,7 @@ impl Window {
 
         self.clients().remove(idx as u32);
         if self.clients().n_items() == 0 {
-            self.set_placeholder_visible(true);
+            self.update_placeholder_visibility();
         }
     }
 
@@ -286,6 +351,32 @@ impl Window {
         self.request(FrontendRequest::Delete(client.handle()));
     }
 
+    pub fn open_fingerprint_dialog(&self) {
+        let window = FingerprintWindow::new();
+        window.set_transient_for(Some(self));
+        window.connect_closure(
+            "confirm-clicked",
+            false,
+            closure_local!(
+                #[strong(rename_to = parent)]
+                self,
+                move |w: FingerprintWindow, desc: String, fp: String| {
+                    parent.request_fingerprint_add(desc, fp);
+                    w.close();
+                }
+            ),
+        );
+        window.present();
+    }
+
+    pub fn request_fingerprint_add(&self, desc: String, fp: String) {
+        self.request(FrontendRequest::AuthorizeKey(desc, fp));
+    }
+
+    pub fn request_fingerprint_remove(&self, fp: String) {
+        self.request(FrontendRequest::RemoveAuthorizedKey(fp));
+    }
+
     pub fn request(&self, request: FrontendRequest) {
         let mut requester = self.imp().frontend_request_writer.borrow_mut();
         let requester = requester.as_mut().unwrap();
@@ -318,5 +409,21 @@ impl Window {
         self.imp()
             .capture_emulation_group
             .set_visible(!capture || !emulation);
+    }
+
+    pub(crate) fn set_authorized_keys(&self, fingerprints: HashMap<String, String>) {
+        let authorized = self.authorized();
+        // clear list
+        authorized.remove_all();
+        // insert fingerprints
+        for (fingerprint, description) in fingerprints {
+            let key_obj = KeyObject::new(description, fingerprint);
+            authorized.append(&key_obj);
+        }
+        self.update_auth_placeholder_visibility();
+    }
+
+    pub(crate) fn set_pk_fp(&self, fingerprint: &str) {
+        self.imp().fingerprint_row.set_subtitle(fingerprint);
     }
 }
