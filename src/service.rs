@@ -75,7 +75,10 @@ pub struct Service {
     pending_incoming: Rc<RefCell<VecDeque<IncomingEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
-    incoming_conns: Rc<RefCell<HashMap<ClientHandle, Incoming>>>,
+    /// keep track of registered connections to avoid duplicate barriers
+    incoming_conns: Rc<RefCell<HashSet<SocketAddr>>>,
+    /// map from capture handle to connection info
+    incoming_conn_info: Rc<RefCell<HashMap<ClientHandle, Incoming>>>,
     cert: Certificate,
     next_trigger_handle: u64,
 }
@@ -135,7 +138,8 @@ impl Service {
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
-            incoming_conns: Rc::new(RefCell::new(HashMap::new())),
+            incoming_conn_info: Default::default(),
+            incoming_conns: Default::default(),
             next_trigger_handle: 0,
         };
         Ok(service)
@@ -196,8 +200,11 @@ impl Service {
                     } {
                         match incoming {
                             IncomingEvent::Connected { addr, pos, fingerprint } => {
-                                self.add_incoming(addr, pos, fingerprint.clone(), &capture);
-                                self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                                // check if already registered
+                                if self.incoming_conns.borrow_mut().insert(addr) {
+                                    self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                                    self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                                }
                             },
                             IncomingEvent::Disconnected { addr } => {
                                 if let Some(fp) = self.remove_incoming(addr, &capture) {
@@ -214,7 +221,7 @@ impl Service {
                 handle = capture.entered() => {
                     // we entered the capture zone for an incoming connection
                     // => notify it that its capture should be released
-                    if let Some(incoming) = self.incoming_conns.borrow().get(&handle) {
+                    if let Some(incoming) = self.incoming_conn_info.borrow().get(&handle) {
                         emulation.notify_release(incoming.addr);
                     }
                 },
@@ -248,7 +255,7 @@ impl Service {
         let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
         capture.create(handle, pos);
-        self.incoming_conns.borrow_mut().insert(
+        self.incoming_conn_info.borrow_mut().insert(
             handle,
             Incoming {
                 fingerprint,
@@ -260,20 +267,21 @@ impl Service {
 
     fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<String> {
         let handle = self
-            .incoming_conns
+            .incoming_conn_info
             .borrow()
             .iter()
             .find(|(_, incoming)| incoming.addr == addr)
             .map(|(k, _)| *k)?;
         capture.destroy(handle);
-        self.incoming_conns
+        self.incoming_conns.borrow_mut().remove(&addr);
+        self.incoming_conn_info
             .borrow_mut()
             .remove(&handle)
             .map(|incoming| incoming.fingerprint)
     }
 
     pub(crate) fn get_incoming_pos(&self, handle: ClientHandle) -> Option<Position> {
-        self.incoming_conns
+        self.incoming_conn_info
             .borrow()
             .get(&handle)
             .map(|incoming| incoming.pos)
