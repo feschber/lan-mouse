@@ -4,13 +4,17 @@ use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Label, ListBox};
+use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Image, Label, ListBox};
 
 use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
 pub struct Window {
+    #[template_child]
+    pub authorized_placeholder: TemplateChild<ActionRow>,
+    #[template_child]
+    pub fingerprint_row: TemplateChild<ActionRow>,
     #[template_child]
     pub port_edit_apply: TemplateChild<Button>,
     #[template_child]
@@ -21,6 +25,8 @@ pub struct Window {
     pub client_placeholder: TemplateChild<ActionRow>,
     #[template_child]
     pub port_entry: TemplateChild<Entry>,
+    #[template_child]
+    pub hostname_copy_icon: TemplateChild<Image>,
     #[template_child]
     pub hostname_label: TemplateChild<Label>,
     #[template_child]
@@ -35,7 +41,10 @@ pub struct Window {
     pub input_emulation_button: TemplateChild<Button>,
     #[template_child]
     pub input_capture_button: TemplateChild<Button>,
+    #[template_child]
+    pub authorized_list: TemplateChild<ListBox>,
     pub clients: RefCell<Option<gio::ListStore>>,
+    pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
     pub port: Cell<u16>,
     pub capture_active: Cell<bool>,
@@ -69,23 +78,43 @@ impl Window {
     }
 
     #[template_callback]
-    fn handle_copy_hostname(&self, button: &Button) {
+    fn handle_copy_hostname(&self, _: &Button) {
         if let Ok(hostname) = hostname::get() {
             let display = gdk::Display::default().unwrap();
             let clipboard = display.clipboard();
             clipboard.set_text(hostname.to_str().expect("hostname: invalid utf8"));
-            button.set_icon_name("emblem-ok-symbolic");
-            button.set_css_classes(&["success"]);
+            let icon = self.hostname_copy_icon.clone();
+            icon.set_icon_name(Some("emblem-ok-symbolic"));
+            icon.set_css_classes(&["success"]);
             glib::spawn_future_local(clone!(
                 #[weak]
-                button,
+                icon,
                 async move {
                     glib::timeout_future_seconds(1).await;
-                    button.set_icon_name("edit-copy-symbolic");
-                    button.set_css_classes(&[]);
+                    icon.set_icon_name(Some("edit-copy-symbolic"));
+                    icon.set_css_classes(&[]);
                 }
             ));
         }
+    }
+
+    #[template_callback]
+    fn handle_copy_fingerprint(&self, button: &Button) {
+        let fingerprint: String = self.fingerprint_row.property("subtitle");
+        let display = gdk::Display::default().unwrap();
+        let clipboard = display.clipboard();
+        clipboard.set_text(&fingerprint);
+        button.set_icon_name("emblem-ok-symbolic");
+        button.set_css_classes(&["success"]);
+        glib::spawn_future_local(clone!(
+            #[weak]
+            button,
+            async move {
+                glib::timeout_future_seconds(1).await;
+                button.set_icon_name("edit-copy-symbolic");
+                button.set_css_classes(&[]);
+            }
+        ));
     }
 
     #[template_callback]
@@ -118,6 +147,11 @@ impl Window {
         self.obj().request_capture();
     }
 
+    #[template_callback]
+    fn handle_add_cert_fingerprint(&self, _button: &Button) {
+        self.obj().open_fingerprint_dialog();
+    }
+
     pub fn set_port(&self, port: u16) {
         self.port.set(port);
         if port == DEFAULT_PORT {
@@ -141,6 +175,7 @@ impl ObjectImpl for Window {
         let obj = self.obj();
         obj.setup_icon();
         obj.setup_clients();
+        obj.setup_authorized();
     }
 }
 
