@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::Path;
 use std::{fs::File, io::BufReader};
@@ -54,6 +55,8 @@ pub(crate) fn load_or_generate_key_and_cert(path: &Path) -> Result<Certificate, 
 pub(crate) fn generate_key_and_cert(path: &Path) -> Result<Certificate, Error> {
     let cert = Certificate::generate_self_signed(["ignored".to_owned()])?;
     let serialized = cert.serialize_pem();
+    let parent = path.parent().expect("is a path");
+    fs::create_dir_all(parent)?;
     let f = File::create(path)?;
     #[cfg(unix)]
     {
