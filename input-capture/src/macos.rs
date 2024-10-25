@@ -24,8 +24,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::thread::{self};
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{oneshot, Mutex};
 
 #[derive(Debug, Default)]
 struct Bounds {
@@ -322,12 +322,11 @@ fn get_events(
     Ok(())
 }
 
-fn event_tap_thread(
+fn create_event_tap<'a>(
     client_state: Arc<Mutex<InputCaptureState>>,
-    event_tx: Sender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
-    exit: tokio::sync::oneshot::Sender<Result<(), &'static str>>,
-) {
+    event_tx: Sender<(Position, CaptureEvent)>,
+) -> Result<CGEventTap<'a>, MacosCaptureCreationError> {
     let cg_events_of_interest: Vec<CGEventType> = vec![
         CGEventType::LeftMouseDown,
         CGEventType::LeftMouseUp,
@@ -345,12 +344,8 @@ fn event_tap_thread(
         CGEventType::FlagsChanged,
     ];
 
-    let tap = CGEventTap::new(
-        CGEventTapLocation::Session,
-        CGEventTapPlacement::HeadInsertEventTap,
-        CGEventTapOptions::Default,
-        cg_events_of_interest,
-        |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
+    let event_tap_callback =
+        move |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
             log::trace!("Got event from tap: {event_type:?}");
             let mut state = client_state.blocking_lock();
             let mut pos = None;
@@ -404,9 +399,16 @@ fn event_tap_thread(
                 cg_ev.set_type(CGEventType::Null);
             }
             Some(cg_ev.to_owned())
-        },
+        };
+
+    let tap = CGEventTap::new(
+        CGEventTapLocation::Session,
+        CGEventTapPlacement::HeadInsertEventTap,
+        CGEventTapOptions::Default,
+        cg_events_of_interest,
+        event_tap_callback,
     )
-    .expect("Failed creating tap");
+    .map_err(|_| MacosCaptureCreationError::EventTapCreation)?;
 
     let tap_source: CFRunLoopSource = tap
         .mach_port
@@ -417,6 +419,26 @@ fn event_tap_thread(
         CFRunLoop::get_current().add_source(&tap_source, kCFRunLoopCommonModes);
     }
 
+    Ok(tap)
+}
+
+fn event_tap_thread(
+    client_state: Arc<Mutex<InputCaptureState>>,
+    event_tx: Sender<(Position, CaptureEvent)>,
+    notify_tx: Sender<ProducerEvent>,
+    ready: std::sync::mpsc::Sender<Result<(), MacosCaptureCreationError>>,
+    exit: oneshot::Sender<Result<(), &'static str>>,
+) {
+    let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
+        Err(e) => {
+            ready.send(Err(e)).expect("channel closed");
+            return;
+        }
+        Ok(tap) => {
+            ready.send(Ok(())).expect("channel closed");
+            tap
+        }
+    };
     CFRunLoop::run_current();
 
     let _ = exit.send(Err("tap thread exited"));
@@ -430,9 +452,10 @@ pub struct MacOSInputCapture {
 impl MacOSInputCapture {
     pub async fn new() -> Result<Self, MacosCaptureCreationError> {
         let state = Arc::new(Mutex::new(InputCaptureState::new()?));
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel(32);
-        let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel(32);
-        let (tap_exit_tx, mut tap_exit_rx) = tokio::sync::oneshot::channel();
+        let (event_tx, event_rx) = mpsc::channel(32);
+        let (notify_tx, mut notify_rx) = mpsc::channel(32);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (tap_exit_tx, mut tap_exit_rx) = oneshot::channel();
 
         unsafe {
             configure_cf_settings()?;
@@ -446,9 +469,13 @@ impl MacOSInputCapture {
                 event_tap_thread_state,
                 event_tx,
                 event_tap_notify,
+                ready_tx,
                 tap_exit_tx,
             )
         });
+
+        // wait for event tap creation result
+        ready_rx.recv().expect("channel closed")?;
 
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
             loop {

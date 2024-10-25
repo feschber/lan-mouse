@@ -93,7 +93,7 @@ pub enum CaptureCreationError {
     #[error("error creating windows capture backend")]
     Windows,
     #[cfg(target_os = "macos")]
-    #[error("error creating macos capture backend")]
+    #[error("error creating macos capture backend: `{0}`")]
     MacOS(#[from] MacosCaptureCreationError),
 }
 
@@ -165,6 +165,9 @@ pub enum X11InputCaptureCreationError {
 pub enum MacosCaptureCreationError {
     #[error("event source creation failed!")]
     EventSourceCreation,
+    #[cfg(target_os = "macos")]
+    #[error("event tap creation failed")]
+    EventTapCreation,
     #[error("failed to set CG Cursor property")]
     CGCursorProperty,
     #[cfg(target_os = "macos")]
