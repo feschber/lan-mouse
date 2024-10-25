@@ -153,7 +153,7 @@ async fn do_capture(
                     }
                     // client disconnected
                     ProtoEvent::Leave(_) => {
-                        log::info!("releasing capture: Server notified Leave");
+                        log::info!("releasing capture: left remote client device region");
                         release_capture(&mut capture, server).await?;
                     },
                     _ => {}
