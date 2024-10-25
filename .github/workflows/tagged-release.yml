@@ -51,7 +51,9 @@ jobs:
         # choco install msys2
         # choco install visualstudio2022-workload-vctools
         # choco install pkgconfiglite
-        pipx install gvsbuild
+        py -m venv .venv
+        .venv\Scripts\activate.ps1
+        py -m pip install gvsbuild
         # see https://github.com/wingtk/gvsbuild/pull/1004
         Move-Item "C:\Program Files\Git\usr\bin" "C:\Program Files\Git\usr\notbin"
         Move-Item "C:\Program Files\Git\bin" "C:\Program Files\Git\notbin"
