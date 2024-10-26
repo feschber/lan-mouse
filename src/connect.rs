@@ -36,7 +36,11 @@ pub(crate) enum LanMouseConnectionError {
     NotConnected,
     #[error("emulation is disabled on the target device")]
     TargetEmulationDisabled,
+    #[error("connection timed out")]
+    Timeout,
 }
+
+const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn connect(
     addr: SocketAddr,
@@ -52,9 +56,25 @@ async fn connect(
         extended_master_secret: ExtendedMasterSecretType::Require,
         ..Default::default()
     };
-    let dtls_conn = DTLSConn::new(conn, config, true, None).await?;
-    log::info!("{addr} connected successfully!");
-    Ok((Arc::new(dtls_conn), addr))
+    let timeout = tokio::time::sleep(DEFAULT_CONNECTION_TIMEOUT);
+    tokio::select! {
+        _ = timeout => {
+            log::warn!("connection to {addr} timed out");
+            Err(LanMouseConnectionError::Timeout)
+        }
+        result = DTLSConn::new(conn, config, true, None) => {
+            match result {
+                Ok(dtls_conn) => {
+                    log::info!("{addr} connected successfully!");
+                    Ok((Arc::new(dtls_conn), addr))
+                }
+                Err(e) => {
+                    log::warn!("failed to connect to {addr}: {e}");
+                    Err(e.into())
+                }
+            }
+        }
+    }
 }
 
 async fn connect_any(
@@ -65,8 +85,18 @@ async fn connect_any(
     for &addr in addrs {
         joinset.spawn_local(connect(addr, cert.clone()));
     }
-    let conn = joinset.join_next().await;
-    conn.expect("no addrs to connect").expect("failed to join")
+    loop {
+        match joinset.join_next().await {
+            None => return Err(LanMouseConnectionError::NotConnected),
+            Some(r) => match r.expect("join error") {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    log::warn!("failed to connect: {e}");
+                    continue;
+                }
+            },
+        };
+    }
 }
 
 pub(crate) struct LanMouseConnection {
