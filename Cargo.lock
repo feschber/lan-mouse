@@ -1226,6 +1226,7 @@ version = "0.2.1"
 dependencies = [
  "ashpd",
  "async-trait",
+ "bitflags 2.6.0",
  "core-graphics",
  "futures",
  "input-event",
