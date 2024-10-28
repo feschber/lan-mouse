@@ -1,69 +1,97 @@
+use std::net::IpAddr;
+
 use local_channel::mpsc::{channel, Receiver, Sender};
 use tokio::task::{spawn_local, JoinHandle};
 
 use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
+use tokio_util::sync::CancellationToken;
 
-use crate::service::Service;
 use lan_mouse_ipc::ClientHandle;
 
 pub(crate) struct DnsResolver {
-    _task: JoinHandle<()>,
-    tx: Sender<ClientHandle>,
+    cancellation_token: CancellationToken,
+    task: Option<JoinHandle<()>>,
+    request_tx: Sender<DnsRequest>,
+    event_rx: Receiver<DnsEvent>,
+}
+
+struct DnsRequest {
+    handle: ClientHandle,
+    hostname: String,
+}
+
+pub(crate) enum DnsEvent {
+    Resolving(ClientHandle),
+    Resolved(ClientHandle, String, Result<Vec<IpAddr>, ResolveError>),
 }
 
 impl DnsResolver {
-    pub(crate) fn new(server: Service) -> Result<Self, ResolveError> {
+    pub(crate) fn new() -> Result<Self, ResolveError> {
         let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
-        let (tx, rx) = channel();
-        let _task = spawn_local(Self::run(server, resolver, rx));
-        Ok(Self { _task, tx })
+        let (request_tx, request_rx) = channel();
+        let (event_tx, event_rx) = channel();
+        let cancellation_token = CancellationToken::new();
+        let task = Some(spawn_local(Self::run(
+            resolver,
+            request_rx,
+            event_tx,
+            cancellation_token.clone(),
+        )));
+        Ok(Self {
+            cancellation_token,
+            task,
+            event_rx,
+            request_tx,
+        })
     }
 
-    pub(crate) fn resolve(&self, host: ClientHandle) {
-        self.tx.send(host).expect("channel closed");
+    pub(crate) fn resolve(&self, handle: ClientHandle, hostname: String) {
+        let request = DnsRequest { handle, hostname };
+        self.request_tx.send(request).expect("channel closed");
     }
 
-    async fn run(server: Service, resolver: TokioAsyncResolver, mut rx: Receiver<ClientHandle>) {
+    pub(crate) async fn event(&mut self) -> DnsEvent {
+        self.event_rx.recv().await.expect("channel closed")
+    }
+
+    async fn run(
+        resolver: TokioAsyncResolver,
+        mut request_rx: Receiver<DnsRequest>,
+        event_tx: Sender<DnsEvent>,
+        cancellation_token: CancellationToken,
+    ) {
         tokio::select! {
-            _ = server.cancelled() => {},
-            _ = Self::do_dns(&server, &resolver, &mut rx) => {},
+            _ = Self::do_dns(&resolver, &mut request_rx, &event_tx) => {},
+            _ = cancellation_token.cancelled() => {},
         }
     }
 
     async fn do_dns(
-        server: &Service,
         resolver: &TokioAsyncResolver,
-        rx: &mut Receiver<ClientHandle>,
+        request_rx: &mut Receiver<DnsRequest>,
+        event_tx: &Sender<DnsEvent>,
     ) {
         loop {
-            let handle = rx.recv().await.expect("channel closed");
+            let DnsRequest { handle, hostname } = request_rx.recv().await.expect("channel closed");
 
-            /* update resolving status */
-            let hostname = match server.client_manager.get_hostname(handle) {
-                Some(hostname) => hostname,
-                None => continue,
-            };
-
-            log::info!("resolving ({handle}) `{hostname}` ...");
-            server.set_resolving(handle, true);
+            event_tx
+                .send(DnsEvent::Resolving(handle))
+                .expect("channel closed");
 
             /* resolve host */
-            let ips = match resolver.lookup_ip(&hostname).await {
-                Ok(response) => {
-                    let ips = response.iter().collect::<Vec<_>>();
-                    for ip in ips.iter() {
-                        log::info!("{hostname}: adding ip {ip}");
-                    }
-                    ips
-                }
-                Err(e) => {
-                    log::warn!("could not resolve host '{hostname}': {e}");
-                    vec![]
-                }
-            };
+            let ips = resolver
+                .lookup_ip(&hostname)
+                .await
+                .map(|ips| ips.iter().collect::<Vec<_>>());
 
-            server.update_dns_ips(handle, ips);
-            server.set_resolving(handle, false);
+            event_tx
+                .send(DnsEvent::Resolved(handle, hostname, ips))
+                .expect("channel closed");
         }
+    }
+
+    pub(crate) async fn terminate(&mut self) {
+        self.cancellation_token.cancel();
+        self.task.take().expect("task").await.expect("join error");
     }
 }
