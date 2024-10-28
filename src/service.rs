@@ -5,7 +5,7 @@ use crate::{
     connect::LanMouseConnection,
     crypto,
     dns::DnsResolver,
-    emulation::Emulation,
+    emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
@@ -85,13 +85,10 @@ pub struct Service {
 
 #[derive(Default)]
 struct Notifies {
-    capture: Notify,
-    emulation: Notify,
+    reenable_capture: Notify,
     incoming: Notify,
-    port_changed: Notify,
     frontend_event_pending: Notify,
     cancel: CancellationToken,
-    release: Notify,
 }
 
 impl Service {
@@ -116,11 +113,6 @@ impl Service {
             client_manager.set_state(handle, state);
         }
 
-        // task notification tokens
-        let notifies = Rc::new(Notifies::default());
-
-        let config = Rc::new(config);
-
         // load certificate
         let cert = crypto::load_or_generate_key_and_cert(&config.cert_path)?;
         let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
@@ -130,17 +122,18 @@ impl Service {
             authorized_keys: Arc::new(RwLock::new(config.authorized_fingerprints.clone())),
             cert,
             public_key_fingerprint,
-            config,
+            config: Rc::new(config),
             client_manager,
             pending_incoming: Default::default(),
             port,
-            notifies,
+            notifies: Default::default(),
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            requested_port: Default::default(),
         };
         Ok(service)
     }
@@ -160,7 +153,8 @@ impl Service {
 
         // input capture + emulation
         let mut capture = Capture::new(self.clone(), conn);
-        let mut emulation = Emulation::new(self.clone(), listener);
+        let emulation_backend = self.config.emulation_backend.map(|b| b.into());
+        let mut emulation = Emulation::new(emulation_backend, listener);
 
         // create dns resolver
         let resolver = DnsResolver::new(self.clone())?;
@@ -181,7 +175,7 @@ impl Service {
                         None => break,
                     };
                     log::debug!("received frontend request: {request:?}");
-                    self.handle_request(&capture, request, &resolver);
+                    self.handle_request(&capture, &emulation, request, &resolver);
                     log::debug!("handled frontend request");
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
@@ -214,15 +208,34 @@ impl Service {
                         }
                     }
                 },
-                _ = self.notifies.release.notified() => {
-                    self.set_active(None);
-                    capture.release();
-                }
+                event = emulation.event() => match event {
+                    EmulationEvent::Connected { addr, pos, fingerprint } => self.register_incoming(addr, pos, fingerprint),
+                    EmulationEvent::Disconnected { addr } => self.deregister_incoming(addr),
+                    EmulationEvent::PortChanged(port) => match port {
+                        Ok(port) => {
+                            self.port.replace(port);
+                            self.notify_frontend(FrontendEvent::PortChanged(port, None));
+                        },
+                        Err(e) => self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), Some(format!("{e}")))),
+                    }
+                    EmulationEvent::EmulationDisabled => {
+                        self.emulation_status.replace(Status::Disabled);
+                        self.notify_frontend(FrontendEvent::EmulationStatus(Status::Disabled));
+                    },
+                    EmulationEvent::EmulationEnabled => {
+                        self.emulation_status.replace(Status::Enabled);
+                        self.notify_frontend(FrontendEvent::EmulationStatus(Status::Enabled));
+                    },
+                    EmulationEvent::ReleaseNotify => {
+                        self.set_active(None);
+                        capture.release();
+                    }
+                },
                 handle = capture.entered() => {
                     // we entered the capture zone for an incoming connection
                     // => notify it that its capture should be released
                     if let Some(incoming) = self.incoming_conn_info.borrow().get(&handle) {
-                        emulation.notify_release(incoming.addr);
+                        emulation.send_leave_event(incoming.addr);
                     }
                 },
                 _ = self.cancelled() => break,
@@ -300,44 +313,30 @@ impl Service {
         self.notifies.cancel.cancelled().await
     }
 
-    fn notify_capture(&self) {
+    fn request_capture_reenable(&self) {
         log::info!("received capture enable request");
-        self.notifies.capture.notify_waiters()
+        self.notifies.reenable_capture.notify_waiters()
     }
 
     pub(crate) async fn capture_enabled(&self) {
-        self.notifies.capture.notified().await
-    }
-
-    fn notify_emulation(&self) {
-        log::info!("received emulation enable request");
-        self.notifies.emulation.notify_waiters()
-    }
-
-    pub(crate) async fn emulation_notified(&self) {
-        self.notifies.emulation.notified().await
-    }
-
-    fn request_port_change(&self, port: u16) {
-        self.port.replace(port);
-        self.notifies.port_changed.notify_one();
-    }
-
-    #[allow(unused)]
-    fn notify_port_changed(&self, port: u16, msg: Option<String>) {
-        self.port.replace(port);
-        self.notify_frontend(FrontendEvent::PortChanged(port, msg));
+        self.notifies.reenable_capture.notified().await
     }
 
     pub(crate) fn client_updated(&self, handle: ClientHandle) {
         self.notify_frontend(FrontendEvent::Changed(handle));
     }
 
-    fn handle_request(&self, capture: &Capture, event: FrontendRequest, dns: &DnsResolver) -> bool {
+    fn handle_request(
+        &self,
+        capture: &Capture,
+        emulation: &Emulation,
+        event: FrontendRequest,
+        dns: &DnsResolver,
+    ) -> bool {
         log::debug!("frontend: {event:?}");
         match event {
-            FrontendRequest::EnableCapture => self.notify_capture(),
-            FrontendRequest::EnableEmulation => self.notify_emulation(),
+            FrontendRequest::EnableCapture => self.request_capture_reenable(),
+            FrontendRequest::EnableEmulation => emulation.reenable(),
             FrontendRequest::Create => {
                 self.add_client();
             }
@@ -348,7 +347,7 @@ impl Service {
                     self.deactivate_client(capture, handle);
                 }
             }
-            FrontendRequest::ChangePort(port) => self.request_port_change(port),
+            FrontendRequest::ChangePort(port) => emulation.request_port_change(port),
             FrontendRequest::Delete(handle) => {
                 self.remove_client(capture, handle);
                 self.notify_frontend(FrontendEvent::Deleted(handle));
@@ -492,12 +491,6 @@ impl Service {
         self.notify_frontend(event);
     }
 
-    pub(crate) fn set_emulation_status(&self, status: Status) {
-        self.emulation_status.replace(status);
-        let status = FrontendEvent::EmulationStatus(status);
-        self.notify_frontend(status);
-    }
-
     pub(crate) fn set_capture_status(&self, status: Status) {
         self.capture_status.replace(status);
         let status = FrontendEvent::CaptureStatus(status);
@@ -507,10 +500,6 @@ impl Service {
     pub(crate) fn set_resolving(&self, handle: ClientHandle, status: bool) {
         self.client_manager.set_resolving(handle, status);
         self.client_updated(handle);
-    }
-
-    pub(crate) fn release_capture(&self) {
-        self.notifies.release.notify_one();
     }
 
     pub(crate) fn set_active(&self, handle: Option<ClientHandle>) {
