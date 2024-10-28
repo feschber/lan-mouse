@@ -288,7 +288,10 @@ impl EmulationProxy {
 
         // create active handles
         for &handle in handles.values() {
-            emulation.create(handle).await;
+            tokio::select! {
+                _ = emulation.create(handle) => {},
+                _ = wait_for_termination(request_rx) => return Ok(()),
+            }
         }
 
         let res = Self::do_emulation_session(&mut emulation, handles, next_id, request_rx).await;

@@ -182,7 +182,10 @@ async fn do_capture(
 
     /* create barriers for active clients */
     for (handle, pos) in clients {
-        capture.create(handle, to_capture_pos(pos)).await?;
+        tokio::select! {
+            r = capture.create(handle, to_capture_pos(pos)) => r?,
+            _ = wait_for_termination(request_rx) => return Ok(()),
+        }
     }
 
     let res = do_capture_session(active, &mut capture, conn, event_tx, request_rx, service).await;
