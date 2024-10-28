@@ -295,7 +295,7 @@ async fn handle_capture_event(
 
     if capture.keys_pressed(&service.config.release_bind) {
         log::info!("releasing capture: release-bind pressed");
-        return release_capture(capture, &active).await;
+        return release_capture(capture, active).await;
     }
 
     if event == CaptureEvent::Begin {
