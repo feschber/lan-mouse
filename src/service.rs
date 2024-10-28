@@ -340,6 +340,9 @@ impl Service {
             }
             FrontendRequest::Activate(handle, active) => {
                 if active {
+                    if let Some(hostname) = self.client_manager.get_hostname(handle) {
+                        dns.resolve(handle, hostname);
+                    }
                     self.activate_client(capture, handle);
                 } else {
                     self.deactivate_client(capture, handle);
