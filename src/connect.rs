@@ -36,7 +36,7 @@ pub(crate) enum LanMouseConnectionError {
     NotConnected,
     #[error("emulation is disabled on the target device")]
     TargetEmulationDisabled,
-    #[error("connection timed out")]
+    #[error("Connection timed out")]
     Timeout,
 }
 
@@ -45,10 +45,14 @@ const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 async fn connect(
     addr: SocketAddr,
     cert: Certificate,
-) -> Result<(Arc<dyn Conn + Sync + Send>, SocketAddr), LanMouseConnectionError> {
+) -> Result<(Arc<dyn Conn + Sync + Send>, SocketAddr), (SocketAddr, LanMouseConnectionError)> {
     log::info!("connecting to {addr} ...");
-    let conn = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-    conn.connect(addr).await?;
+    let conn = Arc::new(
+        UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(|e| (addr, e.into()))?,
+    );
+    conn.connect(addr).await.map_err(|e| (addr, e.into()))?;
     let config = Config {
         certificates: vec![cert],
         server_name: "ignored".to_owned(),
@@ -58,21 +62,10 @@ async fn connect(
     };
     let timeout = tokio::time::sleep(DEFAULT_CONNECTION_TIMEOUT);
     tokio::select! {
-        _ = timeout => {
-            log::warn!("connection to {addr} timed out");
-            Err(LanMouseConnectionError::Timeout)
-        }
-        result = DTLSConn::new(conn, config, true, None) => {
-            match result {
-                Ok(dtls_conn) => {
-                    log::info!("{addr} connected successfully!");
-                    Ok((Arc::new(dtls_conn), addr))
-                }
-                Err(e) => {
-                    log::warn!("failed to connect to {addr}: {e}");
-                    Err(e.into())
-                }
-            }
+        _ = timeout => Err((addr, LanMouseConnectionError::Timeout)),
+        result = DTLSConn::new(conn, config, true, None) => match result {
+            Ok(dtls_conn) => Ok((Arc::new(dtls_conn), addr)),
+            Err(e) => Err((addr, e.into())),
         }
     }
 }
@@ -90,9 +83,8 @@ async fn connect_any(
             None => return Err(LanMouseConnectionError::NotConnected),
             Some(r) => match r.expect("join error") {
                 Ok(conn) => return Ok(conn),
-                Err(e) => {
-                    log::warn!("failed to connect: {e}");
-                    continue;
+                Err((a, e)) => {
+                    log::warn!("failed to connect to {a}: `{e}`")
                 }
             },
         };
