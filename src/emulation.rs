@@ -174,6 +174,7 @@ impl Emulation {
 /// discarding events when it is disabled
 pub(crate) struct EmulationProxy {
     emulation_active: Rc<Cell<bool>>,
+    exit_requested: Rc<Cell<bool>>,
     request_tx: Sender<ProxyRequest>,
     event_rx: Receiver<EmulationEvent>,
     task: JoinHandle<()>,
@@ -191,9 +192,16 @@ impl EmulationProxy {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_active = Rc::new(Cell::new(false));
-        let task = spawn_local(Self::emulation_task(backend, request_rx, event_tx));
+        let exit_requested = Rc::new(Cell::new(false));
+        let task = spawn_local(Self::emulation_task(
+            backend,
+            exit_requested.clone(),
+            request_rx,
+            event_tx,
+        ));
         Self {
             emulation_active,
+            exit_requested,
             request_tx,
             task,
             event_rx,
@@ -228,6 +236,7 @@ impl EmulationProxy {
 
     async fn emulation_task(
         backend: Option<input_emulation::Backend>,
+        exit_requested: Rc<Cell<bool>>,
         mut request_rx: Receiver<ProxyRequest>,
         event_tx: Sender<EmulationEvent>,
     ) {
@@ -244,6 +253,9 @@ impl EmulationProxy {
             .await
             {
                 log::warn!("input emulation exited: {e}");
+            }
+            if exit_requested.get() {
+                break;
             }
             // wait for reenable request
             loop {
@@ -330,6 +342,7 @@ impl EmulationProxy {
     }
 
     async fn terminate(&mut self) {
+        self.exit_requested.replace(true);
         self.request_tx
             .send(ProxyRequest::Terminate)
             .expect("channel closed");

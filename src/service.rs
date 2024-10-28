@@ -171,9 +171,61 @@ impl Service {
                         }
                         None => break,
                     };
-                    log::debug!("received frontend request: {request:?}");
-                    self.handle_request(&capture, &emulation, request, &resolver);
-                    log::debug!("handled frontend request");
+                    match request {
+                        FrontendRequest::EnableCapture => capture.reenable(),
+                        FrontendRequest::EnableEmulation => emulation.reenable(),
+                        FrontendRequest::Create => {
+                            self.add_client();
+                        }
+                        FrontendRequest::Activate(handle, active) => {
+                            if active {
+                                if let Some(hostname) = self.client_manager.get_hostname(handle) {
+                                    resolver.resolve(handle, hostname);
+                                }
+                                self.activate_client(&capture, handle);
+                            } else {
+                                self.deactivate_client(&capture, handle);
+                            }
+                        }
+                        FrontendRequest::ChangePort(port) => emulation.request_port_change(port),
+                        FrontendRequest::Delete(handle) => {
+                            self.remove_client(&capture, handle);
+                            self.notify_frontend(FrontendEvent::Deleted(handle));
+                        }
+                        FrontendRequest::Enumerate() => self.enumerate(),
+                        FrontendRequest::GetState(handle) => self.broadcast_client(handle),
+                        FrontendRequest::UpdateFixIps(handle, fix_ips) => self.update_fix_ips(handle, fix_ips),
+                        FrontendRequest::UpdateHostname(handle, host) => {
+                            self.update_hostname(handle, host, &resolver)
+                        }
+                        FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
+                        FrontendRequest::UpdatePosition(handle, pos) => {
+                            self.update_pos(handle, &capture, pos);
+                        }
+                        FrontendRequest::ResolveDns(handle) => {
+                            if let Some(hostname) = self.client_manager.get_hostname(handle) {
+                                resolver.resolve(handle, hostname);
+                            }
+                        }
+                        FrontendRequest::Sync => {
+                            self.enumerate();
+                            self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
+                            self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
+                            self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
+                            self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
+                                self.public_key_fingerprint.clone(),
+                            ));
+                            self.notify_frontend(FrontendEvent::AuthorizedUpdated(
+                                self.authorized_keys.read().expect("lock").clone(),
+                            ));
+                        }
+                        FrontendRequest::AuthorizeKey(desc, fp) => {
+                            self.add_authorized_key(desc, fp);
+                        }
+                        FrontendRequest::RemoveAuthorizedKey(key) => {
+                            self.remove_authorized_key(key);
+                        }
+                    }
                 }
                 _ = self.notifies.frontend_event_pending.notified() => {
                     while let Some(event) = {
@@ -262,10 +314,12 @@ impl Service {
             }
         }
 
-        log::info!("terminating service");
-
+        log::info!("terminating service ...");
+        log::info!("terminating capture ...");
         capture.terminate().await;
+        log::info!("terminating emulation ...");
         emulation.terminate().await;
+        log::info!("terminating dns resolver ...");
         resolver.terminate().await;
 
         Ok(())
@@ -322,72 +376,6 @@ impl Service {
 
     pub(crate) fn client_updated(&self, handle: ClientHandle) {
         self.notify_frontend(FrontendEvent::Changed(handle));
-    }
-
-    fn handle_request(
-        &self,
-        capture: &Capture,
-        emulation: &Emulation,
-        event: FrontendRequest,
-        dns: &DnsResolver,
-    ) -> bool {
-        log::debug!("frontend: {event:?}");
-        match event {
-            FrontendRequest::EnableCapture => capture.reenable(),
-            FrontendRequest::EnableEmulation => emulation.reenable(),
-            FrontendRequest::Create => {
-                self.add_client();
-            }
-            FrontendRequest::Activate(handle, active) => {
-                if active {
-                    if let Some(hostname) = self.client_manager.get_hostname(handle) {
-                        dns.resolve(handle, hostname);
-                    }
-                    self.activate_client(capture, handle);
-                } else {
-                    self.deactivate_client(capture, handle);
-                }
-            }
-            FrontendRequest::ChangePort(port) => emulation.request_port_change(port),
-            FrontendRequest::Delete(handle) => {
-                self.remove_client(capture, handle);
-                self.notify_frontend(FrontendEvent::Deleted(handle));
-            }
-            FrontendRequest::Enumerate() => self.enumerate(),
-            FrontendRequest::GetState(handle) => self.broadcast_client(handle),
-            FrontendRequest::UpdateFixIps(handle, fix_ips) => self.update_fix_ips(handle, fix_ips),
-            FrontendRequest::UpdateHostname(handle, host) => {
-                self.update_hostname(handle, host, dns)
-            }
-            FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
-            FrontendRequest::UpdatePosition(handle, pos) => {
-                self.update_pos(handle, capture, pos);
-            }
-            FrontendRequest::ResolveDns(handle) => {
-                if let Some(hostname) = self.client_manager.get_hostname(handle) {
-                    dns.resolve(handle, hostname);
-                }
-            }
-            FrontendRequest::Sync => {
-                self.enumerate();
-                self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status.get()));
-                self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status.get()));
-                self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
-                self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
-                    self.public_key_fingerprint.clone(),
-                ));
-                self.notify_frontend(FrontendEvent::AuthorizedUpdated(
-                    self.authorized_keys.read().expect("lock").clone(),
-                ));
-            }
-            FrontendRequest::AuthorizeKey(desc, fp) => {
-                self.add_authorized_key(desc, fp);
-            }
-            FrontendRequest::RemoveAuthorizedKey(key) => {
-                self.remove_authorized_key(key);
-            }
-        };
-        false
     }
 
     fn add_authorized_key(&self, desc: String, fp: String) {
