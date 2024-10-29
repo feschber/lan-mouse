@@ -165,9 +165,12 @@ async fn do_capture(
         r = InputCapture::new(backend) => r?,
         _ = wait_for_termination(request_rx) => return Ok(()),
     };
-    event_tx
-        .send(ICaptureEvent::CaptureEnabled)
-        .expect("channel closed");
+
+    let _capture_guard = DropGuard::new(
+        event_tx,
+        ICaptureEvent::CaptureEnabled,
+        ICaptureEvent::CaptureDisabled,
+    );
 
     let clients = service.client_manager.active_clients();
     let clients = clients.iter().copied().map(|handle| {
@@ -190,17 +193,8 @@ async fn do_capture(
 
     let res = do_capture_session(active, &mut capture, conn, event_tx, request_rx, service).await;
     // FIXME replace with async drop when stabilized
-    let res1 = capture.terminate().await;
-
-    // handle errors
-    res?;
-    res1?;
-
-    event_tx
-        .send(ICaptureEvent::CaptureDisabled)
-        .expect("channel closed");
-
-    Ok(())
+    capture.terminate().await?;
+    res
 }
 
 async fn do_capture_session(
@@ -409,5 +403,26 @@ async fn wait_for_termination(rx: &mut Receiver<CaptureRequest>) {
             CaptureRequest::Destroy(_) => continue,
             CaptureRequest::Reenable => continue,
         }
+    }
+}
+
+struct DropGuard<'a, T> {
+    tx: &'a Sender<T>,
+    on_drop: Option<T>,
+}
+
+impl<'a, T> DropGuard<'a, T> {
+    fn new(tx: &'a Sender<T>, on_new: T, on_drop: T) -> Self {
+        tx.send(on_new).expect("channel closed");
+        let on_drop = Some(on_drop);
+        Self { tx, on_drop }
+    }
+}
+
+impl<'a, T> Drop for DropGuard<'a, T> {
+    fn drop(&mut self) {
+        self.tx
+            .send(self.on_drop.take().expect("item"))
+            .expect("channel closed");
     }
 }

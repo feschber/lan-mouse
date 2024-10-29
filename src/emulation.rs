@@ -282,9 +282,13 @@ impl EmulationProxy {
             // allow termination event while requesting input emulation
             _ = wait_for_termination(request_rx) => return Ok(()),
         };
-        event_tx
-            .send(EmulationEvent::EmulationEnabled)
-            .expect("channel closed");
+
+        // used to send enabled and disabled events
+        let _emulation_guard = DropGuard::new(
+            &event_tx,
+            EmulationEvent::EmulationEnabled,
+            EmulationEvent::EmulationDisabled,
+        );
 
         // create active handles
         for &handle in handles.values() {
@@ -297,10 +301,6 @@ impl EmulationProxy {
         let res = Self::do_emulation_session(&mut emulation, handles, next_id, request_rx).await;
         // FIXME replace with async drop when stabilized
         emulation.terminate().await;
-
-        event_tx
-            .send(EmulationEvent::EmulationDisabled)
-            .expect("channel closed");
         res
     }
 
@@ -370,5 +370,26 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
             ProxyRequest::ReleaseKeys(_) => continue,
             ProxyRequest::Reenable => continue,
         }
+    }
+}
+
+struct DropGuard<'a, T> {
+    tx: &'a Sender<T>,
+    on_drop: Option<T>,
+}
+
+impl<'a, T> DropGuard<'a, T> {
+    fn new(tx: &'a Sender<T>, on_new: T, on_drop: T) -> Self {
+        tx.send(on_new).expect("channel closed");
+        let on_drop = Some(on_drop);
+        Self { tx, on_drop }
+    }
+}
+
+impl<'a, T> Drop for DropGuard<'a, T> {
+    fn drop(&mut self) {
+        self.tx
+            .send(self.on_drop.take().expect("item"))
+            .expect("channel closed");
     }
 }
