@@ -285,7 +285,7 @@ impl EmulationProxy {
 
         // used to send enabled and disabled events
         let _emulation_guard = DropGuard::new(
-            &event_tx,
+            event_tx,
             EmulationEvent::EmulationEnabled,
             EmulationEvent::EmulationDisabled,
         );
