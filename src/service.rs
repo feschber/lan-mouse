@@ -506,5 +506,6 @@ impl Service {
         self.pending_incoming
             .borrow_mut()
             .push_back(IncomingEvent::Disconnected { addr });
+        self.notifies.incoming.notify_one();
     }
 }
