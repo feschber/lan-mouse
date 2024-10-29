@@ -43,17 +43,6 @@ pub enum ServiceError {
 
 pub struct ReleaseToken;
 
-enum IncomingEvent {
-    Connected {
-        addr: SocketAddr,
-        pos: Position,
-        fingerprint: String,
-    },
-    Disconnected {
-        addr: SocketAddr,
-    },
-}
-
 #[derive(Debug)]
 pub struct Incoming {
     fingerprint: String,
@@ -70,7 +59,6 @@ pub struct Service {
     notifies: Rc<Notifies>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
-    pending_incoming: Rc<RefCell<VecDeque<IncomingEvent>>>,
     capture_status: Rc<Cell<Status>>,
     pub(crate) emulation_status: Rc<Cell<Status>>,
     /// keep track of registered connections to avoid duplicate barriers
@@ -83,7 +71,6 @@ pub struct Service {
 
 #[derive(Default)]
 struct Notifies {
-    incoming: Notify,
     frontend_event_pending: Notify,
 }
 
@@ -119,7 +106,6 @@ impl Service {
             public_key_fingerprint,
             config: Rc::new(config),
             client_manager,
-            pending_incoming: Default::default(),
             port,
             notifies: Default::default(),
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
@@ -236,30 +222,19 @@ impl Service {
                         frontend_listener.broadcast(event).await;
                     }
                 },
-                _ = self.notifies.incoming.notified() => {
-                    while let Some(incoming) = {
-                        let incoming = self.pending_incoming.borrow_mut().pop_front();
-                        incoming
-                    } {
-                        match incoming {
-                            IncomingEvent::Connected { addr, pos, fingerprint } => {
-                                // check if already registered
-                                if self.incoming_conns.borrow_mut().insert(addr) {
-                                    self.add_incoming(addr, pos, fingerprint.clone(), &capture);
-                                    self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
-                                }
-                            },
-                            IncomingEvent::Disconnected { addr } => {
-                                if let Some(fp) = self.remove_incoming(addr, &capture) {
-                                    self.notify_frontend(FrontendEvent::IncomingDisconnected(fp));
-                                }
-                            },
+                event = emulation.event() => match event {
+                    EmulationEvent::Connected { addr, pos, fingerprint } => {
+                        // check if already registered
+                        if self.incoming_conns.borrow_mut().insert(addr) {
+                            self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                            self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
                         }
                     }
-                },
-                event = emulation.event() => match event {
-                    EmulationEvent::Connected { addr, pos, fingerprint } => self.register_incoming(addr, pos, fingerprint),
-                    EmulationEvent::Disconnected { addr } => self.deregister_incoming(addr),
+                    EmulationEvent::Disconnected { addr } => {
+                        if let Some(fp) = self.remove_incoming(addr, &capture) {
+                            self.notify_frontend(FrontendEvent::IncomingDisconnected(fp));
+                        }
+                    }
                     EmulationEvent::PortChanged(port) => match port {
                         Ok(port) => {
                             self.port.replace(port);
@@ -489,23 +464,5 @@ impl Service {
     pub(crate) fn set_resolving(&self, handle: ClientHandle, status: bool) {
         self.client_manager.set_resolving(handle, status);
         self.client_updated(handle);
-    }
-
-    pub(crate) fn register_incoming(&self, addr: SocketAddr, pos: Position, fingerprint: String) {
-        self.pending_incoming
-            .borrow_mut()
-            .push_back(IncomingEvent::Connected {
-                addr,
-                pos,
-                fingerprint,
-            });
-        self.notifies.incoming.notify_one();
-    }
-
-    pub(crate) fn deregister_incoming(&self, addr: SocketAddr) {
-        self.pending_incoming
-            .borrow_mut()
-            .push_back(IncomingEvent::Disconnected { addr });
-        self.notifies.incoming.notify_one();
     }
 }
