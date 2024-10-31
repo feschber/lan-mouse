@@ -173,7 +173,13 @@ impl Service {
                                 self.deactivate_client(&capture, handle);
                             }
                         }
-                        FrontendRequest::ChangePort(port) => emulation.request_port_change(port),
+                        FrontendRequest::ChangePort(port) => {
+                            if self.port.get() != port {
+                                emulation.request_port_change(port);
+                            } else {
+                                self.notify_frontend(FrontendEvent::PortChanged(self.port.get(), None));
+                            }
+                        }
                         FrontendRequest::Delete(handle) => {
                             self.remove_client(&capture, handle);
                             self.notify_frontend(FrontendEvent::Deleted(handle));
