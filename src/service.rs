@@ -234,11 +234,36 @@ impl Service {
                         if self.incoming_conns.borrow_mut().insert(addr) {
                             self.add_incoming(addr, pos, fingerprint.clone(), &capture);
                             self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                        } else {
+                            let handle = self
+                                .incoming_conn_info
+                                .borrow()
+                                .iter()
+                                .find(|(_, incoming)| incoming.addr == addr)
+                                .map(|(k, _)| *k)
+                                .expect("no such client");
+                            let mut changed = false;
+                            if let Some(incoming) = self.incoming_conn_info.borrow_mut().get_mut(&handle) {
+                                if incoming.fingerprint != fingerprint {
+                                    incoming.fingerprint = fingerprint.clone();
+                                    changed = true;
+                                }
+                                if incoming.pos != pos {
+                                    incoming.pos = pos;
+                                    changed = true;
+                                }
+                            }
+                            if changed {
+                                self.remove_incoming(addr, &capture);
+                                self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                                self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
+                                self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                            }
                         }
                     }
                     EmulationEvent::Disconnected { addr } => {
-                        if let Some(fp) = self.remove_incoming(addr, &capture) {
-                            self.notify_frontend(FrontendEvent::IncomingDisconnected(fp));
+                        if let Some(addr) = self.remove_incoming(addr, &capture) {
+                            self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
                         }
                     }
                     EmulationEvent::PortChanged(port) => match port {
@@ -328,7 +353,7 @@ impl Service {
         );
     }
 
-    fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<String> {
+    fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<SocketAddr> {
         let handle = self
             .incoming_conn_info
             .borrow()
@@ -340,7 +365,7 @@ impl Service {
         self.incoming_conn_info
             .borrow_mut()
             .remove(&handle)
-            .map(|incoming| incoming.fingerprint)
+            .map(|incoming| incoming.addr)
     }
 
     pub(crate) fn get_incoming_pos(&self, handle: ClientHandle) -> Option<Position> {

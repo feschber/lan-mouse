@@ -204,7 +204,7 @@ pub enum FrontendEvent {
     /// incoming connected
     IncomingConnected(String, SocketAddr, Position),
     /// incoming disconnected
-    IncomingDisconnected(String),
+    IncomingDisconnected(SocketAddr),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
