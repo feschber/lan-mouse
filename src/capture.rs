@@ -186,8 +186,17 @@ async fn do_capture(
     /* create barriers for active clients */
     for (handle, pos) in clients {
         tokio::select! {
-            r = capture.create(handle, to_capture_pos(pos)) => r?,
-            _ = wait_for_termination(request_rx) => return Ok(()),
+            r = capture.create(handle, to_capture_pos(pos)) => match r {
+                Ok(_) => {},
+                Err(e) => {
+                    capture.terminate().await?;
+                    return Err(e.into());
+                },
+            },
+            _ = wait_for_termination(request_rx) => {
+                capture.terminate().await?;
+                return Ok(());
+            },
         }
     }
 
