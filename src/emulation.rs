@@ -291,17 +291,31 @@ impl EmulationProxy {
         );
 
         // create active handles
-        for &handle in handles.values() {
-            tokio::select! {
-                _ = emulation.create(handle) => {},
-                _ = wait_for_termination(request_rx) => return Ok(()),
-            }
+        if let Err(e) =
+            Self::create_clients(&mut emulation, handles.values().copied(), request_rx).await
+        {
+            emulation.terminate().await;
+            return Err(e);
         }
 
         let res = Self::do_emulation_session(&mut emulation, handles, next_id, request_rx).await;
         // FIXME replace with async drop when stabilized
         emulation.terminate().await;
         res
+    }
+
+    async fn create_clients(
+        emulation: &mut InputEmulation,
+        handles: impl Iterator<Item = EmulationHandle>,
+        request_rx: &mut Receiver<ProxyRequest>,
+    ) -> Result<(), InputEmulationError> {
+        for handle in handles {
+            tokio::select! {
+                _ = emulation.create(handle) => {},
+                _ = wait_for_termination(request_rx) => return Ok(()),
+            }
+        }
+        Ok(())
     }
 
     async fn do_emulation_session(
