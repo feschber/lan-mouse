@@ -648,10 +648,16 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
             capabilities: WEnum::Value(capabilities),
         } = event
         {
-            if capabilities.contains(wl_seat::Capability::Pointer) && state.pointer.is_none() {
+            if capabilities.contains(wl_seat::Capability::Pointer) {
+                if let Some(p) = state.pointer.take() {
+                    p.release();
+                }
                 state.pointer.replace(seat.get_pointer(qh, ()));
             }
-            if capabilities.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
+            if capabilities.contains(wl_seat::Capability::Keyboard) {
+                if let Some(k) = state.keyboard.take() {
+                    k.release();
+                }
                 seat.get_keyboard(qh, ());
             }
         }
