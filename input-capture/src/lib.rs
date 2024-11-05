@@ -132,31 +132,35 @@ pub struct InputCapture {
 impl InputCapture {
     /// create a new client with the given id
     pub async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+        assert!(!self.id_map.contains_key(&id));
+
+        self.id_map.insert(id, pos);
+
         if let Some(v) = self.position_map.get_mut(&pos) {
             v.push(id);
             Ok(())
         } else {
             self.position_map.insert(pos, vec![id]);
-            self.id_map.insert(id, pos);
             self.capture.create(pos).await
         }
     }
 
     /// destroy the client with the given id, if it exists
     pub async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
-        if let Some(pos) = self.id_map.remove(&id) {
-            let destroy = if let Some(v) = self.position_map.get_mut(&pos) {
-                v.retain(|&i| i != id);
-                // we were the last id registered at this position
-                v.is_empty()
-            } else {
-                // nothing to destroy
-                false
-            };
-            if destroy {
-                self.position_map.remove(&pos);
-                self.capture.destroy(pos).await?;
-            }
+        let pos = self
+            .id_map
+            .remove(&id)
+            .expect("no position for this handle");
+
+        log::debug!("destroying capture {id} @ {pos}");
+        let remaining = self.position_map.get_mut(&pos).expect("id vector");
+        remaining.retain(|&i| i != id);
+
+        log::debug!("remaining ids @ {pos}: {remaining:?}");
+        if remaining.is_empty() {
+            log::debug!("destroying capture @ {pos} - no remaining ids");
+            self.position_map.remove(&pos);
+            self.capture.destroy(pos).await?;
         }
         Ok(())
     }
