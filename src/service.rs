@@ -231,7 +231,7 @@ impl Service {
                 event = emulation.event() => match event {
                     EmulationEvent::Connected { addr, pos, fingerprint } => {
                         // check if already registered
-                        if self.incoming_conns.borrow_mut().insert(addr) {
+                        if !self.incoming_conns.borrow_mut().contains(&addr) {
                             self.add_incoming(addr, pos, fingerprint.clone(), &capture);
                             self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
                         } else {
@@ -343,6 +343,7 @@ impl Service {
         let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
         capture.create(handle, pos);
+        self.incoming_conns.borrow_mut().insert(addr);
         self.incoming_conn_info.borrow_mut().insert(
             handle,
             Incoming {
