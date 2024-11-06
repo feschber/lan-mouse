@@ -20,7 +20,7 @@ Focus lies on performance and a clean, manageable implementation that can easily
 
 ***blazingly fast™*** because it's written in rust.
 
-For an alternative (with slightly different goals) you may check out [Synergy 1 Community Edition](https://github.com/symless/synergy) or [Input Leap](https://github.com/input-leap) (Synergy fork).
+For an alternative (with slightly different goals) you may check out [Deskflow](https://github.com/deskflow/deskflow) or [Input Leap](https://github.com/input-leap) (Synergy fork).
 
 
 > [!WARNING]
