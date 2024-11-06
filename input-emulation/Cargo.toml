@@ -11,7 +11,7 @@ async-trait = "0.1.80"
 futures = "0.3.28"
 log = "0.4.22"
 input-event = { path = "../input-event", version = "0.2.1" }
-thiserror = "1.0.61"
+thiserror = "2.0.0"
 tokio = { version = "1.32.0", features = [
     "io-util",
     "io-std",
