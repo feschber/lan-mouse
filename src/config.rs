@@ -86,15 +86,21 @@ struct CliArgs {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum CaptureBackend {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[serde(rename = "input-capture-portal")]
     InputCapturePortal,
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[serde(rename = "layer-shell")]
     LayerShell,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[serde(rename = "x11")]
     X11,
     #[cfg(windows)]
+    #[serde(rename = "windows")]
     Windows,
     #[cfg(target_os = "macos")]
+    #[serde(rename = "macos")]
     MacOs,
+    #[serde(rename = "dummy")]
     Dummy,
 }
 
@@ -137,17 +143,24 @@ impl From<CaptureBackend> for input_capture::Backend {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum EmulationBackend {
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[serde(rename = "wlroots")]
     Wlroots,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[serde(rename = "libei")]
     Libei,
     #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    #[serde(rename = "xdp")]
     Xdp,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[serde(rename = "x11")]
     X11,
     #[cfg(windows)]
+    #[serde(rename = "windows")]
     Windows,
     #[cfg(target_os = "macos")]
+    #[serde(rename = "macos")]
     MacOs,
+    #[serde(rename = "dummy")]
     Dummy,
 }
 
@@ -193,7 +206,9 @@ impl Display for EmulationBackend {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize, ValueEnum)]
 pub enum Frontend {
+    #[serde(rename = "gtk")]
     Gtk,
+    #[serde(rename = "cli")]
     Cli,
 }
 
