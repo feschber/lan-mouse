@@ -184,19 +184,18 @@ async fn do_capture(
     });
 
     /* create barriers for active clients */
-    if let Err(e) = create_clients(&mut capture, clients, request_rx).await {
+    let r = create_clients(&mut capture, clients, request_rx).await;
+    if let Err(e) = r {
         capture.terminate().await?;
         return Err(e.into());
     }
 
-    if let Err(e) =
-        do_capture_session(active, &mut capture, conn, event_tx, request_rx, service).await
-    {
-        // FIXME replace with async drop when stabilized
-        capture.terminate().await?;
-        return Err(e);
-    }
-    Ok(())
+    let r = do_capture_session(active, &mut capture, conn, event_tx, request_rx, service).await;
+
+    // FIXME replace with async drop when stabilized
+    capture.terminate().await?;
+
+    r
 }
 
 async fn create_clients(
