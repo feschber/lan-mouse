@@ -8,8 +8,6 @@ pub enum InputEmulationError {
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use ashpd::{desktop::ResponseError, Error::Response};
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-use reis::tokio::EiConvertEventStreamError;
 use std::io;
 use thiserror::Error;
 
@@ -20,33 +18,13 @@ use wayland_client::{
     ConnectError, DispatchError,
 };
 
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-use reis::tokio::HandshakeError;
-
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-#[derive(Debug, Error)]
-#[error("error in libei stream: {inner:?}")]
-pub struct ReisConvertStreamError {
-    inner: EiConvertEventStreamError,
-}
-
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-impl From<EiConvertEventStreamError> for ReisConvertStreamError {
-    fn from(e: EiConvertEventStreamError) -> Self {
-        Self { inner: e }
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum EmulationError {
     #[error("event stream closed")]
     EndOfStream,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    #[error("libei error flushing events: `{0}`")]
-    Libei(#[from] reis::event::Error),
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    #[error("")]
-    LibeiConvertStream(#[from] ReisConvertStreamError),
+    #[error("libei error: `{0}`")]
+    Libei(#[from] reis::Error),
     #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
     #[error("wayland error: `{0}`")]
     Wayland(#[from] wayland_client::backend::WaylandError),
@@ -150,7 +128,7 @@ pub enum LibeiEmulationCreationError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Handshake(#[from] HandshakeError),
+    Reis(#[from] reis::Error),
 }
 
 #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]

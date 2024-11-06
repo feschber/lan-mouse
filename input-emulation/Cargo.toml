@@ -38,10 +38,10 @@ wayland-protocols-misc = { version = "0.3.1", features = [
     "client",
 ], optional = true }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-ashpd = { version = "0.9", default-features = false, features = [
+ashpd = { version = "0.10", default-features = false, features = [
     "tokio",
 ], optional = true }
-reis = { version = "0.2", features = ["tokio"], optional = true }
+reis = { version = "0.4", features = ["tokio"], optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]
 bitflags = "2.5.0"
