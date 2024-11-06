@@ -1,6 +1,9 @@
 use ashpd::{
     desktop::{
-        input_capture::{Activated, Barrier, BarrierID, Capabilities, InputCapture, Region, Zones},
+        input_capture::{
+            Activated, ActivatedBarrier, Barrier, BarrierID, Capabilities, InputCapture, Region,
+            Zones,
+        },
         Session,
     },
     enumflags2::BitFlags,
@@ -8,14 +11,15 @@ use ashpd::{
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt};
 use reis::{
-    ei,
-    event::{DeviceCapability, EiEvent},
-    tokio::{EiConvertEventStream, EiEventStream},
+    ei::{self, handshake::ContextType},
+    event::{Connection, DeviceCapability, EiEvent},
+    tokio::EiConvertEventStream,
 };
 use std::{
     cell::Cell,
     collections::HashMap,
     io,
+    num::NonZeroU32,
     os::unix::net::UnixStream,
     pin::Pin,
     rc::Rc,
@@ -32,14 +36,13 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use futures_core::Stream;
-use once_cell::sync::Lazy;
 
 use input_event::Event;
 
 use crate::CaptureEvent;
 
 use super::{
-    error::{CaptureError, LibeiCaptureCreationError, ReisConvertEventStreamError},
+    error::{CaptureError, LibeiCaptureCreationError},
     Capture as LanMouseInputCapture, Position,
 };
 
@@ -64,22 +67,6 @@ pub struct LibeiInputCapture<'a> {
     cancellation_token: CancellationToken,
     terminated: bool,
 }
-
-static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    m.insert("ei_connection", 1);
-    m.insert("ei_callback", 1);
-    m.insert("ei_pingpong", 1);
-    m.insert("ei_seat", 1);
-    m.insert("ei_device", 2);
-    m.insert("ei_pointer", 1);
-    m.insert("ei_pointer_absolute", 1);
-    m.insert("ei_scroll", 1);
-    m.insert("ei_button", 1);
-    m.insert("ei_keyboard", 1);
-    m.insert("ei_touchscreen", 1);
-    m
-});
 
 /// returns (start pos, end pos), inclusive
 fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
@@ -118,7 +105,7 @@ impl From<ICBarrier> for Barrier {
 fn select_barriers(
     zones: &Zones,
     clients: &[Position],
-    next_barrier_id: &mut u32,
+    next_barrier_id: &mut NonZeroU32,
 ) -> (Vec<ICBarrier>, HashMap<BarrierID, Position>) {
     let mut pos_for_barrier = HashMap::new();
     let mut barriers: Vec<ICBarrier> = vec![];
@@ -129,7 +116,9 @@ fn select_barriers(
             .iter()
             .map(|r| {
                 let id = *next_barrier_id;
-                *next_barrier_id = id + 1;
+                *next_barrier_id = next_barrier_id
+                    .checked_add(1)
+                    .expect("barrier id out of range");
                 let position = pos_to_barrier(r, *pos);
                 pos_for_barrier.insert(id, *pos);
                 ICBarrier::new(id, position)
@@ -144,7 +133,7 @@ async fn update_barriers(
     input_capture: &InputCapture<'_>,
     session: &Session<'_, InputCapture<'_>>,
     active_clients: &[Position],
-    next_barrier_id: &mut u32,
+    next_barrier_id: &mut NonZeroU32,
 ) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, Position>), ashpd::Error> {
     let zones = input_capture.zones(session).await?.response()?;
     log::debug!("zones: {zones:?}");
@@ -168,7 +157,7 @@ async fn create_session<'a>(
     log::debug!("creating input capture session");
     input_capture
         .create_session(
-            &ashpd::WindowIdentifier::default(),
+            None,
             Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
         )
         .await
@@ -177,7 +166,7 @@ async fn create_session<'a>(
 async fn connect_to_eis(
     input_capture: &InputCapture<'_>,
     session: &Session<'_, InputCapture<'_>>,
-) -> Result<(ei::Context, EiConvertEventStream), CaptureError> {
+) -> Result<(ei::Context, Connection, EiConvertEventStream), CaptureError> {
     log::debug!("connect_to_eis");
     let fd = input_capture.connect_to_eis(session).await?;
 
@@ -187,17 +176,11 @@ async fn connect_to_eis(
 
     // create ei context
     let context = ei::Context::new(stream)?;
-    let mut event_stream = EiEventStream::new(context.clone())?;
-    let response = reis::tokio::ei_handshake(
-        &mut event_stream,
-        "de.feschber.LanMouse",
-        ei::handshake::ContextType::Receiver,
-        &INTERFACES,
-    )
-    .await?;
-    let event_stream = EiConvertEventStream::new(event_stream, response.serial);
+    let (conn, event_stream) = context
+        .handshake_tokio("de.feschber.LanMouse", ContextType::Receiver)
+        .await?;
 
-    Ok((context, event_stream))
+    Ok((context, conn, event_stream))
 }
 
 async fn libei_event_handler(
@@ -211,8 +194,7 @@ async fn libei_event_handler(
         let ei_event = ei_event_stream
             .next()
             .await
-            .ok_or(CaptureError::EndOfStream)?
-            .map_err(ReisConvertEventStreamError::from)?;
+            .ok_or(CaptureError::EndOfStream)??;
         log::trace!("from ei: {ei_event:?}");
         let client = current_pos.get();
         handle_ei_event(ei_event, client, &context, &event_tx, &release_session).await?;
@@ -268,7 +250,7 @@ async fn do_capture(
     /* safety: libei_task does not outlive Self */
     let input_capture = unsafe { &*input_capture };
     let mut active_clients: Vec<Position> = vec![];
-    let mut next_barrier_id = 1u32;
+    let mut next_barrier_id = NonZeroU32::new(1).expect("id must be non-zero");
 
     let mut zones_changed = input_capture.receive_zones_changed().await?;
 
@@ -358,7 +340,7 @@ async fn do_capture_session(
     session: &mut Session<'_, InputCapture<'_>>,
     event_tx: &Sender<(Position, CaptureEvent)>,
     active_clients: &[Position],
-    next_barrier_id: &mut u32,
+    next_barrier_id: &mut NonZeroU32,
     notify_release: &Notify,
     cancel: (CancellationToken, CancellationToken),
 ) -> Result<(), CaptureError> {
@@ -367,7 +349,7 @@ async fn do_capture_session(
     let current_pos = Rc::new(Cell::new(None));
 
     // connect to eis server
-    let (context, ei_event_stream) = connect_to_eis(input_capture, session).await?;
+    let (context, _conn, ei_event_stream) = connect_to_eis(input_capture, session).await?;
 
     // set barriers
     let (barriers, pos_for_barrier_id) =
@@ -415,9 +397,9 @@ async fn do_capture_session(
 
                     // get barrier id from activation
                     let barrier_id = match activated.barrier_id() {
-                        Some(bid) => bid,
+                        Some(ActivatedBarrier::Barrier(id)) => id,
                         // workaround for KDE plasma not reporting barrier ids
-                        None => find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor")),
+                        Some(ActivatedBarrier::UnknownBarrier) | None => find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor")),
                     };
 
                     // find client corresponding to barrier

@@ -1,23 +1,18 @@
 use futures::{future, StreamExt};
-use once_cell::sync::Lazy;
 use std::{
-    collections::HashMap,
     io,
     os::{fd::OwnedFd, unix::net::UnixStream},
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
 
-use ashpd::{
-    desktop::{
-        remote_desktop::{DeviceType, RemoteDesktop},
-        PersistMode, Session,
-    },
-    WindowIdentifier,
+use ashpd::desktop::{
+    remote_desktop::{DeviceType, RemoteDesktop},
+    PersistMode, Session,
 };
 use async_trait::async_trait;
 
@@ -26,31 +21,15 @@ use reis::{
         self, button::ButtonState, handshake::ContextType, keyboard::KeyState, Button, Keyboard,
         Pointer, Scroll,
     },
-    event::{DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
-    tokio::{ei_handshake, EiConvertEventStream, EiEventStream},
+    event::{self, Connection, DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
+    tokio::EiConvertEventStream,
 };
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::error::{EmulationError, ReisConvertStreamError};
+use crate::error::EmulationError;
 
 use super::{error::LibeiEmulationCreationError, Emulation, EmulationHandle};
-
-static INTERFACES: Lazy<HashMap<&'static str, u32>> = Lazy::new(|| {
-    let mut m = HashMap::new();
-    m.insert("ei_connection", 1);
-    m.insert("ei_callback", 1);
-    m.insert("ei_pingpong", 1);
-    m.insert("ei_seat", 1);
-    m.insert("ei_device", 2);
-    m.insert("ei_pointer", 1);
-    m.insert("ei_pointer_absolute", 1);
-    m.insert("ei_scroll", 1);
-    m.insert("ei_button", 1);
-    m.insert("ei_keyboard", 1);
-    m.insert("ei_touchscreen", 1);
-    m
-});
 
 #[derive(Clone, Default)]
 struct Devices {
@@ -62,11 +41,11 @@ struct Devices {
 
 pub(crate) struct LibeiEmulation<'a> {
     context: ei::Context,
+    conn: event::Connection,
     devices: Devices,
     ei_task: JoinHandle<()>,
     error: Arc<Mutex<Option<EmulationError>>>,
     libei_error: Arc<AtomicBool>,
-    serial: AtomicU32,
     _remote_desktop: RemoteDesktop<'a>,
     session: Session<'a, RemoteDesktop<'a>>,
 }
@@ -89,10 +68,7 @@ async fn get_ei_fd<'a>(
         .await?;
 
     log::info!("requesting permission for input emulation");
-    let _devices = remote_desktop
-        .start(&session, &WindowIdentifier::default())
-        .await?
-        .response()?;
+    let _devices = remote_desktop.start(&session, None).await?.response()?;
 
     let fd = remote_desktop.connect_to_eis(&session).await?;
     Ok((remote_desktop, session, fd))
@@ -104,20 +80,15 @@ impl<'a> LibeiEmulation<'a> {
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
-        let mut events = EiEventStream::new(context.clone())?;
-        let handshake = ei_handshake(
-            &mut events,
-            "de.feschber.LanMouse",
-            ContextType::Sender,
-            &INTERFACES,
-        )
-        .await?;
-        let events = EiConvertEventStream::new(events, handshake.serial);
+        let (conn, events) = context
+            .handshake_tokio("de.feschber.LanMouse", ContextType::Sender)
+            .await?;
         let devices = Devices::default();
         let libei_error = Arc::new(AtomicBool::default());
         let error = Arc::new(Mutex::new(None));
         let ei_handler = ei_task(
             events,
+            conn.clone(),
             context.clone(),
             devices.clone(),
             libei_error.clone(),
@@ -125,15 +96,13 @@ impl<'a> LibeiEmulation<'a> {
         );
         let ei_task = tokio::task::spawn_local(ei_handler);
 
-        let serial = AtomicU32::new(handshake.serial);
-
         Ok(Self {
             context,
+            conn,
             devices,
             ei_task,
             error,
             libei_error,
-            serial,
             _remote_desktop,
             session,
         })
@@ -169,7 +138,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                     let pointer_device = self.devices.pointer.read().unwrap();
                     if let Some((d, p)) = pointer_device.as_ref() {
                         p.motion_relative(dx as f32, dy as f32);
-                        d.frame(self.serial.load(Ordering::SeqCst), now);
+                        d.frame(self.conn.serial(), now);
                     }
                 }
                 PointerEvent::Button {
@@ -186,7 +155,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                                 _ => ButtonState::Press,
                             },
                         );
-                        d.frame(self.serial.load(Ordering::SeqCst), now);
+                        d.frame(self.conn.serial(), now);
                     }
                 }
                 PointerEvent::Axis {
@@ -200,7 +169,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                             0 => s.scroll(0., value as f32),
                             _ => s.scroll(value as f32, 0.),
                         }
-                        d.frame(self.serial.load(Ordering::SeqCst), now);
+                        d.frame(self.conn.serial(), now);
                     }
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
@@ -210,7 +179,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                             0 => s.scroll_discrete(0, value),
                             _ => s.scroll_discrete(value, 0),
                         }
-                        d.frame(self.serial.load(Ordering::SeqCst), now);
+                        d.frame(self.conn.serial(), now);
                     }
                 }
             },
@@ -229,7 +198,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
                                 _ => KeyState::Press,
                             },
                         );
-                        d.frame(self.serial.load(Ordering::SeqCst), now);
+                        d.frame(self.conn.serial(), now);
                     }
                 }
                 KeyboardEvent::Modifiers { .. } => {}
@@ -252,6 +221,7 @@ impl<'a> Emulation for LibeiEmulation<'a> {
 
 async fn ei_task(
     mut events: EiConvertEventStream,
+    _conn: Connection,
     context: ei::Context,
     devices: Devices,
     libei_error: Arc<AtomicBool>,
@@ -276,11 +246,7 @@ async fn ei_event_handler(
     devices: &Devices,
 ) -> Result<(), EmulationError> {
     loop {
-        let event = events
-            .next()
-            .await
-            .ok_or(EmulationError::EndOfStream)?
-            .map_err(ReisConvertStreamError::from)?;
+        let event = events.next().await.ok_or(EmulationError::EndOfStream)??;
         const CAPABILITIES: &[DeviceCapability] = &[
             DeviceCapability::Pointer,
             DeviceCapability::PointerAbsolute,

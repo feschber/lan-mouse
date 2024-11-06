@@ -4,7 +4,6 @@ use ashpd::{
         PersistMode, Session,
     },
     zbus::AsyncDrop,
-    WindowIdentifier,
 };
 use async_trait::async_trait;
 
@@ -43,10 +42,7 @@ impl<'a> DesktopPortalEmulation<'a> {
             .await?;
 
         log::info!("requesting permission for input emulation");
-        let _devices = proxy
-            .start(&session, &WindowIdentifier::default())
-            .await?
-            .response()?;
+        let _devices = proxy.start(&session, None).await?.response()?;
 
         log::debug!("started session");
         let session = session;

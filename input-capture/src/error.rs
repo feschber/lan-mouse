@@ -19,25 +19,9 @@ use wayland_client::{
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 use ashpd::desktop::ResponseError;
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-use reis::tokio::{EiConvertEventStreamError, HandshakeError};
 
 #[cfg(target_os = "macos")]
 use core_graphics::base::CGError;
-
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-#[derive(Debug, Error)]
-#[error("error in libei stream: {inner:?}")]
-pub struct ReisConvertEventStreamError {
-    inner: EiConvertEventStreamError,
-}
-
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-impl From<EiConvertEventStreamError> for ReisConvertEventStreamError {
-    fn from(e: EiConvertEventStreamError) -> Self {
-        Self { inner: e }
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum CaptureError {
@@ -48,11 +32,8 @@ pub enum CaptureError {
     #[error("io error: `{0}`")]
     Io(#[from] std::io::Error),
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    #[error("error in libei stream: `{0}`")]
-    Reis(#[from] ReisConvertEventStreamError),
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
-    #[error("libei handshake failed: `{0}`")]
-    Handshake(#[from] HandshakeError),
+    #[error("libei error: `{0}`")]
+    Reis(#[from] reis::Error),
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error(transparent)]
     Portal(#[from] ashpd::Error),
