@@ -1,6 +1,6 @@
 # Lan Mouse
 Lan Mouse is a *cross-platform* mouse and keyboard sharing software similar to universal-control on Apple devices.
-It allows for using multiple PCs using a single set of mouse and keyboard.
+It allows for using multiple PCs via a single set of mouse and keyboard.
 This is also known as a Software KVM switch.
 
 Goal of this project is to be an open-source alternative to proprietary tools like [Synergy 2/3](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/)
