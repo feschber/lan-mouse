@@ -8,9 +8,9 @@ The primary target is Wayland on Linux but Windows and MacOS and Linux on Xorg h
 - _Now with a gtk frontend_
 
 <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/feschber/lan-mouse/assets/40996949/d6318340-f811-4e16-9d6e-d1b79883c709">
-    <img alt="Screenshot of Lan-Mouse" srcset="https://github.com/feschber/lan-mouse/assets/40996949/016a06a9-76db-4951-9dcc-127d012c59df">
+    <source media="(prefers-color-scheme: dark)" srcset="/screenshots/dark.png?raw=true">
+    <source media="(prefers-color-scheme: light)" srcset="/screenshots/light.png?raw=true">
+    <img alt="Screenshot of Lan-Mouse" srcset="/screenshots/dark.png">
 </picture>
 
 
