@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "input-capture"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ashpd",
  "async-trait",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "input-emulation"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ashpd",
  "async-trait",
@@ -1337,7 +1337,7 @@ dependencies = [
 
 [[package]]
 name = "input-event"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "futures-core",
  "log",
@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "clap",
  "env_logger",
@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "lan-mouse-ipc",
@@ -1439,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse-gtk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-channel",
  "glib-build-tools",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "log",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "lan-mouse-proto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "input-event",
  "num_enum",

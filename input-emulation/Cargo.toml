@@ -1,7 +1,7 @@
 [package]
 name = "input-emulation"
 description = "cross-platform input emulation library used by lan-mouse"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/feschber/lan-mouse"
@@ -10,7 +10,7 @@ repository = "https://github.com/feschber/lan-mouse"
 async-trait = "0.1.80"
 futures = "0.3.28"
 log = "0.4.22"
-input-event = { path = "../input-event", version = "0.2.1" }
+input-event = { path = "../input-event", version = "0.3.0" }
 thiserror = "2.0.0"
 tokio = { version = "1.32.0", features = [
     "io-util",
