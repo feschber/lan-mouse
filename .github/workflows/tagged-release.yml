@@ -3,7 +3,7 @@ name: "Tagged Release"
 on:
   push:
     tags:
-      - "v*"
+      - v**
 
 jobs:
   linux-release-build:
@@ -114,7 +114,7 @@ jobs:
     steps:
     - name: Download build artifacts
       uses: actions/download-artifact@v4
-    - name: "Create Release"
+    - name: Create Release
       uses: "marvinpinto/action-automatic-releases@latest"
       with:
         repo_token: "${{ secrets.GITHUB_TOKEN }}"
