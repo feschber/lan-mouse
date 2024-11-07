@@ -6,7 +6,11 @@ pub enum InputEmulationError {
     Emulate(#[from] EmulationError),
 }
 
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+#[cfg(all(
+    unix,
+    any(feature = "xdg_desktop_portal", feature = "libei"),
+    not(target_os = "macos")
+))]
 use ashpd::{desktop::ResponseError, Error::Response};
 use std::io;
 use thiserror::Error;
