@@ -46,12 +46,12 @@ ashpd = { version = "0.10", default-features = false, features = [
 reis = { version = "0.4", features = ["tokio"], optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]
-core-graphics = { version = "0.23", features = ["highsierra"] }
-core-foundation = "0.9.4"
+core-graphics = { version = "0.24.0", features = ["highsierra"] }
+core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 libc = "0.2.155"
 keycode = "0.4.0"
-bitflags = "2.5.0"
+bitflags = "2.6.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58.0", features = [
