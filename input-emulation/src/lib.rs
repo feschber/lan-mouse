@@ -14,10 +14,10 @@ mod windows;
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 mod x11;
 
-#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+#[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
 mod wlroots;
 
-#[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+#[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
 mod xdg_desktop_portal;
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
@@ -34,11 +34,11 @@ pub type EmulationHandle = u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
-    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
     Wlroots,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     Libei,
-    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
     Xdp,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11,
@@ -52,11 +52,11 @@ pub enum Backend {
 impl Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
             Backend::Wlroots => write!(f, "wlroots"),
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::Libei => write!(f, "libei"),
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
             Backend::Xdp => write!(f, "xdg-desktop-portal"),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11 => write!(f, "X11"),
@@ -78,13 +78,13 @@ pub struct InputEmulation {
 impl InputEmulation {
     async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::Libei => Box::new(libei::LibeiEmulation::new().await?),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11 => Box::new(x11::X11Emulation::new()?),
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
             Backend::Xdp => Box::new(xdg_desktop_portal::DesktopPortalEmulation::new().await?),
             #[cfg(windows)]
             Backend::Windows => Box::new(windows::WindowsEmulation::new()?),
@@ -109,11 +109,11 @@ impl InputEmulation {
         }
 
         for backend in [
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
             Backend::Wlroots,
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::Libei,
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
             Backend::Xdp,
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11,

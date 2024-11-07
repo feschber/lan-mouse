@@ -57,9 +57,21 @@ local-channel = "0.1.5"
 libc = "0.2.148"
 
 [features]
-default = ["wayland", "x11", "xdg_desktop_portal", "libei", "gtk"]
-wayland = ["input-capture/wayland", "input-emulation/wayland"]
-x11 = ["input-capture/x11", "input-emulation/x11"]
-xdg_desktop_portal = ["input-emulation/xdg_desktop_portal"]
-libei = ["input-event/libei", "input-capture/libei", "input-emulation/libei"]
+default = [
+    "gtk",
+    "layer_shell_capture",
+    "x11_capture",
+    "libei_capture",
+    "wlroots_emulation",
+    "libei_emulation",
+    "rdp_emulation",
+    "x11_emulation",
+]
 gtk = ["dep:lan-mouse-gtk"]
+layer_shell_capture = ["input-capture/layer_shell"]
+x11_capture = ["input-capture/x11"]
+libei_capture = ["input-event/libei", "input-capture/libei"]
+libei_emulation = ["input-event/libei", "input-emulation/libei"]
+wlroots_emulation = ["input-emulation/wlroots"]
+x11_emulation = ["input-emulation/x11"]
+rdp_emulation = ["input-emulation/remote_desktop_portal"]

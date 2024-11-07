@@ -21,8 +21,8 @@ mod libei;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-mod wayland;
+#[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+mod layer_shell;
 
 #[cfg(windows)]
 mod windows;
@@ -87,7 +87,7 @@ impl Display for Position {
 pub enum Backend {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     InputCapturePortal,
-    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
     LayerShell,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
     X11,
@@ -103,7 +103,7 @@ impl Display for Backend {
         match self {
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::InputCapturePortal => write!(f, "input-capture-portal"),
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
             Backend::LayerShell => write!(f, "layer-shell"),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11 => write!(f, "X11"),
@@ -287,8 +287,8 @@ async fn create_backend(
     match backend {
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
-        #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
-        Backend::LayerShell => Ok(Box::new(wayland::LayerShellInputCapture::new()?)),
+        #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+        Backend::LayerShell => Ok(Box::new(layer_shell::LayerShellInputCapture::new()?)),
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
         Backend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
         #[cfg(windows)]
@@ -316,7 +316,7 @@ async fn create(
     for backend in [
         #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
         Backend::InputCapturePortal,
-        #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+        #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
         Backend::LayerShell,
         #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
         Backend::X11,

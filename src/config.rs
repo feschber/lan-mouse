@@ -85,13 +85,13 @@ struct CliArgs {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum CaptureBackend {
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "libei_capture", not(target_os = "macos")))]
     #[serde(rename = "input-capture-portal")]
     InputCapturePortal,
-    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "layer_shell_capture", not(target_os = "macos")))]
     #[serde(rename = "layer-shell")]
     LayerShell,
-    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "x11_capture", not(target_os = "macos")))]
     #[serde(rename = "x11")]
     X11,
     #[cfg(windows)]
@@ -107,11 +107,11 @@ pub enum CaptureBackend {
 impl Display for CaptureBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "libei_capture", not(target_os = "macos")))]
             CaptureBackend::InputCapturePortal => write!(f, "input-capture-portal"),
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "layer_shell_capture", not(target_os = "macos")))]
             CaptureBackend::LayerShell => write!(f, "layer-shell"),
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "x11_capture", not(target_os = "macos")))]
             CaptureBackend::X11 => write!(f, "X11"),
             #[cfg(windows)]
             CaptureBackend::Windows => write!(f, "windows"),
@@ -125,11 +125,11 @@ impl Display for CaptureBackend {
 impl From<CaptureBackend> for input_capture::Backend {
     fn from(backend: CaptureBackend) -> Self {
         match backend {
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "libei_capture", not(target_os = "macos")))]
             CaptureBackend::InputCapturePortal => Self::InputCapturePortal,
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "layer_shell_capture", not(target_os = "macos")))]
             CaptureBackend::LayerShell => Self::LayerShell,
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "x11_capture", not(target_os = "macos")))]
             CaptureBackend::X11 => Self::X11,
             #[cfg(windows)]
             CaptureBackend::Windows => Self::Windows,
@@ -142,16 +142,16 @@ impl From<CaptureBackend> for input_capture::Backend {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum EmulationBackend {
-    #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
     #[serde(rename = "wlroots")]
     Wlroots,
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "libei_emulation", not(target_os = "macos")))]
     #[serde(rename = "libei")]
     Libei,
-    #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "rdp_emulation", not(target_os = "macos")))]
     #[serde(rename = "xdp")]
     Xdp,
-    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[cfg(all(unix, feature = "x11_emulation", not(target_os = "macos")))]
     #[serde(rename = "x11")]
     X11,
     #[cfg(windows)]
@@ -167,13 +167,13 @@ pub enum EmulationBackend {
 impl From<EmulationBackend> for input_emulation::Backend {
     fn from(backend: EmulationBackend) -> Self {
         match backend {
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
             EmulationBackend::Wlroots => Self::Wlroots,
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "libei_emulation", not(target_os = "macos")))]
             EmulationBackend::Libei => Self::Libei,
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "rdp_emulation", not(target_os = "macos")))]
             EmulationBackend::Xdp => Self::Xdp,
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "x11_emulation", not(target_os = "macos")))]
             EmulationBackend::X11 => Self::X11,
             #[cfg(windows)]
             EmulationBackend::Windows => Self::Windows,
@@ -187,13 +187,13 @@ impl From<EmulationBackend> for input_emulation::Backend {
 impl Display for EmulationBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(all(unix, feature = "wayland", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
             EmulationBackend::Wlroots => write!(f, "wlroots"),
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "libei_emulation", not(target_os = "macos")))]
             EmulationBackend::Libei => write!(f, "libei"),
-            #[cfg(all(unix, feature = "xdg_desktop_portal", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "rdp_emulation", not(target_os = "macos")))]
             EmulationBackend::Xdp => write!(f, "xdg-desktop-portal"),
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            #[cfg(all(unix, feature = "x11_emulation", not(target_os = "macos")))]
             EmulationBackend::X11 => write!(f, "X11"),
             #[cfg(windows)]
             EmulationBackend::Windows => write!(f, "windows"),

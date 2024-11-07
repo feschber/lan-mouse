@@ -60,13 +60,13 @@ windows = { version = "0.58.0", features = [
 ] }
 
 [features]
-default = ["wayland", "x11", "xdg_desktop_portal", "libei"]
-wayland = [
+default = ["wlroots", "x11", "remote_desktop_portal", "libei"]
+wlroots = [
     "dep:wayland-client",
     "dep:wayland-protocols",
     "dep:wayland-protocols-wlr",
     "dep:wayland-protocols-misc",
 ]
 x11 = ["dep:x11"]
-xdg_desktop_portal = ["dep:ashpd"]
+remote_desktop_portal = ["dep:ashpd"]
 libei = ["dep:reis", "dep:ashpd"]

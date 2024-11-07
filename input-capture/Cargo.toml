@@ -65,8 +65,8 @@ windows = { version = "0.58.0", features = [
 ] }
 
 [features]
-default = ["wayland", "x11", "libei"]
-wayland = [
+default = ["layer_shell", "x11", "libei"]
+layer_shell = [
     "dep:wayland-client",
     "dep:wayland-protocols",
     "dep:wayland-protocols-wlr",
