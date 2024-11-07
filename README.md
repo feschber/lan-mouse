@@ -21,7 +21,7 @@ Focus lies on performance, ease of use and a maintainable implementation that ca
 
 > [!WARNING]
 > DISCLAIMER:
-> Until [#200](https://github.com/feschber/lan-mouse/pulls/200) is merged, all network traffic is **unencrypted** and sent in **plaintext**!
+> Until [#200](https://github.com/feschber/lan-mouse/pull/200) is merged, all network traffic is **unencrypted** and sent in **plaintext**!
 >
 > A malicious actor with access to the network could read input data or send input events with spoofed IPs to take control over a device.
 >
