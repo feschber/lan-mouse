@@ -198,9 +198,6 @@ impl CaptureTask {
             if let Err(e) = self.do_capture().await {
                 log::warn!("input capture exited: {e}");
             }
-            if self.cancellation_token.is_cancelled() {
-                break;
-            }
             loop {
                 tokio::select! {
                     r = self.request_rx.recv() => match r.expect("channel closed") {
@@ -209,7 +206,7 @@ impl CaptureTask {
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
                         CaptureRequest::Release => { /* nothing to do */ }
                     },
-                    _ = self.cancellation_token.cancelled() => break,
+                    _ = self.cancellation_token.cancelled() => return,
                 }
             }
         }
