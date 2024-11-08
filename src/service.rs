@@ -24,7 +24,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
-use tokio::{signal, sync::Notify};
+use tokio::{process::Command, signal, sync::Notify};
 use webrtc_dtls::crypto::Certificate;
 
 #[derive(Debug, Error)]
@@ -284,7 +284,7 @@ impl Service {
                     EmulationEvent::ReleaseNotify => capture.release(),
                 },
                 event = capture.event() => match event {
-                    ICaptureEvent::ClientEntered(handle) => {
+                    ICaptureEvent::CaptureBegin(handle) => {
                         // we entered the capture zone for an incoming connection
                         // => notify it that its capture should be released
                         if let Some(incoming) = self.incoming_conn_info.borrow().get(&handle) {
@@ -299,6 +299,10 @@ impl Service {
                         self.capture_status.replace(Status::Enabled);
                         self.notify_frontend(FrontendEvent::CaptureStatus(Status::Enabled));
                     }
+                    ICaptureEvent::ClientEntered(handle) => {
+                        log::info!("entering client {handle} ...");
+                        self.spawn_hook_command(handle)
+                    },
                 },
                 event = resolver.event() => match event {
                     DnsEvent::Resolving(handle) => self.set_resolving(handle, true),
@@ -496,5 +500,31 @@ impl Service {
     pub(crate) fn set_resolving(&self, handle: ClientHandle, status: bool) {
         self.client_manager.set_resolving(handle, status);
         self.client_updated(handle);
+    }
+
+    fn spawn_hook_command(&self, handle: ClientHandle) {
+        let Some(cmd) = self.client_manager.get_enter_cmd(handle) else {
+            return;
+        };
+        tokio::task::spawn_local(async move {
+            log::info!("spawning command!");
+            let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("could not execute cmd: {e}");
+                    return;
+                }
+            };
+            match child.wait().await {
+                Ok(s) => {
+                    if s.success() {
+                        log::info!("{cmd} exited successfully");
+                    } else {
+                        log::warn!("{cmd} exited with {s}");
+                    }
+                }
+                Err(e) => log::warn!("{cmd}: {e}"),
+            }
+        });
     }
 }

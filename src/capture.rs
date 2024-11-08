@@ -8,13 +8,9 @@ use futures::StreamExt;
 use input_capture::{
     CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
 };
-use lan_mouse_ipc::ClientHandle;
 use lan_mouse_proto::ProtoEvent;
 use local_channel::mpsc::{channel, Receiver, Sender};
-use tokio::{
-    process::Command,
-    task::{spawn_local, JoinHandle},
-};
+use tokio::task::{spawn_local, JoinHandle};
 
 use crate::{connect::LanMouseConnection, service::Service};
 
@@ -28,11 +24,18 @@ pub(crate) struct Capture {
 
 pub(crate) enum ICaptureEvent {
     /// a client was entered
-    ClientEntered(CaptureHandle),
+    CaptureBegin(CaptureHandle),
     /// capture disabled
     CaptureDisabled,
     /// capture disabled
     CaptureEnabled,
+    /// A (new) client was entered.
+    /// In contrast to [`ICaptureEvent::CaptureBegin`] this
+    /// event is only triggered when the capture was
+    /// explicitly released in the meantime by
+    /// either the remote client leaving its device region,
+    /// a new device entering the screen or the release bind.
+    ClientEntered(u64),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -309,7 +312,7 @@ async fn handle_capture_event(
 
     if event == CaptureEvent::Begin {
         event_tx
-            .send(ICaptureEvent::ClientEntered(handle))
+            .send(ICaptureEvent::CaptureBegin(handle))
             .expect("channel closed");
     }
 
@@ -331,8 +334,9 @@ async fn handle_capture_event(
     if event == CaptureEvent::Begin && Some(handle) != active.get() {
         *state = State::WaitingForAck;
         active.replace(Some(handle));
-        log::info!("entering client {handle} ...");
-        spawn_hook_command(service, handle);
+        event_tx
+            .send(ICaptureEvent::ClientEntered(handle))
+            .expect("channel closed");
     }
 
     let pos = match service.client_manager.get_pos(handle) {
@@ -345,7 +349,7 @@ async fn handle_capture_event(
         CaptureEvent::Input(e) => match state {
             // connection not acknowledged, repeat `Enter` event
             State::WaitingForAck => ProtoEvent::Enter(pos),
-            _ => ProtoEvent::Input(e),
+            State::Sending => ProtoEvent::Input(e),
         },
     };
 
@@ -381,32 +385,6 @@ fn to_proto_pos(pos: lan_mouse_ipc::Position) -> lan_mouse_proto::Position {
         lan_mouse_ipc::Position::Top => lan_mouse_proto::Position::Top,
         lan_mouse_ipc::Position::Bottom => lan_mouse_proto::Position::Bottom,
     }
-}
-
-fn spawn_hook_command(service: &Service, handle: ClientHandle) {
-    let Some(cmd) = service.client_manager.get_enter_cmd(handle) else {
-        return;
-    };
-    tokio::task::spawn_local(async move {
-        log::info!("spawning command!");
-        let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                log::warn!("could not execute cmd: {e}");
-                return;
-            }
-        };
-        match child.wait().await {
-            Ok(s) => {
-                if s.success() {
-                    log::info!("{cmd} exited successfully");
-                } else {
-                    log::warn!("{cmd} exited with {s}");
-                }
-            }
-            Err(e) => log::warn!("{cmd}: {e}"),
-        }
-    });
 }
 
 async fn wait_for_termination(rx: &mut Receiver<CaptureRequest>) {
