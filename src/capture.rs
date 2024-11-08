@@ -16,7 +16,6 @@ use crate::{connect::LanMouseConnection, service::Service};
 
 pub(crate) struct Capture {
     exit_requested: Rc<Cell<bool>>,
-    _active: Rc<Cell<Option<CaptureHandle>>>,
     request_tx: Sender<CaptureRequest>,
     task: JoinHandle<()>,
     event_rx: Receiver<ICaptureEvent>,
@@ -60,10 +59,8 @@ impl Capture {
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
-        let active = Rc::new(Cell::new(None));
         let exit_requested = Rc::new(Cell::new(false));
         let task = spawn_local(Self::run(
-            active.clone(),
             exit_requested.clone(),
             service,
             backend,
@@ -72,7 +69,6 @@ impl Capture {
             event_tx,
         ));
         Self {
-            _active: active,
             exit_requested,
             request_tx,
             task,
@@ -120,7 +116,6 @@ impl Capture {
     }
 
     async fn run(
-        active: Rc<Cell<Option<CaptureHandle>>>,
         exit_requested: Rc<Cell<bool>>,
         service: Service,
         backend: Option<input_capture::Backend>,
@@ -128,9 +123,10 @@ impl Capture {
         mut conn: LanMouseConnection,
         mut event_tx: Sender<ICaptureEvent>,
     ) {
+        let mut active = None;
         loop {
             if let Err(e) = do_capture(
-                &active,
+                &mut active,
                 &service,
                 backend,
                 &mut conn,
@@ -156,7 +152,7 @@ impl Capture {
 }
 
 async fn do_capture(
-    active: &Cell<Option<CaptureHandle>>,
+    active: &mut Option<CaptureHandle>,
     service: &Service,
     backend: Option<input_capture::Backend>,
     conn: &mut LanMouseConnection,
@@ -216,7 +212,7 @@ async fn create_clients(
 }
 
 async fn do_capture_session(
-    active: &Cell<Option<CaptureHandle>>,
+    active: &mut Option<CaptureHandle>,
     capture: &mut InputCapture,
     conn: &mut LanMouseConnection,
     event_tx: &Sender<ICaptureEvent>,
@@ -232,8 +228,8 @@ async fn do_capture_session(
                 None => return Ok(()),
             },
             (handle, event) = conn.recv() => {
-                if let Some(active) = active.get() {
-                    if handle != active {
+                if let Some(active) = active {
+                    if handle != *active {
                         // we only care about events coming from the client we are currently connected to
                         // only `Ack` and `Leave` are relevant
                         continue
@@ -294,7 +290,7 @@ enum State {
 }
 
 async fn handle_capture_event(
-    active: &Cell<Option<CaptureHandle>>,
+    active: &mut Option<CaptureHandle>,
     service: &Service,
     capture: &mut InputCapture,
     conn: &LanMouseConnection,
@@ -331,9 +327,9 @@ async fn handle_capture_event(
     }
 
     // activated a new client
-    if event == CaptureEvent::Begin && Some(handle) != active.get() {
+    if event == CaptureEvent::Begin && Some(handle) != *active {
         *state = State::WaitingForAck;
-        active.replace(Some(handle));
+        active.replace(handle);
         event_tx
             .send(ICaptureEvent::ClientEntered(handle))
             .expect("channel closed");
@@ -363,9 +359,9 @@ async fn handle_capture_event(
 
 async fn release_capture(
     capture: &mut InputCapture,
-    active: &Cell<Option<CaptureHandle>>,
+    active: &mut Option<CaptureHandle>,
 ) -> Result<(), CaptureError> {
-    active.replace(None);
+    active.take();
     capture.release().await
 }
 
