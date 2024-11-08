@@ -124,7 +124,7 @@ impl Service {
             self.authorized_keys.clone(),
         )
         .await?;
-        let conn = LanMouseConnection::new(self.clone(), self.cert.clone());
+        let conn = LanMouseConnection::new(self.cert.clone(), self.client_manager.clone());
 
         // input capture + emulation
         let capture_backend = self.config.capture_backend.map(|b| b.into());

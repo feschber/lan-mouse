@@ -1,4 +1,4 @@
-use crate::service::Service;
+use crate::client::ClientManager;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
 use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
 use local_channel::mpsc::{channel, Receiver, Sender};
@@ -92,8 +92,8 @@ async fn connect_any(
 }
 
 pub(crate) struct LanMouseConnection {
-    server: Service,
     cert: Certificate,
+    client_manager: ClientManager,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
     recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
@@ -102,11 +102,11 @@ pub(crate) struct LanMouseConnection {
 }
 
 impl LanMouseConnection {
-    pub(crate) fn new(server: Service, cert: Certificate) -> Self {
+    pub(crate) fn new(cert: Certificate, client_manager: ClientManager) -> Self {
         let (recv_tx, recv_rx) = channel();
         Self {
-            server,
             cert,
+            client_manager,
             conns: Default::default(),
             connecting: Default::default(),
             recv_rx,
@@ -126,20 +126,20 @@ impl LanMouseConnection {
     ) -> Result<(), LanMouseConnectionError> {
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
-        if let Some(addr) = self.server.client_manager.active_addr(handle) {
+        if let Some(addr) = self.client_manager.active_addr(handle) {
             let conn = {
                 let conns = self.conns.lock().await;
                 conns.get(&addr).cloned()
             };
             if let Some(conn) = conn {
-                if !self.server.client_manager.alive(handle) {
+                if !self.client_manager.alive(handle) {
                     return Err(LanMouseConnectionError::TargetEmulationDisabled);
                 }
                 match conn.send(buf).await {
                     Ok(_) => {}
                     Err(e) => {
                         log::warn!("client {handle} failed to send: {e}");
-                        disconnect(&self.server, handle, addr, &self.conns).await;
+                        disconnect(&self.client_manager, handle, addr, &self.conns).await;
                     }
                 }
                 log::trace!("{event} >->->->->- {addr}");
@@ -153,7 +153,7 @@ impl LanMouseConnection {
             connecting.insert(handle);
             // connect in the background
             spawn_local(connect_to_handle(
-                self.server.clone(),
+                self.client_manager.clone(),
                 self.cert.clone(),
                 handle,
                 self.conns.clone(),
@@ -167,7 +167,7 @@ impl LanMouseConnection {
 }
 
 async fn connect_to_handle(
-    server: Service,
+    client_manager: ClientManager,
     cert: Certificate,
     handle: ClientHandle,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
@@ -177,11 +177,8 @@ async fn connect_to_handle(
 ) -> Result<(), LanMouseConnectionError> {
     log::info!("client {handle} connecting ...");
     // sending did not work, figure out active conn.
-    if let Some(addrs) = server.client_manager.get_ips(handle) {
-        let port = server
-            .client_manager
-            .get_port(handle)
-            .unwrap_or(DEFAULT_PORT);
+    if let Some(addrs) = client_manager.get_ips(handle) {
+        let port = client_manager.get_port(handle).unwrap_or(DEFAULT_PORT);
         let addrs = addrs
             .into_iter()
             .map(|a| SocketAddr::new(a, port))
@@ -196,7 +193,7 @@ async fn connect_to_handle(
             }
         };
         log::info!("client ({handle}) connected @ {addr}");
-        server.client_manager.set_active_addr(handle, Some(addr));
+        client_manager.set_active_addr(handle, Some(addr));
         conns.lock().await.insert(addr, conn.clone());
         connecting.lock().await.remove(&handle);
 
@@ -205,7 +202,7 @@ async fn connect_to_handle(
 
         // receiver
         spawn_local(receive_loop(
-            server,
+            client_manager,
             handle,
             addr,
             conn,
@@ -244,7 +241,7 @@ async fn ping_pong(
 }
 
 async fn receive_loop(
-    server: Service,
+    client_manager: ClientManager,
     handle: ClientHandle,
     addr: SocketAddr,
     conn: Arc<dyn Conn + Send + Sync>,
@@ -258,8 +255,8 @@ async fn receive_loop(
             log::trace!("{addr} <==<==<== {event}");
             match event {
                 ProtoEvent::Pong(b) => {
-                    server.client_manager.set_active_addr(handle, Some(addr));
-                    server.client_manager.set_alive(handle, b);
+                    client_manager.set_active_addr(handle, Some(addr));
+                    client_manager.set_alive(handle, b);
                     ping_response.borrow_mut().insert(addr);
                 }
                 event => tx.send((handle, event)).expect("channel closed"),
@@ -267,18 +264,18 @@ async fn receive_loop(
         }
     }
     log::warn!("recv error");
-    disconnect(&server, handle, addr, &conns).await;
+    disconnect(&client_manager, handle, addr, &conns).await;
 }
 
 async fn disconnect(
-    server: &Service,
+    client_manager: &ClientManager,
     handle: ClientHandle,
     addr: SocketAddr,
     conns: &Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>,
 ) {
     log::warn!("client ({handle}) @ {addr} connection closed");
     conns.lock().await.remove(&addr);
-    server.client_manager.set_active_addr(handle, None);
+    client_manager.set_active_addr(handle, None);
     let active: Vec<SocketAddr> = conns.lock().await.keys().copied().collect();
     log::info!("active connections: {active:?}");
 }
