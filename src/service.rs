@@ -143,6 +143,10 @@ impl Service {
 
     pub async fn run(&mut self) -> Result<(), ServiceError> {
         for handle in self.client_manager.active_clients() {
+            // small hack: `activate_client()` checks, if the client
+            // is already active in client_manager and does not create a
+            // capture barrier in that case so we have to deactivate it first
+            self.client_manager.deactivate_client(handle);
             self.activate_client(handle);
         }
 
