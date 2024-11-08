@@ -144,6 +144,9 @@ impl Service {
             if let Some(hostname) = self.client_manager.get_hostname(handle) {
                 resolver.resolve(handle, hostname);
             }
+            if let Some(pos) = self.client_manager.get_pos(handle) {
+                capture.create(handle, pos, CaptureType::Default);
+            }
         }
 
         loop {
