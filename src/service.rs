@@ -56,7 +56,7 @@ pub struct Service {
     pub(crate) client_manager: ClientManager,
     port: Rc<Cell<u16>>,
     public_key_fingerprint: String,
-    notifies: Rc<Notifies>,
+    frontend_event_pending: Rc<Notify>,
     pub(crate) config: Rc<Config>,
     pending_frontend_events: Rc<RefCell<VecDeque<FrontendEvent>>>,
     capture_status: Rc<Cell<Status>>,
@@ -67,11 +67,6 @@ pub struct Service {
     incoming_conn_info: Rc<RefCell<HashMap<ClientHandle, Incoming>>>,
     cert: Certificate,
     next_trigger_handle: u64,
-}
-
-#[derive(Default)]
-struct Notifies {
-    frontend_event_pending: Notify,
 }
 
 impl Service {
@@ -106,8 +101,8 @@ impl Service {
             public_key_fingerprint,
             config: Rc::new(config),
             client_manager,
+            frontend_event_pending: Default::default(),
             port,
-            notifies: Default::default(),
             pending_frontend_events: Rc::new(RefCell::new(VecDeque::new())),
             capture_status: Default::default(),
             emulation_status: Default::default(),
@@ -222,7 +217,7 @@ impl Service {
                         }
                     }
                 }
-                _ = self.notifies.frontend_event_pending.notified() => {
+                _ = self.frontend_event_pending.notified() => {
                     while let Some(event) = {
                         /* need to drop borrow before next iteration! */
                         let event = self.pending_frontend_events.borrow_mut().pop_front();
@@ -378,7 +373,7 @@ impl Service {
 
     fn notify_frontend(&self, event: FrontendEvent) {
         self.pending_frontend_events.borrow_mut().push_back(event);
-        self.notifies.frontend_event_pending.notify_one();
+        self.frontend_event_pending.notify_one();
     }
 
     pub(crate) fn client_updated(&self, handle: ClientHandle) {
