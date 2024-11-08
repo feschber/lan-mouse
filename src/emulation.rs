@@ -138,7 +138,7 @@ impl ListenTask {
                             }
                         }
                         ProtoEvent::Leave(_) => {
-                            self.emulation_proxy.release_keys(addr);
+                            self.emulation_proxy.remove(addr);
                             self.listener.reply(addr, ProtoEvent::Ack(0)).await;
                         }
                         ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
@@ -163,9 +163,9 @@ impl ListenTask {
                 },
                 _ = interval.tick() => {
                     last_response.retain(|&addr,instant| {
-                        if instant.elapsed() > Duration::from_secs(5) {
+                        if instant.elapsed() > Duration::from_secs(1) {
                             log::warn!("releasing keys: {addr} not responding!");
-                            self.emulation_proxy.release_keys(addr);
+                            self.emulation_proxy.remove(addr);
                             self.event_tx.send(EmulationEvent::Disconnected { addr }).expect("channel closed");
                             false
                         } else {
@@ -192,7 +192,7 @@ pub(crate) struct EmulationProxy {
 
 enum ProxyRequest {
     Input(Event, SocketAddr),
-    ReleaseKeys(SocketAddr),
+    Remove(SocketAddr),
     Terminate,
     Reenable,
 }
@@ -241,9 +241,9 @@ impl EmulationProxy {
         }
     }
 
-    fn release_keys(&self, addr: SocketAddr) {
+    fn remove(&self, addr: SocketAddr) {
         self.request_tx
-            .send(ProxyRequest::ReleaseKeys(addr))
+            .send(ProxyRequest::Remove(addr))
             .expect("channel closed");
     }
 
@@ -286,7 +286,7 @@ impl EmulationTask {
                     ProxyRequest::Reenable => break,
                     ProxyRequest::Terminate => return,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
-                    ProxyRequest::ReleaseKeys(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
                 }
             }
         }
@@ -352,9 +352,9 @@ impl EmulationTask {
                         };
                         emulation.consume(event, handle).await?;
                     },
-                    ProxyRequest::ReleaseKeys(addr) => {
-                        if let Some(&handle) = self.handles.get(&addr) {
-                            emulation.release_keys(handle).await?
+                    ProxyRequest::Remove(addr) => {
+                        if let Some(handle) = self.handles.remove(&addr) {
+                            emulation.destroy(handle).await;
                         }
                     }
                     ProxyRequest::Terminate => break Ok(()),
@@ -379,7 +379,7 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
         match rx.recv().await.expect("channel closed") {
             ProxyRequest::Terminate => return,
             ProxyRequest::Input(_, _) => continue,
-            ProxyRequest::ReleaseKeys(_) => continue,
+            ProxyRequest::Remove(_) => continue,
             ProxyRequest::Reenable => continue,
         }
     }
