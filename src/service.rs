@@ -1,5 +1,5 @@
 use crate::{
-    capture::{Capture, ICaptureEvent},
+    capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
     config::Config,
     connect::LanMouseConnection,
@@ -133,7 +133,7 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = self.config.capture_backend.map(|b| b.into());
-        let mut capture = Capture::new(capture_backend, conn, self.clone());
+        let mut capture = Capture::new(capture_backend, conn, self.config.release_bind.clone());
         let emulation_backend = self.config.emulation_backend.map(|b| b.into());
         let mut emulation = Emulation::new(emulation_backend, listener);
 
@@ -346,7 +346,7 @@ impl Service {
     ) {
         let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
-        capture.create(handle, pos);
+        capture.create(handle, pos, CaptureType::EnterOnly);
         self.incoming_conns.borrow_mut().insert(addr);
         self.incoming_conn_info.borrow_mut().insert(
             handle,
@@ -371,13 +371,6 @@ impl Service {
             .borrow_mut()
             .remove(&handle)
             .map(|incoming| incoming.addr)
-    }
-
-    pub(crate) fn get_incoming_pos(&self, handle: ClientHandle) -> Option<Position> {
-        self.incoming_conn_info
-            .borrow()
-            .get(&handle)
-            .map(|incoming| incoming.pos)
     }
 
     fn notify_frontend(&self, event: FrontendEvent) {
@@ -441,7 +434,7 @@ impl Service {
         /* activate the client */
         if self.client_manager.activate_client(handle) {
             /* notify capture and frontends */
-            capture.create(handle, pos);
+            capture.create(handle, pos, CaptureType::Default);
             self.client_updated(handle);
             log::info!("activated client {handle} ({pos})");
         }
