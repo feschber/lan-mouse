@@ -78,24 +78,29 @@ impl DnsTask {
     }
 
     async fn do_dns(&mut self) {
-        loop {
-            let DnsRequest { handle, hostname } =
-                self.request_rx.recv().await.expect("channel closed");
+        while let Some(dns_request) = self.request_rx.recv().await {
+            let DnsRequest { handle, hostname } = dns_request;
 
             self.event_tx
                 .send(DnsEvent::Resolving(handle))
                 .expect("channel closed");
 
-            /* resolve host */
-            let ips = self
-                .resolver
-                .lookup_ip(&hostname)
-                .await
-                .map(|ips| ips.iter().collect::<Vec<_>>());
+            /* spawn task for dns request */
+            let event_tx = self.event_tx.clone();
+            let resolver = self.resolver.clone();
+            let cancellation_token = self.cancellation_token.clone();
 
-            self.event_tx
-                .send(DnsEvent::Resolved(handle, hostname, ips))
-                .expect("channel closed");
+            tokio::task::spawn_local(async move {
+                tokio::select! {
+                    ips = resolver.lookup_ip(&hostname) => {
+                       let ips = ips.map(|ips| ips.iter().collect::<Vec<_>>());
+                       event_tx
+                           .send(DnsEvent::Resolved(handle, hostname, ips))
+                           .expect("channel closed");
+                    }
+                    _ = cancellation_token.cancelled() => {},
+                }
+            });
         }
     }
 }
