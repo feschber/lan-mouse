@@ -23,7 +23,6 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
-use webrtc_dtls::crypto::Certificate;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -49,12 +48,15 @@ pub struct Incoming {
 }
 
 pub struct Service {
+    capture: Capture,
+    emulation: Emulation,
+    resolver: DnsResolver,
+    frontend_listener: AsyncFrontendListener,
     authorized_keys: Arc<RwLock<HashMap<String, String>>>,
     pub(crate) client_manager: ClientManager,
     port: u16,
     public_key_fingerprint: String,
     frontend_event_pending: Notify,
-    pub(crate) config: Config,
     pending_frontend_events: VecDeque<FrontendEvent>,
     capture_status: Status,
     pub(crate) emulation_status: Status,
@@ -62,7 +64,6 @@ pub struct Service {
     incoming_conns: HashSet<SocketAddr>,
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
-    cert: Certificate,
     next_trigger_handle: u64,
 }
 
@@ -91,12 +92,32 @@ impl Service {
         let cert = crypto::load_or_generate_key_and_cert(&config.cert_path)?;
         let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
 
+        // create frontend communication adapter, exit if already running
+        let frontend_listener = AsyncFrontendListener::new().await?;
+
+        let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints.clone()));
+        // listener + connection
+        let listener =
+            LanMouseListener::new(config.port, cert.clone(), authorized_keys.clone()).await?;
+        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+
+        // input capture + emulation
+        let capture_backend = config.capture_backend.map(|b| b.into());
+        let capture = Capture::new(capture_backend, conn, config.release_bind.clone());
+        let emulation_backend = config.emulation_backend.map(|b| b.into());
+        let emulation = Emulation::new(emulation_backend, listener);
+
+        // create dns resolver
+        let resolver = DnsResolver::new()?;
+
         let port = config.port;
         let service = Self {
-            authorized_keys: Arc::new(RwLock::new(config.authorized_fingerprints.clone())),
-            cert,
+            capture,
+            emulation,
+            frontend_listener,
+            resolver,
+            authorized_keys,
             public_key_fingerprint,
-            config,
             client_manager,
             frontend_event_pending: Default::default(),
             port,
@@ -111,39 +132,18 @@ impl Service {
     }
 
     pub async fn run(&mut self) -> Result<(), ServiceError> {
-        // create frontend communication adapter, exit if already running
-        let mut frontend_listener = AsyncFrontendListener::new().await?;
-
-        // listener + connection
-        let listener = LanMouseListener::new(
-            self.config.port,
-            self.cert.clone(),
-            self.authorized_keys.clone(),
-        )
-        .await?;
-        let conn = LanMouseConnection::new(self.cert.clone(), self.client_manager.clone());
-
-        // input capture + emulation
-        let capture_backend = self.config.capture_backend.map(|b| b.into());
-        let mut capture = Capture::new(capture_backend, conn, self.config.release_bind.clone());
-        let emulation_backend = self.config.emulation_backend.map(|b| b.into());
-        let mut emulation = Emulation::new(emulation_backend, listener);
-
-        // create dns resolver
-        let mut resolver = DnsResolver::new()?;
-
         for handle in self.client_manager.active_clients() {
             if let Some(hostname) = self.client_manager.get_hostname(handle) {
-                resolver.resolve(handle, hostname);
+                self.resolver.resolve(handle, hostname);
             }
             if let Some(pos) = self.client_manager.get_pos(handle) {
-                capture.create(handle, pos, CaptureType::Default);
+                self.capture.create(handle, pos, CaptureType::Default);
             }
         }
 
         loop {
             tokio::select! {
-                request = frontend_listener.next() => {
+                request = self.frontend_listener.next() => {
                     let request = match request {
                         Some(Ok(r)) => r,
                         Some(Err(e)) => {
@@ -153,45 +153,45 @@ impl Service {
                         None => break,
                     };
                     match request {
-                        FrontendRequest::EnableCapture => capture.reenable(),
-                        FrontendRequest::EnableEmulation => emulation.reenable(),
+                        FrontendRequest::EnableCapture => self.capture.reenable(),
+                        FrontendRequest::EnableEmulation => self.emulation.reenable(),
                         FrontendRequest::Create => {
                             self.add_client();
                         }
                         FrontendRequest::Activate(handle, active) => {
                             if active {
                                 if let Some(hostname) = self.client_manager.get_hostname(handle) {
-                                    resolver.resolve(handle, hostname);
+                                    self.resolver.resolve(handle, hostname);
                                 }
-                                self.activate_client(&capture, handle);
+                                self.activate_client(handle);
                             } else {
-                                self.deactivate_client(&capture, handle);
+                                self.deactivate_client(handle);
                             }
                         }
                         FrontendRequest::ChangePort(port) => {
                             if self.port != port {
-                                emulation.request_port_change(port);
+                                self.emulation.request_port_change(port);
                             } else {
                                 self.notify_frontend(FrontendEvent::PortChanged(self.port, None));
                             }
                         }
                         FrontendRequest::Delete(handle) => {
-                            self.remove_client(&capture, handle);
+                            self.remove_client(handle);
                             self.notify_frontend(FrontendEvent::Deleted(handle));
                         }
                         FrontendRequest::Enumerate() => self.enumerate(),
                         FrontendRequest::GetState(handle) => self.broadcast_client(handle),
                         FrontendRequest::UpdateFixIps(handle, fix_ips) => self.update_fix_ips(handle, fix_ips),
                         FrontendRequest::UpdateHostname(handle, host) => {
-                            self.update_hostname(handle, host, &resolver)
+                            self.update_hostname(handle, host)
                         }
                         FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
                         FrontendRequest::UpdatePosition(handle, pos) => {
-                            self.update_pos(handle, &capture, pos);
+                            self.update_pos(handle, pos);
                         }
                         FrontendRequest::ResolveDns(handle) => {
                             if let Some(hostname) = self.client_manager.get_hostname(handle) {
-                                resolver.resolve(handle, hostname);
+                                self.resolver.resolve(handle, hostname);
                             }
                         }
                         FrontendRequest::Sync => {
@@ -215,14 +215,14 @@ impl Service {
                 }
                 _ = self.frontend_event_pending.notified() => {
                     while let Some(event) = self.pending_frontend_events.pop_front() {
-                        frontend_listener.broadcast(event).await;
+                        self.frontend_listener.broadcast(event).await;
                     }
                 },
-                event = emulation.event() => match event {
+                event = self.emulation.event() => match event {
                     EmulationEvent::Connected { addr, pos, fingerprint } => {
                         // check if already registered
                         if !self.incoming_conns.contains(&addr) {
-                            self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                            self.add_incoming(addr, pos, fingerprint.clone());
                             self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
                         } else {
                             let handle = self
@@ -243,15 +243,15 @@ impl Service {
                                 }
                             }
                             if changed {
-                                self.remove_incoming(addr, &capture);
-                                self.add_incoming(addr, pos, fingerprint.clone(), &capture);
+                                self.remove_incoming(addr);
+                                self.add_incoming(addr, pos, fingerprint.clone());
                                 self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
                                 self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
                             }
                         }
                     }
                     EmulationEvent::Disconnected { addr } => {
-                        if let Some(addr) = self.remove_incoming(addr, &capture) {
+                        if let Some(addr) = self.remove_incoming(addr) {
                             self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
                         }
                     }
@@ -270,14 +270,14 @@ impl Service {
                         self.emulation_status = Status::Enabled;
                         self.notify_frontend(FrontendEvent::EmulationStatus(Status::Enabled));
                     },
-                    EmulationEvent::ReleaseNotify => capture.release(),
+                    EmulationEvent::ReleaseNotify => self.capture.release(),
                 },
-                event = capture.event() => match event {
+                event = self.capture.event() => match event {
                     ICaptureEvent::CaptureBegin(handle) => {
                         // we entered the capture zone for an incoming connection
                         // => notify it that its capture should be released
                         if let Some(incoming) = self.incoming_conn_info.get(&handle) {
-                            emulation.send_leave_event(incoming.addr);
+                            self.emulation.send_leave_event(incoming.addr);
                         }
                     }
                     ICaptureEvent::CaptureDisabled => {
@@ -293,7 +293,7 @@ impl Service {
                         self.spawn_hook_command(handle)
                     },
                 },
-                event = resolver.event() => match event {
+                event = self.resolver.event() => match event {
                     DnsEvent::Resolving(handle) => self.set_resolving(handle, true),
                     DnsEvent::Resolved(handle, hostname, ips) => {
                         self.set_resolving(handle, false);
@@ -315,27 +315,21 @@ impl Service {
 
         log::info!("terminating service ...");
         log::info!("terminating capture ...");
-        capture.terminate().await;
+        self.capture.terminate().await;
         log::info!("terminating emulation ...");
-        emulation.terminate().await;
+        self.emulation.terminate().await;
         log::info!("terminating dns resolver ...");
-        resolver.terminate().await;
+        self.resolver.terminate().await;
 
         Ok(())
     }
 
     pub(crate) const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
 
-    fn add_incoming(
-        &mut self,
-        addr: SocketAddr,
-        pos: Position,
-        fingerprint: String,
-        capture: &Capture,
-    ) {
+    fn add_incoming(&mut self, addr: SocketAddr, pos: Position, fingerprint: String) {
         let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
         self.next_trigger_handle += 1;
-        capture.create(handle, pos, CaptureType::EnterOnly);
+        self.capture.create(handle, pos, CaptureType::EnterOnly);
         self.incoming_conns.insert(addr);
         self.incoming_conn_info.insert(
             handle,
@@ -347,13 +341,13 @@ impl Service {
         );
     }
 
-    fn remove_incoming(&mut self, addr: SocketAddr, capture: &Capture) -> Option<SocketAddr> {
+    fn remove_incoming(&mut self, addr: SocketAddr) -> Option<SocketAddr> {
         let handle = self
             .incoming_conn_info
             .iter()
             .find(|(_, incoming)| incoming.addr == addr)
             .map(|(k, _)| *k)?;
-        capture.destroy(handle);
+        self.capture.destroy(handle);
         self.incoming_conns.remove(&addr);
         self.incoming_conn_info
             .remove(&handle)
@@ -394,16 +388,16 @@ impl Service {
         handle
     }
 
-    fn deactivate_client(&mut self, capture: &Capture, handle: ClientHandle) {
+    fn deactivate_client(&mut self, handle: ClientHandle) {
         log::debug!("deactivating client {handle}");
         if self.client_manager.deactivate_client(handle) {
-            capture.destroy(handle);
+            self.capture.destroy(handle);
             self.client_updated(handle);
             log::info!("deactivated client {handle}");
         }
     }
 
-    fn activate_client(&mut self, capture: &Capture, handle: ClientHandle) {
+    fn activate_client(&mut self, handle: ClientHandle) {
         log::debug!("activating client");
         /* deactivate potential other client at this position */
         let Some(pos) = self.client_manager.get_pos(handle) else {
@@ -412,26 +406,26 @@ impl Service {
 
         if let Some(other) = self.client_manager.client_at(pos) {
             if other != handle {
-                self.deactivate_client(capture, other);
+                self.deactivate_client(other);
             }
         }
 
         /* activate the client */
         if self.client_manager.activate_client(handle) {
             /* notify capture and frontends */
-            capture.create(handle, pos, CaptureType::Default);
+            self.capture.create(handle, pos, CaptureType::Default);
             self.client_updated(handle);
             log::info!("activated client {handle} ({pos})");
         }
     }
 
-    fn remove_client(&self, capture: &Capture, handle: ClientHandle) {
+    fn remove_client(&self, handle: ClientHandle) {
         if let Some(true) = self
             .client_manager
             .remove_client(handle)
             .map(|(_, s)| s.active)
         {
-            capture.destroy(handle);
+            self.capture.destroy(handle);
         }
     }
 
@@ -445,15 +439,10 @@ impl Service {
         self.client_updated(handle);
     }
 
-    fn update_hostname(
-        &mut self,
-        handle: ClientHandle,
-        hostname: Option<String>,
-        dns: &DnsResolver,
-    ) {
+    fn update_hostname(&mut self, handle: ClientHandle, hostname: Option<String>) {
         if self.client_manager.set_hostname(handle, hostname.clone()) {
             if let Some(hostname) = hostname {
-                dns.resolve(handle, hostname);
+                self.resolver.resolve(handle, hostname);
             }
             self.client_updated(handle);
         }
@@ -463,11 +452,11 @@ impl Service {
         self.client_manager.set_port(handle, port);
     }
 
-    fn update_pos(&mut self, handle: ClientHandle, capture: &Capture, pos: Position) {
+    fn update_pos(&mut self, handle: ClientHandle, pos: Position) {
         // update state in event input emulator & input capture
         if self.client_manager.set_pos(handle, pos) {
-            self.deactivate_client(capture, handle);
-            self.activate_client(capture, handle);
+            self.deactivate_client(handle);
+            self.activate_client(handle);
         }
     }
 
