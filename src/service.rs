@@ -38,33 +38,31 @@ pub enum ServiceError {
     Certificate(#[from] crypto::Error),
 }
 
-pub struct ReleaseToken;
-
-#[derive(Debug)]
-pub struct Incoming {
-    fingerprint: String,
-    addr: SocketAddr,
-    pos: Position,
-}
-
 pub struct Service {
     capture: Capture,
     emulation: Emulation,
     resolver: DnsResolver,
     frontend_listener: AsyncFrontendListener,
     authorized_keys: Arc<RwLock<HashMap<String, String>>>,
-    pub(crate) client_manager: ClientManager,
+    client_manager: ClientManager,
     port: u16,
     public_key_fingerprint: String,
     frontend_event_pending: Notify,
     pending_frontend_events: VecDeque<FrontendEvent>,
     capture_status: Status,
-    pub(crate) emulation_status: Status,
+    emulation_status: Status,
     /// keep track of registered connections to avoid duplicate barriers
     incoming_conns: HashSet<SocketAddr>,
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+}
+
+#[derive(Debug)]
+struct Incoming {
+    fingerprint: String,
+    addr: SocketAddr,
+    pos: Position,
 }
 
 impl Service {
@@ -264,11 +262,11 @@ impl Service {
                     }
                     EmulationEvent::EmulationDisabled => {
                         self.emulation_status = Status::Disabled;
-                        self.notify_frontend(FrontendEvent::EmulationStatus(Status::Disabled));
+                        self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
                     },
                     EmulationEvent::EmulationEnabled => {
                         self.emulation_status = Status::Enabled;
-                        self.notify_frontend(FrontendEvent::EmulationStatus(Status::Enabled));
+                        self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
                     },
                     EmulationEvent::ReleaseNotify => self.capture.release(),
                 },
@@ -282,15 +280,15 @@ impl Service {
                     }
                     ICaptureEvent::CaptureDisabled => {
                         self.capture_status = Status::Disabled;
-                        self.notify_frontend(FrontendEvent::CaptureStatus(Status::Disabled));
+                        self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status));
                     }
                     ICaptureEvent::CaptureEnabled => {
                         self.capture_status = Status::Enabled;
-                        self.notify_frontend(FrontendEvent::CaptureStatus(Status::Enabled));
+                        self.notify_frontend(FrontendEvent::CaptureStatus(self.capture_status));
                     }
                     ICaptureEvent::ClientEntered(handle) => {
                         log::info!("entering client {handle} ...");
-                        self.spawn_hook_command(handle)
+                        self.spawn_hook_command(handle);
                     },
                 },
                 event = self.resolver.event() => match event {
@@ -359,7 +357,7 @@ impl Service {
         self.frontend_event_pending.notify_one();
     }
 
-    pub(crate) fn client_updated(&mut self, handle: ClientHandle) {
+    fn client_updated(&mut self, handle: ClientHandle) {
         self.notify_frontend(FrontendEvent::Changed(handle));
     }
 
@@ -434,7 +432,7 @@ impl Service {
         self.client_updated(handle);
     }
 
-    pub(crate) fn update_dns_ips(&mut self, handle: ClientHandle, dns_ips: Vec<IpAddr>) {
+    fn update_dns_ips(&mut self, handle: ClientHandle, dns_ips: Vec<IpAddr>) {
         self.client_manager.set_dns_ips(handle, dns_ips);
         self.client_updated(handle);
     }
@@ -469,7 +467,7 @@ impl Service {
         self.notify_frontend(event);
     }
 
-    pub(crate) fn set_resolving(&mut self, handle: ClientHandle, status: bool) {
+    fn set_resolving(&mut self, handle: ClientHandle, status: bool) {
         self.client_manager.set_resolving(handle, status);
         self.client_updated(handle);
     }
