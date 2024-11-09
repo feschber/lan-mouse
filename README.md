@@ -380,14 +380,14 @@ The following sections detail the emulation and capture backends provided by lan
 
 ### Input Emulation Support
 
-| Desktop / Backend         | layer-shell              | libei                    | windows                  |   macos                                | x11 |
-|---------------------------|--------------------------|--------------------------|--------------------------|----------------------------------------|-----|
-| Wayland (wlroots)         | :heavy_check_mark:       |                          |                          |                                        |     |
-| Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |     |
-| Wayland (Gnome)           |                          | :heavy_check_mark:       |                          |                                        |     |
-| Windows                   |                          |                          | :heavy_check_mark:       |                                        |     |
-| MacOS                     |                          |                          |                          |   :heavy_check_mark:                   |     |
-| X11                       |                          |                          |                          |                                        | WIP |
+| Desktop / Backend         | wlroots                  | libei                    | remote-desktop portal    | windows                  |   macos                                | x11                |
+|---------------------------|--------------------------|--------------------------|--------------------------|--------------------------|----------------------------------------|--------------------|
+| Wayland (wlroots)         | :heavy_check_mark:       |                          |                          |                          |                                        |                    |
+| Wayland (KDE)             |                          | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |                    |
+| Wayland (Gnome)           |                          | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |                    |
+| Windows                   |                          |                          |                          | :heavy_check_mark:       |                                        |                    |
+| MacOS                     |                          |                          |                          |                          |   :heavy_check_mark:                   |                    |
+| X11                       |                          |                          |                          |                          |                                        | :heavy_check_mark: |
 
 - `wlroots`: This backend makes use of the [wlr-virtual-pointer-unstable-v1](https://wayland.app/protocols/wlr-virtual-pointer-unstable-v1) and [virtual-keyboard-unstable-v1](https://wayland.app/protocols/virtual-keyboard-unstable-v1) protocols and is supported by most wlroots based compositors.
 - `libei`: This backend uses [libei](https://gitlab.freedesktop.org/libinput/libei) and is supported by GNOME >= 45 or KDE Plasma >= 6.1.
@@ -400,14 +400,14 @@ The following sections detail the emulation and capture backends provided by lan
 
 ### Input Capture Support
 
-| Desktop / Backend         | wlroots                  | libei                    | remote-desktop portal    | windows                  |   macos                                | x11                |
-|---------------------------|--------------------------|--------------------------|--------------------------|--------------------------|----------------------------------------|--------------------|
-| Wayland (wlroots)         | :heavy_check_mark:       |                          |                          |                          |                                        |                    |
-| Wayland (KDE)             |                          | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |                    |
-| Wayland (Gnome)           |                          | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |                    |
-| Windows                   |                          |                          |                          | :heavy_check_mark:       |                                        |                    |
-| MacOS                     |                          |                          |                          |                          |   :heavy_check_mark:                   |                    |
-| X11                       |                          |                          |                          |                          |                                        | :heavy_check_mark: |
+| Desktop / Backend         | layer-shell              | libei                    | windows                  |   macos                                | x11 |
+|---------------------------|--------------------------|--------------------------|--------------------------|----------------------------------------|-----|
+| Wayland (wlroots)         | :heavy_check_mark:       |                          |                          |                                        |     |
+| Wayland (KDE)             | :heavy_check_mark:       | :heavy_check_mark:       |                          |                                        |     |
+| Wayland (Gnome)           |                          | :heavy_check_mark:       |                          |                                        |     |
+| Windows                   |                          |                          | :heavy_check_mark:       |                                        |     |
+| MacOS                     |                          |                          |                          |   :heavy_check_mark:                   |     |
+| X11                       |                          |                          |                          |                                        | WIP |
 
 - `layer-shell`: This backend creates a single pixel wide window on the edges of Displays to capture the cursor using the [layer-shell protocol](https://wayland.app/protocols/wlr-layer-shell-unstable-v1).
 - `libei`: This backend uses [libei](https://gitlab.freedesktop.org/libinput/libei) and is supported by GNOME >= 45 or KDE Plasma >= 6.1.
