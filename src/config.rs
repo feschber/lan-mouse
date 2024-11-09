@@ -46,7 +46,6 @@ pub struct TomlClient {
 impl ConfigToml {
     pub fn new(path: &Path) -> Result<ConfigToml, ConfigError> {
         let config = fs::read_to_string(path)?;
-        log::info!("using config: \"{path:?}\"");
         Ok(toml::from_str::<_>(&config)?)
     }
 }
@@ -232,16 +231,29 @@ impl Default for Frontend {
 
 #[derive(Debug)]
 pub struct Config {
+    /// the path to the configuration file used
+    pub path: PathBuf,
+    /// public key fingerprints authorized for connection
     pub authorized_fingerprints: HashMap<String, String>,
+    /// optional input-capture backend override
     pub capture_backend: Option<CaptureBackend>,
+    /// optional input-emulation backend override
     pub emulation_backend: Option<EmulationBackend>,
+    /// the frontend to use
     pub frontend: Frontend,
+    /// the port to use (initially)
     pub port: u16,
+    /// list of clients
     pub clients: Vec<(TomlClient, Position)>,
+    /// whether or not to run as a daemon
     pub daemon: bool,
+    /// configured release bind
     pub release_bind: Vec<scancode::Linux>,
+    /// test capture instead of running the app
     pub test_capture: bool,
+    /// test emulation instead of running the app
     pub test_emulation: bool,
+    /// path to the tls certificate to use
     pub cert_path: PathBuf,
 }
 
@@ -357,6 +369,7 @@ impl Config {
         let test_emulation = args.test_emulation;
 
         Ok(Config {
+            path: config_path,
             authorized_fingerprints,
             capture_backend,
             emulation_backend,

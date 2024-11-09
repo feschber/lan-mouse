@@ -7,7 +7,7 @@ use lan_mouse::{
     emulation_test,
     service::{Service, ServiceError},
 };
-use lan_mouse_ipc::IpcError;
+use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
@@ -32,7 +32,7 @@ enum LanMouseError {
     Emulation(#[from] InputEmulationError),
 }
 
-pub fn main() {
+fn main() {
     // init logging
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
     env_logger::init_from_env(env);
@@ -46,16 +46,18 @@ pub fn main() {
 fn run() -> Result<(), LanMouseError> {
     // parse config file + cli args
     let config = Config::new()?;
-    log::debug!("{config:?}");
-    log::info!("release bind: {:?}", config.release_bind);
-
     if config.test_capture {
         run_async(capture_test::run(config))?;
     } else if config.test_emulation {
         run_async(emulation_test::run(config))?;
     } else if config.daemon {
         // if daemon is specified we run the service
-        run_async(run_service(config))?;
+        match run_async(run_service(config)) {
+            Err(LanMouseError::Service(ServiceError::IpcListen(
+                IpcListenerCreationError::AlreadyRunning,
+            ))) => log::info!("service already running!"),
+            r => r?,
+        }
     } else {
         //  otherwise start the service as a child process and
         //  run a frontend
@@ -100,9 +102,10 @@ fn start_service() -> Result<Child, io::Error> {
 }
 
 async fn run_service(config: Config) -> Result<(), ServiceError> {
+    log::info!("using config: {:?}", config.path);
     log::info!("Press {:?} to release the mouse", config.release_bind);
-    let mut server = Service::new(config).await?;
-    server.run().await?;
+    let mut service = Service::new(config).await?;
+    service.run().await?;
     log::info!("service exited!");
     Ok(())
 }
