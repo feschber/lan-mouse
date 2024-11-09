@@ -50,6 +50,11 @@ Most current desktop environments and operating systems are fully supported, thi
 
 For more detailed information about os support see [Detailed OS Support](#detailed-os-support)
 
+### Android & IOS
+
+A proof of concept for an Android / IOS Application by [rohitsangwan01](https://github.com/rohitsangwan01) can be found [here](https://github.com/rohitsangwan01/lan-mouse-mobile).
+It can be used as a remote control for any device supported by Lan Mouse.
+Be aware it only works with version 0.10.0 of lan-mouse due to the recent changes in regards to encryption.
 
 ## Installation
 
