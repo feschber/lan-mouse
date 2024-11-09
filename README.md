@@ -4,7 +4,7 @@ It allows for using multiple PCs via a single set of mouse and keyboard.
 This is also known as a Software KVM switch.
 
 Goal of this project is to be an open-source alternative to proprietary tools like [Synergy 2/3](https://symless.com/synergy), [Share Mouse](https://www.sharemouse.com/de/)
-and an alternative to other open source tools like [Deskflow](https://github.com/deskflow/deskflow) or [Input Leap](https://github.com/input-leap) (Synergy fork).
+and other open source tools like [Deskflow](https://github.com/deskflow/deskflow) or [Input Leap](https://github.com/input-leap) (Synergy fork).
 
 Focus lies on performance, ease of use and a maintainable implementation that can be expanded to support additional backends for e.g. Android, iOS, ... in the future.
 
@@ -19,15 +19,10 @@ Focus lies on performance, ease of use and a maintainable implementation that ca
 </picture>
 
 
-> [!WARNING]
-> DISCLAIMER:
-> Until [#200](https://github.com/feschber/lan-mouse/pull/200) is merged, all network traffic is **unencrypted** and sent in **plaintext**!
->
-> A malicious actor with access to the network could read input data or send input events with spoofed IPs to take control over a device.
->
-> Therefore you should only use this tool in your local network with trusted devices.
-> I take no responsibility for any security breaches!
+## Encryption
 
+Lan Mouse encrypts all network traffic using the DTLS implementation provided by [WebRTC.rs](https://github.com/webrtc-rs/webrtc).
+There are currently no mitigations in place for timing side-channel attacks.
 
 ## OS Support
 
@@ -190,14 +185,14 @@ sudo dnf install libadwaita-devel libXtst-devel libX11-devel
 </details>
 <details>
     <summary>Nix</summary>
-    
+
 ```sh
 nix-shell .
 ```
 </details>
 <details>
     <summary>Nix (flake)</summary>
-    
+
 ```sh
 nix develop
 ```
@@ -252,11 +247,17 @@ the gtk frontend (see conditional compilation).
 
 By default the gtk frontend will open when running `lan-mouse`.
 
-To add a new connection, simply click the `Add` button on *both* devices,
-enter the corresponding hostname and activate it.
+To connect a device you want to control, simply click the `Add` button and enter the hostname
+of the device.
 
-If the mouse can not be moved onto a device, make sure you have port `4242` (or the one selected)
-opened up in your firewall.
+On the *remote* device, authorize your *local* device for incoming traffic using the `Authorize` button
+under the "Incoming Connections" section.
+The fingerprint for authorization can be found under the general section of your *local* device.
+It is of the form "aa:bb:cc:..."
+
+Authorized devices can be persisted using the configuration file (see [Configuration](#configuration)).
+
+If the device still can not be entered, make sure you have UDP port `4242` (or the one selected) opened up in your firewall.
 </details>
 
 <details>
@@ -321,8 +322,13 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 # # optional frontend -> defaults to gtk if available
-# # possible values are "cli" and "gtk" 
+# # possible values are "cli" and "gtk"
 # frontend = "gtk"
+
+# list of authorized tls certificate fingerprints that
+# are accepted for incoming traffic
+[authorized_fingerprints]
+"bc:05:ab:7a:a4:de:88:8c:2f:92:ac:bc:b8:49:b8:24:0d:44:b3:e6:a4:ef:d7:0b:6c:69:6d:77:53:0b:14:80" = "iridium"
 
 # define a client on the right side with host name "iridium"
 [right]
@@ -356,7 +362,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] Libei Input Capture
 - [x] MacOS Input Capture
 - [x] Windows Input Capture
-- [ ] *Encryption* (WIP)
+- [x] Encryption
 - [ ] X11 Input Capture
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization
@@ -408,6 +414,3 @@ The following sections detail the emulation and capture backends provided by lan
 - `windows`: Backend for input capture on Windows.
 - `macos`: Backend for input capture on MacOS.
 - `x11`: TODO (not yet supported)
-
-
-

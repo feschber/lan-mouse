@@ -274,6 +274,17 @@ impl Cli {
             FrontendEvent::EmulationStatus(s) => {
                 eprintln!("emulation status: {s:?}")
             }
+            FrontendEvent::AuthorizedUpdated(fingerprints) => {
+                eprintln!("authorized keys changed:");
+                for (desc, fp) in fingerprints {
+                    eprintln!("{desc}: {fp}");
+                }
+            }
+            FrontendEvent::PublicKeyFingerprint(fp) => {
+                eprintln!("the public key fingerprint of this device is {fp}");
+            }
+            FrontendEvent::IncomingConnected(..) => {}
+            FrontendEvent::IncomingDisconnected(..) => {}
         }
     }
 

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+	<template class="KeyRow" parent="AdwActionRow">
+		<child type="prefix">
+			<object class="GtkButton" id="delete_button">
+				<property name="valign">center</property>
+				<property name="halign">end</property>
+				<property name="tooltip-text" translatable="yes">revoke authorization</property>
+                <property name="icon-name">edit-delete-symbolic</property>
+				<style>
+                    <class name="flat"/>
+				</style>
+			</object>
+		</child>
+	</template>
+</interface>

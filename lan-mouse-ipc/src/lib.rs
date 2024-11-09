@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env::VarError,
     fmt::Display,
     io,
@@ -33,7 +33,7 @@ pub enum ConnectionError {
 }
 
 #[derive(Debug, Error)]
-pub enum ListenerCreationError {
+pub enum IpcListenerCreationError {
     #[error("could not determine socket-path: `{0}`")]
     SocketPath(#[from] SocketPathError),
     #[error("service already running!")]
@@ -51,7 +51,7 @@ pub enum IpcError {
     #[error(transparent)]
     Connection(#[from] ConnectionError),
     #[error(transparent)]
-    Listen(#[from] ListenerCreationError),
+    Listen(#[from] IpcListenerCreationError),
 }
 
 pub const DEFAULT_PORT: u16 = 4242;
@@ -63,6 +63,17 @@ pub enum Position {
     Right,
     Top,
     Bottom,
+}
+
+impl Position {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Position::Left => Position::Right,
+            Position::Right => Position::Left,
+            Position::Top => Position::Bottom,
+            Position::Bottom => Position::Top,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -150,7 +161,7 @@ pub struct ClientState {
     /// This should generally be the socket address where data
     /// was last received from.
     pub active_addr: Option<SocketAddr>,
-    /// tracks whether or not the client is responding to pings
+    /// tracks whether or not the client is available for emulation
     pub alive: bool,
     /// ips from dns
     pub dns_ips: Vec<IpAddr>,
@@ -186,6 +197,14 @@ pub enum FrontendEvent {
     CaptureStatus(Status),
     /// emulation status
     EmulationStatus(Status),
+    /// authorized public key fingerprints have been updated
+    AuthorizedUpdated(HashMap<String, String>),
+    /// public key fingerprint of this device
+    PublicKeyFingerprint(String),
+    /// incoming connected
+    IncomingConnected(String, SocketAddr, Position),
+    /// incoming disconnected
+    IncomingDisconnected(SocketAddr),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -218,9 +237,13 @@ pub enum FrontendRequest {
     EnableEmulation,
     /// synchronize all state
     Sync,
+    /// authorize fingerprint (description, fingerprint)
+    AuthorizeKey(String, String),
+    /// remove fingerprint (fingerprint)
+    RemoveAuthorizedKey(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum Status {
     #[default]
     Disabled,

@@ -1,9 +1,11 @@
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env::{self, VarError};
 use std::fmt::Display;
 use std::fs;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
@@ -22,10 +24,12 @@ pub struct ConfigToml {
     pub port: Option<u16>,
     pub frontend: Option<Frontend>,
     pub release_bind: Option<Vec<scancode::Linux>>,
+    pub cert_path: Option<PathBuf>,
     pub left: Option<TomlClient>,
     pub right: Option<TomlClient>,
     pub top: Option<TomlClient>,
     pub bottom: Option<TomlClient>,
+    pub authorized_fingerprints: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -40,9 +44,8 @@ pub struct TomlClient {
 }
 
 impl ConfigToml {
-    pub fn new(path: &str) -> Result<ConfigToml, ConfigError> {
+    pub fn new(path: &Path) -> Result<ConfigToml, ConfigError> {
         let config = fs::read_to_string(path)?;
-        log::info!("using config: \"{path}\"");
         Ok(toml::from_str::<_>(&config)?)
     }
 }
@@ -81,6 +84,10 @@ struct CliArgs {
     /// emulation backend override
     #[arg(long)]
     emulation_backend: Option<EmulationBackend>,
+
+    /// path to non-default certificate location
+    #[arg(long)]
+    cert_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -224,15 +231,30 @@ impl Default for Frontend {
 
 #[derive(Debug)]
 pub struct Config {
+    /// the path to the configuration file used
+    pub path: PathBuf,
+    /// public key fingerprints authorized for connection
+    pub authorized_fingerprints: HashMap<String, String>,
+    /// optional input-capture backend override
     pub capture_backend: Option<CaptureBackend>,
+    /// optional input-emulation backend override
     pub emulation_backend: Option<EmulationBackend>,
+    /// the frontend to use
     pub frontend: Frontend,
+    /// the port to use (initially)
     pub port: u16,
+    /// list of clients
     pub clients: Vec<(TomlClient, Position)>,
+    /// whether or not to run as a daemon
     pub daemon: bool,
+    /// configured release bind
     pub release_bind: Vec<scancode::Linux>,
+    /// test capture instead of running the app
     pub test_capture: bool,
+    /// test emulation instead of running the app
     pub test_emulation: bool,
+    /// path to the tls certificate to use
+    pub cert_path: PathBuf,
 }
 
 pub struct ConfigClient {
@@ -260,27 +282,32 @@ const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
 impl Config {
     pub fn new() -> Result<Self, ConfigError> {
         let args = CliArgs::parse();
-        let config_file = "config.toml";
+        const CONFIG_FILE_NAME: &str = "config.toml";
+        const CERT_FILE_NAME: &str = "lan-mouse.pem";
+
         #[cfg(unix)]
         let config_path = {
             let xdg_config_home =
                 env::var("XDG_CONFIG_HOME").unwrap_or(format!("{}/.config", env::var("HOME")?));
-            format!("{xdg_config_home}/lan-mouse/{config_file}")
+            format!("{xdg_config_home}/lan-mouse/")
         };
 
         #[cfg(not(unix))]
         let config_path = {
             let app_data =
                 env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
-            format!("{app_data}\\lan-mouse\\{config_file}")
+            format!("{app_data}\\lan-mouse\\")
         };
 
-        // --config <file> overrules default location
-        let config_path = args.config.unwrap_or(config_path);
+        let config_path = PathBuf::from(config_path);
+        let config_file = config_path.join(CONFIG_FILE_NAME);
 
-        let config_toml = match ConfigToml::new(config_path.as_str()) {
+        // --config <file> overrules default location
+        let config_file = args.config.map(PathBuf::from).unwrap_or(config_file);
+
+        let mut config_toml = match ConfigToml::new(&config_file) {
             Err(e) => {
-                log::warn!("{config_path}: {e}");
+                log::warn!("{config_file:?}: {e}");
                 log::warn!("Continuing without config file ...");
                 None
             }
@@ -310,6 +337,16 @@ impl Config {
             .emulation_backend
             .or(config_toml.as_ref().and_then(|c| c.emulation_backend));
 
+        let cert_path = args
+            .cert_path
+            .or(config_toml.as_ref().and_then(|c| c.cert_path.clone()))
+            .unwrap_or(config_path.join(CERT_FILE_NAME));
+
+        let authorized_fingerprints = config_toml
+            .as_mut()
+            .and_then(|c| std::mem::take(&mut c.authorized_fingerprints))
+            .unwrap_or_default();
+
         let mut clients: Vec<(TomlClient, Position)> = vec![];
 
         if let Some(config_toml) = config_toml {
@@ -332,6 +369,8 @@ impl Config {
         let test_emulation = args.test_emulation;
 
         Ok(Config {
+            path: config_path,
+            authorized_fingerprints,
             capture_backend,
             emulation_backend,
             daemon,
@@ -341,6 +380,7 @@ impl Config {
             release_bind,
             test_capture,
             test_emulation,
+            cert_path,
         })
     }
 
