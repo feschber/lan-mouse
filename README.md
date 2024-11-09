@@ -247,11 +247,17 @@ the gtk frontend (see conditional compilation).
 
 By default the gtk frontend will open when running `lan-mouse`.
 
-To add a new connection, simply click the `Add` button on *both* devices,
-enter the corresponding hostname and activate it.
+To connect a device you want to control, simply click the `Add` button and enter the hostname
+of the device.
 
-If the mouse can not be moved onto a device, make sure you have port `4242` (or the one selected)
-opened up in your firewall.
+On the *remote* device, authorize your *local* device for incoming traffic using the `Authorize` button
+under the "Incoming Connections" section.
+The fingerprint for authorization can be found under the general section of your *local* device.
+It is of the form "aa:bb:cc:..."
+
+Authorized devices can be persisted using the configuration file (see [Configuration](#configuration)).
+
+If the device still can not be entered, make sure you have UDP port `4242` (or the one selected) opened up in your firewall.
 </details>
 
 <details>
@@ -318,6 +324,11 @@ port = 4242
 # # optional frontend -> defaults to gtk if available
 # # possible values are "cli" and "gtk"
 # frontend = "gtk"
+
+# list of authorized tls certificate fingerprints that
+# are accepted for incoming traffic
+[authorized_fingerprints]
+"bc:05:ab:7a:a4:de:88:8c:2f:92:ac:bc:b8:49:b8:24:0d:44:b3:e6:a4:ef:d7:0b:6c:69:6d:77:53:0b:14:80" = "iridium"
 
 # define a client on the right side with host name "iridium"
 [right]
