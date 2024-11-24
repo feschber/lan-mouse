@@ -8,8 +8,13 @@ fn main() {
         .arg("--dirty")
         .arg("--tags")
         .output()
-        .unwrap();
-
-    let git_describe = String::from_utf8(git_describe.stdout).unwrap();
+        .map(|output| String::from_utf8(output.stdout).ok())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| {
+            println!("cargo:warning=Failed to get git describe");
+            String::from("unknown")
+        });
+    let git_describe = git_describe.trim().to_string();
     println!("cargo::rustc-env=GIT_DESCRIBE={git_describe}");
 }
