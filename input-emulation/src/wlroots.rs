@@ -220,9 +220,8 @@ impl VirtualInput {
                 KeyboardEvent::Key { time, key, state } => {
                     self.keyboard.key(time, key, state as u32);
                     if let Ok(mut mods) = self.modifiers.lock() {
-                        if mods.from_key_event(key, state) {
-                            log::trace!("Key triggers modifier change");
-                            log::trace!("Modifiers: {:?}", mods);
+                        if mods.update_by_key_event(key, state) {
+                            log::trace!("Key triggers modifier change: {:?}", mods);
                             self.keyboard.modifiers(
                                 mods.mask_pressed().bits(),
                                 0,
@@ -240,8 +239,7 @@ impl VirtualInput {
                 } => {
                     // Synchronize internal modifier state, assuming server is authoritative
                     if let Ok(mut mods) = self.modifiers.lock() {
-                        mods.from_mods_event(e);
-                        log::trace!("Modifiers: {:?}", mods);
+                        mods.update_by_mods_event(e);
                     }
                     self.keyboard
                         .modifiers(mods_depressed, mods_latched, mods_locked, group);
@@ -321,18 +319,16 @@ bitflags! {
 }
 
 impl XMods {
-    fn from_mods_event(&mut self, evt: KeyboardEvent) {
-        match evt {
-            KeyboardEvent::Modifiers {
-                depressed, locked, ..
-            } => {
-                *self = XMods::from_bits_truncate(depressed) | XMods::from_bits_truncate(locked);
-            }
-            _ => {}
+    fn update_by_mods_event(&mut self, evt: KeyboardEvent) {
+        if let KeyboardEvent::Modifiers {
+            depressed, locked, ..
+        } = evt
+        {
+            *self = XMods::from_bits_truncate(depressed) | XMods::from_bits_truncate(locked);
         }
     }
 
-    fn from_key_event(&mut self, key: u32, state: u8) -> bool {
+    fn update_by_key_event(&mut self, key: u32, state: u8) -> bool {
         if let Ok(key) = scancode::Linux::try_from(key) {
             log::trace!("Attempting to process modifier from: {:#?}", key);
             let pressed_mask = match key {
