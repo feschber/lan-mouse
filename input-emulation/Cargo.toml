@@ -44,7 +44,6 @@ ashpd = { version = "0.10", default-features = false, features = [
 ], optional = true }
 reis = { version = "0.4", features = ["tokio"], optional = true }
 
-
 [target.'cfg(target_os="macos")'.dependencies]
 bitflags = "2.6.0"
 core-graphics = { version = "0.24.0", features = ["highsierra"] }
