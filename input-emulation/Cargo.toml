@@ -43,7 +43,6 @@ ashpd = { version = "0.10", default-features = false, features = [
     "tokio",
 ], optional = true }
 reis = { version = "0.4", features = ["tokio"], optional = true }
-keycode = "0.4.0"
 
 
 [target.'cfg(target_os="macos")'.dependencies]
