@@ -218,7 +218,7 @@ unsafe fn to_key_event(wparam: WPARAM, lparam: LPARAM) -> Option<KeyboardEvent> 
         WPARAM(p) if p == WM_SYSKEYUP as usize => Some(KeyboardEvent::Key {
             time: 0,
             key: scan_code,
-            state: 1,
+            state: 0,
         }),
         _ => None,
     }
