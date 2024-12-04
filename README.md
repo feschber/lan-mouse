@@ -314,7 +314,7 @@ To create this file you can copy the following example config:
 ### Example config
 > [!TIP]
 > key symbols in the release bind are named according
-> to their names in [src/scancode.rs#L172](src/scancode.rs#L172).
+> to their names in [input-event/src/scancode.rs#L172](input-event/src/scancode.rs#L176).
 > This is bound to change
 
 ```toml
