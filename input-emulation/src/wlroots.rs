@@ -2,9 +2,11 @@ use crate::error::EmulationError;
 
 use super::{error::WlrootsEmulationCreationError, Emulation};
 use async_trait::async_trait;
+use bitflags::bitflags;
 use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
+use std::sync::{Arc, Mutex};
 use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
 
@@ -28,7 +30,7 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, QueueHandle,
 };
 
-use input_event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{scancode, Event, KeyboardEvent, PointerEvent};
 
 use super::error::WaylandBindError;
 use super::EmulationHandle;
@@ -102,7 +104,11 @@ impl State {
             panic!("no keymap");
         }
 
-        let vinput = VirtualInput { pointer, keyboard };
+        let vinput = VirtualInput {
+            pointer,
+            keyboard,
+            modifiers: Arc::new(Mutex::new(XMods::empty())),
+        };
 
         self.input_for_client.insert(client, vinput);
     }
@@ -173,6 +179,7 @@ impl Emulation for WlrootsEmulation {
 struct VirtualInput {
     pointer: Vp,
     keyboard: Vk,
+    modifiers: Arc<Mutex<XMods>>,
 }
 
 impl VirtualInput {
@@ -206,6 +213,17 @@ impl VirtualInput {
             Event::Keyboard(e) => match e {
                 KeyboardEvent::Key { time, key, state } => {
                     self.keyboard.key(time, key, state as u32);
+                    if let Ok(mut mods) = self.modifiers.lock() {
+                        if mods.update_by_key_event(key, state) {
+                            log::trace!("Key triggers modifier change: {:?}", mods);
+                            self.keyboard.modifiers(
+                                mods.mask_pressed().bits(),
+                                0,
+                                mods.mask_locks().bits(),
+                                0,
+                            );
+                        }
+                    }
                 }
                 KeyboardEvent::Modifiers {
                     depressed: mods_depressed,
@@ -213,6 +231,10 @@ impl VirtualInput {
                     locked: mods_locked,
                     group,
                 } => {
+                    // Synchronize internal modifier state, assuming server is authoritative
+                    if let Ok(mut mods) = self.modifiers.lock() {
+                        mods.update_by_mods_event(e);
+                    }
                     self.keyboard
                         .modifiers(mods_depressed, mods_latched, mods_locked, group);
                 }
@@ -271,5 +293,76 @@ impl Dispatch<WlSeat, ()> for State {
                 seat.get_keyboard(qhandle, ());
             }
         }
+    }
+}
+
+// From X11/X.h
+bitflags! {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    struct XMods: u32 {
+        const ShiftMask = (1<<0);
+        const LockMask = (1<<1);
+        const ControlMask = (1<<2);
+        const Mod1Mask = (1<<3);
+        const Mod2Mask = (1<<4);
+        const Mod3Mask = (1<<5);
+        const Mod4Mask = (1<<6);
+        const Mod5Mask = (1<<7);
+    }
+}
+
+impl XMods {
+    fn update_by_mods_event(&mut self, evt: KeyboardEvent) {
+        if let KeyboardEvent::Modifiers {
+            depressed, locked, ..
+        } = evt
+        {
+            *self = XMods::from_bits_truncate(depressed) | XMods::from_bits_truncate(locked);
+        }
+    }
+
+    fn update_by_key_event(&mut self, key: u32, state: u8) -> bool {
+        if let Ok(key) = scancode::Linux::try_from(key) {
+            log::trace!("Attempting to process modifier from: {:#?}", key);
+            let pressed_mask = match key {
+                scancode::Linux::KeyLeftShift | scancode::Linux::KeyRightShift => XMods::ShiftMask,
+                scancode::Linux::KeyLeftCtrl | scancode::Linux::KeyRightCtrl => XMods::ControlMask,
+                scancode::Linux::KeyLeftAlt | scancode::Linux::KeyRightalt => XMods::Mod1Mask,
+                scancode::Linux::KeyLeftMeta | scancode::Linux::KeyRightmeta => XMods::Mod4Mask,
+                _ => XMods::empty(),
+            };
+
+            let locked_mask = match key {
+                scancode::Linux::KeyCapsLock => XMods::LockMask,
+                scancode::Linux::KeyNumlock => XMods::Mod2Mask,
+                scancode::Linux::KeyScrollLock => XMods::Mod3Mask,
+                _ => XMods::empty(),
+            };
+
+            // unchanged
+            if pressed_mask.is_empty() && locked_mask.is_empty() {
+                log::trace!("{:#?} is not a modifier key", key);
+                return false;
+            }
+            match state {
+                1 => self.insert(pressed_mask),
+                _ => {
+                    self.remove(pressed_mask);
+                    self.toggle(locked_mask);
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn mask_locks(&self) -> XMods {
+        *self & (XMods::LockMask | XMods::Mod2Mask | XMods::Mod3Mask)
+    }
+
+    fn mask_pressed(&self) -> XMods {
+        *self & (XMods::ShiftMask | XMods::ControlMask | XMods::Mod1Mask | XMods::Mod4Mask)
     }
 }
