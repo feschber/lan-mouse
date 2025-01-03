@@ -246,6 +246,7 @@ the gtk frontend (see conditional compilation).
 </details>
 
 ## Usage
+This might not be intuitive but you need to add device A on device B and device B on device A (and activate them on both ends). 
 <details>
     <summary>Gtk Frontend</summary>
 
