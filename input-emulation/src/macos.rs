@@ -170,7 +170,7 @@ fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
         return Option::None;
     }
 
-    return displays.first().copied();
+    displays.first().copied()
 }
 
 fn get_display_bounds(display: CGDirectDisplayID) -> (CGFloat, CGFloat, CGFloat, CGFloat) {

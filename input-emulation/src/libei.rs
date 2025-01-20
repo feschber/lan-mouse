@@ -74,7 +74,7 @@ async fn get_ei_fd<'a>(
     Ok((remote_desktop, session, fd))
 }
 
-impl<'a> LibeiEmulation<'a> {
+impl LibeiEmulation<'_> {
     pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
         let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
@@ -109,14 +109,14 @@ impl<'a> LibeiEmulation<'a> {
     }
 }
 
-impl<'a> Drop for LibeiEmulation<'a> {
+impl Drop for LibeiEmulation<'_> {
     fn drop(&mut self) {
         self.ei_task.abort();
     }
 }
 
 #[async_trait]
-impl<'a> Emulation for LibeiEmulation<'a> {
+impl Emulation for LibeiEmulation<'_> {
     async fn consume(
         &mut self,
         event: Event,
