@@ -52,7 +52,7 @@ impl<'a> DesktopPortalEmulation<'a> {
 }
 
 #[async_trait]
-impl<'a> Emulation for DesktopPortalEmulation<'a> {
+impl Emulation for DesktopPortalEmulation<'_> {
     async fn consume(
         &mut self,
         event: input_event::Event,
@@ -141,7 +141,7 @@ impl<'a> Emulation for DesktopPortalEmulation<'a> {
     }
 }
 
-impl<'a> AsyncDrop for DesktopPortalEmulation<'a> {
+impl AsyncDrop for DesktopPortalEmulation<'_> {
     #[doc = r" Perform the async cleanup."]
     #[must_use]
     #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]

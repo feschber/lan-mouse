@@ -153,7 +153,7 @@ async fn update_barriers(
 
 async fn create_session<'a>(
     input_capture: &'a InputCapture<'a>,
-) -> std::result::Result<(Session<'_, InputCapture<'_>>, BitFlags<Capabilities>), ashpd::Error> {
+) -> std::result::Result<(Session<'a, InputCapture<'a>>, BitFlags<Capabilities>), ashpd::Error> {
     log::debug!("creating input capture session");
     input_capture
         .create_session(
@@ -201,7 +201,7 @@ async fn libei_event_handler(
     }
 }
 
-impl<'a> LibeiInputCapture<'a> {
+impl LibeiInputCapture<'_> {
     pub async fn new() -> std::result::Result<Self, LibeiCaptureCreationError> {
         let input_capture = Box::pin(InputCapture::new().await?);
         let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture<'static>;
@@ -561,7 +561,7 @@ async fn handle_ei_event(
 }
 
 #[async_trait]
-impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
+impl LanMouseInputCapture for LibeiInputCapture<'_> {
     async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
@@ -594,7 +594,7 @@ impl<'a> LanMouseInputCapture for LibeiInputCapture<'a> {
     }
 }
 
-impl<'a> Drop for LibeiInputCapture<'a> {
+impl Drop for LibeiInputCapture<'_> {
     fn drop(&mut self) {
         if !self.terminated {
             /* this workaround is needed until async drop is stabilized */
@@ -603,7 +603,7 @@ impl<'a> Drop for LibeiInputCapture<'a> {
     }
 }
 
-impl<'a> Stream for LibeiInputCapture<'a> {
+impl Stream for LibeiInputCapture<'_> {
     type Item = Result<(Position, CaptureEvent), CaptureError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
