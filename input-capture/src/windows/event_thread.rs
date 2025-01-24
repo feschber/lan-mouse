@@ -162,44 +162,48 @@ fn start_routine(
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
 ) {
     EVENT_TX.replace(Some(event_tx));
+    /* communicate thread id */
+    {
+        let (cnd, mtx) = &*ready;
+        let mut ready = mtx.lock().unwrap();
+        *ready = Some(unsafe { GetCurrentThreadId() });
+        cnd.notify_one();
+    }
+
+    let mouse_proc: HOOKPROC = Some(mouse_proc);
+    let kybrd_proc: HOOKPROC = Some(kybrd_proc);
+    let window_proc: WNDPROC = Some(window_proc);
+
+    /* register hooks */
     unsafe {
-        /* communicate thread id */
-        {
-            let (cnd, mtx) = &*ready;
-            let mut ready = mtx.lock().unwrap();
-            *ready = Some(GetCurrentThreadId());
-            cnd.notify_one();
-        }
-
-        let mouse_proc: HOOKPROC = Some(mouse_proc);
-        let kybrd_proc: HOOKPROC = Some(kybrd_proc);
-        let window_proc: WNDPROC = Some(window_proc);
-
-        /* register hooks */
         let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
         let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
+    }
 
-        let instance = GetModuleHandleW(None).unwrap();
-        let window_class: WNDCLASSW = WNDCLASSW {
-            lpfnWndProc: window_proc,
-            hInstance: instance.into(),
-            lpszClassName: w!("lan-mouse-message-window-class"),
-            ..Default::default()
-        };
+    let instance = unsafe { GetModuleHandleW(None).unwrap() };
+    let window_class: WNDCLASSW = WNDCLASSW {
+        lpfnWndProc: window_proc,
+        hInstance: instance.into(),
+        lpszClassName: w!("lan-mouse-message-window-class"),
+        ..Default::default()
+    };
 
-        static WINDOW_CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
-        if WINDOW_CLASS_REGISTERED
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            /* register window class if not yet done so */
+    static WINDOW_CLASS_REGISTERED: AtomicBool = AtomicBool::new(false);
+    if WINDOW_CLASS_REGISTERED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        /* register window class if not yet done so */
+        unsafe {
             let ret = RegisterClassW(&window_class);
             if ret == 0 {
                 panic!("RegisterClassW");
             }
         }
+    }
 
-        /* window is used ro receive WM_DISPLAYCHANGE messages */
+    /* window is used ro receive WM_DISPLAYCHANGE messages */
+    unsafe {
         CreateWindowExW(
             Default::default(),
             w!("lan-mouse-message-window-class"),
@@ -215,38 +219,40 @@ fn start_routine(
             None,
         )
         .expect("CreateWindowExW");
+    }
 
-        /* run message loop */
-        loop {
-            // mouse / keybrd proc do not actually return a message
-            let Some(msg) = get_msg() else {
-                break;
-            };
-            if msg.hwnd.0.is_null() {
-                /* messages sent via PostThreadMessage */
-                match msg.wParam.0 {
-                    x if x == RequestType::Exit as usize => break,
-                    x if x == RequestType::Release as usize => {
-                        ACTIVE_CLIENT.take();
-                    }
-                    x if x == RequestType::ClientUpdate as usize => {
-                        let requests = {
-                            let mut res = vec![];
-                            let mut requests = request_buffer.lock().unwrap();
-                            for request in requests.drain(..) {
-                                res.push(request);
-                            }
-                            res
-                        };
-
-                        for request in requests {
-                            update_clients(request)
-                        }
-                    }
-                    _ => {}
+    /* run message loop */
+    loop {
+        // mouse / keybrd proc do not actually return a message
+        let Some(msg) = get_msg() else {
+            break;
+        };
+        if msg.hwnd.0.is_null() {
+            /* messages sent via PostThreadMessage */
+            match msg.wParam.0 {
+                x if x == RequestType::Exit as usize => break,
+                x if x == RequestType::Release as usize => {
+                    ACTIVE_CLIENT.take();
                 }
-            } else {
-                /* other messages for window_procs */
+                x if x == RequestType::ClientUpdate as usize => {
+                    let requests = {
+                        let mut res = vec![];
+                        let mut requests = request_buffer.lock().unwrap();
+                        for request in requests.drain(..) {
+                            res.push(request);
+                        }
+                        res
+                    };
+
+                    for request in requests {
+                        update_clients(request)
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            /* other messages for window_procs */
+            unsafe {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
