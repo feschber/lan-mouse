@@ -23,6 +23,9 @@ lto = "fat"
 strip = true
 panic = "abort"
 
+[build-dependencies]
+shadow-rs = "0.38.0"
+
 [dependencies]
 input-event = { path = "input-event", version = "0.3.0" }
 input-emulation = { path = "input-emulation", version = "0.3.0", default-features = false }
@@ -31,6 +34,7 @@ lan-mouse-cli = { path = "lan-mouse-cli", version = "0.2.0" }
 lan-mouse-gtk = { path = "lan-mouse-gtk", version = "0.2.0", optional = true }
 lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.2.0" }
 lan-mouse-proto = { path = "lan-mouse-proto", version = "0.2.0" }
+shadow-rs = { version = "0.38.0", features = ["metadata"] }
 
 hickory-resolver = "0.24.1"
 toml = "0.8"

@@ -17,6 +17,10 @@ use input_event::scancode::{
     Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift},
 };
 
+use shadow_rs::shadow;
+
+shadow!(build);
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConfigToml {
     pub capture_backend: Option<CaptureBackend>,
@@ -51,7 +55,7 @@ impl ConfigToml {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version=env!("GIT_DESCRIBE"), about, long_about = None)]
+#[command(author, version=build::CLAP_LONG_VERSION, about, long_about = None)]
 struct CliArgs {
     /// the listen port for lan-mouse
     #[arg(short, long)]
