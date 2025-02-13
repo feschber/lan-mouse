@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use futures_core::Stream;
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     env,
+    fmt::{self, Display},
     io::{self, ErrorKind},
     os::fd::{AsFd, RawFd},
     pin::Pin,
@@ -46,13 +47,15 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use wayland_client::{
     backend::{ReadEventsGuard, WaylandError},
     delegate_noop,
-    globals::{registry_queue_init, GlobalListContents},
+    globals::{registry_queue_init, Global, GlobalList, GlobalListContents},
     protocol::{
         wl_buffer, wl_compositor,
         wl_keyboard::{self, WlKeyboard},
         wl_output::{self, WlOutput},
         wl_pointer::{self, WlPointer},
-        wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+        wl_region,
+        wl_registry::{self, WlRegistry},
+        wl_seat, wl_shm, wl_shm_pool,
         wl_surface::WlSurface,
     },
     Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
@@ -75,28 +78,42 @@ struct Globals {
     seat: wl_seat::WlSeat,
     shm: wl_shm::WlShm,
     layer_shell: ZwlrLayerShellV1,
-    outputs: Vec<WlOutput>,
     xdg_output_manager: ZxdgOutputManagerV1,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
+struct Output {
+    wl_output: WlOutput,
+    global: Global,
+    info: Option<OutputInfo>,
+    pending_info: OutputInfo,
+    has_xdg_info: bool,
+}
+
+impl Display for Output {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(info) = &self.info {
+            write!(
+                f,
+                "{} {}x{} @pos {:?} ({})",
+                info.name, info.size.0, info.size.1, info.position, info.description
+            )
+        } else {
+            write!(f, "unknown output")
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 struct OutputInfo {
+    description: String,
     name: String,
     position: (i32, i32),
     size: (i32, i32),
 }
 
-impl OutputInfo {
-    fn new() -> Self {
-        Self {
-            name: "".to_string(),
-            position: (0, 0),
-            size: (0, 0),
-        }
-    }
-}
-
 struct State {
+    active_positions: HashSet<Position>,
     pointer: Option<WlPointer>,
     keyboard: Option<WlKeyboard>,
     pointer_lock: Option<ZwpLockedPointerV1>,
@@ -104,12 +121,13 @@ struct State {
     shortcut_inhibitor: Option<ZwpKeyboardShortcutsInhibitorV1>,
     active_windows: Vec<Arc<Window>>,
     focused: Option<Arc<Window>>,
-    g: Globals,
+    global_list: GlobalList,
+    globals: Globals,
     wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: VecDeque<(Position, CaptureEvent)>,
-    output_info: Vec<(WlOutput, OutputInfo)>,
+    outputs: Vec<Output>,
     scroll_discrete_pending: bool,
 }
 
@@ -142,7 +160,7 @@ impl Window {
         size: (i32, i32),
     ) -> Window {
         log::debug!("creating window output: {output:?}, size: {size:?}");
-        let g = &state.g;
+        let g = &state.globals;
 
         let (width, height) = match pos {
             Position::Left | Position::Right => (1, size.1 as u32),
@@ -203,41 +221,36 @@ impl Drop for Window {
     }
 }
 
-fn get_edges(outputs: &[(WlOutput, OutputInfo)], pos: Position) -> Vec<(WlOutput, i32)> {
+fn get_edges(outputs: &[Output], pos: Position) -> Vec<(Output, i32)> {
     outputs
         .iter()
-        .map(|(o, i)| {
-            (
-                o.clone(),
-                match pos {
-                    Position::Left => i.position.0,
-                    Position::Right => i.position.0 + i.size.0,
-                    Position::Top => i.position.1,
-                    Position::Bottom => i.position.1 + i.size.1,
-                },
-            )
+        .filter_map(|output| {
+            output.info.as_ref().map(|info| {
+                (
+                    output.clone(),
+                    match pos {
+                        Position::Left => info.position.0,
+                        Position::Right => info.position.0 + info.size.0,
+                        Position::Top => info.position.1,
+                        Position::Bottom => info.position.1 + info.size.1,
+                    },
+                )
+            })
         })
         .collect()
 }
 
-fn get_output_configuration(state: &State, pos: Position) -> Vec<(WlOutput, OutputInfo)> {
+fn get_output_configuration(state: &State, pos: Position) -> Vec<Output> {
     // get all output edges corresponding to the position
-    let edges = get_edges(&state.output_info, pos);
-    log::debug!("edges: {edges:?}");
-    let opposite_edges = get_edges(&state.output_info, pos.opposite());
+    let edges = get_edges(&state.outputs, pos);
+    let opposite_edges = get_edges(&state.outputs, pos.opposite());
 
     // remove those edges that are at the same position
     // as an opposite edge of a different output
-    let outputs: Vec<WlOutput> = edges
+    edges
         .iter()
         .filter(|(_, edge)| !opposite_edges.iter().map(|(_, e)| *e).any(|e| &e == edge))
         .map(|(o, _)| o.clone())
-        .collect();
-    state
-        .output_info
-        .iter()
-        .filter(|(o, _)| outputs.contains(o))
-        .map(|(o, i)| (o.clone(), i.clone()))
         .collect()
 }
 
@@ -259,36 +272,36 @@ fn draw(f: &mut File, (width, height): (u32, u32)) {
 impl LayerShellInputCapture {
     pub fn new() -> std::result::Result<Self, LayerShellCaptureCreationError> {
         let conn = Connection::connect_to_env()?;
-        let (g, mut queue) = registry_queue_init::<State>(&conn)?;
+        let (global_list, mut queue) = registry_queue_init::<State>(&conn)?;
 
         let qh = queue.handle();
 
-        let compositor: wl_compositor::WlCompositor = g
+        let compositor: wl_compositor::WlCompositor = global_list
             .bind(&qh, 4..=5, ())
             .map_err(|e| WaylandBindError::new(e, "wl_compositor 4..=5"))?;
-        let xdg_output_manager: ZxdgOutputManagerV1 = g
+        let xdg_output_manager: ZxdgOutputManagerV1 = global_list
             .bind(&qh, 1..=3, ())
             .map_err(|e| WaylandBindError::new(e, "xdg_output_manager 1..=3"))?;
-        let shm: wl_shm::WlShm = g
+        let shm: wl_shm::WlShm = global_list
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "wl_shm"))?;
-        let layer_shell: ZwlrLayerShellV1 = g
+        let layer_shell: ZwlrLayerShellV1 = global_list
             .bind(&qh, 3..=4, ())
             .map_err(|e| WaylandBindError::new(e, "wlr_layer_shell 3..=4"))?;
-        let seat: wl_seat::WlSeat = g
+        let seat: wl_seat::WlSeat = global_list
             .bind(&qh, 7..=8, ())
             .map_err(|e| WaylandBindError::new(e, "wl_seat 7..=8"))?;
 
-        let pointer_constraints: ZwpPointerConstraintsV1 = g
+        let pointer_constraints: ZwpPointerConstraintsV1 = global_list
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "zwp_pointer_constraints_v1"))?;
-        let relative_pointer_manager: ZwpRelativePointerManagerV1 = g
+        let relative_pointer_manager: ZwpRelativePointerManagerV1 = global_list
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "zwp_relative_pointer_manager_v1"))?;
         let shortcut_inhibit_manager: Result<
             ZwpKeyboardShortcutsInhibitManagerV1,
             WaylandBindError,
-        > = g
+        > = global_list
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "zwp_keyboard_shortcuts_inhibit_manager_v1"));
         // layer-shell backend still works without this protocol so we make it an optional dependency
@@ -297,65 +310,41 @@ impl LayerShellInputCapture {
                 to the client");
         }
         let shortcut_inhibit_manager = shortcut_inhibit_manager.ok();
-        let outputs = vec![];
-
-        let g = Globals {
-            compositor,
-            shm,
-            layer_shell,
-            seat,
-            pointer_constraints,
-            relative_pointer_manager,
-            shortcut_inhibit_manager,
-            outputs,
-            xdg_output_manager,
-        };
-
-        // flush outgoing events
-        queue.flush()?;
-
-        let wayland_fd = queue.as_fd().as_raw_fd();
 
         let mut state = State {
+            active_positions: Default::default(),
             pointer: None,
             keyboard: None,
-            g,
+            global_list,
+            globals: Globals {
+                compositor,
+                shm,
+                layer_shell,
+                seat,
+                pointer_constraints,
+                relative_pointer_manager,
+                shortcut_inhibit_manager,
+                xdg_output_manager,
+            },
             pointer_lock: None,
             rel_pointer: None,
             shortcut_inhibitor: None,
             active_windows: Vec::new(),
             focused: None,
             qh,
-            wayland_fd,
+            wayland_fd: queue.as_fd().as_raw_fd(),
             read_guard: None,
             pending_events: VecDeque::new(),
-            output_info: vec![],
+            outputs: vec![],
             scroll_discrete_pending: false,
         };
 
-        // dispatch registry to () again, in order to read all wl_outputs
-        conn.display().get_registry(&state.qh, ());
-        log::debug!("==============> requested registry");
-
-        // roundtrip to read wl_output globals
-        queue.roundtrip(&mut state)?;
-        log::debug!("==============> roundtrip 1 done");
-
-        // read outputs
-        for output in state.g.outputs.iter() {
-            state
-                .g
-                .xdg_output_manager
-                .get_xdg_output(output, &state.qh, output.clone());
+        for global in state.global_list.contents().clone_list() {
+            state.register_global(global);
         }
 
-        // roundtrip to read xdg_output events
-        queue.roundtrip(&mut state)?;
-
-        log::debug!("==============> roundtrip 2 done");
-        for i in &state.output_info {
-            log::debug!("{:#?}", i.1);
-        }
+        // flush outgoing events
+        queue.flush()?;
 
         let read_guard = loop {
             match queue.prepare_read() {
@@ -379,6 +368,7 @@ impl LayerShellInputCapture {
 
     fn delete_client(&mut self, pos: Position) {
         let inner = self.0.get_mut();
+        inner.state.active_positions.remove(&pos);
         // remove all windows corresponding to this client
         while let Some(i) = inner.state.active_windows.iter().position(|w| w.pos == pos) {
             inner.state.active_windows.remove(i);
@@ -388,6 +378,52 @@ impl LayerShellInputCapture {
 }
 
 impl State {
+    fn update_output_info(&mut self, name: u32) {
+        let output = self
+            .outputs
+            .iter_mut()
+            .find(|o| o.global.name == name)
+            .expect("output not found");
+        if output.has_xdg_info {
+            output.info.replace(output.pending_info.clone());
+            self.update_windows();
+        }
+    }
+
+    fn register_global(&mut self, global: Global) {
+        if global.interface.as_str() == "wl_output" {
+            log::debug!("new output global: wl_output {}", global.name);
+            let wl_output = self.global_list.registry().bind::<WlOutput, _, _>(
+                global.name,
+                4,
+                &self.qh,
+                global.name,
+            );
+            self.globals
+                .xdg_output_manager
+                .get_xdg_output(&wl_output, &self.qh, global.name);
+            self.outputs.push(Output {
+                wl_output,
+                global,
+                info: None,
+                has_xdg_info: false,
+                pending_info: Default::default(),
+            })
+        }
+    }
+
+    fn deregister_global(&mut self, name: u32) {
+        self.outputs.retain(|o| {
+            if o.global.name == name {
+                log::debug!("{o} (global {:?}) removed", o.global);
+                o.wl_output.release();
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     fn grab(
         &mut self,
         surface: &WlSurface,
@@ -408,7 +444,7 @@ impl State {
 
         // lock pointer
         if self.pointer_lock.is_none() {
-            self.pointer_lock = Some(self.g.pointer_constraints.lock_pointer(
+            self.pointer_lock = Some(self.globals.pointer_constraints.lock_pointer(
                 surface,
                 pointer,
                 None,
@@ -420,7 +456,7 @@ impl State {
 
         // request relative input
         if self.rel_pointer.is_none() {
-            self.rel_pointer = Some(self.g.relative_pointer_manager.get_relative_pointer(
+            self.rel_pointer = Some(self.globals.relative_pointer_manager.get_relative_pointer(
                 pointer,
                 qh,
                 (),
@@ -428,10 +464,14 @@ impl State {
         }
 
         // capture modifier keys
-        if let Some(shortcut_inhibit_manager) = &self.g.shortcut_inhibit_manager {
+        if let Some(shortcut_inhibit_manager) = &self.globals.shortcut_inhibit_manager {
             if self.shortcut_inhibitor.is_none() {
-                self.shortcut_inhibitor =
-                    Some(shortcut_inhibit_manager.inhibit_shortcuts(surface, &self.g.seat, qh, ()));
+                self.shortcut_inhibitor = Some(shortcut_inhibit_manager.inhibit_shortcuts(
+                    surface,
+                    &self.globals.seat,
+                    qh,
+                    (),
+                ));
             }
         }
     }
@@ -469,21 +509,39 @@ impl State {
     }
 
     fn add_client(&mut self, pos: Position) {
+        self.active_positions.insert(pos);
         let outputs = get_output_configuration(self, pos);
 
-        log::debug!("outputs: {outputs:?}");
-        outputs.iter().for_each(|(o, i)| {
-            let window = Window::new(self, &self.qh, o, pos, i.size);
-            let window = Arc::new(window);
-            self.active_windows.push(window);
+        log::info!(
+            "adding capture for position {pos} - using outputs: {:?}",
+            outputs
+                .iter()
+                .map(|o| o
+                    .info
+                    .as_ref()
+                    .map(|i| i.name.to_owned())
+                    .unwrap_or("unknown output".to_owned()))
+                .collect::<Vec<_>>()
+        );
+        outputs.iter().for_each(|o| {
+            if let Some(info) = o.info.as_ref() {
+                let window = Window::new(self, &self.qh, &o.wl_output, pos, info.size);
+                let window = Arc::new(window);
+                self.active_windows.push(window);
+            }
         });
     }
 
     fn update_windows(&mut self) {
-        log::debug!("updating windows");
-        log::debug!("output info: {:?}", self.output_info);
-        let clients: Vec<_> = self.active_windows.drain(..).map(|w| w.pos).collect();
-        for pos in clients {
+        log::info!("active outputs: ");
+        for output in self.outputs.iter().filter(|o| o.info.is_some()) {
+            log::info!(" * {}", output);
+        }
+
+        self.active_windows.clear();
+
+        let active_positions = self.active_positions.iter().cloned().collect::<Vec<_>>();
+        for pos in active_positions {
             self.add_client(pos);
         }
     }
@@ -872,94 +930,89 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
 }
 
 // delegate wl_registry events to App itself
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
-    fn event(
-        _state: &mut Self,
-        _proxy: &wl_registry::WlRegistry,
-        _event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
-        _data: &GlobalListContents,
-        _conn: &Connection,
-        _qhandle: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<wl_registry::WlRegistry, ()> for State {
+impl Dispatch<WlRegistry, GlobalListContents> for State {
     fn event(
         state: &mut Self,
-        registry: &wl_registry::WlRegistry,
-        event: <wl_registry::WlRegistry as wayland_client::Proxy>::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
+        _registry: &WlRegistry,
+        event: <WlRegistry as wayland_client::Proxy>::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
     ) {
         match event {
             wl_registry::Event::Global {
                 name,
                 interface,
-                version: _,
+                version,
             } => {
-                if interface.as_str() == "wl_output" {
-                    log::debug!("wl_output global");
-                    state
-                        .g
-                        .outputs
-                        .push(registry.bind::<WlOutput, _, _>(name, 4, qh, ()))
-                }
+                state.register_global(Global {
+                    name,
+                    interface,
+                    version,
+                });
             }
-            wl_registry::Event::GlobalRemove { .. } => {}
+            wl_registry::Event::GlobalRemove { name } => {
+                state.deregister_global(name);
+            }
             _ => {}
         }
     }
 }
 
-impl Dispatch<ZxdgOutputV1, WlOutput> for State {
+impl Dispatch<ZxdgOutputV1, u32> for State {
     fn event(
         state: &mut Self,
         _: &ZxdgOutputV1,
         event: <ZxdgOutputV1 as wayland_client::Proxy>::Event,
-        wl_output: &WlOutput,
+        name: &u32,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        log::debug!("xdg-output - {event:?}");
-        let output_info = match state.output_info.iter_mut().find(|(o, _)| o == wl_output) {
-            Some((_, c)) => c,
-            None => {
-                let output_info = OutputInfo::new();
-                state.output_info.push((wl_output.clone(), output_info));
-                &mut state.output_info.last_mut().unwrap().1
-            }
-        };
+        let output = state
+            .outputs
+            .iter_mut()
+            .find(|o| o.global.name == *name)
+            .expect("output");
 
+        log::debug!("xdg_output {name} - {:?}", event);
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => {
-                output_info.position = (x, y);
+                output.pending_info.position = (x, y);
+                output.has_xdg_info = true;
             }
             zxdg_output_v1::Event::LogicalSize { width, height } => {
-                output_info.size = (width, height);
+                output.pending_info.size = (width, height);
+                output.has_xdg_info = true;
             }
-            zxdg_output_v1::Event::Done => {}
+            zxdg_output_v1::Event::Done => {
+                log::warn!("Use of deprecated xdg-output event \"done\"");
+                state.update_output_info(*name);
+            }
             zxdg_output_v1::Event::Name { name } => {
-                output_info.name = name;
+                output.pending_info.name = name;
+                output.has_xdg_info = true;
             }
-            zxdg_output_v1::Event::Description { .. } => {}
-            _ => {}
+            zxdg_output_v1::Event::Description { description } => {
+                output.pending_info.description = description;
+                output.has_xdg_info = true;
+            }
+            _ => todo!(),
         }
     }
 }
 
-impl Dispatch<WlOutput, ()> for State {
+impl Dispatch<WlOutput, u32> for State {
     fn event(
         state: &mut Self,
-        _proxy: &WlOutput,
+        _wl_output: &WlOutput,
         event: <WlOutput as wayland_client::Proxy>::Event,
-        _data: &(),
+        name: &u32,
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+        log::debug!("wl_output {name} - {:?}", event);
         if let wl_output::Event::Done = event {
-            state.update_windows();
+            state.update_output_info(*name);
         }
     }
 }
