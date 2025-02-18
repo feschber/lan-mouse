@@ -89,3 +89,8 @@ libei_emulation = ["input-event/libei", "input-emulation/libei"]
 wlroots_emulation = ["input-emulation/wlroots"]
 x11_emulation = ["input-emulation/x11"]
 rdp_emulation = ["input-emulation/remote_desktop_portal"]
+
+[package.metadata.bundle]
+name = "Lan Mouse"
+icon = ["lan-mouse-gtk/resources/icon.icns"]
+identifier = "de.feschber.LanMouse"

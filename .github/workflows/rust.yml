@@ -107,11 +107,19 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Install cargo bundle
+      run: cargo install cargo-bundle
+    - name: Bundle
+      run: cargo bundle
+    - name: Zip bundle
+      run: |
+        cd target/debug/bundle/osx
+        zip -r "Lan Mouse macOS (Intel).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-macos
-        path: target/debug/lan-mouse
+        name: Lan Mouse macOS (Intel)
+        path: target/debug/bundle/osx/Lan Mouse macOS (Intel).zip
 
   build-macos-aarch64:
     runs-on: macos-14
@@ -127,8 +135,16 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Install cargo bundle
+      run: cargo install cargo-bundle
+    - name: Bundle
+      run: cargo bundle
+    - name: Zip bundle
+      run: |
+        cd target/debug/bundle/osx
+        zip -r "Lan Mouse macOS (ARM).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-macos-aarch64
-        path: target/debug/lan-mouse
+        name: Lan Mouse macOS (ARM)
+        path: target/debug/bundle/osx/Lan Mouse macOS (ARM).zip
