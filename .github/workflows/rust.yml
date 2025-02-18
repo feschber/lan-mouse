@@ -98,7 +98,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita
+      run: brew install gtk4 libadwaita imagemagick
     - name: Build
       run: cargo build --verbose
     - name: Run tests
@@ -128,7 +128,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita
+      run: brew install gtk4 libadwaita imagemagick
     - name: Build
       run: cargo build --verbose
     - name: Run tests
