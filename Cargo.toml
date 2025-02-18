@@ -92,5 +92,5 @@ rdp_emulation = ["input-emulation/remote_desktop_portal"]
 
 [package.metadata.bundle]
 name = "Lan Mouse"
-icon = ["lan-mouse-gtk/resources/icon.icns"]
+icon = ["target/icon.icns"]
 identifier = "de.feschber.LanMouse"

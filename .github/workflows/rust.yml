@@ -107,6 +107,8 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Make icns
+      run: scripts/makeicns.sh
     - name: Install cargo bundle
       run: cargo install cargo-bundle
     - name: Bundle
@@ -135,6 +137,8 @@ jobs:
       run: cargo fmt --check
     - name: Clippy
       run: cargo clippy --all-features --all-targets -- --deny warnings
+    - name: Make icns
+      run: scripts/makeicns.sh
     - name: Install cargo bundle
       run: cargo install cargo-bundle
     - name: Bundle
