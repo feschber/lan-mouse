@@ -98,12 +98,12 @@ jobs:
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
-        zip -r "Lan Mouse macOS (Intel).zip" "Lan Mouse.app"
+        zip -r "lan-mouse-macos-intel.zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos-intel
-        path: target/release/bundle/osx/Lan Mouse macOS (Intel).zip
+        path: target/release/bundle/osx/lan-mouse-macos-intel.zip
 
   macos-aarch64-release-build:
     runs-on: macos-14
@@ -124,12 +124,12 @@ jobs:
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
-        zip -r "Lan Mouse macOS (ARM).zip" "Lan Mouse.app"
+        zip -r "lan-mouse-macos-aarch64.zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos-aarch64
-        path: target/release/bundle/osx/Lan Mouse macOS (ARM).zip
+        path: target/release/bundle/osx/lan-mouse-macos-aarch64.zip
 
   pre-release:
     name: "Pre Release"
@@ -147,6 +147,6 @@ jobs:
         title: "Development Build"
         files: |
           lan-mouse-linux/lan-mouse
-          lan-mouse-macos-intel/Lan Mouse macOS (Intel).zip
-          lan-mouse-macos-aarch64/Lan Mouse macOS (ARM).zip
+          lan-mouse-macos-intel/lan-mouse-macos-intel.zip
+          lan-mouse-macos-aarch64/lan-mouse-macos-aarch64.zip
           lan-mouse-windows/lan-mouse-windows.zip
