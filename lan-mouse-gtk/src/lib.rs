@@ -49,7 +49,11 @@ fn gtk_main() -> glib::ExitCode {
         .application_id("de.feschber.LanMouse")
         .build();
 
-    app.connect_startup(|_| load_icons());
+    app.connect_startup(|app| {
+        load_icons();
+        setup_actions(app);
+        setup_menu(app);
+    });
     app.connect_activate(build_ui);
 
     let args: Vec<&'static str> = vec![];
@@ -60,6 +64,33 @@ fn load_icons() {
     let display = &Display::default().expect("Could not connect to a display.");
     let icon_theme = IconTheme::for_display(display);
     icon_theme.add_resource_path("/de/feschber/LanMouse/icons");
+}
+
+// Add application actions
+fn setup_actions(app: &adw::Application) {
+    // Quit action
+    // This is important on macOS, where users expect a File->Quit action with a Cmd+Q shortcut.
+    let quit_action = gio::SimpleAction::new("quit", None);
+    quit_action.connect_activate({
+        let app = app.clone();
+        move |_, _| {
+            app.quit();
+        }
+    });
+    app.add_action(&quit_action);
+}
+
+// Set up a global menu
+//
+// Currently this is used only on macOS
+fn setup_menu(app: &adw::Application) {
+    let menu = gio::Menu::new();
+
+    let file_menu = gio::Menu::new();
+    file_menu.append(Some("Quit"), Some("app.quit"));
+    menu.append_submenu(Some("_File"), &file_menu);
+
+    app.set_menubar(Some(&menu))
 }
 
 fn build_ui(app: &Application) {
