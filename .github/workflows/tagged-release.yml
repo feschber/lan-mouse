@@ -80,36 +80,56 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita
+      run: brew install gtk4 libadwaita imagemagick
     - name: Release Build
       run: |
         cargo build --release
         cp target/release/lan-mouse lan-mouse-macos-intel
+    - name: Make icns
+      run: scripts/makeicns.sh
+    - name: Install cargo bundle
+      run: cargo install cargo-bundle
+    - name: Bundle
+      run: cargo bundle --release
+    - name: Zip bundle
+      run: |
+        cd target/debug/bundle/osx
+        zip -r "Lan Mouse macOS (Intel).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos-intel
-        path: lan-mouse-macos-intel
+        path: target/release/bundle/osx/Lan Mouse macOS (Intel).zip
 
   macos-aarch64-release-build:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita
+      run: brew install gtk4 libadwaita imagemagick
     - name: Release Build
       run: |
         cargo build --release
         cp target/release/lan-mouse lan-mouse-macos-aarch64
+    - name: Make icns
+      run: scripts/makeicns.sh
+    - name: Install cargo bundle
+      run: cargo install cargo-bundle
+    - name: Bundle
+      run: cargo bundle --release
+    - name: Zip bundle
+      run: |
+        cd target/debug/bundle/osx
+        zip -r "Lan Mouse macOS (ARM).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
         name: lan-mouse-macos-aarch64
-        path: lan-mouse-macos-aarch64
+        path: target/release/bundle/osx/Lan Mouse macOS (ARM).zip
 
   tagged-release:
     name: "Tagged Release"
-    needs: [windows-release-build, linux-release-build, macos-release-build]
+    needs: [windows-release-build, linux-release-build, macos-release-build, macos-aarch64-release-build]
     runs-on: "ubuntu-latest"
     steps:
     - name: Download build artifacts
@@ -121,6 +141,6 @@ jobs:
         prerelease: false
         files: |
           lan-mouse-linux/lan-mouse
-          lan-mouse-macos-intel/lan-mouse-macos-intel
-          lan-mouse-macos-aarch64/lan-mouse-macos-aarch64
+          lan-mouse-macos-intel/Lan Mouse macOS (Intel).zip
+          lan-mouse-macos-aarch64/Lan Mouse macOS (ARM).zip
           lan-mouse-windows/lan-mouse-windows.zip
