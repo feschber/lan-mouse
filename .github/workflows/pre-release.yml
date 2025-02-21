@@ -97,7 +97,7 @@ jobs:
       run: cargo bundle --release
     - name: Zip bundle
       run: |
-        cd target/debug/bundle/osx
+        cd target/release/bundle/osx
         zip -r "Lan Mouse macOS (Intel).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
@@ -123,7 +123,7 @@ jobs:
       run: cargo bundle --release
     - name: Zip bundle
       run: |
-        cd target/debug/bundle/osx
+        cd target/release/bundle/osx
         zip -r "Lan Mouse macOS (ARM).zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
