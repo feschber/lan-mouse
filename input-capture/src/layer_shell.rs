@@ -893,7 +893,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for State {
         } = event
         {
             if let Some(window) = &app.focused {
-                let time = (((utime_hi as u64) << 32 | utime_lo as u64) / 1000) as u32;
+                let time = ((((utime_hi as u64) << 32) | utime_lo as u64) / 1000) as u32;
                 app.pending_events.push_back((
                     window.pos,
                     CaptureEvent::Input(Event::Pointer(PointerEvent::Motion { time, dx, dy })),
