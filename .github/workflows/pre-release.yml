@@ -96,7 +96,7 @@ jobs:
     - name: Bundle
       run: |
         cargo bundle --release
-        /opt/homebrew/bin/bash scripts/copy-macos-dylib.bash
+        /usr/local/bin/bash scripts/copy-macos-dylib.bash
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
