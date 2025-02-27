@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-homebrew_path="/opt/homebrew"
+homebrew_path=""
 exec_path="target/debug/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
 
 usage() {
@@ -13,7 +13,7 @@ OPTIONS:
   -h, --help    Show this help message and exit
   -b            Path to Homebrew installation (default: $homebrew_path)
   exec_pat      Path to the main executable in the app bundle
-                (default: $exec_path)
+                (default: get from `brew --prefix`)
 
 When macOS apps are linked to dynamic libraries (.dylib files),
 the fully qualified path to the library is embedded in the binary.
@@ -33,6 +33,10 @@ while test $# -gt 0; do
         * ) exec_path="$1"; shift;;
     esac
 done
+
+if [ -z "$homebrew_path" ]; then
+    homebrew_path="$(brew --prefix)"
+fi
 
 # Path to the .app bundle
 bundle_path=$(dirname "$(dirname "$(dirname "$exec_path")")")
@@ -56,7 +60,7 @@ fix_references() {
 
   # Make an array of all Homebrew libraries referenced by the binary
   local libs
-  mapfile -t libs < <(otool -L "$bin" | awk '/\/opt\/homebrew\// {print $1}')
+  mapfile -t libs < <(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
 
   for old_path in "${libs[@]}"; do
     local base_name="$(basename "$old_path")"
