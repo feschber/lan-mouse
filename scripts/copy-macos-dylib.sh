@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/sh
+set -eu
 
 homebrew_path=""
 exec_path="target/debug/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
@@ -43,10 +43,6 @@ bundle_path=$(dirname "$(dirname "$(dirname "$exec_path")")")
 # Path to the Frameworks directory
 fwks_path="$bundle_path/Contents/Frameworks"
 mkdir -p "$fwks_path"
-# Array of all the binaries we need to process, starting with the main executable.
-queue=("$exec_path")
-# Array of all the libraries we've already copied, so we don't do it twice.
-declare -A copied
 
 # Copy and fix references for a binary (executable or dylib)
 #
@@ -54,28 +50,26 @@ declare -A copied
 # - Copy any referenced dylibs from /opt/homebrew to the Frameworks directory
 # - Update the binary to reference the local copy instead
 # - Add the Frameworks directory to the binary's RPATH
-# - Add the binary to the queue to process its own references
+# - Recursively process the copied dylibs
 fix_references() {
   local bin="$1"
 
-  # Make an array of all Homebrew libraries referenced by the binary
-  local libs
-  mapfile -t libs < <(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
+  # Get all Homebrew libraries referenced by the binary
+  libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
 
-  for old_path in "${libs[@]}"; do
+  echo "$libs" | while IFS= read -r old_path; do
     local base_name="$(basename "$old_path")"
     local dest="$fwks_path/$base_name"
 
-    if [[ -z "${copied["$old_path"]}" ]]; then
+    if [ ! -e "$dest" ]; then
       echo "Copying $old_path -> $dest"
       cp -f "$old_path" "$dest"
-      copied["$old_path"]=1
 
       echo "Updating $dest to have install_name of @rpath/$base_name..."
       install_name_tool -id "@rpath/$base_name" "$dest"
 
-      # Add this dylib to the queue to process its own references
-      queue+=("$dest")
+      # Recursively process this dylib
+      fix_references "$dest"
     fi
 
     echo "Updating $bin to reference @rpath/$base_name..."
@@ -83,14 +77,7 @@ fix_references() {
   done
 }
 
-# Run fix_references on each binary in the queue.
-# We keep adding new binaries to the queue as we find them, so this will process all of them.
-while [[ ${#queue[@]} -gt 0 ]]; do
-  current="${queue[0]}"
-  queue=("${queue[@]:1}")  # pop front
-
-  fix_references "$current"
-done
+fix_references "$exec_path"
 
 # Ensure the main executable has our Frameworks path in its RPATH
 if ! otool -l "$exec_path" | grep -q "@executable_path/../Frameworks"; then

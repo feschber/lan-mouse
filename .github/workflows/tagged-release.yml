@@ -80,7 +80,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick bash
+      run: brew install gtk4 libadwaita imagemagick
     - name: Release Build
       run: |
         cargo build --release
@@ -92,7 +92,7 @@ jobs:
     - name: Bundle
       run: |
         cargo bundle --release
-        /usr/local/bin/bash scripts/copy-macos-dylib.bash
+        scripts/copy-macos-dylib.sh
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
@@ -108,7 +108,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick bash
+      run: brew install gtk4 libadwaita imagemagick
     - name: Release Build
       run: |
         cargo build --release
@@ -120,7 +120,7 @@ jobs:
     - name: Bundle
       run: |
         cargo bundle --release
-        /opt/homebrew/bin/bash scripts/copy-macos-dylib.bash
+        scripts/copy-macos-dylib.sh
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx

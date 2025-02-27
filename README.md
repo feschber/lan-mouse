@@ -191,7 +191,7 @@ scripts/makeicns.sh
 # Create the .app bundle
 cargo bundle
 # Copy all dynamic libraries into the bundle, and update the bundle to find them there
-scripts/copy-macos-dylib.bash
+scripts/copy-macos-dylib.sh
 ```
 </details>
 
