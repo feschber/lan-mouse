@@ -455,6 +455,7 @@ impl Service {
     }
 
     fn update_hostname(&mut self, handle: ClientHandle, hostname: Option<String>) {
+        log::info!("hostname changed: {hostname:?}");
         if self.client_manager.set_hostname(handle, hostname.clone()) {
             self.resolve(handle);
         }

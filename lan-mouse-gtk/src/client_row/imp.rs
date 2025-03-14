@@ -3,8 +3,8 @@ use std::cell::RefCell;
 use adw::subclass::prelude::*;
 use adw::{prelude::*, ActionRow, ComboRow};
 use glib::{subclass::InitializingObject, Binding};
-use gtk::glib::clone;
 use gtk::glib::subclass::Signal;
+use gtk::glib::{clone, SignalHandlerId};
 use gtk::{glib, Button, CompositeTemplate, Entry, Switch};
 use std::sync::OnceLock;
 
@@ -28,6 +28,10 @@ pub struct ClientRow {
     #[template_child]
     pub dns_loading_indicator: TemplateChild<gtk::Spinner>,
     pub bindings: RefCell<Vec<Binding>>,
+    pub hostname_change_handler: RefCell<Option<SignalHandlerId>>,
+    pub port_change_handler: RefCell<Option<SignalHandlerId>>,
+    pub position_change_handler: RefCell<Option<SignalHandlerId>>,
+    pub set_state_handler: RefCell<Option<SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -59,13 +63,42 @@ impl ObjectImpl for ClientRow {
                 row.handle_client_delete(button);
             }
         ));
-        self.hostname.connect_changed(clone!(
+        let handler = self.hostname.connect_changed(clone!(
             #[weak(rename_to = row)]
             self,
             move |entry| {
                 row.handle_hostname_changed(entry);
             }
         ));
+        self.hostname_change_handler.replace(Some(handler));
+        let handler = self.port.connect_changed(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |entry| {
+                row.handle_port_changed(entry);
+            }
+        ));
+        self.port_change_handler.replace(Some(handler));
+        let handler = self.position.connect_selected_notify(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |position| {
+                row.handle_position_changed(position);
+            }
+        ));
+        self.position_change_handler.replace(Some(handler));
+        // <signal name="state_set" handler="handle_activate_switch" swapped="true"/>
+        let handler = self.enable_switch.connect_state_set(clone!(
+            #[weak(rename_to = row)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |switch, state| {
+                row.handle_activate_switch(state, switch);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.set_state_handler.replace(Some(handler));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
@@ -109,24 +142,70 @@ impl ClientRow {
         self.obj().emit_by_name::<()>("request-delete", &[]);
     }
 
-    #[template_callback]
-    fn handle_port_changed(&self) {
-        if let Ok(port) = self.port.text().parse::<u16>() {
+    fn handle_port_changed(&self, port_entry: &Entry) {
+        if let Ok(port) = port_entry.text().parse::<u16>() {
             self.obj()
                 .emit_by_name::<()>("request-port-change", &[&(port as u32)]);
         }
     }
 
-    // #[template_callback]
-    fn handle_hostname_changed(&self, entry: &Entry) {
+    fn handle_hostname_changed(&self, hostname_entry: &Entry) {
+        log::error!("hostname changed: {}", hostname_entry.text());
         self.obj()
-            .emit_by_name::<()>("request-hostname-change", &[&entry.text()]);
+            .emit_by_name::<()>("request-hostname-change", &[&hostname_entry.text()]);
     }
 
-    #[template_callback]
-    fn handle_position_changed(&self) {
+    fn handle_position_changed(&self, position: &ComboRow) {
         self.obj()
-            .emit_by_name("request-position-change", &[&self.position.selected()])
+            .emit_by_name("request-position-change", &[&position.selected()])
+    }
+
+    pub fn block_hostname_change(&self) {
+        let handler = self.hostname_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.hostname.block_signal(handler);
+    }
+
+    pub fn unblock_hostname_change(&self) {
+        let handler = self.hostname_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.hostname.unblock_signal(handler);
+    }
+
+    pub fn block_port_change(&self) {
+        let handler = self.port_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.port.block_signal(handler);
+    }
+
+    pub fn unblock_port_change(&self) {
+        let handler = self.port_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.port.unblock_signal(handler);
+    }
+
+    pub fn block_position_change(&self) {
+        let handler = self.position_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.position.block_signal(handler);
+    }
+
+    pub fn unblock_position_change(&self) {
+        let handler = self.position_change_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.position.unblock_signal(handler);
+    }
+
+    pub fn block_active_switch(&self) {
+        let handler = self.set_state_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.enable_switch.block_signal(handler);
+    }
+
+    pub fn unblock_active_switch(&self) {
+        let handler = self.set_state_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.enable_switch.unblock_signal(handler);
     }
 }
 

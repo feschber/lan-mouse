@@ -8,7 +8,7 @@ use glib::{clone, Object};
 use gtk::{
     gio,
     glib::{self, closure_local},
-    ListBox, NoSelection,
+    NoSelection,
 };
 
 use lan_mouse_ipc::{
@@ -56,6 +56,14 @@ impl Window {
 
     fn client_by_idx(&self, idx: u32) -> Option<ClientObject> {
         self.clients().item(idx).map(|o| o.downcast().unwrap())
+    }
+
+    fn row_by_idx(&self, idx: i32) -> Option<ClientRow> {
+        self.imp()
+            .client_list
+            .get()
+            .row_at_index(idx)
+            .map(|o| o.downcast().expect("expected ClientRow"))
     }
 
     fn authorized_by_idx(&self, idx: u32) -> Option<KeyObject> {
@@ -118,8 +126,11 @@ impl Window {
                             #[strong]
                             window,
                             move |row: ClientRow, hostname: String| {
+                                log::info!("request-hostname-change");
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
                                     let hostname = Some(hostname).filter(|s| !s.is_empty());
+                                    /* changed in response to FrontendEvent
+                                     * -> do not request additional update */
                                     window.request(FrontendRequest::UpdateHostname(
                                         client.handle(),
                                         hostname,
@@ -264,14 +275,10 @@ impl Window {
         self.update_dns_state(handle, !state.ips.is_empty());
     }
 
-    pub fn client_idx(&self, handle: ClientHandle) -> Option<usize> {
-        self.clients().iter::<ClientObject>().position(|c| {
-            if let Ok(c) = c {
-                c.handle() == handle
-            } else {
-                false
-            }
-        })
+    pub(super) fn client_idx(&self, handle: ClientHandle) -> Option<usize> {
+        self.clients()
+            .iter::<ClientObject>()
+            .position(|c| c.ok().map(|c| c.handle() == handle).unwrap_or_default())
     }
 
     pub fn delete_client(&self, handle: ClientHandle) {
@@ -287,41 +294,51 @@ impl Window {
     }
 
     pub fn update_client_config(&self, handle: ClientHandle, client: ClientConfig) {
-        let Some(idx) = self.client_idx(handle) else {
-            log::warn!("could not find client with handle {}", handle);
+        let Some(row) = self.row_for_handle(handle) else {
+            log::warn!("could not find row for handle {}", handle);
             return;
         };
-        let client_object = self.clients().item(idx as u32).unwrap();
-        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
-        let data = client_object.get_data();
+        let Some(client_object) = self.client_object_for_handle(handle) else {
+            log::warn!("could not find row for handle {}", handle);
+            return;
+        };
 
-        /* only change if it actually has changed, otherwise
-         * the update signal is triggered */
-        if data.hostname != client.hostname {
-            client_object.set_hostname(client.hostname.unwrap_or("".into()));
-        }
-        if data.port != client.port as u32 {
-            client_object.set_port(client.port as u32);
-        }
-        if data.position != client.pos.to_string() {
-            client_object.set_position(client.pos.to_string());
-        }
+        row.imp().block_hostname_change();
+        client_object.set_hostname(client.hostname.unwrap_or("".into()));
+        row.imp().unblock_hostname_change();
+
+        row.imp().block_port_change();
+        client_object.set_port(client.port as u32);
+        row.imp().unblock_port_change();
+
+        row.imp().block_position_change();
+        client_object.set_position(client.pos.to_string());
+        row.imp().unblock_position_change();
     }
 
     pub fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
-        let Some(idx) = self.client_idx(handle) else {
-            log::warn!("could not find client with handle {}", handle);
+        let Some(row) = self.row_for_handle(handle) else {
+            log::warn!("could not find row for handle {}", handle);
             return;
         };
-        let client_object = self.clients().item(idx as u32).unwrap();
-        let client_object: &ClientObject = client_object.downcast_ref().unwrap();
-        let data = client_object.get_data();
+        let Some(client_object) = self.client_object_for_handle(handle) else {
+            log::warn!("could not find row for handle {}", handle);
+            return;
+        };
 
+        /* activation state */
+        row.imp().block_active_switch();
         client_object.set_active(state.active);
+        row.imp().unblock_active_switch();
         log::info!("set active to {}", state.active);
 
+        /* dns state */
         client_object.set_resolving(state.resolving);
-        log::info!("resolving {}: {}", data.handle, state.resolving);
+        log::info!(
+            "resolving {}: {}",
+            client_object.get_data().handle,
+            state.resolving
+        );
 
         self.update_dns_state(handle, !state.ips.is_empty());
         let ips = state
@@ -332,18 +349,25 @@ impl Window {
         client_object.set_ips(ips);
     }
 
-    pub fn update_dns_state(&self, handle: ClientHandle, resolved: bool) {
-        let Some(idx) = self.client_idx(handle) else {
-            log::warn!("could not find client with handle {}", handle);
-            return;
-        };
-        let list_box: ListBox = self.imp().client_list.get();
-        let row = list_box.row_at_index(idx as i32).unwrap();
-        let client_row: ClientRow = row.downcast().expect("expected ClientRow Object");
-        if resolved {
-            client_row.imp().dns_button.set_css_classes(&["success"])
-        } else {
-            client_row.imp().dns_button.set_css_classes(&["warning"])
+    fn client_object_for_handle(&self, handle: ClientHandle) -> Option<ClientObject> {
+        self.client_idx(handle)
+            .map(|i| self.client_by_idx(i as u32))
+            .flatten()
+    }
+
+    fn row_for_handle(&self, handle: ClientHandle) -> Option<ClientRow> {
+        self.client_idx(handle)
+            .map(|i| self.row_by_idx(i as i32))
+            .flatten()
+    }
+
+    fn update_dns_state(&self, handle: ClientHandle, resolved: bool) {
+        if let Some(client_row) = self.row_for_handle(handle) {
+            if resolved {
+                client_row.imp().dns_button.set_css_classes(&["success"])
+            } else {
+                client_row.imp().dns_button.set_css_classes(&["warning"])
+            }
         }
     }
 

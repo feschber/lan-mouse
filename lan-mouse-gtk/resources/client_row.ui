@@ -5,7 +5,6 @@
 		<!-- enabled -->
 		<child type="prefix">
 			<object class="GtkSwitch" id="enable_switch">
-				<signal name="state_set" handler="handle_activate_switch" swapped="true"/>
 				<property name="valign">center</property>
 				<property name="halign">end</property>
 				<property name="tooltip-text" translatable="yes">enable</property>
@@ -68,7 +67,6 @@
 						</items>
 					</object>
 				</property>
-				<signal name="notify::selected" handler="handle_position_changed" swapped="true"/>
 			</object>
 		</child>
 		<!-- delete button -->
