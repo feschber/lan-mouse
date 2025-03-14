@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use lan_mouse_ipc::DEFAULT_PORT;
+use lan_mouse_ipc::{Position, DEFAULT_PORT};
 
 use super::ClientObject;
 
@@ -15,8 +15,14 @@ glib::wrapper! {
 }
 
 impl ClientRow {
-    pub fn new(_client_object: &ClientObject) -> Self {
-        Object::builder().build()
+    pub fn new(client_object: &ClientObject) -> Self {
+        let client_row: Self = Object::builder().build();
+        client_row
+            .imp()
+            .client_object
+            .borrow_mut()
+            .replace(client_object.clone());
+        client_row
     }
 
     pub fn bind(&self, client_object: &ClientObject) {
@@ -129,5 +135,21 @@ impl ClientRow {
         for binding in self.imp().bindings.borrow_mut().drain(..) {
             binding.unbind();
         }
+    }
+
+    pub fn set_active(&self, active: bool) {
+        self.imp().set_active(active);
+    }
+
+    pub fn set_hostname(&self, hostname: &str) {
+        self.imp().set_hostname(hostname);
+    }
+
+    pub fn set_port(&self, port: u16) {
+        self.imp().set_port(port);
+    }
+
+    pub fn set_position(&self, pos: Position) {
+        self.imp().set_pos(pos);
     }
 }

@@ -298,22 +298,9 @@ impl Window {
             log::warn!("could not find row for handle {}", handle);
             return;
         };
-        let Some(client_object) = self.client_object_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
-            return;
-        };
-
-        row.imp().block_hostname_change();
-        client_object.set_hostname(client.hostname.unwrap_or("".into()));
-        row.imp().unblock_hostname_change();
-
-        row.imp().block_port_change();
-        client_object.set_port(client.port as u32);
-        row.imp().unblock_port_change();
-
-        row.imp().block_position_change();
-        client_object.set_position(client.pos.to_string());
-        row.imp().unblock_position_change();
+        row.set_hostname(&client.hostname.unwrap_or("".into()));
+        row.set_port(client.port);
+        row.set_position(client.pos);
     }
 
     pub fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
@@ -327,18 +314,10 @@ impl Window {
         };
 
         /* activation state */
-        row.imp().block_active_switch();
-        client_object.set_active(state.active);
-        row.imp().unblock_active_switch();
-        log::info!("set active to {}", state.active);
+        row.set_active(state.active);
 
         /* dns state */
         client_object.set_resolving(state.resolving);
-        log::info!(
-            "resolving {}: {}",
-            client_object.get_data().handle,
-            state.resolving
-        );
 
         self.update_dns_state(handle, !state.ips.is_empty());
         let ips = state

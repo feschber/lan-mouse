@@ -6,7 +6,10 @@ use glib::{subclass::InitializingObject, Binding};
 use gtk::glib::subclass::Signal;
 use gtk::glib::{clone, SignalHandlerId};
 use gtk::{glib, Button, CompositeTemplate, Entry, Switch};
+use lan_mouse_ipc::Position;
 use std::sync::OnceLock;
+
+use crate::client_object::ClientObject;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/client_row.ui")]
@@ -28,10 +31,11 @@ pub struct ClientRow {
     #[template_child]
     pub dns_loading_indicator: TemplateChild<gtk::Spinner>,
     pub bindings: RefCell<Vec<Binding>>,
-    pub hostname_change_handler: RefCell<Option<SignalHandlerId>>,
-    pub port_change_handler: RefCell<Option<SignalHandlerId>>,
-    pub position_change_handler: RefCell<Option<SignalHandlerId>>,
-    pub set_state_handler: RefCell<Option<SignalHandlerId>>,
+    hostname_change_handler: RefCell<Option<SignalHandlerId>>,
+    port_change_handler: RefCell<Option<SignalHandlerId>>,
+    position_change_handler: RefCell<Option<SignalHandlerId>>,
+    set_state_handler: RefCell<Option<SignalHandlerId>>,
+    pub client_object: RefCell<Option<ClientObject>>,
 }
 
 #[glib::object_subclass]
@@ -87,7 +91,6 @@ impl ObjectImpl for ClientRow {
             }
         ));
         self.position_change_handler.replace(Some(handler));
-        // <signal name="state_set" handler="handle_activate_switch" swapped="true"/>
         let handler = self.enable_switch.connect_state_set(clone!(
             #[weak(rename_to = row)]
             self,
@@ -150,7 +153,6 @@ impl ClientRow {
     }
 
     fn handle_hostname_changed(&self, hostname_entry: &Entry) {
-        log::error!("hostname changed: {}", hostname_entry.text());
         self.obj()
             .emit_by_name::<()>("request-hostname-change", &[&hostname_entry.text()]);
     }
@@ -160,51 +162,55 @@ impl ClientRow {
             .emit_by_name("request-position-change", &[&position.selected()])
     }
 
-    pub fn block_hostname_change(&self) {
+    pub(super) fn set_hostname(&self, hostname: &str) {
+        let position = self.hostname.position();
         let handler = self.hostname_change_handler.borrow();
         let handler = handler.as_ref().expect("signal handler");
         self.hostname.block_signal(handler);
-    }
-
-    pub fn unblock_hostname_change(&self) {
-        let handler = self.hostname_change_handler.borrow();
-        let handler = handler.as_ref().expect("signal handler");
+        self.client_object
+            .borrow_mut()
+            .as_mut()
+            .expect("client object")
+            .set_hostname(hostname);
         self.hostname.unblock_signal(handler);
+        self.hostname.set_position(position);
     }
 
-    pub fn block_port_change(&self) {
+    pub(super) fn set_port(&self, port: u16) {
+        let position = self.port.position();
         let handler = self.port_change_handler.borrow();
         let handler = handler.as_ref().expect("signal handler");
         self.port.block_signal(handler);
-    }
-
-    pub fn unblock_port_change(&self) {
-        let handler = self.port_change_handler.borrow();
-        let handler = handler.as_ref().expect("signal handler");
+        self.client_object
+            .borrow_mut()
+            .as_mut()
+            .expect("client object")
+            .set_port(port as u32);
         self.port.unblock_signal(handler);
+        self.port.set_position(position);
     }
 
-    pub fn block_position_change(&self) {
+    pub(super) fn set_pos(&self, pos: Position) {
         let handler = self.position_change_handler.borrow();
         let handler = handler.as_ref().expect("signal handler");
         self.position.block_signal(handler);
-    }
-
-    pub fn unblock_position_change(&self) {
-        let handler = self.position_change_handler.borrow();
-        let handler = handler.as_ref().expect("signal handler");
+        self.client_object
+            .borrow_mut()
+            .as_mut()
+            .expect("client object")
+            .set_position(pos.to_string());
         self.position.unblock_signal(handler);
     }
 
-    pub fn block_active_switch(&self) {
+    pub(super) fn set_active(&self, active: bool) {
         let handler = self.set_state_handler.borrow();
         let handler = handler.as_ref().expect("signal handler");
         self.enable_switch.block_signal(handler);
-    }
-
-    pub fn unblock_active_switch(&self) {
-        let handler = self.set_state_handler.borrow();
-        let handler = handler.as_ref().expect("signal handler");
+        self.client_object
+            .borrow_mut()
+            .as_mut()
+            .expect("client object")
+            .set_active(active);
         self.enable_switch.unblock_signal(handler);
     }
 }
