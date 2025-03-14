@@ -295,9 +295,8 @@ impl Window {
     }
 
     pub(super) fn update_port(&self, port: u16, msg: Option<String>) {
-        match msg {
-            None => self.show_toast(format!("port changed: {port}").as_str()),
-            Some(msg) => self.show_toast(msg.as_str()),
+        if let Some(msg) = msg {
+            self.show_toast(msg.as_str());
         }
         self.imp().set_port(port);
     }
