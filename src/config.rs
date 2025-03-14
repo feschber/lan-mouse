@@ -38,7 +38,6 @@ pub struct ConfigToml {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct TomlClient {
-    pub capture_backend: Option<CaptureBackend>,
     pub hostname: Option<String>,
     pub host_name: Option<String>,
     pub ips: Option<Vec<IpAddr>>,

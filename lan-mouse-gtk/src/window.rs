@@ -356,14 +356,12 @@ impl Window {
 
     fn client_object_for_handle(&self, handle: ClientHandle) -> Option<ClientObject> {
         self.client_idx(handle)
-            .map(|i| self.client_by_idx(i as u32))
-            .flatten()
+            .and_then(|i| self.client_by_idx(i as u32))
     }
 
     fn row_for_handle(&self, handle: ClientHandle) -> Option<ClientRow> {
         self.client_idx(handle)
-            .map(|i| self.row_by_idx(i as i32))
-            .flatten()
+            .and_then(|i| self.row_by_idx(i as i32))
     }
 
     fn update_dns_state(&self, handle: ClientHandle, resolved: bool) {
