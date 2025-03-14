@@ -298,7 +298,7 @@ impl Window {
             log::warn!("could not find row for handle {}", handle);
             return;
         };
-        row.set_hostname(&client.hostname.unwrap_or("".into()));
+        row.set_hostname(client.hostname);
         row.set_port(client.port);
         row.set_position(client.pos);
     }

@@ -56,13 +56,7 @@ impl ClientRow {
         // bind hostname to title
         let title_binding = client_object
             .bind_property("hostname", self, "title")
-            .transform_to(|_, v: Option<String>| {
-                if let Some(hostname) = v {
-                    Some(hostname)
-                } else {
-                    Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>".to_string())
-                }
-            })
+            .transform_to(|_, v: Option<String>| v.or(Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>".to_string())))
             .sync_create()
             .build();
 
@@ -141,7 +135,7 @@ impl ClientRow {
         self.imp().set_active(active);
     }
 
-    pub fn set_hostname(&self, hostname: &str) {
+    pub fn set_hostname(&self, hostname: Option<String>) {
         self.imp().set_hostname(hostname);
     }
 

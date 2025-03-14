@@ -162,7 +162,7 @@ impl ClientRow {
             .emit_by_name("request-position-change", &[&position.selected()])
     }
 
-    pub(super) fn set_hostname(&self, hostname: &str) {
+    pub(super) fn set_hostname(&self, hostname: Option<String>) {
         let position = self.hostname.position();
         let handler = self.hostname_change_handler.borrow();
         let handler = handler.as_ref().expect("signal handler");
@@ -171,7 +171,7 @@ impl ClientRow {
             .borrow_mut()
             .as_mut()
             .expect("client object")
-            .set_hostname(hostname);
+            .set_property("hostname", hostname);
         self.hostname.unblock_signal(handler);
         self.hostname.set_position(position);
     }
