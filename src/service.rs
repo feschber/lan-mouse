@@ -186,7 +186,6 @@ impl Service {
             FrontendRequest::EnableCapture => self.capture.reenable(),
             FrontendRequest::EnableEmulation => self.emulation.reenable(),
             FrontendRequest::Enumerate() => self.enumerate(),
-            FrontendRequest::GetState(handle) => self.broadcast_client(handle),
             FrontendRequest::UpdateFixIps(handle, fix_ips) => self.update_fix_ips(handle, fix_ips),
             FrontendRequest::UpdateHostname(handle, host) => self.update_hostname(handle, host),
             FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
@@ -283,7 +282,7 @@ impl Service {
                 handle
             }
         };
-        self.notify_frontend(FrontendEvent::Changed(handle));
+        self.broadcast_client(handle);
     }
 
     fn resolve(&self, handle: ClientHandle) {
@@ -399,7 +398,7 @@ impl Service {
         log::debug!("deactivating client {handle}");
         if self.client_manager.deactivate_client(handle) {
             self.capture.destroy(handle);
-            self.notify_frontend(FrontendEvent::Changed(handle));
+            self.broadcast_client(handle);
             log::info!("deactivated client {handle}");
         }
     }
@@ -425,7 +424,7 @@ impl Service {
         if self.client_manager.activate_client(handle) {
             /* notify capture and frontends */
             self.capture.create(handle, pos, CaptureType::Default);
-            self.notify_frontend(FrontendEvent::Changed(handle));
+            self.broadcast_client(handle);
             log::info!("activated client {handle} ({pos})");
         }
     }
@@ -452,19 +451,19 @@ impl Service {
 
     fn update_fix_ips(&mut self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
         self.client_manager.set_fix_ips(handle, fix_ips);
-        self.notify_frontend(FrontendEvent::Changed(handle));
+        self.broadcast_client(handle);
     }
 
     fn update_hostname(&mut self, handle: ClientHandle, hostname: Option<String>) {
         if self.client_manager.set_hostname(handle, hostname.clone()) {
             self.resolve(handle);
         }
-        self.notify_frontend(FrontendEvent::Changed(handle));
+        self.broadcast_client(handle);
     }
 
     fn update_port(&mut self, handle: ClientHandle, port: u16) {
         self.client_manager.set_port(handle, port);
-        self.notify_frontend(FrontendEvent::Changed(handle));
+        self.broadcast_client(handle);
     }
 
     fn update_pos(&mut self, handle: ClientHandle, pos: Position) {
@@ -473,7 +472,7 @@ impl Service {
             self.deactivate_client(handle);
             self.activate_client(handle);
         }
-        self.notify_frontend(FrontendEvent::Changed(handle));
+        self.broadcast_client(handle);
     }
 
     fn broadcast_client(&mut self, handle: ClientHandle) {

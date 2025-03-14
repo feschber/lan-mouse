@@ -177,8 +177,6 @@ pub struct ClientState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendEvent {
-    /// client state has changed, new state must be requested via [`FrontendRequest::GetState`]
-    Changed(ClientHandle),
     /// a client was created
     Created(ClientHandle, ClientConfig, ClientState),
     /// no such client
@@ -229,8 +227,6 @@ pub enum FrontendRequest {
     UpdatePosition(ClientHandle, Position),
     /// update fix-ips
     UpdateFixIps(ClientHandle, Vec<IpAddr>),
-    /// request the state of the given client
-    GetState(ClientHandle),
     /// request reenabling input capture
     EnableCapture,
     /// request reenabling input emulation

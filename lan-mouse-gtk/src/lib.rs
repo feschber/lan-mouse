@@ -9,7 +9,7 @@ use std::{env, process, str};
 
 use window::Window;
 
-use lan_mouse_ipc::{FrontendEvent, FrontendRequest};
+use lan_mouse_ipc::FrontendEvent;
 
 use adw::Application;
 use gtk::{
@@ -127,9 +127,6 @@ fn build_ui(app: &Application) {
             loop {
                 let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
                 match notify {
-                    FrontendEvent::Changed(handle) => {
-                        window.request(FrontendRequest::GetState(handle));
-                    }
                     FrontendEvent::Created(handle, client, state) => {
                         window.new_client(handle, client, state);
                     }

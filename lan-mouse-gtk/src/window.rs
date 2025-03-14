@@ -112,16 +112,54 @@ impl Window {
                         .expect("Expected object of type `ClientObject`.");
                     let row = window.create_client_row(client_object);
                     row.connect_closure(
-                        "request-update",
+                        "request-hostname-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow, hostname: String| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    let hostname = Some(hostname).filter(|s| !s.is_empty());
+                                    window.request(FrontendRequest::UpdateHostname(
+                                        client.handle(),
+                                        hostname,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-port-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow, port: u32| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    window.request(FrontendRequest::UpdatePort(
+                                        client.handle(),
+                                        port as u16,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-activate",
                         false,
                         closure_local!(
                             #[strong]
                             window,
                             move |row: ClientRow, active: bool| {
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
-                                    window.request_client_activate(&client, active);
-                                    window.request_client_update(&client);
-                                    window.request_client_state(&client);
+                                    log::info!(
+                                        "request: {} client",
+                                        if active { "activating" } else { "deactivating" }
+                                    );
+                                    window.request(FrontendRequest::Activate(
+                                        client.handle(),
+                                        active,
+                                    ));
                                 }
                             }
                         ),
@@ -134,7 +172,7 @@ impl Window {
                             window,
                             move |row: ClientRow| {
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
-                                    window.request_client_delete(&client);
+                                    window.request(FrontendRequest::Delete(client.handle()));
                                 }
                             }
                         ),
@@ -147,9 +185,31 @@ impl Window {
                             window,
                             move |row: ClientRow| {
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
-                                    window.request_client_update(&client);
-                                    window.request_dns(&client);
-                                    window.request_client_state(&client);
+                                    window.request(FrontendRequest::ResolveDns(
+                                        client.get_data().handle,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-position-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow, pos_idx: u32| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    let position = match pos_idx {
+                                        0 => Position::Left,
+                                        1 => Position::Right,
+                                        2 => Position::Top,
+                                        _ => Position::Bottom,
+                                    };
+                                    window.request(FrontendRequest::UpdatePosition(
+                                        client.handle(),
+                                        position,
+                                    ));
                                 }
                             }
                         ),
@@ -257,15 +317,11 @@ impl Window {
         let client_object: &ClientObject = client_object.downcast_ref().unwrap();
         let data = client_object.get_data();
 
-        if state.active != data.active {
-            client_object.set_active(state.active);
-            log::debug!("set active to {}", state.active);
-        }
+        client_object.set_active(state.active);
+        log::info!("set active to {}", state.active);
 
-        if state.resolving != data.resolving {
-            client_object.set_resolving(state.resolving);
-            log::debug!("resolving {}: {}", data.handle, state.resolving);
-        }
+        client_object.set_resolving(state.resolving);
+        log::info!("resolving {}: {}", data.handle, state.resolving);
 
         self.update_dns_state(handle, !state.ips.is_empty());
         let ips = state
@@ -291,7 +347,7 @@ impl Window {
         }
     }
 
-    pub fn request_port_change(&self) {
+    fn request_port_change(&self) {
         let port = self
             .imp()
             .port_entry
@@ -303,52 +359,16 @@ impl Window {
         self.request(FrontendRequest::ChangePort(port));
     }
 
-    pub fn request_capture(&self) {
+    fn request_capture(&self) {
         self.request(FrontendRequest::EnableCapture);
     }
 
-    pub fn request_emulation(&self) {
+    fn request_emulation(&self) {
         self.request(FrontendRequest::EnableEmulation);
     }
 
-    pub fn request_client_state(&self, client: &ClientObject) {
-        self.request_client_state_for(client.handle());
-    }
-
-    pub fn request_client_state_for(&self, handle: ClientHandle) {
-        self.request(FrontendRequest::GetState(handle));
-    }
-
-    pub fn request_client_create(&self) {
+    fn request_client_create(&self) {
         self.request(FrontendRequest::Create);
-    }
-
-    pub fn request_dns(&self, client: &ClientObject) {
-        self.request(FrontendRequest::ResolveDns(client.get_data().handle));
-    }
-
-    pub fn request_client_update(&self, client: &ClientObject) {
-        let handle = client.handle();
-        let data = client.get_data();
-        let position = Position::try_from(data.position.as_str()).expect("invalid position");
-        let hostname = data.hostname;
-        let port = data.port as u16;
-
-        for event in [
-            FrontendRequest::UpdateHostname(handle, hostname),
-            FrontendRequest::UpdatePosition(handle, position),
-            FrontendRequest::UpdatePort(handle, port),
-        ] {
-            self.request(event);
-        }
-    }
-
-    pub fn request_client_activate(&self, client: &ClientObject, active: bool) {
-        self.request(FrontendRequest::Activate(client.handle(), active));
-    }
-
-    pub fn request_client_delete(&self, client: &ClientObject) {
-        self.request(FrontendRequest::Delete(client.handle()));
     }
 
     pub fn open_fingerprint_dialog(&self) {

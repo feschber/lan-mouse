@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::cell::RefCell;
 
 use glib::Properties;
@@ -20,6 +21,7 @@ pub struct ClientObject {
     #[property(name = "resolving", get, set, type = bool, member = resolving)]
     #[property(name = "ips", get, set, type = Vec<String>, member = ips)]
     pub data: RefCell<ClientData>,
+    pub ignore_next_update: Cell<bool>,
 }
 
 #[glib::object_subclass]

@@ -22,18 +22,19 @@ impl ClientRow {
     pub fn bind(&self, client_object: &ClientObject) {
         let mut bindings = self.imp().bindings.borrow_mut();
 
+        // bind client active to switch state
         let active_binding = client_object
             .bind_property("active", &self.imp().enable_switch.get(), "state")
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind client active to switch position
         let switch_position_binding = client_object
             .bind_property("active", &self.imp().enable_switch.get(), "active")
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind hostname to hostname edit field
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
             .transform_to(|_, v: Option<String>| {
@@ -43,17 +44,10 @@ impl ClientRow {
                     Some("".to_string())
                 }
             })
-            .transform_from(|_, v: String| {
-                if v.as_str().trim() == "" {
-                    Some(None)
-                } else {
-                    Some(Some(v))
-                }
-            })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind hostname to title
         let title_binding = client_object
             .bind_property("hostname", self, "title")
             .transform_to(|_, v: Option<String>| {
@@ -66,49 +60,38 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        // bind port to port edit field
         let port_binding = client_object
             .bind_property("port", &self.imp().port.get(), "text")
-            .transform_from(|_, v: String| {
-                if v.is_empty() {
-                    Some(DEFAULT_PORT as u32)
-                } else {
-                    Some(v.parse::<u16>().unwrap_or(DEFAULT_PORT) as u32)
-                }
-            })
             .transform_to(|_, v: u32| {
-                if v == 4242 {
+                if v == DEFAULT_PORT as u32 {
                     Some("".to_string())
                 } else {
                     Some(v.to_string())
                 }
             })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind port to subtitle
         let subtitle_binding = client_object
             .bind_property("port", self, "subtitle")
             .sync_create()
             .build();
 
+        // bind position to selected position
         let position_binding = client_object
             .bind_property("position", &self.imp().position.get(), "selected")
-            .transform_from(|_, v: u32| match v {
-                1 => Some("right"),
-                2 => Some("top"),
-                3 => Some("bottom"),
-                _ => Some("left"),
-            })
             .transform_to(|_, v: String| match v.as_str() {
-                "right" => Some(1),
+                "right" => Some(1u32),
                 "top" => Some(2u32),
                 "bottom" => Some(3u32),
                 _ => Some(0u32),
             })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind resolving status to spinner visibility
         let resolve_binding = client_object
             .bind_property(
                 "resolving",
@@ -118,6 +101,7 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        // bind ips to tooltip-text
         let ip_binding = client_object
             .bind_property("ips", &self.imp().dns_button.get(), "tooltip-text")
             .transform_to(|_, ips: Vec<String>| {

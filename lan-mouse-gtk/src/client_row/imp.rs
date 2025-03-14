@@ -5,7 +5,7 @@ use adw::{prelude::*, ActionRow, ComboRow};
 use glib::{subclass::InitializingObject, Binding};
 use gtk::glib::clone;
 use gtk::glib::subclass::Signal;
-use gtk::{glib, Button, CompositeTemplate, Switch};
+use gtk::{glib, Button, CompositeTemplate, Entry, Switch};
 use std::sync::OnceLock;
 
 #[derive(CompositeTemplate, Default)]
@@ -59,17 +59,33 @@ impl ObjectImpl for ClientRow {
                 row.handle_client_delete(button);
             }
         ));
+        self.hostname.connect_changed(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |entry| {
+                row.handle_hostname_changed(entry);
+            }
+        ));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
         SIGNALS.get_or_init(|| {
             vec![
-                Signal::builder("request-dns").build(),
-                Signal::builder("request-update")
+                Signal::builder("request-activate")
                     .param_types([bool::static_type()])
                     .build(),
                 Signal::builder("request-delete").build(),
+                Signal::builder("request-dns").build(),
+                Signal::builder("request-hostname-change")
+                    .param_types([String::static_type()])
+                    .build(),
+                Signal::builder("request-port-change")
+                    .param_types([u32::static_type()])
+                    .build(),
+                Signal::builder("request-position-change")
+                    .param_types([u32::static_type()])
+                    .build(),
             ]
         })
     }
@@ -78,21 +94,39 @@ impl ObjectImpl for ClientRow {
 #[gtk::template_callbacks]
 impl ClientRow {
     #[template_callback]
-    fn handle_client_set_state(&self, state: bool, _switch: &Switch) -> bool {
-        log::debug!("state change -> requesting update");
-        self.obj().emit_by_name::<()>("request-update", &[&state]);
+    fn handle_activate_switch(&self, state: bool, _switch: &Switch) -> bool {
+        self.obj().emit_by_name::<()>("request-activate", &[&state]);
         true // dont run default handler
     }
 
     #[template_callback]
-    fn handle_request_dns(&self, _: Button) {
+    fn handle_request_dns(&self, _: &Button) {
         self.obj().emit_by_name::<()>("request-dns", &[]);
     }
 
     #[template_callback]
     fn handle_client_delete(&self, _button: &Button) {
-        log::debug!("delete button pressed -> requesting delete");
         self.obj().emit_by_name::<()>("request-delete", &[]);
+    }
+
+    #[template_callback]
+    fn handle_port_changed(&self) {
+        if let Ok(port) = self.port.text().parse::<u16>() {
+            self.obj()
+                .emit_by_name::<()>("request-port-change", &[&(port as u32)]);
+        }
+    }
+
+    // #[template_callback]
+    fn handle_hostname_changed(&self, entry: &Entry) {
+        self.obj()
+            .emit_by_name::<()>("request-hostname-change", &[&entry.text()]);
+    }
+
+    #[template_callback]
+    fn handle_position_changed(&self) {
+        self.obj()
+            .emit_by_name("request-position-change", &[&self.position.selected()])
     }
 }
 
