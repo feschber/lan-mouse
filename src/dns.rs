@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::{collections::HashMap, net::IpAddr};
 
 use local_channel::mpsc::{channel, Receiver, Sender};
 use tokio::task::{spawn_local, JoinHandle};
@@ -30,6 +30,7 @@ struct DnsTask {
     request_rx: Receiver<DnsRequest>,
     event_tx: Sender<DnsEvent>,
     cancellation_token: CancellationToken,
+    active_tasks: HashMap<ClientHandle, JoinHandle<()>>,
 }
 
 impl DnsResolver {
@@ -39,6 +40,7 @@ impl DnsResolver {
         let (event_tx, event_rx) = channel();
         let cancellation_token = CancellationToken::new();
         let dns_task = DnsTask {
+            active_tasks: Default::default(),
             resolver,
             request_rx,
             event_tx,
@@ -81,6 +83,14 @@ impl DnsTask {
         while let Some(dns_request) = self.request_rx.recv().await {
             let DnsRequest { handle, hostname } = dns_request;
 
+            /* abort previous dns task */
+            let previous_task = self.active_tasks.remove(&handle);
+            if let Some(task) = previous_task {
+                if !task.is_finished() {
+                    task.abort();
+                }
+            }
+
             self.event_tx
                 .send(DnsEvent::Resolving(handle))
                 .expect("channel closed");
@@ -90,7 +100,7 @@ impl DnsTask {
             let resolver = self.resolver.clone();
             let cancellation_token = self.cancellation_token.clone();
 
-            tokio::task::spawn_local(async move {
+            let task = tokio::task::spawn_local(async move {
                 tokio::select! {
                     ips = resolver.lookup_ip(&hostname) => {
                        let ips = ips.map(|ips| ips.iter().collect::<Vec<_>>());
@@ -101,6 +111,7 @@ impl DnsTask {
                     _ = cancellation_token.cancelled() => {},
                 }
             });
+            self.active_tasks.insert(handle, task);
         }
     }
 }
