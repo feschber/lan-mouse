@@ -213,6 +213,14 @@ impl ClientRow {
             .set_active(active);
         self.enable_switch.unblock_signal(handler);
     }
+
+    pub(super) fn set_dns_state(&self, resolved: bool) {
+        if resolved {
+            self.dns_button.set_css_classes(&["success"])
+        } else {
+            self.dns_button.set_css_classes(&["warning"])
+        }
+    }
 }
 
 impl WidgetImpl for ClientRow {}

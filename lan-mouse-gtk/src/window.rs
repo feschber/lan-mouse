@@ -368,11 +368,7 @@ impl Window {
 
     fn update_dns_state(&self, handle: ClientHandle, resolved: bool) {
         if let Some(client_row) = self.row_for_handle(handle) {
-            if resolved {
-                client_row.imp().dns_button.set_css_classes(&["success"])
-            } else {
-                client_row.imp().dns_button.set_css_classes(&["warning"])
-            }
+            client_row.set_dns_state(resolved);
         }
     }
 

@@ -146,4 +146,8 @@ impl ClientRow {
     pub fn set_position(&self, pos: Position) {
         self.imp().set_pos(pos);
     }
+
+    pub fn set_dns_state(&self, resolved: bool) {
+        self.imp().set_dns_state(resolved);
+    }
 }
