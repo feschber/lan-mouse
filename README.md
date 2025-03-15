@@ -268,19 +268,17 @@ If the device still can not be entered, make sure you have UDP port `4242` (or t
 <details>
     <summary>Command Line Interface</summary>
 
-The cli interface can be enabled using `--frontend cli` as commandline arguments.
-Type `help` to list the available commands.
-
-E.g.:
+The cli interface can be accessed by passing `cli` as a commandline argument.
+Use
 ```sh
-$ cargo run --release -- --frontend cli
-(...)
-> connect <host> left|right|top|bottom
-(...)
-> list
-(...)
-> activate 0
+lan-mouse cli help
 ```
+ to list the available commands and
+```sh
+lan-mouse cli <cmd> help
+```
+for information on how to use a specific command.
+
 </details>
 
 <details>
