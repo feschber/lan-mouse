@@ -124,7 +124,9 @@ fn run_frontend(config: &Config) -> Result<(), IpcError> {
         }
         #[cfg(not(feature = "gtk"))]
         Frontend::Gtk => panic!("gtk frontend requested but feature not enabled!"),
-        Frontend::None => {}
+        Frontend::None => {
+            log::warn!("no frontend available!");
+        }
     };
     Ok(())
 }
