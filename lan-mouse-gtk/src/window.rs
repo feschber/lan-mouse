@@ -126,7 +126,7 @@ impl Window {
                             #[strong]
                             window,
                             move |row: ClientRow, hostname: String| {
-                                log::info!("request-hostname-change");
+                                log::debug!("request-hostname-change");
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
                                     let hostname = Some(hostname).filter(|s| !s.is_empty());
                                     /* changed in response to FrontendEvent
@@ -163,7 +163,7 @@ impl Window {
                             window,
                             move |row: ClientRow, active: bool| {
                                 if let Some(client) = window.client_by_idx(row.index() as u32) {
-                                    log::info!(
+                                    log::debug!(
                                         "request: {} client",
                                         if active { "activating" } else { "deactivating" }
                                     );

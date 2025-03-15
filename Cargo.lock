@@ -2023,6 +2023,7 @@ dependencies = [
  "lan-mouse-ipc",
  "libadwaita",
  "log",
+ "thiserror 2.0.0",
 ]
 
 [[package]]

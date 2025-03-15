@@ -18,7 +18,15 @@ use gtk::{gio, glib, prelude::ApplicationExt};
 use self::client_object::ClientObject;
 use self::key_object::KeyObject;
 
-pub fn run() -> glib::ExitCode {
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum GtkError {
+    #[error("gtk frontend exited with non zero exit code: {0}")]
+    NonZeroExitCode(i32),
+}
+
+pub fn run() -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
@@ -31,13 +39,10 @@ pub fn run() -> glib::ExitCode {
     #[cfg(not(windows))]
     let ret = gtk_main();
 
-    if ret == glib::ExitCode::FAILURE {
-        log::error!("frontend exited with failure");
-    } else {
-        log::info!("frontend exited successfully");
+    match ret {
+        glib::ExitCode::SUCCESS => Ok(()),
+        e => Err(GtkError::NonZeroExitCode(e.value())),
     }
-
-    ret
 }
 
 fn gtk_main() -> glib::ExitCode {

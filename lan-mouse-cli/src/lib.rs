@@ -18,7 +18,7 @@ pub enum CliError {
     Ipc(#[from] IpcError),
 }
 
-#[derive(Parser, Debug, PartialEq, Eq)]
+#[derive(Parser, Clone, Debug, PartialEq, Eq)]
 #[command(name = "lan-mouse-cli", about = "LanMouse CLI interface")]
 pub struct CliArgs {
     #[command(subcommand)]
@@ -37,7 +37,7 @@ struct Client {
     enter_hook: Option<String>,
 }
 
-#[derive(Subcommand, Debug, PartialEq, Eq)]
+#[derive(Clone, Subcommand, Debug, PartialEq, Eq)]
 enum CliSubcommand {
     /// add a new client
     AddClient(Client),
