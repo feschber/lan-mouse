@@ -9,6 +9,7 @@ use lan_mouse::{
     service::{Service, ServiceError},
 };
 use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
+use lan_mouse_cli::CliError;
 use std::{
     future::Future,
     io,
@@ -31,6 +32,8 @@ enum LanMouseError {
     Capture(#[from] InputCaptureError),
     #[error(transparent)]
     Emulation(#[from] InputEmulationError),
+    #[error(transparent)]
+    Cli(#[from] CliError),
 }
 
 fn main() {

@@ -10,6 +10,7 @@ repository = "https://github.com/feschber/lan-mouse"
 futures = "0.3.30"
 lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.2.0" }
 clap = { version = "4.4.11", features = ["derive"] }
+thiserror = "2.0.0"
 tokio = { version = "1.32.0", features = [
     "io-util",
     "io-std",

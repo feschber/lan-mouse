@@ -2008,6 +2008,7 @@ dependencies = [
  "clap",
  "futures",
  "lan-mouse-ipc",
+ "thiserror 2.0.0",
  "tokio",
 ]
 

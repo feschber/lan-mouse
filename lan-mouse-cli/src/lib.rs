@@ -2,17 +2,23 @@ use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 
 use std::{net::IpAddr, time::Duration};
+use thiserror::Error;
 
 use lan_mouse_ipc::{
-    connect_async, ClientHandle, FrontendEvent, FrontendRequest, IpcError, Position,
+    connect_async, ClientHandle, FrontendEvent, FrontendRequest, ConnectionError, IpcError, Position,
 };
 
+#[derive(Debug, Error)]
+pub enum CliError {
+    /// is the service running?
+    #[error("could not connect: `{0}` - is the service running?")]
+    ServiceNotRunning(#[from] ConnectionError),
+    #[error("error communicating with service: {0}")]
+    Ipc(#[from] IpcError),
+}
+
 #[derive(Parser, Debug, PartialEq, Eq)]
-#[command(
-    name = "lan-mouse-cli",
-    about = "LanMouse CLI interface",
-    flatten_help = true
-)]
+#[command(name = "lan-mouse-cli", about = "LanMouse CLI interface")]
 pub struct CliArgs {
     #[command(subcommand)]
     command: CliSubcommand,
@@ -66,12 +72,12 @@ enum CliSubcommand {
     RemoveAuthorizedKey { sha256_fingerprint: String },
 }
 
-pub async fn run(args: CliArgs) -> Result<(), IpcError> {
+pub async fn run(args: CliArgs) -> Result<(), CliError> {
     execute(args.command).await?;
     Ok(())
 }
 
-async fn execute(cmd: CliSubcommand) -> Result<(), IpcError> {
+async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
     let (mut rx, mut tx) = connect_async(Some(Duration::from_millis(500))).await?;
     match cmd {
         CliSubcommand::AddClient(Client {
