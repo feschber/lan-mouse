@@ -1,4 +1,5 @@
 use crate::config::Config;
+use clap::Args;
 use input_emulation::{InputEmulation, InputEmulationError};
 use input_event::{Event, PointerEvent};
 use std::f64::consts::PI;
@@ -7,7 +8,17 @@ use std::time::{Duration, Instant};
 const FREQUENCY_HZ: f64 = 1.0;
 const RADIUS: f64 = 100.0;
 
-pub async fn run(config: Config) -> Result<(), InputEmulationError> {
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct TestEmulationArgs {
+    #[arg(long)]
+    mouse: bool,
+    #[arg(long)]
+    keyboard: bool,
+    #[arg(long)]
+    scroll: bool,
+}
+
+pub async fn run(config: Config, _args: TestEmulationArgs) -> Result<(), InputEmulationError> {
     log::info!("running input emulation test");
 
     let backend = config.emulation_backend.map(|b| b.into());

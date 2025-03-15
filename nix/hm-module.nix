@@ -52,7 +52,7 @@ in {
       };
       Service = {
         Type = "simple";
-        ExecStart = "${cfg.package}/bin/lan-mouse --daemon";
+        ExecStart = "${cfg.package}/bin/lan-mouse daemon";
       };
       Install.WantedBy = [
         (lib.mkIf config.wayland.windowManager.hyprland.systemd.enable "hyprland-session.target")
@@ -65,7 +65,7 @@ in {
       config = {
         ProgramArguments = [
           "${cfg.package}/bin/lan-mouse"
-          "--daemon"
+          "daemon"
         ];
         KeepAlive = true;
       };

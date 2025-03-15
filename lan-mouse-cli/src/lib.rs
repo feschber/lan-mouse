@@ -1,298 +1,167 @@
+use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    task::LocalSet,
-};
 
-use std::io::{self, Write};
-
-use self::command::{Command, CommandType};
+use std::{net::IpAddr, time::Duration};
+use thiserror::Error;
 
 use lan_mouse_ipc::{
-    AsyncFrontendEventReader, AsyncFrontendRequestWriter, ClientConfig, ClientHandle, ClientState,
-    FrontendEvent, FrontendRequest, IpcError, DEFAULT_PORT,
+    connect_async, ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError,
+    Position,
 };
 
-mod command;
+#[derive(Debug, Error)]
+pub enum CliError {
+    /// is the service running?
+    #[error("could not connect: `{0}` - is the service running?")]
+    ServiceNotRunning(#[from] ConnectionError),
+    #[error("error communicating with service: {0}")]
+    Ipc(#[from] IpcError),
+}
 
-pub fn run() -> Result<(), IpcError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()?;
-    runtime.block_on(LocalSet::new().run_until(async move {
-        let (rx, tx) = lan_mouse_ipc::connect_async().await?;
-        let mut cli = Cli::new(rx, tx);
-        cli.run().await
-    }))?;
+#[derive(Parser, Debug, PartialEq, Eq)]
+#[command(name = "lan-mouse-cli", about = "LanMouse CLI interface")]
+pub struct CliArgs {
+    #[command(subcommand)]
+    command: CliSubcommand,
+}
+
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+struct Client {
+    #[arg(long)]
+    hostname: Option<String>,
+    #[arg(long)]
+    port: Option<u16>,
+    #[arg(long)]
+    ips: Option<Vec<IpAddr>>,
+    #[arg(long)]
+    enter_hook: Option<String>,
+}
+
+#[derive(Subcommand, Debug, PartialEq, Eq)]
+enum CliSubcommand {
+    /// add a new client
+    AddClient(Client),
+    /// remove an existing client
+    RemoveClient { id: ClientHandle },
+    /// activate a client
+    Activate { id: ClientHandle },
+    /// deactivate a client
+    Deactivate { id: ClientHandle },
+    /// list configured clients
+    List,
+    /// change hostname
+    SetHost {
+        id: ClientHandle,
+        host: Option<String>,
+    },
+    /// change port
+    SetPort { id: ClientHandle, port: u16 },
+    /// set position
+    SetPosition { id: ClientHandle, pos: Position },
+    /// set ips
+    SetIps { id: ClientHandle, ips: Vec<IpAddr> },
+    /// re-enable capture
+    EnableCapture,
+    /// re-enable emulation
+    EnableEmulation,
+    /// authorize a public key
+    AuthorizeKey {
+        description: String,
+        sha256_fingerprint: String,
+    },
+    /// deauthorize a public key
+    RemoveAuthorizedKey { sha256_fingerprint: String },
+}
+
+pub async fn run(args: CliArgs) -> Result<(), CliError> {
+    execute(args.command).await?;
     Ok(())
 }
 
-struct Cli {
-    clients: Vec<(ClientHandle, ClientConfig, ClientState)>,
-    rx: AsyncFrontendEventReader,
-    tx: AsyncFrontendRequestWriter,
-}
-
-impl Cli {
-    fn new(rx: AsyncFrontendEventReader, tx: AsyncFrontendRequestWriter) -> Cli {
-        Self {
-            clients: vec![],
-            rx,
-            tx,
-        }
-    }
-
-    async fn run(&mut self) -> Result<(), IpcError> {
-        let stdin = tokio::io::stdin();
-        let stdin = BufReader::new(stdin);
-        let mut stdin = stdin.lines();
-
-        /* initial state sync */
-        self.clients = loop {
-            match self.rx.next().await {
-                Some(Ok(e)) => {
-                    if let FrontendEvent::Enumerate(clients) = e {
-                        break clients;
+async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
+    let (mut rx, mut tx) = connect_async(Some(Duration::from_millis(500))).await?;
+    match cmd {
+        CliSubcommand::AddClient(Client {
+            hostname,
+            port,
+            ips,
+            enter_hook,
+        }) => {
+            tx.request(FrontendRequest::Create).await?;
+            while let Some(e) = rx.next().await {
+                if let FrontendEvent::Created(handle, _, _) = e? {
+                    if let Some(hostname) = hostname {
+                        tx.request(FrontendRequest::UpdateHostname(handle, Some(hostname)))
+                            .await?;
                     }
-                }
-                Some(Err(e)) => return Err(e),
-                None => return Ok(()),
-            }
-        };
-
-        loop {
-            prompt()?;
-            tokio::select! {
-                line = stdin.next_line() => {
-                    let Some(line) = line? else {
-                        break Ok(());
-                    };
-                    let cmd: Command = match line.parse() {
-                        Ok(cmd) => cmd,
-                        Err(e) => {
-                            eprintln!("{e}");
-                            continue;
-                        }
-                    };
-                    self.execute(cmd).await?;
-                }
-                event = self.rx.next() => {
-                    if let Some(event) = event {
-                        self.handle_event(event?);
-                    } else {
-                        break Ok(());
+                    if let Some(port) = port {
+                        tx.request(FrontendRequest::UpdatePort(handle, port))
+                            .await?;
                     }
+                    if let Some(ips) = ips {
+                        tx.request(FrontendRequest::UpdateFixIps(handle, ips))
+                            .await?;
+                    }
+                    if let Some(enter_hook) = enter_hook {
+                        tx.request(FrontendRequest::UpdateEnterHook(handle, Some(enter_hook)))
+                            .await?;
+                    }
+                    break;
                 }
             }
         }
-    }
-
-    async fn execute(&mut self, cmd: Command) -> Result<(), IpcError> {
-        match cmd {
-            Command::None => {}
-            Command::Connect(pos, host, port) => {
-                let request = FrontendRequest::Create;
-                self.tx.request(request).await?;
-                let handle = loop {
-                    if let Some(Ok(event)) = self.rx.next().await {
-                        match event {
-                            FrontendEvent::Created(h, c, s) => {
-                                self.clients.push((h, c, s));
-                                break h;
-                            }
-                            _ => {
-                                self.handle_event(event);
-                                continue;
-                            }
-                        }
-                    }
-                };
-                for request in [
-                    FrontendRequest::UpdateHostname(handle, Some(host.clone())),
-                    FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT)),
-                    FrontendRequest::UpdatePosition(handle, pos),
-                ] {
-                    self.tx.request(request).await?;
-                }
-            }
-            Command::Disconnect(id) => {
-                self.tx.request(FrontendRequest::Delete(id)).await?;
-                loop {
-                    if let Some(Ok(event)) = self.rx.next().await {
-                        self.handle_event(event.clone());
-                        if let FrontendEvent::Deleted(_) = event {
-                            self.handle_event(event);
-                            break;
-                        }
-                    }
-                }
-            }
-            Command::Activate(id) => {
-                self.tx.request(FrontendRequest::Activate(id, true)).await?;
-            }
-            Command::Deactivate(id) => {
-                self.tx
-                    .request(FrontendRequest::Activate(id, false))
-                    .await?;
-            }
-            Command::List => {
-                self.tx.request(FrontendRequest::Enumerate()).await?;
-                while let Some(e) = self.rx.next().await {
-                    let event = e?;
-                    self.handle_event(event.clone());
-                    if let FrontendEvent::Enumerate(_) = event {
-                        break;
-                    }
-                }
-            }
-            Command::SetHost(handle, host) => {
-                let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
-                self.tx.request(request).await?;
-            }
-            Command::SetPort(handle, port) => {
-                let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
-                self.tx.request(request).await?;
-            }
-            Command::Help => {
-                for cmd_type in [
-                    CommandType::List,
-                    CommandType::Connect,
-                    CommandType::Disconnect,
-                    CommandType::Activate,
-                    CommandType::Deactivate,
-                    CommandType::SetHost,
-                    CommandType::SetPort,
-                ] {
-                    eprintln!("{}", cmd_type.usage());
-                }
-            }
+        CliSubcommand::RemoveClient { id } => tx.request(FrontendRequest::Delete(id)).await?,
+        CliSubcommand::Activate { id } => tx.request(FrontendRequest::Activate(id, true)).await?,
+        CliSubcommand::Deactivate { id } => {
+            tx.request(FrontendRequest::Activate(id, false)).await?
         }
-        Ok(())
-    }
-
-    fn find_mut(
-        &mut self,
-        handle: ClientHandle,
-    ) -> Option<&mut (ClientHandle, ClientConfig, ClientState)> {
-        self.clients.iter_mut().find(|(h, _, _)| *h == handle)
-    }
-
-    fn remove(
-        &mut self,
-        handle: ClientHandle,
-    ) -> Option<(ClientHandle, ClientConfig, ClientState)> {
-        let idx = self.clients.iter().position(|(h, _, _)| *h == handle);
-        idx.map(|i| self.clients.swap_remove(i))
-    }
-
-    fn handle_event(&mut self, event: FrontendEvent) {
-        match event {
-            FrontendEvent::Created(h, c, s) => {
-                eprint!("client added ({h}): ");
-                print_config(&c);
-                eprint!(" ");
-                print_state(&s);
-                eprintln!();
-                self.clients.push((h, c, s));
-            }
-            FrontendEvent::NoSuchClient(h) => {
-                eprintln!("no such client: {h}");
-            }
-            FrontendEvent::State(h, c, s) => {
-                if let Some((_, config, state)) = self.find_mut(h) {
-                    let old_host = config.hostname.clone().unwrap_or("\"\"".into());
-                    let new_host = c.hostname.clone().unwrap_or("\"\"".into());
-                    if old_host != new_host {
-                        eprintln!(
-                            "client {h}: hostname updated ({} -> {})",
-                            old_host, new_host
+        CliSubcommand::List => {
+            tx.request(FrontendRequest::Enumerate()).await?;
+            while let Some(e) = rx.next().await {
+                if let FrontendEvent::Enumerate(clients) = e? {
+                    for (handle, config, state) in clients {
+                        let host = config.hostname.unwrap_or("unknown".to_owned());
+                        let port = config.port;
+                        let pos = config.pos;
+                        let active = state.active;
+                        let ips = state.ips;
+                        println!(
+                            "id {handle}: {host}:{port} ({pos}) active: {active}, ips: {ips:?}"
                         );
                     }
-                    if config.port != c.port {
-                        eprintln!("client {h} changed port: {} -> {}", config.port, c.port);
-                    }
-                    if config.fix_ips != c.fix_ips {
-                        eprintln!("client {h} ips updated: {:?}", c.fix_ips)
-                    }
-                    *config = c;
-                    if state.active ^ s.active {
-                        eprintln!(
-                            "client {h} {}",
-                            if s.active { "activated" } else { "deactivated" }
-                        );
-                    }
-                    *state = s;
+                    break;
                 }
             }
-            FrontendEvent::Deleted(h) => {
-                if let Some((h, c, _)) = self.remove(h) {
-                    eprint!("client {h} removed (");
-                    print_config(&c);
-                    eprintln!(")");
-                }
-            }
-            FrontendEvent::PortChanged(p, e) => {
-                if let Some(e) = e {
-                    eprintln!("failed to change port: {e}");
-                } else {
-                    eprintln!("changed port to {p}");
-                }
-            }
-            FrontendEvent::Enumerate(clients) => {
-                self.clients = clients;
-                self.print_clients();
-            }
-            FrontendEvent::Error(e) => {
-                eprintln!("ERROR: {e}");
-            }
-            FrontendEvent::CaptureStatus(s) => {
-                eprintln!("capture status: {s:?}")
-            }
-            FrontendEvent::EmulationStatus(s) => {
-                eprintln!("emulation status: {s:?}")
-            }
-            FrontendEvent::AuthorizedUpdated(fingerprints) => {
-                eprintln!("authorized keys changed:");
-                for (desc, fp) in fingerprints {
-                    eprintln!("{desc}: {fp}");
-                }
-            }
-            FrontendEvent::PublicKeyFingerprint(fp) => {
-                eprintln!("the public key fingerprint of this device is {fp}");
-            }
-            FrontendEvent::IncomingConnected(..) => {}
-            FrontendEvent::IncomingDisconnected(..) => {}
+        }
+        CliSubcommand::SetHost { id, host } => {
+            tx.request(FrontendRequest::UpdateHostname(id, host))
+                .await?
+        }
+        CliSubcommand::SetPort { id, port } => {
+            tx.request(FrontendRequest::UpdatePort(id, port)).await?
+        }
+        CliSubcommand::SetPosition { id, pos } => {
+            tx.request(FrontendRequest::UpdatePosition(id, pos)).await?
+        }
+        CliSubcommand::SetIps { id, ips } => {
+            tx.request(FrontendRequest::UpdateFixIps(id, ips)).await?
+        }
+        CliSubcommand::EnableCapture => tx.request(FrontendRequest::EnableCapture).await?,
+        CliSubcommand::EnableEmulation => tx.request(FrontendRequest::EnableEmulation).await?,
+        CliSubcommand::AuthorizeKey {
+            description,
+            sha256_fingerprint,
+        } => {
+            tx.request(FrontendRequest::AuthorizeKey(
+                description,
+                sha256_fingerprint,
+            ))
+            .await?
+        }
+        CliSubcommand::RemoveAuthorizedKey { sha256_fingerprint } => {
+            tx.request(FrontendRequest::RemoveAuthorizedKey(sha256_fingerprint))
+                .await?
         }
     }
-
-    fn print_clients(&mut self) {
-        for (h, c, s) in self.clients.iter() {
-            eprint!("client {h}: ");
-            print_config(c);
-            eprint!(" ");
-            print_state(s);
-            eprintln!();
-        }
-    }
-}
-
-fn prompt() -> io::Result<()> {
-    eprint!("lan-mouse > ");
-    std::io::stderr().flush()?;
     Ok(())
-}
-
-fn print_config(c: &ClientConfig) {
-    eprint!(
-        "{}:{} ({}), ips: {:?}",
-        c.hostname.clone().unwrap_or("(no hostname)".into()),
-        c.port,
-        c.pos,
-        c.fix_ips
-    );
-}
-
-fn print_state(s: &ClientState) {
-    eprint!("active: {}, dns: {:?}", s.active, s.ips);
 }

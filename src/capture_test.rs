@@ -1,9 +1,13 @@
 use crate::config::Config;
+use clap::Args;
 use futures::StreamExt;
 use input_capture::{self, CaptureError, CaptureEvent, InputCapture, InputCaptureError, Position};
 use input_event::{Event, KeyboardEvent};
 
-pub async fn run(config: Config) -> Result<(), InputCaptureError> {
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct TestCaptureArgs {}
+
+pub async fn run(config: Config, _args: TestCaptureArgs) -> Result<(), InputCaptureError> {
     log::info!("running input capture test");
     log::info!("creating input capture");
     let backend = config.capture_backend.map(|b| b.into());

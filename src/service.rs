@@ -193,6 +193,9 @@ impl Service {
             FrontendRequest::ResolveDns(handle) => self.resolve(handle),
             FrontendRequest::Sync => self.sync_frontend(),
             FrontendRequest::RemoveAuthorizedKey(key) => self.remove_authorized_key(key),
+            FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
+                self.update_enter_hook(handle, enter_hook)
+            }
         }
     }
 
@@ -473,6 +476,11 @@ impl Service {
             self.deactivate_client(handle);
             self.activate_client(handle);
         }
+        self.broadcast_client(handle);
+    }
+
+    fn update_enter_hook(&mut self, handle: ClientHandle, enter_hook: Option<String>) {
+        self.client_manager.set_enter_hook(handle, enter_hook);
         self.broadcast_client(handle);
     }
 

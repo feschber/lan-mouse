@@ -1,12 +1,14 @@
+use clap::Parser;
 use env_logger::Env;
 use input_capture::InputCaptureError;
 use input_emulation::InputEmulationError;
 use lan_mouse::{
     capture_test,
-    config::{Config, ConfigError, Frontend},
+    config::{self, Config, ConfigError, Frontend},
     emulation_test,
     service::{Service, ServiceError},
 };
+use lan_mouse_cli::CliError;
 use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
@@ -30,6 +32,8 @@ enum LanMouseError {
     Capture(#[from] InputCaptureError),
     #[error(transparent)]
     Emulation(#[from] InputEmulationError),
+    #[error(transparent)]
+    Cli(#[from] CliError),
 }
 
 fn main() {
@@ -45,34 +49,39 @@ fn main() {
 
 fn run() -> Result<(), LanMouseError> {
     // parse config file + cli args
-    let config = Config::new()?;
-    if config.test_capture {
-        run_async(capture_test::run(config))?;
-    } else if config.test_emulation {
-        run_async(emulation_test::run(config))?;
-    } else if config.daemon {
-        // if daemon is specified we run the service
-        match run_async(run_service(config)) {
-            Err(LanMouseError::Service(ServiceError::IpcListen(
-                IpcListenerCreationError::AlreadyRunning,
-            ))) => log::info!("service already running!"),
-            r => r?,
-        }
-    } else {
-        //  otherwise start the service as a child process and
-        //  run a frontend
-        let mut service = start_service()?;
-        run_frontend(&config)?;
-        #[cfg(unix)]
-        {
-            // on unix we give the service a chance to terminate gracefully
-            let pid = service.id() as libc::pid_t;
-            unsafe {
-                libc::kill(pid, libc::SIGINT);
+    let args = config::Args::parse();
+    let config = config::Config::new(&args)?;
+    match args.command {
+        Some(command) => match command {
+            config::Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
+            config::Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
+            config::Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
+            config::Command::Daemon => {
+                // if daemon is specified we run the service
+                match run_async(run_service(config)) {
+                    Err(LanMouseError::Service(ServiceError::IpcListen(
+                        IpcListenerCreationError::AlreadyRunning,
+                    ))) => log::info!("service already running!"),
+                    r => r?,
+                }
             }
-            service.wait()?;
+        },
+        None => {
+            //  otherwise start the service as a child process and
+            //  run a frontend
+            let mut service = start_service()?;
+            run_frontend(&config)?;
+            #[cfg(unix)]
+            {
+                // on unix we give the service a chance to terminate gracefully
+                let pid = service.id() as libc::pid_t;
+                unsafe {
+                    libc::kill(pid, libc::SIGINT);
+                }
+                service.wait()?;
+            }
+            service.kill()?;
         }
-        service.kill()?;
     }
 
     Ok(())
@@ -96,7 +105,7 @@ where
 fn start_service() -> Result<Child, io::Error> {
     let child = Command::new(std::env::current_exe()?)
         .args(std::env::args().skip(1))
-        .arg("--daemon")
+        .arg("daemon")
         .spawn()?;
     Ok(child)
 }
@@ -118,8 +127,8 @@ fn run_frontend(config: &Config) -> Result<(), IpcError> {
         }
         #[cfg(not(feature = "gtk"))]
         Frontend::Gtk => panic!("gtk frontend requested but feature not enabled!"),
-        Frontend::Cli => {
-            lan_mouse_cli::run()?;
+        Frontend::None => {
+            log::warn!("no frontend available!");
         }
     };
     Ok(())

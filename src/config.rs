@@ -1,4 +1,6 @@
-use clap::{Parser, ValueEnum};
+use crate::capture_test::TestCaptureArgs;
+use crate::emulation_test::TestEmulationArgs;
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env::{self, VarError};
@@ -10,6 +12,7 @@ use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
 
+use lan_mouse_cli::CliArgs;
 use lan_mouse_ipc::{Position, DEFAULT_PORT};
 
 use input_event::scancode::{
@@ -55,7 +58,7 @@ impl ConfigToml {
 
 #[derive(Parser, Debug)]
 #[command(author, version=build::CLAP_LONG_VERSION, about, long_about = None)]
-struct CliArgs {
+pub struct Args {
     /// the listen port for lan-mouse
     #[arg(short, long)]
     port: Option<u16>,
@@ -66,31 +69,34 @@ struct CliArgs {
 
     /// non-default config file location
     #[arg(short, long)]
-    config: Option<String>,
+    pub config: Option<PathBuf>,
 
-    /// run only the service as a daemon without the frontend
-    #[arg(short, long)]
-    daemon: bool,
-
-    /// test input capture
-    #[arg(long)]
-    test_capture: bool,
-
-    /// test input emulation
-    #[arg(long)]
-    test_emulation: bool,
+    #[command(subcommand)]
+    pub command: Option<Command>,
 
     /// capture backend override
     #[arg(long)]
-    capture_backend: Option<CaptureBackend>,
+    pub capture_backend: Option<CaptureBackend>,
 
     /// emulation backend override
     #[arg(long)]
-    emulation_backend: Option<EmulationBackend>,
+    pub emulation_backend: Option<EmulationBackend>,
 
     /// path to non-default certificate location
     #[arg(long)]
-    cert_path: Option<PathBuf>,
+    pub cert_path: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug, Eq, PartialEq)]
+pub enum Command {
+    /// test input emulation
+    TestEmulation(TestEmulationArgs),
+    /// test input capture
+    TestCapture(TestCaptureArgs),
+    /// Lan Mouse commandline interface
+    Cli(CliArgs),
+    /// run in daemon mode
+    Daemon,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -218,8 +224,8 @@ impl Display for EmulationBackend {
 pub enum Frontend {
     #[serde(rename = "gtk")]
     Gtk,
-    #[serde(rename = "cli")]
-    Cli,
+    #[serde(rename = "none")]
+    None,
 }
 
 impl Default for Frontend {
@@ -227,7 +233,7 @@ impl Default for Frontend {
         if cfg!(feature = "gtk") {
             Self::Gtk
         } else {
-            Self::Cli
+            Self::None
         }
     }
 }
@@ -248,8 +254,6 @@ pub struct Config {
     pub port: u16,
     /// list of clients
     pub clients: Vec<(TomlClient, Position)>,
-    /// whether or not to run as a daemon
-    pub daemon: bool,
     /// configured release bind
     pub release_bind: Vec<scancode::Linux>,
     /// test capture instead of running the app
@@ -283,8 +287,7 @@ const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
     [KeyLeftCtrl, KeyLeftShift, KeyLeftMeta, KeyLeftAlt];
 
 impl Config {
-    pub fn new() -> Result<Self, ConfigError> {
-        let args = CliArgs::parse();
+    pub fn new(args: &Args) -> Result<Self, ConfigError> {
         const CONFIG_FILE_NAME: &str = "config.toml";
         const CERT_FILE_NAME: &str = "lan-mouse.pem";
 
@@ -306,7 +309,7 @@ impl Config {
         let config_file = config_path.join(CONFIG_FILE_NAME);
 
         // --config <file> overrules default location
-        let config_file = args.config.map(PathBuf::from).unwrap_or(config_file);
+        let config_file = args.config.clone().unwrap_or(config_file);
 
         let mut config_toml = match ConfigToml::new(&config_file) {
             Err(e) => {
@@ -342,6 +345,7 @@ impl Config {
 
         let cert_path = args
             .cert_path
+            .clone()
             .or(config_toml.as_ref().and_then(|c| c.cert_path.clone()))
             .unwrap_or(config_path.join(CERT_FILE_NAME));
 
@@ -367,16 +371,14 @@ impl Config {
             }
         }
 
-        let daemon = args.daemon;
-        let test_capture = args.test_capture;
-        let test_emulation = args.test_emulation;
+        let test_capture = matches!(args.command, Some(Command::TestCapture(_)));
+        let test_emulation = matches!(args.command, Some(Command::TestEmulation(_)));
 
         Ok(Config {
             path: config_path,
             authorized_fingerprints,
             capture_backend,
             emulation_backend,
-            daemon,
             frontend,
             clients,
             port,
