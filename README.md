@@ -144,10 +144,11 @@ rust toolchain.
 Additionally, available backends and frontends can be configured manually via
 [cargo features](https://doc.rust-lang.org/cargo/reference/features.html).
 
-E.g. if only wayland support is needed, the following command produces
-an executable with just support for wayland:
+E.g. if only support for sway is needed, the following command produces
+an executable with support for only the `layer-shell` capture backend
+and `wlroots` emulation backend:
 ```sh
-cargo build --no-default-features --features wayland
+cargo build --no-default-features --features layer_shell_capture,wlroots_emulation
 ```
 For a detailed list of available features, checkout the [Cargo.toml](./Cargo.toml)
 </details>
