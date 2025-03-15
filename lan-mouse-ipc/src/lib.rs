@@ -30,6 +30,8 @@ pub enum ConnectionError {
     SocketPath(#[from] SocketPathError),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error("connection timed out")]
+    Timeout,
 }
 
 #[derive(Debug, Error)]
@@ -237,6 +239,8 @@ pub enum FrontendRequest {
     AuthorizeKey(String, String),
     /// remove fingerprint (fingerprint)
     RemoveAuthorizedKey(String),
+    /// change the hook command
+    UpdateEnterHook(u64, Option<String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

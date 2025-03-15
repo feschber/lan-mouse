@@ -57,8 +57,16 @@ impl AsyncFrontendRequestWriter {
 }
 
 pub async fn connect_async(
+    timeout: Option<Duration>,
 ) -> Result<(AsyncFrontendEventReader, AsyncFrontendRequestWriter), ConnectionError> {
-    let stream = wait_for_service().await?;
+    let stream = if let Some(duration) = timeout {
+        tokio::select! {
+            s = wait_for_service() => s?,
+            _ = tokio::time::sleep(duration) => return Err(ConnectionError::Timeout),
+        }
+    } else {
+        wait_for_service().await?
+    };
     #[cfg(unix)]
     let (rx, tx): (ReadHalf<UnixStream>, WriteHalf<UnixStream>) = tokio::io::split(stream);
     #[cfg(windows)]
