@@ -326,9 +326,6 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 
 # optional port (defaults to 4242)
 port = 4242
-# # optional frontend -> defaults to gtk if available
-# # possible values are "cli" and "gtk"
-# frontend = "gtk"
 
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
