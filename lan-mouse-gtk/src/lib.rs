@@ -9,12 +9,10 @@ use std::{env, process, str};
 
 use window::Window;
 
-use lan_mouse_ipc::{FrontendEvent, FrontendRequest};
+use lan_mouse_ipc::FrontendEvent;
 
 use adw::Application;
-use gtk::{
-    gdk::Display, glib::clone, prelude::*, subclass::prelude::ObjectSubclassIsExt, IconTheme,
-};
+use gtk::{gdk::Display, glib::clone, prelude::*, IconTheme};
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
@@ -127,54 +125,28 @@ fn build_ui(app: &Application) {
             loop {
                 let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
                 match notify {
-                    FrontendEvent::Changed(handle) => {
-                        window.request(FrontendRequest::GetState(handle));
-                    }
                     FrontendEvent::Created(handle, client, state) => {
-                        window.new_client(handle, client, state);
+                        window.new_client(handle, client, state)
                     }
-                    FrontendEvent::Deleted(client) => {
-                        window.delete_client(client);
-                    }
+                    FrontendEvent::Deleted(client) => window.delete_client(client),
                     FrontendEvent::State(handle, config, state) => {
                         window.update_client_config(handle, config);
                         window.update_client_state(handle, state);
                     }
                     FrontendEvent::NoSuchClient(_) => {}
-                    FrontendEvent::Error(e) => {
-                        window.show_toast(e.as_str());
+                    FrontendEvent::Error(e) => window.show_toast(e.as_str()),
+                    FrontendEvent::Enumerate(clients) => window.update_client_list(clients),
+                    FrontendEvent::PortChanged(port, msg) => window.update_port(port, msg),
+                    FrontendEvent::CaptureStatus(s) => window.set_capture(s.into()),
+                    FrontendEvent::EmulationStatus(s) => window.set_emulation(s.into()),
+                    FrontendEvent::AuthorizedUpdated(keys) => window.set_authorized_keys(keys),
+                    FrontendEvent::PublicKeyFingerprint(fp) => window.set_pk_fp(&fp),
+                    FrontendEvent::IncomingConnected(_fingerprint, addr, pos) => {
+                        window.show_toast(format!("device connected: {addr} ({pos})").as_str());
                     }
-                    FrontendEvent::Enumerate(clients) => {
-                        for (handle, client, state) in clients {
-                            if window.client_idx(handle).is_some() {
-                                window.update_client_config(handle, client);
-                                window.update_client_state(handle, state);
-                            } else {
-                                window.new_client(handle, client, state);
-                            }
-                        }
+                    FrontendEvent::IncomingDisconnected(addr) => {
+                        window.show_toast(format!("{addr} disconnected").as_str());
                     }
-                    FrontendEvent::PortChanged(port, msg) => {
-                        match msg {
-                            None => window.show_toast(format!("port changed: {port}").as_str()),
-                            Some(msg) => window.show_toast(msg.as_str()),
-                        }
-                        window.imp().set_port(port);
-                    }
-                    FrontendEvent::CaptureStatus(s) => {
-                        window.set_capture(s.into());
-                    }
-                    FrontendEvent::EmulationStatus(s) => {
-                        window.set_emulation(s.into());
-                    }
-                    FrontendEvent::AuthorizedUpdated(keys) => {
-                        window.set_authorized_keys(keys);
-                    }
-                    FrontendEvent::PublicKeyFingerprint(fp) => {
-                        window.set_pk_fp(&fp);
-                    }
-                    FrontendEvent::IncomingConnected(..) => {}
-                    FrontendEvent::IncomingDisconnected(..) => {}
                 }
             }
         }

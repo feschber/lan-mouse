@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use lan_mouse_ipc::DEFAULT_PORT;
+use lan_mouse_ipc::{Position, DEFAULT_PORT};
 
 use super::ClientObject;
 
@@ -15,25 +15,32 @@ glib::wrapper! {
 }
 
 impl ClientRow {
-    pub fn new(_client_object: &ClientObject) -> Self {
-        Object::builder().build()
+    pub fn new(client_object: &ClientObject) -> Self {
+        let client_row: Self = Object::builder().build();
+        client_row
+            .imp()
+            .client_object
+            .borrow_mut()
+            .replace(client_object.clone());
+        client_row
     }
 
     pub fn bind(&self, client_object: &ClientObject) {
         let mut bindings = self.imp().bindings.borrow_mut();
 
+        // bind client active to switch state
         let active_binding = client_object
             .bind_property("active", &self.imp().enable_switch.get(), "state")
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind client active to switch position
         let switch_position_binding = client_object
             .bind_property("active", &self.imp().enable_switch.get(), "active")
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind hostname to hostname edit field
         let hostname_binding = client_object
             .bind_property("hostname", &self.imp().hostname.get(), "text")
             .transform_to(|_, v: Option<String>| {
@@ -43,72 +50,48 @@ impl ClientRow {
                     Some("".to_string())
                 }
             })
-            .transform_from(|_, v: String| {
-                if v.as_str().trim() == "" {
-                    Some(None)
-                } else {
-                    Some(Some(v))
-                }
-            })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind hostname to title
         let title_binding = client_object
             .bind_property("hostname", self, "title")
-            .transform_to(|_, v: Option<String>| {
-                if let Some(hostname) = v {
-                    Some(hostname)
-                } else {
-                    Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>".to_string())
-                }
-            })
+            .transform_to(|_, v: Option<String>| v.or(Some("<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>".to_string())))
             .sync_create()
             .build();
 
+        // bind port to port edit field
         let port_binding = client_object
             .bind_property("port", &self.imp().port.get(), "text")
-            .transform_from(|_, v: String| {
-                if v.is_empty() {
-                    Some(DEFAULT_PORT as u32)
-                } else {
-                    Some(v.parse::<u16>().unwrap_or(DEFAULT_PORT) as u32)
-                }
-            })
             .transform_to(|_, v: u32| {
-                if v == 4242 {
+                if v == DEFAULT_PORT as u32 {
                     Some("".to_string())
                 } else {
                     Some(v.to_string())
                 }
             })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind port to subtitle
         let subtitle_binding = client_object
             .bind_property("port", self, "subtitle")
             .sync_create()
             .build();
 
+        // bind position to selected position
         let position_binding = client_object
             .bind_property("position", &self.imp().position.get(), "selected")
-            .transform_from(|_, v: u32| match v {
-                1 => Some("right"),
-                2 => Some("top"),
-                3 => Some("bottom"),
-                _ => Some("left"),
-            })
             .transform_to(|_, v: String| match v.as_str() {
-                "right" => Some(1),
+                "right" => Some(1u32),
                 "top" => Some(2u32),
                 "bottom" => Some(3u32),
                 _ => Some(0u32),
             })
-            .bidirectional()
             .sync_create()
             .build();
 
+        // bind resolving status to spinner visibility
         let resolve_binding = client_object
             .bind_property(
                 "resolving",
@@ -118,6 +101,7 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        // bind ips to tooltip-text
         let ip_binding = client_object
             .bind_property("ips", &self.imp().dns_button.get(), "tooltip-text")
             .transform_to(|_, ips: Vec<String>| {
@@ -145,5 +129,25 @@ impl ClientRow {
         for binding in self.imp().bindings.borrow_mut().drain(..) {
             binding.unbind();
         }
+    }
+
+    pub fn set_active(&self, active: bool) {
+        self.imp().set_active(active);
+    }
+
+    pub fn set_hostname(&self, hostname: Option<String>) {
+        self.imp().set_hostname(hostname);
+    }
+
+    pub fn set_port(&self, port: u16) {
+        self.imp().set_port(port);
+    }
+
+    pub fn set_position(&self, pos: Position) {
+        self.imp().set_pos(pos);
+    }
+
+    pub fn set_dns_state(&self, resolved: bool) {
+        self.imp().set_dns_state(resolved);
     }
 }

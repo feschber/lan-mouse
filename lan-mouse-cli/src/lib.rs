@@ -30,7 +30,6 @@ pub fn run() -> Result<(), IpcError> {
 
 struct Cli {
     clients: Vec<(ClientHandle, ClientConfig, ClientState)>,
-    changed: Option<ClientHandle>,
     rx: AsyncFrontendEventReader,
     tx: AsyncFrontendRequestWriter,
 }
@@ -39,7 +38,6 @@ impl Cli {
     fn new(rx: AsyncFrontendEventReader, tx: AsyncFrontendRequestWriter) -> Cli {
         Self {
             clients: vec![],
-            changed: None,
             rx,
             tx,
         }
@@ -87,21 +85,7 @@ impl Cli {
                     }
                 }
             }
-            if let Some(handle) = self.changed.take() {
-                self.update_client(handle).await?;
-            }
         }
-    }
-
-    async fn update_client(&mut self, handle: ClientHandle) -> Result<(), IpcError> {
-        self.tx.request(FrontendRequest::GetState(handle)).await?;
-        while let Some(Ok(event)) = self.rx.next().await {
-            self.handle_event(event.clone());
-            if let FrontendEvent::State(_, _, _) | FrontendEvent::NoSuchClient(_) = event {
-                break;
-            }
-        }
-        Ok(())
     }
 
     async fn execute(&mut self, cmd: Command) -> Result<(), IpcError> {
@@ -131,7 +115,6 @@ impl Cli {
                 ] {
                     self.tx.request(request).await?;
                 }
-                self.update_client(handle).await?;
             }
             Command::Disconnect(id) => {
                 self.tx.request(FrontendRequest::Delete(id)).await?;
@@ -147,13 +130,11 @@ impl Cli {
             }
             Command::Activate(id) => {
                 self.tx.request(FrontendRequest::Activate(id, true)).await?;
-                self.update_client(id).await?;
             }
             Command::Deactivate(id) => {
                 self.tx
                     .request(FrontendRequest::Activate(id, false))
                     .await?;
-                self.update_client(id).await?;
             }
             Command::List => {
                 self.tx.request(FrontendRequest::Enumerate()).await?;
@@ -168,12 +149,10 @@ impl Cli {
             Command::SetHost(handle, host) => {
                 let request = FrontendRequest::UpdateHostname(handle, Some(host.clone()));
                 self.tx.request(request).await?;
-                self.update_client(handle).await?;
             }
             Command::SetPort(handle, port) => {
                 let request = FrontendRequest::UpdatePort(handle, port.unwrap_or(DEFAULT_PORT));
                 self.tx.request(request).await?;
-                self.update_client(handle).await?;
             }
             Command::Help => {
                 for cmd_type in [
@@ -209,7 +188,6 @@ impl Cli {
 
     fn handle_event(&mut self, event: FrontendEvent) {
         match event {
-            FrontendEvent::Changed(h) => self.changed = Some(h),
             FrontendEvent::Created(h, c, s) => {
                 eprint!("client added ({h}): ");
                 print_config(&c);
