@@ -5,7 +5,8 @@ use std::{net::IpAddr, time::Duration};
 use thiserror::Error;
 
 use lan_mouse_ipc::{
-    connect_async, ClientHandle, FrontendEvent, FrontendRequest, ConnectionError, IpcError, Position,
+    connect_async, ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError,
+    Position,
 };
 
 #[derive(Debug, Error)]
@@ -118,9 +119,17 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
             tx.request(FrontendRequest::Enumerate()).await?;
             while let Some(e) = rx.next().await {
                 if let FrontendEvent::Enumerate(clients) = e? {
-                    for client in clients {
-                        println!("{client:?}");
+                    for (handle, config, state) in clients {
+                        let host = config.hostname.unwrap_or("unknown".to_owned());
+                        let port = config.port;
+                        let pos = config.pos;
+                        let active = state.active;
+                        let ips = state.ips;
+                        println!(
+                            "id {handle}: {host}:{port} ({pos}) active: {active}, ips: {ips:?}"
+                        );
                     }
+                    break;
                 }
             }
         }

@@ -8,8 +8,8 @@ use lan_mouse::{
     emulation_test,
     service::{Service, ServiceError},
 };
-use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use lan_mouse_cli::CliError;
+use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
