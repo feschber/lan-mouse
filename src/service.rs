@@ -80,7 +80,7 @@ struct Incoming {
 impl Service {
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
         let client_manager = ClientManager::default();
-        for client in config.get_clients() {
+        for client in config.clients() {
             let config = ClientConfig {
                 hostname: client.hostname,
                 fix_ips: client.ips.into_iter().collect(),
@@ -99,28 +99,28 @@ impl Service {
         }
 
         // load certificate
-        let cert = crypto::load_or_generate_key_and_cert(&config.cert_path)?;
+        let cert = crypto::load_or_generate_key_and_cert(config.cert_path())?;
         let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
 
         // create frontend communication adapter, exit if already running
         let frontend_listener = AsyncFrontendListener::new().await?;
 
-        let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints.clone()));
+        let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints()));
         // listener + connection
         let listener =
-            LanMouseListener::new(config.port, cert.clone(), authorized_keys.clone()).await?;
+            LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
 
         // input capture + emulation
-        let capture_backend = config.capture_backend.map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind.clone());
-        let emulation_backend = config.emulation_backend.map(|b| b.into());
+        let capture_backend = config.capture_backend().map(|b| b.into());
+        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
 
-        let port = config.port;
+        let port = config.port();
         let service = Self {
             capture,
             emulation,
@@ -142,11 +142,15 @@ impl Service {
     }
 
     pub async fn run(&mut self) -> Result<(), ServiceError> {
-        for handle in self.client_manager.active_clients() {
+        let active = self.client_manager.active_clients();
+        for handle in active.iter() {
             // small hack: `activate_client()` checks, if the client
             // is already active in client_manager and does not create a
             // capture barrier in that case so we have to deactivate it first
-            self.client_manager.deactivate_client(handle);
+            self.client_manager.deactivate_client(*handle);
+        }
+
+        for handle in active {
             self.activate_client(handle);
         }
 

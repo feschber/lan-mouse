@@ -1,19 +1,20 @@
-use clap::Parser;
 use env_logger::Env;
 use input_capture::InputCaptureError;
 use input_emulation::InputEmulationError;
 use lan_mouse::{
     capture_test,
-    config::{self, Config, ConfigError, Frontend},
+    config::{self, Command, Config, ConfigError},
     emulation_test,
     service::{Service, ServiceError},
 };
 use lan_mouse_cli::CliError;
+#[cfg(feature = "gtk")]
+use lan_mouse_gtk::GtkError;
 use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
-    process::{self, Child, Command},
+    process::{self, Child},
 };
 use thiserror::Error;
 use tokio::task::LocalSet;
@@ -32,6 +33,9 @@ enum LanMouseError {
     Capture(#[from] InputCaptureError),
     #[error(transparent)]
     Emulation(#[from] InputEmulationError),
+    #[cfg(feature = "gtk")]
+    #[error(transparent)]
+    Gtk(#[from] GtkError),
     #[error(transparent)]
     Cli(#[from] CliError),
 }
@@ -48,15 +52,13 @@ fn main() {
 }
 
 fn run() -> Result<(), LanMouseError> {
-    // parse config file + cli args
-    let args = config::Args::parse();
-    let config = config::Config::new(&args)?;
-    match args.command {
+    let config = config::Config::new()?;
+    match config.command() {
         Some(command) => match command {
-            config::Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
-            config::Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
-            config::Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
-            config::Command::Daemon => {
+            Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
+            Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
+            Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
+            Command::Daemon => {
                 // if daemon is specified we run the service
                 match run_async(run_service(config)) {
                     Err(LanMouseError::Service(ServiceError::IpcListen(
@@ -69,18 +71,32 @@ fn run() -> Result<(), LanMouseError> {
         None => {
             //  otherwise start the service as a child process and
             //  run a frontend
-            let mut service = start_service()?;
-            run_frontend(&config)?;
-            #[cfg(unix)]
+            #[cfg(feature = "gtk")]
             {
-                // on unix we give the service a chance to terminate gracefully
-                let pid = service.id() as libc::pid_t;
-                unsafe {
-                    libc::kill(pid, libc::SIGINT);
+                let mut service = start_service()?;
+                let res = lan_mouse_gtk::run();
+                #[cfg(unix)]
+                {
+                    // on unix we give the service a chance to terminate gracefully
+                    let pid = service.id() as libc::pid_t;
+                    unsafe {
+                        libc::kill(pid, libc::SIGINT);
+                    }
+                    service.wait()?;
                 }
-                service.wait()?;
+                service.kill()?;
+                res?;
             }
-            service.kill()?;
+            #[cfg(not(feature = "gtk"))]
+            {
+                // run daemon if gtk is diabled
+                match run_async(run_service(config)) {
+                    Err(LanMouseError::Service(ServiceError::IpcListen(
+                        IpcListenerCreationError::AlreadyRunning,
+                    ))) => log::info!("service already running!"),
+                    r => r?,
+                }
+            }
         }
     }
 
@@ -103,7 +119,7 @@ where
 }
 
 fn start_service() -> Result<Child, io::Error> {
-    let child = Command::new(std::env::current_exe()?)
+    let child = process::Command::new(std::env::current_exe()?)
         .args(std::env::args().skip(1))
         .arg("daemon")
         .spawn()?;
@@ -111,25 +127,12 @@ fn start_service() -> Result<Child, io::Error> {
 }
 
 async fn run_service(config: Config) -> Result<(), ServiceError> {
-    log::info!("using config: {:?}", config.path);
-    log::info!("Press {:?} to release the mouse", config.release_bind);
+    let release_bind = config.release_bind();
+    let config_path = config.config_path().to_owned();
     let mut service = Service::new(config).await?;
+    log::info!("using config: {config_path:?}");
+    log::info!("Press {release_bind:?} to release the mouse");
     service.run().await?;
     log::info!("service exited!");
-    Ok(())
-}
-
-fn run_frontend(config: &Config) -> Result<(), IpcError> {
-    match config.frontend {
-        #[cfg(feature = "gtk")]
-        Frontend::Gtk => {
-            lan_mouse_gtk::run();
-        }
-        #[cfg(not(feature = "gtk"))]
-        Frontend::Gtk => panic!("gtk frontend requested but feature not enabled!"),
-        Frontend::None => {
-            log::warn!("no frontend available!");
-        }
-    };
     Ok(())
 }

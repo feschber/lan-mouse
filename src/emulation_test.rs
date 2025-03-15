@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 const FREQUENCY_HZ: f64 = 1.0;
 const RADIUS: f64 = 100.0;
 
-#[derive(Args, Debug, Eq, PartialEq)]
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub struct TestEmulationArgs {
     #[arg(long)]
     mouse: bool,
@@ -21,7 +21,7 @@ pub struct TestEmulationArgs {
 pub async fn run(config: Config, _args: TestEmulationArgs) -> Result<(), InputEmulationError> {
     log::info!("running input emulation test");
 
-    let backend = config.emulation_backend.map(|b| b.into());
+    let backend = config.emulation_backend().map(|b| b.into());
     let mut emulation = InputEmulation::new(backend).await?;
     emulation.create(0).await;
 

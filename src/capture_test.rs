@@ -4,13 +4,13 @@ use futures::StreamExt;
 use input_capture::{self, CaptureError, CaptureEvent, InputCapture, InputCaptureError, Position};
 use input_event::{Event, KeyboardEvent};
 
-#[derive(Args, Debug, Eq, PartialEq)]
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub struct TestCaptureArgs {}
 
 pub async fn run(config: Config, _args: TestCaptureArgs) -> Result<(), InputCaptureError> {
     log::info!("running input capture test");
     log::info!("creating input capture");
-    let backend = config.capture_backend.map(|b| b.into());
+    let backend = config.capture_backend().map(|b| b.into());
     loop {
         let mut input_capture = InputCapture::new(backend).await?;
         log::info!("creating clients");
