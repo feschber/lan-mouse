@@ -288,10 +288,10 @@ $ cargo run --release -- --frontend cli
 
 Lan Mouse can be launched in daemon mode to keep it running in the background (e.g. for use in a systemd-service).
 
-To do so, add `--daemon` to the commandline args:
+To do so, use the `daemon` subcommand:
 
 ```sh
-lan-mouse --daemon
+lan-mouse daemon
 ```
 
 In order to start lan-mouse with a graphical session automatically,
