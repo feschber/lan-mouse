@@ -336,7 +336,9 @@ port = 4242
 "bc:05:ab:7a:a4:de:88:8c:2f:92:ac:bc:b8:49:b8:24:0d:44:b3:e6:a4:ef:d7:0b:6c:69:6d:77:53:0b:14:80" = "iridium"
 
 # define a client on the right side with host name "iridium"
-[right]
+[[clients]]
+# position (left | right | top | bottom)
+position = "right"
 # hostname
 hostname = "iridium"
 # activate this client immediately when lan-mouse is started
@@ -345,7 +347,8 @@ activate_on_startup = true
 ips = ["192.168.178.156"]
 
 # define a client on the left side with IP address 192.168.178.189
-[left]
+[[clients]]
+position = "left"
 # The hostname is optional: When no hostname is specified,
 # at least one ip address needs to be specified.
 hostname = "thorium"
