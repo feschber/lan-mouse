@@ -6,6 +6,7 @@
 	  UpgradeCode="a330cd60-4c35-4a54-8bb6-75b3049b46c6">
     <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
 
+	<MediaTemplate EmbedCab="yes"/>
     <Feature Id="Main">
       <ComponentGroupRef Id="LanMouseComponents" />
     </Feature>
