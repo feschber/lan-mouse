@@ -1,0 +1,9 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="LanMouseComponents" Directory="INSTALLFOLDER">
+      <Component>
+        <File Source="..\target\release\lan-mouse.exe" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
