@@ -8,7 +8,7 @@
 
 	<MediaTemplate EmbedCab="yes"/>
     <Feature Id="Main">
-      <ComponentGroupRef Id="LanMouseComponents" />
+      <ComponentGroupRef Id="LanMouseComponents"/>
     </Feature>
   </Package>
 </Wix>

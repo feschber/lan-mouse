@@ -1,9 +1,18 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Fragment>
-    <ComponentGroup Id="LanMouseComponents" Directory="INSTALLFOLDER">
-      <Component>
-        <File Source="..\target\release\lan-mouse.exe" />
-      </Component>
-    </ComponentGroup>
-  </Fragment>
+	<Fragment>
+		<ComponentGroup Id="LanMouseComponents" Directory="INSTALLFOLDER">
+			<Component>
+				<File Source="..\target\release\lan-mouse.exe"/>
+			</Component>
+			<Component Id="ApplicationShortcut" Directory="ApplicationProgramsFolder">
+				<Shortcut Id="ApplicationStartMenuShortcut"
+						  Name="!(bind.Property.ProductName)"
+						  Description ="Mouse and Keyboard sharing Software"
+						  Target="[INSTALLFOLDER]lan-mouse.exe"
+						  WorkingDirectory="INSTALLFOLDER"/>
+				<RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+				<RegistryValue Root="HKCU" Key="Software\Feschber\LanMouse" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+			</Component>
+		</ComponentGroup>
+	</Fragment>
 </Wix>
