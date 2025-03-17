@@ -8,6 +8,9 @@
 
     <MediaTemplate EmbedCab="yes"/>
     <Feature Id="Main">
+	  <ComponentGroupRef Id="GTKBIN"/>
+      <ComponentGroupRef Id="GTKICONS"/>
+	  <ComponentGroupRef Id="GTKLIBS"/>
       <ComponentGroupRef Id="LanMouseComponents"/>
     </Feature>
   </Package>
