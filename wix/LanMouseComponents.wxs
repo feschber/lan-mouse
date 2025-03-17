@@ -1,16 +1,22 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 	<Fragment>
-		<ComponentGroup Id="LanMouseComponents" Directory="INSTALLFOLDER">
-			<Component>
+		<ComponentGroup Id="LanMouseComponents" Directory="INSTALLFOLDER" Subdirectory="bin">
+			<Component Guid="{ECB52D3E-28AD-4BEC-B9DF-E01CCAB356BE}">
+				<!-- the main binary -->
 				<File Source="..\target\release\lan-mouse.exe"/>
+
+				<!-- visual c runtime dll -->
+				<File Source="C:\windows\system32\VCRUNTIME140.dll"/>
+				<File Source="C:\windows\system32\VCRUNTIME140_1.dll"/>
 			</Component>
+			<!-- start menu entry-->
 			<Component Id="ApplicationShortcut" Directory="ApplicationProgramsFolder">
 				<Shortcut Id="ApplicationStartMenuShortcut"
 						  Name="!(bind.Property.ProductName)"
 						  Description ="Mouse and Keyboard sharing Software"
-						  Target="[INSTALLFOLDER]lan-mouse.exe"
+						  Target="[INSTALLFOLDER]bin\lan-mouse.exe"
 						  WorkingDirectory="INSTALLFOLDER">
-				<Icon Id="LanMouse" SourceFile=".\icon.ico"/>
+					<Icon Id="LanMouse" SourceFile=".\icon.ico"/>
 				</Shortcut>
 				<RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
 				<RegistryValue

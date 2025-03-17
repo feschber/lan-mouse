@@ -2,4 +2,33 @@
 	<PropertyGroup>
 		<InstallerPlatform>x64</InstallerPlatform>
 	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="WixToolset.Heat">
+		  <Version>5.0.2</Version>
+		</PackageReference>
+	</ItemGroup>
+	<ItemGroup>
+		<HarvestDirectory Include="C:\gtk-build\gtk\x64\release\bin">
+			<ComponentGroupName>GTKBIN</ComponentGroupName>
+			<DirectoryRefId>INSTALLFOLDER</DirectoryRefId>
+			<SuppressRegistry>true</SuppressRegistry>
+		</HarvestDirectory>
+		<BindPath Include="C:\gtk-build\gtk\x64\release\bin" />
+	</ItemGroup>
+	<ItemGroup>
+		<HarvestDirectory Include="C:\gtk-build\gtk\x64\release\share\icons">
+			<ComponentGroupName>GTKICONS</ComponentGroupName>
+			<DirectoryRefId>SHARE</DirectoryRefId>
+			<SuppressRegistry>true</SuppressRegistry>
+		</HarvestDirectory>
+		<BindPath Include="C:\gtk-build\gtk\x64\release\share\icons" />
+	</ItemGroup>
+	<ItemGroup>
+		<HarvestDirectory Include="C:\gtk-build\gtk\x64\release\lib\gdk-pixbuf-2.0">
+			<ComponentGroupName>GTKLIBS</ComponentGroupName>
+			<DirectoryRefId>LIB</DirectoryRefId>
+			<SuppressRegistry>true</SuppressRegistry>
+		</HarvestDirectory>
+		<BindPath Include="C:\gtk-build\gtk\x64\release\lib\gdk-pixbuf-2.0" />
+	</ItemGroup>
 </Project>
