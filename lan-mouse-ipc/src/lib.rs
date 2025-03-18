@@ -61,9 +61,13 @@ pub const DEFAULT_PORT: u16 = 4242;
 #[derive(Debug, Default, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Position {
     #[default]
+    #[serde(rename = "left")]
     Left,
+    #[serde(rename = "right")]
     Right,
+    #[serde(rename = "top")]
     Top,
+    #[serde(rename = "bottom")]
     Bottom,
 }
 

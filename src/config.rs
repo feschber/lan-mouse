@@ -61,6 +61,7 @@ struct TomlClient {
     host_name: Option<String>,
     ips: Option<Vec<IpAddr>>,
     port: Option<u16>,
+    #[serde(rename = "position")]
     pos: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
