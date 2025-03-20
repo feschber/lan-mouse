@@ -64,6 +64,8 @@ fix_references() {
     if [ ! -e "$dest" ]; then
       echo "Copying $old_path -> $dest"
       cp -f "$old_path" "$dest"
+      # Ensure the copied dylib is writable so that xattr -rd /path/to/Lan\ Mouse.app works.
+      chmod 644 "$dest"
 
       echo "Updating $dest to have install_name of @rpath/$base_name..."
       install_name_tool -id "@rpath/$base_name" "$dest"
