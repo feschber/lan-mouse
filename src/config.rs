@@ -61,8 +61,7 @@ struct TomlClient {
     host_name: Option<String>,
     ips: Option<Vec<IpAddr>>,
     port: Option<u16>,
-    #[serde(rename = "position")]
-    pos: Option<Position>,
+    position: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
 }
@@ -263,7 +262,7 @@ impl From<TomlClient> for ConfigClient {
         let hostname = toml.hostname;
         let ips = HashSet::from_iter(toml.ips.into_iter().flatten());
         let port = toml.port.unwrap_or(DEFAULT_PORT);
-        let pos = toml.pos.unwrap_or_default();
+        let pos = toml.position.unwrap_or_default();
         Self {
             ips,
             hostname,
