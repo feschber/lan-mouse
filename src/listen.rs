@@ -52,7 +52,6 @@ pub(crate) struct LanMouseListener {
     listen_rx: Receiver<ListenEvent>,
     listen_tx: Sender<ListenEvent>,
     listen_task: JoinHandle<()>,
-    connection_attempts: Arc<Mutex<VecDeque<String>>>,
     conns: Rc<AsyncMutex<Vec<(SocketAddr, ArcConn)>>>,
     request_port_change: Sender<u16>,
     port_changed: Receiver<Result<u16, ListenerCreationError>>,
@@ -139,8 +138,21 @@ impl LanMouseListener {
                                 spawn_local(read_loop(conns_clone.clone(), addr, conn, listen_tx.clone()));
                             },
                             Err(e) => {
-                                if let Some(fingerprint) = connection_attempts.lock().expect("lock").pop_front() {
-                                    listen_tx.send(ListenEvent::Rejected { fingerprint }).expect("channel closed");
+                                if let Error::Std(ref e) = e {
+                                    if let Some(e) = e.0.downcast_ref::<webrtc_dtls::Error>() {
+                                        match e {
+                                            webrtc_dtls::Error::ErrVerifyDataMismatch => {
+                                                if let Some(fingerprint) = connection_attempts.lock().expect("lock").pop_front() {
+                                                    listen_tx.send(ListenEvent::Rejected { fingerprint }).expect("channel closed");
+                                                }
+                                            }
+                                            _ => log::warn!("accept: {e}"),
+                                        }
+                                    } else {
+                                        log::warn!("accept: {e:?}");
+                                    }
+                                } else {
+                                    log::warn!("accept: {e:?}");
                                 }
                             }
                         },
@@ -166,7 +178,6 @@ impl LanMouseListener {
 
         Ok(Self {
             conns,
-            connection_attempts,
             listen_rx,
             listen_tx,
             listen_task,
