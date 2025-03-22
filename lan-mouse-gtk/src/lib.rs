@@ -1,3 +1,4 @@
+mod authorization_window;
 mod client_object;
 mod client_row;
 mod fingerprint_window;
@@ -146,8 +147,21 @@ fn build_ui(app: &Application) {
                     FrontendEvent::EmulationStatus(s) => window.set_emulation(s.into()),
                     FrontendEvent::AuthorizedUpdated(keys) => window.set_authorized_keys(keys),
                     FrontendEvent::PublicKeyFingerprint(fp) => window.set_pk_fp(&fp),
-                    FrontendEvent::IncomingConnected(_fingerprint, addr, pos) => {
-                        window.show_toast(format!("device connected: {addr} ({pos})").as_str());
+                    FrontendEvent::ConnectionAttempt { fingerprint } => {
+                        window.request_authorization(&fingerprint);
+                    }
+                    FrontendEvent::DeviceConnected {
+                        fingerprint: _,
+                        addr,
+                    } => {
+                        window.show_toast(format!("device connected: {addr}").as_str());
+                    }
+                    FrontendEvent::DeviceEntered {
+                        fingerprint: _,
+                        addr,
+                        pos,
+                    } => {
+                        window.show_toast(format!("device entered: {addr} ({pos})").as_str());
                     }
                     FrontendEvent::IncomingDisconnected(addr) => {
                         window.show_toast(format!("{addr} disconnected").as_str());

@@ -202,10 +202,21 @@ pub enum FrontendEvent {
     AuthorizedUpdated(HashMap<String, String>),
     /// public key fingerprint of this device
     PublicKeyFingerprint(String),
-    /// incoming connected
-    IncomingConnected(String, SocketAddr, Position),
+    /// new device connected
+    DeviceConnected {
+        addr: SocketAddr,
+        fingerprint: String,
+    },
+    /// incoming device entered the screen
+    DeviceEntered {
+        fingerprint: String,
+        addr: SocketAddr,
+        pos: Position,
+    },
     /// incoming disconnected
     IncomingDisconnected(SocketAddr),
+    /// failed connection attempt (approval for fingerprint required)
+    ConnectionAttempt { fingerprint: String },
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
