@@ -211,7 +211,10 @@ impl Service {
 
     fn handle_emulation_event(&mut self, event: EmulationEvent) {
         match event {
-            EmulationEvent::Connected {
+            EmulationEvent::ConnectionAttempt { fingerprint } => {
+                self.notify_frontend(FrontendEvent::ConnectionAttempt { fingerprint });
+            }
+            EmulationEvent::Entered {
                 addr,
                 pos,
                 fingerprint,
@@ -219,7 +222,11 @@ impl Service {
                 // check if already registered
                 if !self.incoming_conns.contains(&addr) {
                     self.add_incoming(addr, pos, fingerprint.clone());
-                    self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+                    self.notify_frontend(FrontendEvent::DeviceEntered {
+                        fingerprint,
+                        addr,
+                        pos,
+                    });
                 } else {
                     self.update_incoming(addr, pos, fingerprint);
                 }
@@ -246,6 +253,9 @@ impl Service {
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
             }
             EmulationEvent::ReleaseNotify => self.capture.release(),
+            EmulationEvent::Connected { addr, fingerprint } => {
+                self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
+            }
         }
     }
 
@@ -347,7 +357,11 @@ impl Service {
             self.remove_incoming(addr);
             self.add_incoming(addr, pos, fingerprint.clone());
             self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
-            self.notify_frontend(FrontendEvent::IncomingConnected(fingerprint, addr, pos));
+            self.notify_frontend(FrontendEvent::DeviceEntered {
+                fingerprint,
+                addr,
+                pos,
+            });
         }
     }
 

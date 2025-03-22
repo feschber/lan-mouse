@@ -16,7 +16,10 @@ use lan_mouse_ipc::{
     DEFAULT_PORT,
 };
 
-use crate::{fingerprint_window::FingerprintWindow, key_object::KeyObject, key_row::KeyRow};
+use crate::{
+    authorization_window::AuthorizationWindow, fingerprint_window::FingerprintWindow,
+    key_object::KeyObject, key_row::KeyRow,
+};
 
 use super::{client_object::ClientObject, client_row::ClientRow};
 
@@ -394,8 +397,8 @@ impl Window {
         self.request(FrontendRequest::Create);
     }
 
-    fn open_fingerprint_dialog(&self) {
-        let window = FingerprintWindow::new();
+    fn open_fingerprint_dialog(&self, fp: Option<String>) {
+        let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
         window.connect_closure(
             "confirm-clicked",
@@ -468,5 +471,30 @@ impl Window {
 
     pub(super) fn set_pk_fp(&self, fingerprint: &str) {
         self.imp().fingerprint_row.set_subtitle(fingerprint);
+    }
+
+    pub(super) fn request_authorization(&self, fingerprint: &str) {
+        let window = AuthorizationWindow::new(fingerprint);
+        window.set_transient_for(Some(self));
+        window.connect_closure(
+            "confirm-clicked",
+            false,
+            closure_local!(
+                #[strong(rename_to = parent)]
+                self,
+                move |w: AuthorizationWindow, fp: String| {
+                    w.close();
+                    parent.open_fingerprint_dialog(Some(fp));
+                }
+            ),
+        );
+        window.connect_closure(
+            "cancel-clicked",
+            false,
+            closure_local!(move |w: AuthorizationWindow| {
+                w.close();
+            }),
+        );
+        window.present();
     }
 }

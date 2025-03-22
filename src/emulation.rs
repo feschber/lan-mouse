@@ -1,4 +1,4 @@
-use crate::listen::{LanMouseListener, ListenerCreationError};
+use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
 use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
@@ -24,8 +24,15 @@ pub(crate) struct Emulation {
 }
 
 pub(crate) enum EmulationEvent {
-    /// new connection
     Connected {
+        addr: SocketAddr,
+        fingerprint: String,
+    },
+    ConnectionAttempt {
+        fingerprint: String,
+    },
+    /// new connection
+    Entered {
         /// address of the connection
         addr: SocketAddr,
         /// position of the connection
@@ -34,7 +41,9 @@ pub(crate) enum EmulationEvent {
         fingerprint: String,
     },
     /// connection closed
-    Disconnected { addr: SocketAddr },
+    Disconnected {
+        addr: SocketAddr,
+    },
     /// the port of the listener has changed
     PortChanged(Result<u16, ListenerCreationError>),
     /// emulation was disabled
@@ -121,31 +130,36 @@ impl ListenTask {
         let mut last_response = HashMap::new();
         loop {
             select! {
-                e = self.listener.next() =>  {
-                    let (event, addr) = match e {
-                        Some(e) => e,
-                        None => break,
-                    };
-                    log::trace!("{event} <-<-<-<-<- {addr}");
-                    last_response.insert(addr, Instant::now());
-                    match event {
-                        ProtoEvent::Enter(pos) => {
-                            if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
-                                log::info!("releasing capture: {addr} entered this device");
-                                self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
-                                self.listener.reply(addr, ProtoEvent::Ack(0)).await;
-                                self.event_tx.send(EmulationEvent::Connected{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
+                e = self.listener.next() => {match e {
+                    Some(ListenEvent::Msg { event, addr }) => {
+                        log::trace!("{event} <-<-<-<-<- {addr}");
+                        last_response.insert(addr, Instant::now());
+                        match event {
+                            ProtoEvent::Enter(pos) => {
+                                if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
+                                    log::info!("releasing capture: {addr} entered this device");
+                                    self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
+                                    self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                    self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
+                                }
                             }
+                            ProtoEvent::Leave(_) => {
+                                self.emulation_proxy.remove(addr);
+                                self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                            }
+                            ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
+                            ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
+                            _ => {}
                         }
-                        ProtoEvent::Leave(_) => {
-                            self.emulation_proxy.remove(addr);
-                            self.listener.reply(addr, ProtoEvent::Ack(0)).await;
-                        }
-                        ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
-                        ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
-                        _ => {}
                     }
-                }
+                    Some(ListenEvent::Accept { addr, fingerprint }) => {
+                        self.event_tx.send(EmulationEvent::Connected { addr, fingerprint }).expect("channel closed");
+                    }
+                    Some(ListenEvent::Rejected { fingerprint }) => {
+                        self.event_tx.send(EmulationEvent::ConnectionAttempt { fingerprint }).expect("channel closed");
+                    }
+                    None => break
+                }}
                 event = self.emulation_proxy.event() => {
                     self.event_tx.send(event).expect("channel closed");
                 }

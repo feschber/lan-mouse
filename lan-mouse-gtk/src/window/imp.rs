@@ -149,7 +149,7 @@ impl Window {
 
     #[template_callback]
     fn handle_add_cert_fingerprint(&self, _button: &Button) {
-        self.obj().open_fingerprint_dialog();
+        self.obj().open_fingerprint_dialog(None);
     }
 
     pub fn set_port(&self, port: u16) {
