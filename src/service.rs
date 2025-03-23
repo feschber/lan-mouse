@@ -200,6 +200,7 @@ impl Service {
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
+            FrontendRequest::SaveConfiguration => todo!(),
         }
     }
 
