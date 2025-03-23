@@ -38,6 +38,7 @@ shadow-rs = { version = "1.2.0", features = ["metadata"] }
 
 hickory-resolver = "0.25.2"
 toml = "0.8"
+toml_edit = { version = "0.22", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4.20"
 env_logger = "0.11.3"

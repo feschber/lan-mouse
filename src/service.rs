@@ -223,7 +223,9 @@ impl Service {
         self.config.set_clients(clients);
         let authorized_keys = self.authorized_keys.read().expect("lock").clone();
         self.config.set_authorized_keys(authorized_keys);
-        self.config.write_back();
+        if let Err(e) = self.config.write_back() {
+            log::warn!("failed to write config: {e}");
+        }
     }
 
     async fn handle_frontend_pending(&mut self) {

@@ -71,6 +71,8 @@ enum CliSubcommand {
     },
     /// deauthorize a public key
     RemoveAuthorizedKey { sha256_fingerprint: String },
+    /// save configuration to file
+    SaveConfig,
 }
 
 pub async fn run(args: CliArgs) -> Result<(), CliError> {
@@ -162,6 +164,7 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
             tx.request(FrontendRequest::RemoveAuthorizedKey(sha256_fingerprint))
                 .await?
         }
+        CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
     }
     Ok(())
 }
