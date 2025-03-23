@@ -431,4 +431,8 @@ impl Config {
             .expect("config")
             .authorized_fingerprints = Some(fingerprints);
     }
+
+    pub fn write_back(&self) {
+        todo!()
+    }
 }

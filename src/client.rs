@@ -15,6 +15,15 @@ pub struct ClientManager {
 }
 
 impl ClientManager {
+    /// get all clients
+    pub fn clients(&self) -> Vec<(ClientConfig, ClientState)> {
+        self.clients
+            .borrow()
+            .iter()
+            .map(|(_, c)| c.clone())
+            .collect::<Vec<_>>()
+    }
+
     /// add a new client to this manager
     pub fn add_client(&self) -> ClientHandle {
         self.clients.borrow_mut().insert(Default::default()) as ClientHandle
