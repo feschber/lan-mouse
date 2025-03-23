@@ -44,7 +44,7 @@ fn default_path() -> Result<PathBuf, VarError> {
     Ok(PathBuf::from(default_path))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 struct ConfigToml {
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
@@ -274,6 +274,33 @@ impl From<TomlClient> for ConfigClient {
     }
 }
 
+impl From<ConfigClient> for TomlClient {
+    fn from(client: ConfigClient) -> Self {
+        let hostname = client.hostname;
+        let host_name = None;
+        let mut ips = client.ips.into_iter().collect::<Vec<_>>();
+        ips.sort();
+        let ips = Some(ips);
+        let port = if client.port == DEFAULT_PORT {
+            None
+        } else {
+            Some(client.port)
+        };
+        let position = Some(client.pos);
+        let activate_on_startup = if client.active { Some(true) } else { None };
+        let enter_hook = client.enter_hook;
+        Self {
+            hostname,
+            host_name,
+            ips,
+            port,
+            position,
+            activate_on_startup,
+            enter_hook,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error(transparent)]
@@ -383,5 +410,25 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// set configured clients
+    pub fn set_clients(&mut self, clients: Vec<ConfigClient>) {
+        if self.config_toml.is_none() {
+            self.config_toml = Default::default();
+        }
+        self.config_toml.as_mut().expect("config").clients =
+            clients.into_iter().map(|c| c.into()).collect::<Vec<_>>();
+    }
+
+    /// set authorized keys
+    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, String>) {
+        if self.config_toml.is_none() {
+            self.config_toml = Default::default();
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .authorized_fingerprints = Some(fingerprints);
     }
 }
