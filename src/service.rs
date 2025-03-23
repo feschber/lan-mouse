@@ -1,7 +1,7 @@
 use crate::{
     capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
-    config::Config,
+    config::{Config, ConfigClient},
     connect::LanMouseConnection,
     crypto,
     dns::{DnsEvent, DnsResolver},
@@ -39,6 +39,8 @@ pub enum ServiceError {
 }
 
 pub struct Service {
+    /// configuration
+    config: Config,
     /// input capture
     capture: Capture,
     /// input emulation
@@ -122,6 +124,7 @@ impl Service {
 
         let port = config.port();
         let service = Self {
+            config,
             capture,
             emulation,
             frontend_listener,
@@ -200,8 +203,27 @@ impl Service {
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
-            FrontendRequest::SaveConfiguration => todo!(),
+            FrontendRequest::SaveConfiguration => self.save_config(),
         }
+    }
+
+    fn save_config(&mut self) {
+        let clients = self.client_manager.clients();
+        let clients = clients
+            .into_iter()
+            .map(|(c, s)| ConfigClient {
+                ips: HashSet::from_iter(c.fix_ips),
+                hostname: c.hostname,
+                port: c.port,
+                pos: c.pos,
+                active: s.active,
+                enter_hook: c.cmd,
+            })
+            .collect();
+        self.config.set_clients(clients);
+        let authorized_keys = self.authorized_keys.read().expect("lock").clone();
+        self.config.set_authorized_keys(authorized_keys);
+        self.config.write_back();
     }
 
     async fn handle_frontend_pending(&mut self) {
