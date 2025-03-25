@@ -22,9 +22,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassW, SetWindowsHookExW, TranslateMessage, EDD_GET_DEVICE_INTERFACE_NAME, HHOOK,
     HMENU, HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
     WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-    WNDPROC,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN,
+    WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
 
 use input_event::{
@@ -537,6 +537,10 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
                 state: if p == WM_XBUTTONDOWN as usize { 1 } else { 0 },
             })
         }
+        WPARAM(p) if p == WM_MOUSEHWHEEL as usize => Some(PointerEvent::AxisDiscrete120 {
+            axis: 1, // Horizontal
+            value: mouse_low_level.mouseData as i32 >> 16,
+        }),
         w => {
             log::warn!("unknown mouse event: {w:?}");
             None
