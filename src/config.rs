@@ -51,7 +51,7 @@ struct ConfigToml {
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
     cert_path: Option<PathBuf>,
-    clients: Vec<TomlClient>,
+    clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
 }
 
@@ -370,6 +370,7 @@ impl Config {
         self.config_toml
             .as_ref()
             .map(|c| c.clients.clone())
+            .unwrap_or_default()
             .into_iter()
             .flatten()
             .map(From::<TomlClient>::from)
