@@ -20,6 +20,9 @@ mod wlroots;
 #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
 mod xdg_desktop_portal;
 
+#[cfg(all(target_os = "linux", feature = "evdev"))]
+mod evdev;
+
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 mod libei;
 
@@ -38,6 +41,8 @@ pub enum Backend {
     Wlroots,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     Libei,
+    #[cfg(all(target_os = "linux", feature = "evdev"))]
+    Evdev,
     #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
     Xdp,
     #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
@@ -56,6 +61,8 @@ impl Display for Backend {
             Backend::Wlroots => write!(f, "wlroots"),
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::Libei => write!(f, "libei"),
+            #[cfg(all(target_os = "linux", feature = "evdev"))]
+            Backend::Evdev => write!(f, "evdev"),
             #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
             Backend::Xdp => write!(f, "xdg-desktop-portal"),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
@@ -82,6 +89,8 @@ impl InputEmulation {
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
             Backend::Libei => Box::new(libei::LibeiEmulation::new().await?),
+            #[cfg(all(target_os = "linux", feature = "evdev"))]
+            Backend::Evdev => Box::new(evdev::EvdevEmulation::new()?),
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11 => Box::new(x11::X11Emulation::new()?),
             #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
@@ -115,6 +124,8 @@ impl InputEmulation {
             Backend::Libei,
             #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
             Backend::Xdp,
+            #[cfg(all(target_os = "linux", feature = "evdev"))]
+            Backend::Evdev,
             #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
             Backend::X11,
             #[cfg(windows)]
