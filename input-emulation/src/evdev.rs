@@ -67,7 +67,7 @@ impl Emulation for EvdevEmulation {
                     };
                     // TODO check that the conversion for `value` is right
                     self.dev
-                        .emit(&[*evdev::RelativeAxisEvent::new(axis, value as i32 * 120)])?;
+                        .emit(&[*evdev::RelativeAxisEvent::new(axis, value * 120)])?;
                 }
             },
             input_event::Event::Keyboard(k) => match k {

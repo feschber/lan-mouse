@@ -813,7 +813,7 @@ impl Dispatch<WlPointer, ()> for State {
                     })),
                 ));
             }
-            wl_pointer::Event::Frame {} => {
+            wl_pointer::Event::Frame => {
                 // TODO properly handle frame events
                 // we simply insert a frame event on the client side
                 // after each event for now
