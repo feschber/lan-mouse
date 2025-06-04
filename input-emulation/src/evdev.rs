@@ -4,6 +4,8 @@ use input_event::{KeyboardEvent, PointerEvent};
 
 use crate::{error::EvdevEmulationCreationError, Emulation, EmulationError, EmulationHandle};
 
+const WHEEL_SENSITIVITY: f64 = 3.0;
+
 pub(crate) struct EvdevEmulation {
     dev: VirtualDevice,
 }
@@ -19,6 +21,8 @@ impl EvdevEmulation {
                 RelativeAxisCode::REL_Y,
                 RelativeAxisCode::REL_WHEEL,
                 RelativeAxisCode::REL_HWHEEL,
+                RelativeAxisCode::REL_WHEEL_HI_RES,
+                RelativeAxisCode::REL_HWHEEL_HI_RES,
             ]))?
             .build()?;
         Ok(EvdevEmulation { dev })
@@ -54,20 +58,19 @@ impl Emulation for EvdevEmulation {
                     value,
                 } => {
                     let axis = match axis {
-                        0 => RelativeAxisCode::REL_WHEEL,
-                        _ => RelativeAxisCode::REL_HWHEEL,
+                        0 => RelativeAxisCode::REL_WHEEL_HI_RES,
+                        _ => RelativeAxisCode::REL_HWHEEL_HI_RES,
                     };
                     self.dev
-                        .emit(&[*evdev::RelativeAxisEvent::new(axis, value as i32)])?;
+                        .emit(&[*evdev::RelativeAxisEvent::new(axis, (value * WHEEL_SENSITIVITY).round() as i32)])?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
                     let axis = match axis {
-                        0 => RelativeAxisCode::REL_WHEEL,
-                        _ => RelativeAxisCode::REL_HWHEEL,
+                        0 => RelativeAxisCode::REL_WHEEL_HI_RES,
+                        _ => RelativeAxisCode::REL_HWHEEL_HI_RES,
                     };
-                    // TODO check that the conversion for `value` is right
                     self.dev
-                        .emit(&[*evdev::RelativeAxisEvent::new(axis, value * 120)])?;
+                        .emit(&[*evdev::RelativeAxisEvent::new(axis, value)])?;
                 }
             },
             input_event::Event::Keyboard(k) => match k {
