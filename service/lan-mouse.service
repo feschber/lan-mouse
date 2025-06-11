@@ -6,7 +6,7 @@ After=graphical-session.target
 BindsTo=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/lan-mouse daemon
+ExecStart=/usr/local/bin/lan-mouse daemon
 Restart=on-failure
 
 [Install]
