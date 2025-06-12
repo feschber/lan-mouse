@@ -172,6 +172,9 @@ impl From<CaptureBackend> for input_capture::Backend {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 pub enum EmulationBackend {
+    #[cfg(all(target_os = "linux", feature = "evdev_emulation"))]
+    #[serde(rename = "evdev")]
+    Evdev,
     #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
     #[serde(rename = "wlroots")]
     Wlroots,
@@ -197,6 +200,8 @@ pub enum EmulationBackend {
 impl From<EmulationBackend> for input_emulation::Backend {
     fn from(backend: EmulationBackend) -> Self {
         match backend {
+            #[cfg(all(target_os = "linux", feature = "evdev_emulation"))]
+            EmulationBackend::Evdev => Self::Evdev,
             #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
             EmulationBackend::Wlroots => Self::Wlroots,
             #[cfg(all(unix, feature = "libei_emulation", not(target_os = "macos")))]
@@ -217,6 +222,8 @@ impl From<EmulationBackend> for input_emulation::Backend {
 impl Display for EmulationBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(all(target_os = "linux", feature = "evdev_emulation"))]
+            EmulationBackend::Evdev => write!(f, "evdev"),
             #[cfg(all(unix, feature = "wlroots_emulation", not(target_os = "macos")))]
             EmulationBackend::Wlroots => write!(f, "wlroots"),
             #[cfg(all(unix, feature = "libei_emulation", not(target_os = "macos")))]

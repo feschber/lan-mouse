@@ -80,6 +80,7 @@ default = [
     "libei_emulation",
     "rdp_emulation",
     "x11_emulation",
+    "evdev_emulation",
 ]
 gtk = ["dep:lan-mouse-gtk"]
 layer_shell_capture = ["input-capture/layer_shell"]
@@ -89,6 +90,7 @@ libei_emulation = ["input-event/libei", "input-emulation/libei"]
 wlroots_emulation = ["input-emulation/wlroots"]
 x11_emulation = ["input-emulation/x11"]
 rdp_emulation = ["input-emulation/remote_desktop_portal"]
+evdev_emulation = ["input-emulation/evdev"]
 
 [package.metadata.bundle]
 name = "Lan Mouse"

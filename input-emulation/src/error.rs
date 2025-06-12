@@ -51,6 +51,9 @@ pub enum EmulationCreationError {
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("libei backend: `{0}`")]
     Libei(#[from] LibeiEmulationCreationError),
+    #[cfg(all(target_os = "linux", feature = "evdev"))]
+    #[error("evdev backend: `{0}`")]
+    Evdev(#[from] EvdevEmulationCreationError),
     #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
     #[error("xdg-desktop-portal: `{0}`")]
     Xdp(#[from] XdpEmulationCreationError),
@@ -133,6 +136,13 @@ pub enum LibeiEmulationCreationError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Reis(#[from] reis::Error),
+}
+
+#[cfg(all(target_os = "linux", feature = "evdev"))]
+#[derive(Debug, Error)]
+pub enum EvdevEmulationCreationError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
