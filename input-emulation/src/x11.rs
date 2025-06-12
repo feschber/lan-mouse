@@ -23,7 +23,7 @@ impl X11Emulation {
     pub(crate) fn new() -> Result<Self, X11EmulationCreationError> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
-                d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
+                d if std::ptr::eq(d, ptr::null_mut::<xlib::Display>()) => {
                     Err(X11EmulationCreationError::OpenDisplay)
                 }
                 display => Ok(display),

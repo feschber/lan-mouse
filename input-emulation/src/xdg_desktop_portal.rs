@@ -143,7 +143,6 @@ impl Emulation for DesktopPortalEmulation<'_> {
 
 impl AsyncDrop for DesktopPortalEmulation<'_> {
     #[doc = r" Perform the async cleanup."]
-    #[must_use]
     #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
     fn async_drop<'async_trait>(
         self,
