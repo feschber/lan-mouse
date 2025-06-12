@@ -3,7 +3,7 @@ use std::{collections::HashMap, net::IpAddr};
 use local_channel::mpsc::{channel, Receiver, Sender};
 use tokio::task::{spawn_local, JoinHandle};
 
-use hickory_resolver::{error::ResolveError, TokioAsyncResolver};
+use hickory_resolver::{ResolveError, TokioResolver};
 use tokio_util::sync::CancellationToken;
 
 use lan_mouse_ipc::ClientHandle;
@@ -26,7 +26,7 @@ pub(crate) enum DnsEvent {
 }
 
 struct DnsTask {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     request_rx: Receiver<DnsRequest>,
     event_tx: Sender<DnsEvent>,
     cancellation_token: CancellationToken,
@@ -35,7 +35,7 @@ struct DnsTask {
 
 impl DnsResolver {
     pub(crate) fn new() -> Result<Self, ResolveError> {
-        let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
+        let resolver = TokioResolver::builder_tokio()?.build();
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let cancellation_token = CancellationToken::new();
