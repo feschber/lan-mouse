@@ -9,7 +9,7 @@ use crate::{
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
-use hickory_resolver::error::ResolveError;
+use hickory_resolver::ResolveError;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
     IpcError, IpcListenerCreationError, Position, Status,

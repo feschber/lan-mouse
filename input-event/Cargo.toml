@@ -14,7 +14,7 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0.0"
 
 [target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
-reis = { version = "0.4", optional = true }
+reis = { version = "0.5.0", optional = true }
 
 [features]
 default = ["libei"]
