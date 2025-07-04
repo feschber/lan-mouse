@@ -81,15 +81,25 @@ paru -S lan-mouse-git
 - flake: [README.md](./nix/README.md)
 </details>
 
+<details>
+    <summary>Fedora</summary>
 
+You can install Lan Mouse from the [Terra Repository](https://terra.fyralabs.com).
+
+
+After enabling Terra:
+
+```sh
+dnf install lan-mouse
+```
 
 <details>
     <summary>Manual Installation</summary>
 
-First make sure to [install the necessary dependencies](#installing-dependencies).
+First make sure to [install the necessary dependencies](#installing-dependencies-for-development--compiling-from-source).
 
 Precompiled release binaries for Windows, MacOS and Linux are available in the [releases section](https://github.com/feschber/lan-mouse/releases).
-For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies).
+For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies-for-development--compiling-from-source).
 
 Alternatively, the `lan-mouse` binary can be compiled from source (see below).
 
