@@ -79,7 +79,7 @@ impl Display for Position {
             Position::Top => "top",
             Position::Bottom => "bottom",
         };
-        write!(f, "{}", pos)
+        write!(f, "{pos}")
     }
 }
 

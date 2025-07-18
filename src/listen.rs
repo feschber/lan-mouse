@@ -264,7 +264,7 @@ async fn read_loop(
             }
         }
     }
-    log::info!("dtls client disconnected {:?}", addr);
+    log::info!("dtls client disconnected {addr:?}");
     let mut conns = conns.lock().await;
     let index = conns
         .iter()

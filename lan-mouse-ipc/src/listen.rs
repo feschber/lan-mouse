@@ -45,7 +45,7 @@ impl AsyncFrontendListener {
         let (socket_path, listener) = {
             let socket_path = crate::default_socket_path()?;
 
-            log::debug!("remove socket: {:?}", socket_path);
+            log::debug!("remove socket: {socket_path:?}");
             if socket_path.exists() {
                 // try to connect to see if some other instance
                 // of lan-mouse is already running
