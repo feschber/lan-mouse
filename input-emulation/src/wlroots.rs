@@ -12,7 +12,7 @@ use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
 
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
-use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
+use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
@@ -210,7 +210,8 @@ impl VirtualInput {
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
                         self.pointer
-                            .axis_discrete(now, axis, value as f64 / 6., value / 120);
+                            .axis_discrete(now, axis, value as f64 / 8., value);
+                        self.pointer.axis_source(AxisSource::Wheel);
                         self.pointer.frame();
                     }
                 }
