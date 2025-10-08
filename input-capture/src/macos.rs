@@ -426,8 +426,8 @@ fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
     event_tx: Sender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
-    ready: std::sync::mpsc::Sender<Result<(), MacosCaptureCreationError>>,
-    exit: oneshot::Sender<Result<(), &'static str>>,
+    ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
+    exit: oneshot::Sender<()>,
 ) {
     let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
         Err(e) => {
@@ -435,18 +435,22 @@ fn event_tap_thread(
             return;
         }
         Ok(tap) => {
-            ready.send(Ok(())).expect("channel closed");
+            let run_loop = CFRunLoop::get_current();
+            ready.send(Ok(run_loop)).expect("channel closed");
             tap
         }
     };
+    log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
+    log::debug!("event tap thread exiting!...");
 
-    let _ = exit.send(Err("tap thread exited"));
+    let _ = exit.send(());
 }
 
 pub struct MacOSInputCapture {
     event_rx: Receiver<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
+    run_loop: CFRunLoop,
 }
 
 impl MacOSInputCapture {
@@ -475,33 +479,41 @@ impl MacOSInputCapture {
         });
 
         // wait for event tap creation result
-        ready_rx.recv().expect("channel closed")?;
+        let run_loop = ready_rx.recv().expect("channel closed")?;
 
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
                     producer_event = notify_rx.recv() => {
-                        let producer_event = producer_event.expect("channel closed");
+                        let Some(producer_event) = producer_event else {
+                            break;
+                        };
                         let mut state = state.lock().await;
                         state.handle_producer_event(producer_event).await.unwrap_or_else(|e| {
                             log::error!("Failed to handle producer event: {e}");
                         })
                     }
 
-                    res = &mut tap_exit_rx => {
-                        if let Err(e) = res.expect("channel closed") {
-                            log::error!("Tap thread failed: {:?}", e);
-                            break;
-                        }
+                    _ = &mut tap_exit_rx => {
+                        break;
                     }
                 }
             }
+            // show cursor
+            let _ = CGDisplay::show_cursor(&CGDisplay::main());
         });
 
         Ok(Self {
             event_rx,
             notify_tx,
+            run_loop,
         })
+    }
+}
+
+impl Drop for MacOSInputCapture {
+    fn drop(&mut self) {
+        self.run_loop.stop();
     }
 }
 
