@@ -92,6 +92,7 @@ After enabling Terra:
 ```sh
 dnf install lan-mouse
 ```
+</details>
 
 <details>
     <summary>Manual Installation</summary>
