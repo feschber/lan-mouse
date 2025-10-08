@@ -163,13 +163,13 @@ impl Emulation for WlrootsEmulation {
     async fn create(&mut self, handle: EmulationHandle) {
         self.state.add_client(handle);
         if let Err(e) = self.queue.flush() {
-            log::error!("{}", e);
+            log::error!("{e}");
         }
     }
     async fn destroy(&mut self, handle: EmulationHandle) {
         self.state.destroy_client(handle);
         if let Err(e) = self.queue.flush() {
-            log::error!("{}", e);
+            log::error!("{e}");
         }
     }
     async fn terminate(&mut self) {
@@ -221,7 +221,7 @@ impl VirtualInput {
                     self.keyboard.key(time, key, state as u32);
                     if let Ok(mut mods) = self.modifiers.lock() {
                         if mods.update_by_key_event(key, state) {
-                            log::trace!("Key triggers modifier change: {:?}", mods);
+                            log::trace!("Key triggers modifier change: {mods:?}");
                             self.keyboard.modifiers(
                                 mods.mask_pressed().bits(),
                                 0,
@@ -330,7 +330,7 @@ impl XMods {
 
     fn update_by_key_event(&mut self, key: u32, state: u8) -> bool {
         if let Ok(key) = scancode::Linux::try_from(key) {
-            log::trace!("Attempting to process modifier from: {:#?}", key);
+            log::trace!("Attempting to process modifier from: {key:#?}");
             let pressed_mask = match key {
                 scancode::Linux::KeyLeftShift | scancode::Linux::KeyRightShift => XMods::ShiftMask,
                 scancode::Linux::KeyLeftCtrl | scancode::Linux::KeyRightCtrl => XMods::ControlMask,
@@ -348,7 +348,7 @@ impl XMods {
 
             // unchanged
             if pressed_mask.is_empty() && locked_mask.is_empty() {
-                log::trace!("{:#?} is not a modifier key", key);
+                log::trace!("{key:#?} is not a modifier key");
                 return false;
             }
             match state {

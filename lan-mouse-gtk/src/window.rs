@@ -324,7 +324,7 @@ impl Window {
 
     pub(super) fn update_client_config(&self, handle: ClientHandle, client: ClientConfig) {
         let Some(row) = self.row_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
         row.set_hostname(client.hostname);
@@ -334,11 +334,11 @@ impl Window {
 
     pub(super) fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
         let Some(row) = self.row_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
         let Some(client_object) = self.client_object_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
 

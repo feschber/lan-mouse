@@ -587,9 +587,13 @@ impl LanMouseInputCapture for LibeiInputCapture<'_> {
         self.cancellation_token.cancel();
         let task = &mut self.capture_task;
         log::debug!("waiting for capture to terminate...");
-        let res = task.await.expect("libei task panic");
-        log::debug!("done!");
+        let res = if !task.is_finished() {
+            task.await.expect("libei task panic")
+        } else {
+            Ok(())
+        };
         self.terminated = true;
+        log::debug!("done!");
         res
     }
 }

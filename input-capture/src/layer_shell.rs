@@ -535,7 +535,7 @@ impl State {
     fn update_windows(&mut self) {
         log::info!("active outputs: ");
         for output in self.outputs.iter().filter(|o| o.info.is_some()) {
-            log::info!(" * {}", output);
+            log::info!(" * {output}");
         }
 
         self.active_windows.clear();
@@ -582,17 +582,17 @@ impl Inner {
         match self.queue.dispatch_pending(&mut self.state) {
             Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
-                log::error!("Wayland Error: {}", e);
+                log::error!("Wayland Error: {e}");
             }
             Err(DispatchError::Backend(e)) => {
-                panic!("backend error: {}", e);
+                panic!("backend error: {e}");
             }
             Err(DispatchError::BadMessage {
                 sender_id,
                 interface,
                 opcode,
             }) => {
-                panic!("bad message {}, {} , {}", sender_id, interface, opcode);
+                panic!("bad message {sender_id}, {interface} , {opcode}");
             }
         }
     }
@@ -974,7 +974,7 @@ impl Dispatch<ZxdgOutputV1, u32> for State {
             .find(|o| o.global.name == *name)
             .expect("output");
 
-        log::debug!("xdg_output {name} - {:?}", event);
+        log::debug!("xdg_output {name} - {event:?}");
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => {
                 output.pending_info.position = (x, y);
@@ -1010,7 +1010,7 @@ impl Dispatch<WlOutput, u32> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        log::debug!("wl_output {name} - {:?}", event);
+        log::debug!("wl_output {name} - {event:?}");
         if let wl_output::Event::Done = event {
             state.update_output_info(*name);
         }

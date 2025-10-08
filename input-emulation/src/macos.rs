@@ -161,12 +161,12 @@ fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
     };
 
     if error != 0 {
-        log::warn!("error getting displays at point ({}, {}): {}", x, y, error);
+        log::warn!("error getting displays at point ({x}, {y}): {error}");
         return Option::None;
     }
 
     if display_count == 0 {
-        log::debug!("no displays found at point ({}, {})", x, y);
+        log::debug!("no displays found at point ({x}, {y})");
         return Option::None;
     }
 

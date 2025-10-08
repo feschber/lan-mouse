@@ -24,7 +24,7 @@ strip = true
 panic = "abort"
 
 [build-dependencies]
-shadow-rs = "0.38.0"
+shadow-rs = "1.2.0"
 
 [dependencies]
 input-event = { path = "input-event", version = "0.3.0" }
@@ -34,9 +34,9 @@ lan-mouse-cli = { path = "lan-mouse-cli", version = "0.2.0" }
 lan-mouse-gtk = { path = "lan-mouse-gtk", version = "0.2.0", optional = true }
 lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.2.0" }
 lan-mouse-proto = { path = "lan-mouse-proto", version = "0.2.0" }
-shadow-rs = { version = "0.38.0", features = ["metadata"] }
+shadow-rs = { version = "1.2.0", features = ["metadata"] }
 
-hickory-resolver = "0.24.1"
+hickory-resolver = "0.25.2"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4.20"
@@ -58,8 +58,8 @@ slab = "0.4.9"
 thiserror = "2.0.0"
 tokio-util = "0.7.11"
 local-channel = "0.1.5"
-webrtc-dtls = { version = "0.10.0", features = ["pem"] }
-webrtc-util = "0.9.0"
+webrtc-dtls = { version = "0.12.0", features = ["pem"] }
+webrtc-util = "0.11.0"
 rustls = { version = "0.23.12", default-features = false, features = [
     "std",
     "ring",

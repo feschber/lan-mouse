@@ -10,7 +10,7 @@ use core_graphics::base::{kCGErrorSuccess, CGError};
 use core_graphics::display::{CGDisplay, CGPoint};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-    CGEventTapProxy, CGEventType, EventField,
+    CGEventTapProxy, CGEventType, CallbackResult, EventField,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use futures_core::Stream;
@@ -394,11 +394,11 @@ fn create_event_tap<'a>(
                     // may already be closed when the InputCapture instance is dropped.
                     let _ = event_tx.blocking_send((pos, *e));
                 });
-                // Returning None should stop the event from being processed
+                // Returning Drop should stop the event from being processed
                 // but core fundation still returns the event
                 cg_ev.set_type(CGEventType::Null);
             }
-            Some(cg_ev.to_owned())
+            CallbackResult::Replace(cg_ev.to_owned())
         };
 
     let tap = CGEventTap::new(
@@ -411,7 +411,7 @@ fn create_event_tap<'a>(
     .map_err(|_| MacosCaptureCreationError::EventTapCreation)?;
 
     let tap_source: CFRunLoopSource = tap
-        .mach_port
+        .mach_port()
         .create_runloop_source(0)
         .expect("Failed creating loop source");
 
