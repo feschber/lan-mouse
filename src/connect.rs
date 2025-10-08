@@ -91,28 +91,37 @@ async fn connect_any(
     }
 }
 
-pub(crate) struct LanMouseConnection {
+#[derive(Clone)]
+pub(crate) struct LanMouseConnectionSender {
     cert: Certificate,
     client_manager: ClientManager,
     conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
-    recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
     recv_tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
+}
+
+pub(crate) struct LanMouseConnection {
+    sender: LanMouseConnectionSender,
+    recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
 }
 
 impl LanMouseConnection {
     pub(crate) fn new(cert: Certificate, client_manager: ClientManager) -> Self {
         let (recv_tx, recv_rx) = channel();
-        Self {
+        let sender = LanMouseConnectionSender {
             cert,
             client_manager,
             conns: Default::default(),
             connecting: Default::default(),
-            recv_rx,
             recv_tx,
             ping_response: Default::default(),
-        }
+        };
+        Self { sender, recv_rx }
+    }
+
+    pub(crate) fn sender(&self) -> LanMouseConnectionSender {
+        self.sender.clone()
     }
 
     pub(crate) async fn recv(&mut self) -> (ClientHandle, ProtoEvent) {
@@ -124,6 +133,17 @@ impl LanMouseConnection {
         event: ProtoEvent,
         handle: ClientHandle,
     ) -> Result<(), LanMouseConnectionError> {
+        self.sender.send(event, handle).await
+    }
+}
+
+impl LanMouseConnectionSender {
+    pub(crate) async fn send(
+        &self,
+        event: ProtoEvent,
+        handle: ClientHandle,
+    ) -> Result<(), LanMouseConnectionError> {
+        let event_str = format!("{event}");
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
         if let Some(addr) = self.client_manager.active_addr(handle) {
@@ -142,7 +162,7 @@ impl LanMouseConnection {
                         disconnect(&self.client_manager, handle, addr, &self.conns).await;
                     }
                 }
-                log::trace!("{event} >->->->->- {addr}");
+                log::trace!("{event_str} >->->->->- {addr}");
                 return Ok(());
             }
         }
@@ -163,6 +183,48 @@ impl LanMouseConnection {
             ));
         }
         Err(LanMouseConnectionError::NotConnected)
+    }
+
+    /// Send clipboard event with variable-length encoding
+    pub(crate) async fn send_clipboard(
+        &self,
+        event: ProtoEvent,
+        handle: ClientHandle,
+    ) -> Result<(), LanMouseConnectionError> {
+        use lan_mouse_proto::encode_clipboard_event;
+
+        let buf = encode_clipboard_event(&event).map_err(|e| {
+            log::error!("Failed to encode clipboard event: {}", e);
+            LanMouseConnectionError::NotConnected
+        })?;
+
+        if let Some(addr) = self.client_manager.active_addr(handle) {
+            let conn = {
+                let conns = self.conns.lock().await;
+                conns.get(&addr).cloned()
+            };
+            if let Some(conn) = conn {
+                if !self.client_manager.alive(handle) {
+                    return Err(LanMouseConnectionError::TargetEmulationDisabled);
+                }
+                match conn.send(&buf).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("client {handle} failed to send clipboard: {e}");
+                        disconnect(&self.client_manager, handle, addr, &self.conns).await;
+                    }
+                }
+                log::trace!("{event} >->->->->- {addr}");
+                return Ok(());
+            }
+        }
+
+        // Not connected yet - clipboard will sync when connection is established
+        log::debug!(
+            "Client {} not connected, clipboard will sync when connection is established",
+            handle
+        );
+        Ok(())
     }
 }
 
@@ -249,20 +311,58 @@ async fn receive_loop(
     tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
 ) {
-    let mut buf = [0u8; MAX_EVENT_SIZE];
-    while conn.recv(&mut buf).await.is_ok() {
-        if let Ok(event) = buf.try_into() {
-            log::trace!("{addr} <==<==<== {event}");
-            match event {
-                ProtoEvent::Pong(b) => {
-                    client_manager.set_active_addr(handle, Some(addr));
-                    client_manager.set_alive(handle, b);
-                    ping_response.borrow_mut().insert(addr);
+    use lan_mouse_proto::{decode_clipboard_event, EventType, MAX_CLIPBOARD_SIZE};
+
+    // Buffer needs to be large enough for clipboard data
+    // Use Vec instead of array for large buffers to avoid stack overflow
+    let mut buf = vec![0u8; MAX_CLIPBOARD_SIZE + 5];
+
+    loop {
+        let n = match conn.recv(&mut buf).await {
+            Ok(n) => n,
+            Err(_) => break,
+        };
+
+        if n == 0 {
+            break;
+        }
+
+        // Check if this is a clipboard event
+        let event = if n > 0 && buf[0] == EventType::ClipboardText as u8 {
+            // Variable-length clipboard event
+            match decode_clipboard_event(&buf[..n]) {
+                Ok(event) => event,
+                Err(e) => {
+                    log::warn!("Failed to decode clipboard from {}: {:?}", addr, e);
+                    continue;
                 }
-                event => tx.send((handle, event)).expect("channel closed"),
             }
+        } else {
+            // Standard fixed-size event - need to convert to fixed-size array
+            // Pad with zeros if message is smaller than MAX_EVENT_SIZE
+            let mut fixed_buf = [0u8; MAX_EVENT_SIZE];
+            let copy_len = n.min(MAX_EVENT_SIZE);
+            fixed_buf[..copy_len].copy_from_slice(&buf[..copy_len]);
+            match fixed_buf.try_into() {
+                Ok(event) => event,
+                Err(e) => {
+                    log::warn!("Failed to decode event from {}: {:?}", addr, e);
+                    continue;
+                }
+            }
+        };
+
+        log::trace!("{addr} <==<==<== {event}");
+        match event {
+            ProtoEvent::Pong(b) => {
+                client_manager.set_active_addr(handle, Some(addr));
+                client_manager.set_alive(handle, b);
+                ping_response.borrow_mut().insert(addr);
+            }
+            event => tx.send((handle, event)).expect("channel closed"),
         }
     }
+
     log::warn!("recv error");
     disconnect(&client_manager, handle, addr, &conns).await;
 }
