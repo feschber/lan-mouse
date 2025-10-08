@@ -37,6 +37,8 @@ pub(crate) enum ICaptureEvent {
     /// either the remote client leaving its device region,
     /// a new device entering the screen or the release bind.
     ClientEntered(u64),
+    /// clipboard data received from remote
+    ClipboardReceived(input_event::ClipboardEvent),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -262,26 +264,35 @@ impl CaptureTask {
                     None => return Ok(()),
                 },
                 (handle, event) = self.conn.recv() => {
-                    if let Some(active) = self.active_client {
-                        if handle != active {
-                            // we only care about events coming from the client we are currently connected to
-                            // only `Ack` and `Leave` are relevant
-                            continue
+                    match &event {
+                        // Handle clipboard events from any client
+                        ProtoEvent::Input(input_event::Event::Clipboard(clipboard_event)) => {
+                            self.event_tx.send(ICaptureEvent::ClipboardReceived(clipboard_event.clone())).expect("channel closed");
                         }
-                    }
+                        _ => {
+                            // For other events, only handle if from active client
+                            if let Some(active) = self.active_client {
+                                if handle != active {
+                                    // we only care about events coming from the client we are currently connected to
+                                    // only `Ack` and `Leave` are relevant
+                                    continue
+                                }
+                            }
 
-                    match event {
-                        // connection acknowlegded => set state to Sending
-                        ProtoEvent::Ack(_) => {
-                            log::info!("client {handle} acknowledged the connection!");
-                            self.state = State::Sending;
+                            match event {
+                                // connection acknowlegded => set state to Sending
+                                ProtoEvent::Ack(_) => {
+                                    log::info!("client {handle} acknowledged the connection!");
+                                    self.state = State::Sending;
+                                }
+                                // client disconnected
+                                ProtoEvent::Leave(_) => {
+                                    log::info!("releasing capture: left remote client device region");
+                                    self.release_capture(capture).await?;
+                                },
+                                _ => {}
+                            }
                         }
-                        // client disconnected
-                        ProtoEvent::Leave(_) => {
-                            log::info!("releasing capture: left remote client device region");
-                            self.release_capture(capture).await?;
-                        },
-                        _ => {}
                     }
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
