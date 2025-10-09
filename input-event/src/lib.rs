@@ -38,12 +38,20 @@ pub enum KeyboardEvent {
     },
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
+pub enum ClipboardEvent {
+    /// text content from clipboard
+    Text(String),
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum Event {
     /// pointer event (motion / button / axis)
     Pointer(PointerEvent),
     /// keyboard events (key / modifiers)
     Keyboard(KeyboardEvent),
+    /// clipboard events
+    Clipboard(ClipboardEvent),
 }
 
 impl Display for PointerEvent {
@@ -109,11 +117,27 @@ impl Display for KeyboardEvent {
     }
 }
 
+impl Display for ClipboardEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClipboardEvent::Text(text) => {
+                let preview = if text.len() > 50 {
+                    format!("{}...", &text[..50])
+                } else {
+                    text.clone()
+                };
+                write!(f, "clipboard(text: {})", preview)
+            }
+        }
+    }
+}
+
 impl Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Event::Pointer(p) => write!(f, "{p}"),
             Event::Keyboard(k) => write!(f, "{k}"),
+            Event::Clipboard(c) => write!(f, "{c}"),
         }
     }
 }

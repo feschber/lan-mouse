@@ -2,7 +2,7 @@ use crate::{
     capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
     config::Config,
-    connect::LanMouseConnection,
+    connect::{LanMouseConnection, LanMouseConnectionSender},
     crypto,
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
@@ -10,6 +10,8 @@ use crate::{
 };
 use futures::StreamExt;
 use hickory_resolver::ResolveError;
+use input_capture::clipboard::ClipboardMonitor;
+use input_emulation::clipboard::ClipboardEmulation;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
     IpcError, IpcListenerCreationError, Position, Status,
@@ -43,6 +45,12 @@ pub struct Service {
     capture: Capture,
     /// input emulation
     emulation: Emulation,
+    /// clipboard monitor
+    clipboard_monitor: Option<ClipboardMonitor>,
+    /// clipboard emulation
+    clipboard_emulation: Option<ClipboardEmulation>,
+    /// clipboard enabled
+    _clipboard_enabled: bool,
     /// dns resolver
     resolver: DnsResolver,
     /// frontend listener
@@ -51,6 +59,8 @@ pub struct Service {
     authorized_keys: Arc<RwLock<HashMap<String, String>>>,
     /// (outgoing) client information
     client_manager: ClientManager,
+    /// lan mouse connection sender (for clipboard)
+    conn_sender: LanMouseConnectionSender,
     /// current port
     port: u16,
     /// the public key fingerprint for (D)TLS
@@ -110,12 +120,46 @@ impl Service {
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let conn_sender = conn.sender();
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
+
+        // clipboard monitor + emulation
+        let clipboard_enabled = config.clipboard_enabled();
+        let clipboard_monitor = if clipboard_enabled {
+            match ClipboardMonitor::new() {
+                Ok(monitor) => {
+                    log::info!("Clipboard monitoring enabled");
+                    Some(monitor)
+                }
+                Err(e) => {
+                    log::warn!("Failed to create clipboard monitor: {}", e);
+                    None
+                }
+            }
+        } else {
+            log::info!("Clipboard sharing disabled by configuration");
+            None
+        };
+
+        let clipboard_emulation = if clipboard_enabled {
+            match ClipboardEmulation::new() {
+                Ok(emulation) => {
+                    log::info!("Clipboard emulation enabled");
+                    Some(emulation)
+                }
+                Err(e) => {
+                    log::warn!("Failed to create clipboard emulation: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -124,11 +168,15 @@ impl Service {
         let service = Self {
             capture,
             emulation,
+            clipboard_monitor,
+            clipboard_emulation,
+            _clipboard_enabled: clipboard_enabled,
             frontend_listener,
             resolver,
             authorized_keys,
             public_key_fingerprint,
-            client_manager,
+            client_manager: client_manager.clone(),
+            conn_sender,
             frontend_event_pending: Default::default(),
             port,
             pending_frontend_events: Default::default(),
@@ -158,9 +206,15 @@ impl Service {
             tokio::select! {
                 request = self.frontend_listener.next() => self.handle_frontend_request(request),
                 _ = self.frontend_event_pending.notified() => self.handle_frontend_pending().await,
-                event = self.emulation.event() => self.handle_emulation_event(event),
+                event = self.emulation.event() => self.handle_emulation_event(event).await,
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
+                event = async {
+                    match &mut self.clipboard_monitor {
+                        Some(monitor) => monitor.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => self.handle_clipboard_event(event).await,
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
         }
@@ -209,7 +263,7 @@ impl Service {
         }
     }
 
-    fn handle_emulation_event(&mut self, event: EmulationEvent) {
+    async fn handle_emulation_event(&mut self, event: EmulationEvent) {
         match event {
             EmulationEvent::ConnectionAttempt { fingerprint } => {
                 self.notify_frontend(FrontendEvent::ConnectionAttempt { fingerprint });
@@ -256,6 +310,14 @@ impl Service {
             EmulationEvent::Connected { addr, fingerprint } => {
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }
+            EmulationEvent::ClipboardReceived(clipboard_event) => {
+                // Received clipboard data from a remote machine - set it locally
+                if let Some(ref clipboard_emulation) = self.clipboard_emulation {
+                    if let Err(e) = clipboard_emulation.set(clipboard_event).await {
+                        log::warn!("Failed to set clipboard: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -279,6 +341,52 @@ impl Service {
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
                 self.spawn_hook_command(handle);
+            }
+            ICaptureEvent::ClipboardReceived(clipboard_event) => {
+                // Received clipboard data from a remote machine - set it locally
+                if let Some(ref clipboard_emulation) = self.clipboard_emulation {
+                    // Spawn async task to set clipboard
+                    let clipboard_emulation = clipboard_emulation.clone();
+                    tokio::task::spawn_local(async move {
+                        if let Err(e) = clipboard_emulation.set(clipboard_event).await {
+                            log::warn!("Failed to set clipboard: {}", e);
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    async fn handle_clipboard_event(&mut self, event: Option<input_capture::CaptureEvent>) {
+        use input_capture::CaptureEvent;
+        use input_event::Event;
+
+        if let Some(CaptureEvent::Input(Event::Clipboard(clipboard_event))) = event {
+            log::info!("Clipboard changed locally, sending to all connected peers");
+
+            // Send clipboard to all active clients (machines we're controlling)
+            let active_clients: Vec<_> = self.client_manager.active_clients().into_iter().collect();
+
+            for handle in active_clients {
+                let proto_event = lan_mouse_proto::ProtoEvent::Input(
+                    input_event::Event::Clipboard(clipboard_event.clone()),
+                );
+
+                if let Err(e) = self.conn_sender.send_clipboard(proto_event, handle).await {
+                    log::warn!("Failed to send clipboard to client {}: {}", handle, e);
+                }
+            }
+
+            // Also send clipboard to all incoming connections (machines controlling us)
+            let incoming_addrs: Vec<_> = self
+                .incoming_conn_info
+                .values()
+                .map(|incoming| incoming.addr)
+                .collect();
+
+            for addr in incoming_addrs {
+                log::info!("Sending clipboard to incoming connection {}", addr);
+                self.emulation.send_clipboard(addr, clipboard_event.clone());
             }
         }
     }
