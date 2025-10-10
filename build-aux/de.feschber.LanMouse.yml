@@ -39,7 +39,6 @@ modules:
       append-path: /usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/lan-mouse/cargo
-        # CARGO_NET_OFFLINE: 'true'
     build-commands:
       - cargo fetch --manifest-path Cargo.toml --verbose
       - cargo build
@@ -49,7 +48,3 @@ modules:
     sources:
       - type: dir
         path: ..
-      # - type: git
-      #   url: https://github.com/my_app/my_app.git
-      #   tag: "v0.1.1"
-      # - cargo-sources.json
