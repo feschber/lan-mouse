@@ -92,7 +92,7 @@ jobs:
     - name: Bundle
       run: |
         cargo bundle --release
-        scripts/copy-macos-dylib.sh
+        scripts/copy-macos-dylib.sh "target/release/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
@@ -120,7 +120,7 @@ jobs:
     - name: Bundle
       run: |
         cargo bundle --release
-        scripts/copy-macos-dylib.sh
+        scripts/copy-macos-dylib.sh "target/release/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
