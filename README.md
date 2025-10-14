@@ -94,13 +94,13 @@ dnf install lan-mouse
 </details>
 
 <details>
-    <summary>macOS</summary>
+    <summary>MacOS</summary>
 
 - Download the package for your Mac (Intel or ARM) from the releases page
 - Unzip it
 - Remove the quarantine with `xattr -rd com.apple.quarantine "Lan Mouse.app"`
 - Launch the app
-- Allow it accessibility permissions in System Preferences
+- Grant accessibility permissions in System Preferences
 
 </details>
 

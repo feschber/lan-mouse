@@ -12,7 +12,7 @@ USAGE: $0 [-h] [-b homebrew_path] [exec_path]
 OPTIONS:
   -h, --help    Show this help message and exit
   -b            Path to Homebrew installation (default: $homebrew_path)
-  exec_pat      Path to the main executable in the app bundle
+  exec_path     Path to the main executable in the app bundle
                 (default: get from `brew --prefix`)
 
 When macOS apps are linked to dynamic libraries (.dylib files),
