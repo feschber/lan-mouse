@@ -83,7 +83,6 @@ paru -S lan-mouse-git
 
 <details>
     <summary>Fedora</summary>
-
 You can install Lan Mouse from the [Terra Repository](https://terra.fyralabs.com).
 
 
@@ -93,6 +92,18 @@ After enabling Terra:
 dnf install lan-mouse
 ```
 </details>
+
+<details>
+    <summary>MacOS</summary>
+
+- Download the package for your Mac (Intel or ARM) from the releases page
+- Unzip it
+- Remove the quarantine with `xattr -rd com.apple.quarantine "Lan Mouse.app"`
+- Launch the app
+- Grant accessibility permissions in System Preferences
+
+</details>
+
 
 <details>
     <summary>Manual Installation</summary>
@@ -172,7 +183,15 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
     <summary>MacOS</summary>
 
 ```sh
-brew install libadwaita pkg-config
+# Install dependencies
+brew install libadwaita pkg-config imagemagick
+cargo install cargo-bundle
+# Create the macOS icon file
+scripts/makeicns.sh
+# Create the .app bundle
+cargo bundle
+# Copy all dynamic libraries into the bundle, and update the bundle to find them there
+scripts/copy-macos-dylib.sh
 ```
 </details>
 

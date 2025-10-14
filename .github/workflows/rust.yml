@@ -112,7 +112,9 @@ jobs:
     - name: Install cargo bundle
       run: cargo install cargo-bundle
     - name: Bundle
-      run: cargo bundle
+      run: |
+        cargo bundle
+        scripts/copy-macos-dylib.sh
     - name: Zip bundle
       run: |
         cd target/debug/bundle/osx
@@ -142,7 +144,9 @@ jobs:
     - name: Install cargo bundle
       run: cargo install cargo-bundle
     - name: Bundle
-      run: cargo bundle
+      run: |
+        cargo bundle
+        scripts/copy-macos-dylib.sh
     - name: Zip bundle
       run: |
         cd target/debug/bundle/osx
