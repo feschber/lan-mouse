@@ -26,6 +26,7 @@ mod libei;
 #[cfg(target_os = "macos")]
 mod macos;
 
+pub mod clipboard;
 /// fallback input emulation (logs events)
 mod dummy;
 mod error;

@@ -214,6 +214,34 @@ impl LanMouseListener {
         }
     }
 
+    pub(crate) async fn reply_clipboard(&self, addr: SocketAddr, event: ProtoEvent) {
+        use lan_mouse_proto::encode_clipboard_event;
+
+        let buf = match encode_clipboard_event(&event) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("Failed to encode clipboard event: {}", e);
+                return;
+            }
+        };
+
+        log::info!(
+            "Sending clipboard ({} bytes) >=>=>=>=>=> {}",
+            buf.len(),
+            addr
+        );
+
+        let conns = self.conns.lock().await;
+        for (a, conn) in conns.iter() {
+            if *a == addr {
+                match conn.send(&buf).await {
+                    Ok(_) => log::debug!("Clipboard sent successfully to {}", addr),
+                    Err(e) => log::error!("Failed to send clipboard to {}: {:?}", addr, e),
+                }
+            }
+        }
+    }
+
     pub(crate) async fn get_certificate_fingerprint(&self, addr: SocketAddr) -> Option<String> {
         if let Some(conn) = self
             .conns
@@ -251,19 +279,113 @@ async fn read_loop(
     conn: ArcConn,
     dtls_tx: Sender<ListenEvent>,
 ) -> Result<(), Error> {
-    let mut b = [0u8; MAX_EVENT_SIZE];
+    use lan_mouse_proto::{decode_clipboard_event, EventType, MAX_CLIPBOARD_SIZE};
 
-    while conn.recv(&mut b).await.is_ok() {
-        match b.try_into() {
-            Ok(event) => dtls_tx
-                .send(ListenEvent::Msg { event, addr })
-                .expect("channel closed"),
+    // Buffer needs to be large enough for clipboard data
+    // Use Vec instead of array for large buffers to avoid stack overflow
+    let mut b = vec![0u8; MAX_CLIPBOARD_SIZE + 5];
+
+    loop {
+        // Read first byte to determine event type
+        let n = match conn.recv(&mut b).await {
+            Ok(n) => n,
             Err(e) => {
-                log::warn!("error receiving event: {e}");
+                log::warn!("recv error from {}: {:?}", addr, e);
                 break;
             }
+        };
+
+        if n == 0 {
+            break;
         }
+
+        log::trace!("Received {} bytes from {}", n, addr);
+
+        // Check if this is a clipboard event (variable length)
+        let event_type = b[0];
+        let event = if event_type == EventType::ClipboardText as u8 {
+            // This is a clipboard event - need to read full message
+            if n < 5 {
+                log::warn!("Clipboard event too short: {} bytes", n);
+                break;
+            }
+
+            // Parse length from bytes 1-4
+            let length = u32::from_be_bytes([b[1], b[2], b[3], b[4]]) as usize;
+
+            if length > MAX_CLIPBOARD_SIZE {
+                log::warn!("Clipboard data too large: {} bytes", length);
+                break;
+            }
+
+            let total_size = 5 + length;
+            log::debug!(
+                "Clipboard event: received {} bytes, total expected {}",
+                n,
+                total_size
+            );
+
+            // Check if we already have all the data
+            if n >= total_size {
+                // All data received in one packet
+                match decode_clipboard_event(&b[..total_size]) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        log::warn!("error decoding clipboard event: {e}");
+                        break;
+                    }
+                }
+            } else {
+                // Need to read more data
+                let mut clipboard_buf = vec![0u8; total_size];
+                clipboard_buf[..n].copy_from_slice(&b[..n]);
+
+                let mut read_so_far = n;
+                let mut read_failed = false;
+                while read_so_far < total_size {
+                    match conn.recv(&mut clipboard_buf[read_so_far..]).await {
+                        Ok(n) if n > 0 => read_so_far += n,
+                        _ => {
+                            log::warn!("Connection closed while reading clipboard data");
+                            read_failed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if read_failed || read_so_far < total_size {
+                    log::warn!("Incomplete clipboard data received, closing connection");
+                    break;
+                }
+
+                match decode_clipboard_event(&clipboard_buf) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        log::warn!("error decoding clipboard event: {e}");
+                        break;
+                    }
+                }
+            }
+        } else {
+            // Standard fixed-size event - need to convert to fixed-size array
+            // Pad with zeros if message is smaller than MAX_EVENT_SIZE
+            let mut fixed_buf = [0u8; MAX_EVENT_SIZE];
+            let copy_len = n.min(MAX_EVENT_SIZE);
+            fixed_buf[..copy_len].copy_from_slice(&b[..copy_len]);
+            match fixed_buf.try_into() {
+                Ok(event) => event,
+                Err(e) => {
+                    log::warn!("error receiving event: {e}");
+                    break;
+                }
+            }
+        };
+
+        dtls_tx
+            .send(ListenEvent::Msg { event, addr })
+            .expect("channel closed");
     }
+
     log::info!("dtls client disconnected {addr:?}");
     let mut conns = conns.lock().await;
     let index = conns

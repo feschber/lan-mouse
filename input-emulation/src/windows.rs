@@ -70,6 +70,11 @@ impl Emulation for WindowsEmulation {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
+            Event::Clipboard(_) => {
+                // Clipboard events are not emulated through this backend
+                // They are handled directly by the clipboard emulation module
+                log::debug!("ignoring clipboard event in windows emulation");
+            }
         }
         // FIXME
         Ok(())

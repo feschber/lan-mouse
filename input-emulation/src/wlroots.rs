@@ -144,13 +144,14 @@ impl Emulation for WlrootsEmulation {
                     _ => {}
                 }
             }
+            let event_debug = format!("{event:?}");
             virtual_input
                 .consume_event(event)
-                .unwrap_or_else(|_| panic!("failed to convert event: {event:?}"));
+                .unwrap_or_else(|_| panic!("failed to convert event: {event_debug}"));
             match self.queue.flush() {
                 Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                     self.last_flush_failed = true;
-                    log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
+                    log::warn!("can't keep up, discarding event: ({handle}) - {event_debug}");
                 }
                 Err(WaylandError::Protocol(e)) => panic!("wayland protocol violation: {e}"),
                 Ok(()) => self.last_flush_failed = false,
@@ -246,6 +247,10 @@ impl VirtualInput {
                         .modifiers(mods_depressed, mods_latched, mods_locked, group);
                 }
             },
+            Event::Clipboard(_) => {
+                // Clipboard events are not supported by wlroots emulation
+                log::debug!("ignoring clipboard event in wlroots emulation");
+            }
         }
         Ok(())
     }
