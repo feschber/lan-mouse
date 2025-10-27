@@ -474,6 +474,9 @@ impl Window {
     }
 
     pub(super) fn request_authorization(&self, fingerprint: &str) {
+        if let Some(w) = self.imp().authorization_window.borrow_mut().take() {
+            w.close();
+        }
         let window = AuthorizationWindow::new(fingerprint);
         window.set_transient_for(Some(self));
         window.connect_closure(
@@ -496,5 +499,6 @@ impl Window {
             }),
         );
         window.present();
+        self.imp().authorization_window.replace(Some(window));
     }
 }

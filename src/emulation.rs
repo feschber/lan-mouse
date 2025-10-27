@@ -128,6 +128,7 @@ impl ListenTask {
     async fn run(mut self) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_response = HashMap::new();
+        let mut rejected_connections = HashMap::new();
         loop {
             select! {
                 e = self.listener.next() => {match e {
@@ -156,7 +157,10 @@ impl ListenTask {
                         self.event_tx.send(EmulationEvent::Connected { addr, fingerprint }).expect("channel closed");
                     }
                     Some(ListenEvent::Rejected { fingerprint }) => {
-                        self.event_tx.send(EmulationEvent::ConnectionAttempt { fingerprint }).expect("channel closed");
+                        if rejected_connections.insert(fingerprint.clone(), Instant::now())
+                            .is_none_or(|i| i.elapsed() >= Duration::from_secs(2)) {
+                                self.event_tx.send(EmulationEvent::ConnectionAttempt { fingerprint }).expect("channel closed");
+                            }
                     }
                     None => break
                 }}
