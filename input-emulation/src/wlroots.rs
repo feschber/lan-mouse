@@ -210,7 +210,7 @@ impl VirtualInput {
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
                         self.pointer
-                            .axis_discrete(now, axis, value as f64 / 8., value);
+                            .axis_discrete(now, axis, value as f64 / 8., value / 120);
                         self.pointer.axis_source(AxisSource::Wheel);
                         self.pointer.frame();
                     }
