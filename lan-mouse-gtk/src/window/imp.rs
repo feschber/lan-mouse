@@ -8,6 +8,8 @@ use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Image, Label, ListBo
 
 use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
 
+use crate::authorization_window::AuthorizationWindow;
+
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
 pub struct Window {
@@ -49,6 +51,7 @@ pub struct Window {
     pub port: Cell<u16>,
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,
+    pub authorization_window: RefCell<Option<AuthorizationWindow>>,
 }
 
 #[glib::object_subclass]
