@@ -50,6 +50,8 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    mouse_mod: Option<f64>,
+    invert_scroll: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -363,6 +365,20 @@ impl Config {
             .port
             .or(self.config_toml.as_ref().and_then(|c| c.port))
             .unwrap_or(DEFAULT_PORT)
+    }
+
+    pub fn mouse_mod(&self) -> f64 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.mouse_mod)
+            .unwrap_or(1.0)
+    }
+
+    pub fn invert_scroll(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.invert_scroll)
+            .unwrap_or(false)
     }
 
     /// list of configured clients
