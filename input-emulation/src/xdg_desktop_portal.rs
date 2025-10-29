@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use futures::FutureExt;
 use input_event::{
-    Event::{Keyboard, Pointer},
+    Event::{self, Keyboard, Pointer},
     KeyboardEvent, PointerEvent,
 };
 
@@ -124,6 +124,10 @@ impl Emulation for DesktopPortalEmulation<'_> {
                         // ignore
                     }
                 }
+            }
+            Event::Clipboard(_) => {
+                // Clipboard events are not supported by desktop portal emulation
+                log::debug!("ignoring clipboard event in desktop portal emulation");
             }
         }
         Ok(())

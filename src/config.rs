@@ -53,6 +53,7 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    enable_clipboard: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -383,5 +384,13 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// whether clipboard sharing is enabled (default: true)
+    pub fn clipboard_enabled(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.enable_clipboard)
+            .unwrap_or(true)
     }
 }
