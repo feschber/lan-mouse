@@ -10,25 +10,37 @@ use core_graphics::event::{
     ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use input_event::{scancode, Event, KeyboardEvent, PointerEvent};
+use input_event::{scancode, Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
 use std::ops::{Index, IndexMut};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::{sync::Notify, task::JoinHandle};
 
 use super::error::MacOSEmulationCreationError;
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct MacOSEmulation {
+    /// global event source for all events
     event_source: CGEventSource,
+    /// task handle for key repeats
     repeat_task: Option<JoinHandle<()>>,
+    /// current state of the mouse buttons
     button_state: ButtonState,
+    /// button previously pressed
+    previous_button: Option<CGMouseButton>,
+    /// timestamp of previous click (button down)
+    previous_button_click: Option<Instant>,
+    /// click state, i.e. number of clicks in quick succession
+    button_click_state: i64,
+    /// current modifier state
     modifier_state: Rc<Cell<XMods>>,
+    /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
 }
 
@@ -74,6 +86,9 @@ impl MacOSEmulation {
         Ok(Self {
             event_source,
             button_state,
+            previous_button: None,
+            previous_button_click: None,
+            button_click_state: 1,
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
@@ -271,24 +286,12 @@ impl Emulation for MacOSEmulation {
                     state,
                 } => {
                     let (event_type, mouse_button) = match (button, state) {
-                        (b, 1) if b == input_event::BTN_LEFT => {
-                            (CGEventType::LeftMouseDown, CGMouseButton::Left)
-                        }
-                        (b, 0) if b == input_event::BTN_LEFT => {
-                            (CGEventType::LeftMouseUp, CGMouseButton::Left)
-                        }
-                        (b, 1) if b == input_event::BTN_RIGHT => {
-                            (CGEventType::RightMouseDown, CGMouseButton::Right)
-                        }
-                        (b, 0) if b == input_event::BTN_RIGHT => {
-                            (CGEventType::RightMouseUp, CGMouseButton::Right)
-                        }
-                        (b, 1) if b == input_event::BTN_MIDDLE => {
-                            (CGEventType::OtherMouseDown, CGMouseButton::Center)
-                        }
-                        (b, 0) if b == input_event::BTN_MIDDLE => {
-                            (CGEventType::OtherMouseUp, CGMouseButton::Center)
-                        }
+                        (BTN_LEFT, 1) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
+                        (BTN_LEFT, 0) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
+                        (BTN_RIGHT, 1) => (CGEventType::RightMouseDown, CGMouseButton::Right),
+                        (BTN_RIGHT, 0) => (CGEventType::RightMouseUp, CGMouseButton::Right),
+                        (BTN_MIDDLE, 1) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
+                        (BTN_MIDDLE, 0) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
                         _ => {
                             log::warn!("invalid button event: {button},{state}");
                             return Ok(());
@@ -297,6 +300,22 @@ impl Emulation for MacOSEmulation {
                     // store button state
                     self.button_state[mouse_button] = state == 1;
 
+                    // update previous button state
+                    if state == 1 {
+                        if self.previous_button.is_some_and(|b| b.eq(&mouse_button))
+                            && self
+                                .previous_button_click
+                                .is_some_and(|i| i.elapsed() < DOUBLE_CLICK_INTERVAL)
+                        {
+                            self.button_click_state += 1;
+                        } else {
+                            self.button_click_state = 1;
+                        }
+                        self.previous_button = Some(mouse_button);
+                        self.previous_button_click = Some(Instant::now());
+                    }
+
+                    log::debug!("click_state: {}", self.button_click_state);
                     let location = self.get_mouse_location().unwrap();
                     let event = match CGEvent::new_mouse_event(
                         self.event_source.clone(),
@@ -310,6 +329,10 @@ impl Emulation for MacOSEmulation {
                             return Ok(());
                         }
                     };
+                    event.set_integer_value_field(
+                        EventField::MOUSE_EVENT_CLICK_STATE,
+                        self.button_click_state,
+                    );
                     event.post(CGEventTapLocation::HID);
                 }
                 PointerEvent::Axis {
@@ -415,6 +438,21 @@ impl Emulation for MacOSEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+}
+
+trait ButtonEq {
+    fn eq(&self, other: &Self) -> bool;
+}
+
+impl ButtonEq for CGMouseButton {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (CGMouseButton::Left, CGMouseButton::Left)
+                | (CGMouseButton::Right, CGMouseButton::Right)
+                | (CGMouseButton::Center, CGMouseButton::Center)
+        )
+    }
 }
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {
