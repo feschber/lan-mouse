@@ -104,6 +104,9 @@ impl MacOSEmulation {
         // there can only be one repeating key and it's
         // always the last to be pressed
         self.cancel_repeat_task().await;
+        // initial key event
+        key_event(self.event_source.clone(), key, 1, self.modifier_state.get());
+        // repeat task
         let event_source = self.event_source.clone();
         let notify = self.notify_repeat_task.clone();
         let modifiers = self.modifier_state.clone();
@@ -239,6 +242,7 @@ impl Emulation for MacOSEmulation {
         event: Event,
         _handle: EmulationHandle,
     ) -> Result<(), EmulationError> {
+        log::trace!("{event:?}");
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion { time: _, dx, dy } => {
@@ -405,18 +409,12 @@ impl Emulation for MacOSEmulation {
                             return Ok(());
                         }
                     };
+                    update_modifiers(&self.modifier_state, key, state);
                     match state {
                         // pressed
                         1 => self.spawn_repeat_task(code).await,
                         _ => self.cancel_repeat_task().await,
                     }
-                    update_modifiers(&self.modifier_state, key, state);
-                    key_event(
-                        self.event_source.clone(),
-                        code,
-                        state,
-                        self.modifier_state.get(),
-                    );
                 }
                 KeyboardEvent::Modifiers {
                     depressed,
