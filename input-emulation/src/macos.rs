@@ -88,7 +88,7 @@ impl MacOSEmulation {
             button_state,
             previous_button: None,
             previous_button_click: None,
-            button_click_state: 1,
+            button_click_state: 0,
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
@@ -244,158 +244,165 @@ impl Emulation for MacOSEmulation {
     ) -> Result<(), EmulationError> {
         log::trace!("{event:?}");
         match event {
-            Event::Pointer(pointer_event) => match pointer_event {
-                PointerEvent::Motion { time: _, dx, dy } => {
-                    let mut mouse_location = match self.get_mouse_location() {
-                        Some(l) => l,
-                        None => {
-                            log::warn!("could not get mouse location!");
-                            return Ok(());
-                        }
-                    };
+            Event::Pointer(pointer_event) => {
+                match pointer_event {
+                    PointerEvent::Motion { time: _, dx, dy } => {
+                        let mut mouse_location = match self.get_mouse_location() {
+                            Some(l) => l,
+                            None => {
+                                log::warn!("could not get mouse location!");
+                                return Ok(());
+                            }
+                        };
 
-                    let (new_mouse_x, new_mouse_y) =
-                        clamp_to_screen_space(mouse_location.x, mouse_location.y, dx, dy);
+                        let (new_mouse_x, new_mouse_y) =
+                            clamp_to_screen_space(mouse_location.x, mouse_location.y, dx, dy);
 
-                    mouse_location.x = new_mouse_x;
-                    mouse_location.y = new_mouse_y;
+                        mouse_location.x = new_mouse_x;
+                        mouse_location.y = new_mouse_y;
 
-                    let mut event_type = CGEventType::MouseMoved;
-                    if self.button_state.left {
-                        event_type = CGEventType::LeftMouseDragged
-                    } else if self.button_state.right {
-                        event_type = CGEventType::RightMouseDragged
-                    } else if self.button_state.center {
-                        event_type = CGEventType::OtherMouseDragged
-                    };
-                    let event = match CGEvent::new_mouse_event(
-                        self.event_source.clone(),
-                        event_type,
-                        mouse_location,
-                        CGMouseButton::Left,
-                    ) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            log::warn!("mouse event creation failed!");
-                            return Ok(());
-                        }
-                    };
-                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
-                    event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
-                    event.post(CGEventTapLocation::HID);
-                }
-                PointerEvent::Button {
-                    time: _,
-                    button,
-                    state,
-                } => {
-                    let (event_type, mouse_button) = match (button, state) {
-                        (BTN_LEFT, 1) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
-                        (BTN_LEFT, 0) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
-                        (BTN_RIGHT, 1) => (CGEventType::RightMouseDown, CGMouseButton::Right),
-                        (BTN_RIGHT, 0) => (CGEventType::RightMouseUp, CGMouseButton::Right),
-                        (BTN_MIDDLE, 1) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
-                        (BTN_MIDDLE, 0) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
-                        _ => {
-                            log::warn!("invalid button event: {button},{state}");
-                            return Ok(());
-                        }
-                    };
-                    // store button state
-                    self.button_state[mouse_button] = state == 1;
-
-                    // update previous button state
-                    if state == 1 {
-                        if self.previous_button.is_some_and(|b| b.eq(&mouse_button))
-                            && self
-                                .previous_button_click
-                                .is_some_and(|i| i.elapsed() < DOUBLE_CLICK_INTERVAL)
-                        {
-                            self.button_click_state += 1;
-                        } else {
-                            self.button_click_state = 1;
-                        }
-                        self.previous_button = Some(mouse_button);
-                        self.previous_button_click = Some(Instant::now());
+                        let mut event_type = CGEventType::MouseMoved;
+                        if self.button_state.left {
+                            event_type = CGEventType::LeftMouseDragged
+                        } else if self.button_state.right {
+                            event_type = CGEventType::RightMouseDragged
+                        } else if self.button_state.center {
+                            event_type = CGEventType::OtherMouseDragged
+                        };
+                        let event = match CGEvent::new_mouse_event(
+                            self.event_source.clone(),
+                            event_type,
+                            mouse_location,
+                            CGMouseButton::Left,
+                        ) {
+                            Ok(e) => e,
+                            Err(_) => {
+                                log::warn!("mouse event creation failed!");
+                                return Ok(());
+                            }
+                        };
+                        event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
+                        event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
+                        event.post(CGEventTapLocation::HID);
                     }
+                    PointerEvent::Button {
+                        time: _,
+                        button,
+                        state,
+                    } => {
+                        let (event_type, mouse_button) = match (button, state) {
+                            (BTN_LEFT, 1) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
+                            (BTN_LEFT, 0) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
+                            (BTN_RIGHT, 1) => (CGEventType::RightMouseDown, CGMouseButton::Right),
+                            (BTN_RIGHT, 0) => (CGEventType::RightMouseUp, CGMouseButton::Right),
+                            (BTN_MIDDLE, 1) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
+                            (BTN_MIDDLE, 0) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
+                            _ => {
+                                log::warn!("invalid button event: {button},{state}");
+                                return Ok(());
+                            }
+                        };
+                        // store button state
+                        self.button_state[mouse_button] = state == 1;
 
-                    log::debug!("click_state: {}", self.button_click_state);
-                    let location = self.get_mouse_location().unwrap();
-                    let event = match CGEvent::new_mouse_event(
-                        self.event_source.clone(),
-                        event_type,
-                        location,
-                        mouse_button,
-                    ) {
-                        Ok(e) => e,
-                        Err(()) => {
-                            log::warn!("mouse event creation failed!");
-                            return Ok(());
+                        // update previous button state
+                        if state == 1 {
+                            if self.previous_button.is_some_and(|b| b.eq(&mouse_button))
+                                && self
+                                    .previous_button_click
+                                    .is_some_and(|i| i.elapsed() < DOUBLE_CLICK_INTERVAL)
+                            {
+                                self.button_click_state += 1;
+                            } else {
+                                self.button_click_state = 1;
+                            }
+                            self.previous_button = Some(mouse_button);
+                            self.previous_button_click = Some(Instant::now());
                         }
-                    };
-                    event.set_integer_value_field(
-                        EventField::MOUSE_EVENT_CLICK_STATE,
-                        self.button_click_state,
-                    );
-                    event.post(CGEventTapLocation::HID);
+
+                        log::debug!("click_state: {}", self.button_click_state);
+                        let location = self.get_mouse_location().unwrap();
+                        let event = match CGEvent::new_mouse_event(
+                            self.event_source.clone(),
+                            event_type,
+                            location,
+                            mouse_button,
+                        ) {
+                            Ok(e) => e,
+                            Err(()) => {
+                                log::warn!("mouse event creation failed!");
+                                return Ok(());
+                            }
+                        };
+                        event.set_integer_value_field(
+                            EventField::MOUSE_EVENT_CLICK_STATE,
+                            self.button_click_state,
+                        );
+                        event.post(CGEventTapLocation::HID);
+                    }
+                    PointerEvent::Axis {
+                        time: _,
+                        axis,
+                        value,
+                    } => {
+                        let value = value as i32;
+                        let (count, wheel1, wheel2, wheel3) = match axis {
+                            0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                            1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
+                            _ => {
+                                log::warn!("invalid scroll event: {axis}, {value}");
+                                return Ok(());
+                            }
+                        };
+                        let event = match CGEvent::new_scroll_event(
+                            self.event_source.clone(),
+                            ScrollEventUnit::PIXEL,
+                            count,
+                            wheel1,
+                            wheel2,
+                            wheel3,
+                        ) {
+                            Ok(e) => e,
+                            Err(()) => {
+                                log::warn!("scroll event creation failed!");
+                                return Ok(());
+                            }
+                        };
+                        event.post(CGEventTapLocation::HID);
+                    }
+                    PointerEvent::AxisDiscrete120 { axis, value } => {
+                        const LINES_PER_STEP: i32 = 3;
+                        let (count, wheel1, wheel2, wheel3) = match axis {
+                            0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                            1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
+                            _ => {
+                                log::warn!("invalid scroll event: {axis}, {value}");
+                                return Ok(());
+                            }
+                        };
+                        let event = match CGEvent::new_scroll_event(
+                            self.event_source.clone(),
+                            ScrollEventUnit::LINE,
+                            count,
+                            wheel1,
+                            wheel2,
+                            wheel3,
+                        ) {
+                            Ok(e) => e,
+                            Err(()) => {
+                                log::warn!("scroll event creation failed!");
+                                return Ok(());
+                            }
+                        };
+                        event.post(CGEventTapLocation::HID);
+                    }
                 }
-                PointerEvent::Axis {
-                    time: _,
-                    axis,
-                    value,
-                } => {
-                    let value = value as i32;
-                    let (count, wheel1, wheel2, wheel3) = match axis {
-                        0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
-                        1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
-                        _ => {
-                            log::warn!("invalid scroll event: {axis}, {value}");
-                            return Ok(());
-                        }
-                    };
-                    let event = match CGEvent::new_scroll_event(
-                        self.event_source.clone(),
-                        ScrollEventUnit::PIXEL,
-                        count,
-                        wheel1,
-                        wheel2,
-                        wheel3,
-                    ) {
-                        Ok(e) => e,
-                        Err(()) => {
-                            log::warn!("scroll event creation failed!");
-                            return Ok(());
-                        }
-                    };
-                    event.post(CGEventTapLocation::HID);
+
+                // reset button click state in case it's not a button event
+                if !matches!(pointer_event, PointerEvent::Button { .. }) {
+                    self.button_click_state = 0;
                 }
-                PointerEvent::AxisDiscrete120 { axis, value } => {
-                    const LINES_PER_STEP: i32 = 3;
-                    let (count, wheel1, wheel2, wheel3) = match axis {
-                        0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
-                        1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
-                        _ => {
-                            log::warn!("invalid scroll event: {axis}, {value}");
-                            return Ok(());
-                        }
-                    };
-                    let event = match CGEvent::new_scroll_event(
-                        self.event_source.clone(),
-                        ScrollEventUnit::LINE,
-                        count,
-                        wheel1,
-                        wheel2,
-                        wheel3,
-                    ) {
-                        Ok(e) => e,
-                        Err(()) => {
-                            log::warn!("scroll event creation failed!");
-                            return Ok(());
-                        }
-                    };
-                    event.post(CGEventTapLocation::HID);
-                }
-            },
+            }
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key {
                     time: _,
