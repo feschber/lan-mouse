@@ -40,6 +40,7 @@ struct InputCaptureState {
     active_clients: Lazy<HashSet<Position>>,
     current_pos: Option<Position>,
     bounds: Bounds,
+    modifier_state: XMods,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ impl InputCaptureState {
             active_clients: Lazy::new(HashSet::new),
             current_pos: None,
             bounds: Bounds::default(),
+            modifier_state: Default::default(),
         };
         res.update_bounds()?;
         Ok(res)
@@ -180,6 +182,7 @@ fn get_events(
     ev_type: &CGEventType,
     ev: &CGEvent,
     result: &mut Vec<CaptureEvent>,
+    modifier_state: &mut XMods,
 ) -> Result<(), CaptureError> {
     fn map_pointer_event(ev: &CGEvent) -> PointerEvent {
         PointerEvent::Motion {
@@ -215,29 +218,42 @@ fn get_events(
             })));
         }
         CGEventType::FlagsChanged => {
-            let mut mods = XMods::empty();
+            let mut depressed = XMods::empty();
             let mut mods_locked = XMods::empty();
             let cg_flags = ev.get_flags();
 
             if cg_flags.contains(CGEventFlags::CGEventFlagShift) {
-                mods |= XMods::ShiftMask;
+                depressed |= XMods::ShiftMask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagControl) {
-                mods |= XMods::ControlMask;
+                depressed |= XMods::ControlMask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagAlternate) {
-                mods |= XMods::Mod1Mask;
+                depressed |= XMods::Mod1Mask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagCommand) {
-                mods |= XMods::Mod4Mask;
+                depressed |= XMods::Mod4Mask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagAlphaShift) {
-                mods |= XMods::LockMask;
+                depressed |= XMods::LockMask;
                 mods_locked |= XMods::LockMask;
             }
 
+            // check if pressed or released
+            let state = if depressed > *modifier_state { 1 } else { 0 };
+            *modifier_state = depressed;
+
+            if let Ok(key) = map_key(ev) {
+                let key_event = CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key,
+                    state,
+                }));
+                result.push(key_event);
+            }
+
             let modifier_event = KeyboardEvent::Modifiers {
-                depressed: mods.bits(),
+                depressed: depressed.bits(),
                 latched: 0,
                 locked: mods_locked.bits(),
                 group: 0,
@@ -366,7 +382,13 @@ fn create_event_tap<'a>(
             // Are we in a client?
             if let Some(current_pos) = state.current_pos {
                 pos = Some(current_pos);
-                get_events(&event_type, cg_ev, &mut res_events).unwrap_or_else(|e| {
+                get_events(
+                    &event_type,
+                    cg_ev,
+                    &mut res_events,
+                    &mut state.modifier_state,
+                )
+                .unwrap_or_else(|e| {
                     log::error!("Failed to get events: {e}");
                 });
 
