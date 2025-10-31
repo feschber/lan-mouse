@@ -1872,6 +1872,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "toml_edit",
  "webrtc-dtls",
  "webrtc-util",
 ]
