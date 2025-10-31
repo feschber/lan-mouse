@@ -12,6 +12,7 @@ use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
 
+use input_emulation::InputConfig;
 use lan_mouse_cli::CliArgs;
 use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
@@ -50,6 +51,8 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    mouse_mod: Option<f64>,
+    invert_scroll: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -363,6 +366,22 @@ impl Config {
             .port
             .or(self.config_toml.as_ref().and_then(|c| c.port))
             .unwrap_or(DEFAULT_PORT)
+    }
+
+    pub fn input_config(&self) -> InputConfig {
+        InputConfig {
+            invert_scroll: self
+                .config_toml
+                .as_ref()
+                .and_then(|c| c.invert_scroll)
+                .unwrap_or(false),
+
+            mouse_mod: self
+                .config_toml
+                .as_ref()
+                .and_then(|c| c.mouse_mod)
+                .unwrap_or(1.0),
+        }
     }
 
     /// list of configured clients

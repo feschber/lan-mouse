@@ -1,6 +1,6 @@
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{EmulationHandle, InputConfig, InputEmulation, InputEmulationError};
 use input_event::Event;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -59,14 +59,16 @@ enum EmulationRequest {
     Release(SocketAddr),
     ChangePort(u16),
     Terminate,
+    UpdateInputConfig(InputConfig),
 }
 
 impl Emulation {
     pub(crate) fn new(
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
+        input_config: InputConfig,
     ) -> Self {
-        let emulation_proxy = EmulationProxy::new(backend);
+        let emulation_proxy = EmulationProxy::new(backend, input_config);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_task = ListenTask {
@@ -98,6 +100,12 @@ impl Emulation {
     pub(crate) fn request_port_change(&self, port: u16) {
         self.request_tx
             .send(EmulationRequest::ChangePort(port))
+            .expect("channel closed")
+    }
+
+    pub(crate) fn request_input_config_upate(&self, input_config: InputConfig) {
+        self.request_tx
+            .send(EmulationRequest::UpdateInputConfig(input_config))
             .expect("channel closed")
     }
 
@@ -172,6 +180,7 @@ impl ListenTask {
                     EmulationRequest::Reenable => self.emulation_proxy.reenable(),
                     // notify the other end that we hit a barrier (should release capture)
                     EmulationRequest::Release(addr) => self.listener.reply(addr, ProtoEvent::Leave(0)).await,
+                    EmulationRequest::UpdateInputConfig(input_config) => self.emulation_proxy.input_config = input_config,
                     EmulationRequest::ChangePort(port) => {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
@@ -206,6 +215,7 @@ pub(crate) struct EmulationProxy {
     request_tx: Sender<ProxyRequest>,
     event_rx: Receiver<EmulationEvent>,
     task: JoinHandle<()>,
+    input_config: InputConfig,
 }
 
 enum ProxyRequest {
@@ -216,7 +226,7 @@ enum ProxyRequest {
 }
 
 impl EmulationProxy {
-    fn new(backend: Option<input_emulation::Backend>) -> Self {
+    fn new(backend: Option<input_emulation::Backend>, input_config: InputConfig) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_active = Rc::new(Cell::new(false));
@@ -228,6 +238,7 @@ impl EmulationProxy {
             event_tx,
             handles: Default::default(),
             next_id: 0,
+            input_config,
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -236,6 +247,7 @@ impl EmulationProxy {
             request_tx,
             task,
             event_rx,
+            input_config,
         }
     }
 
@@ -287,6 +299,7 @@ struct EmulationTask {
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
     next_id: EmulationHandle,
+    input_config: InputConfig,
 }
 
 impl EmulationTask {
@@ -313,7 +326,7 @@ impl EmulationTask {
     async fn do_emulation(&mut self) -> Result<(), InputEmulationError> {
         log::info!("creating input emulation ...");
         let mut emulation = tokio::select! {
-            r = InputEmulation::new(self.backend) => r?,
+            r = InputEmulation::new(self.backend, self.input_config) => r?,
             // allow termination event while requesting input emulation
             _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
         };
