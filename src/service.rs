@@ -10,6 +10,7 @@ use crate::{
 };
 use futures::StreamExt;
 use hickory_resolver::ResolveError;
+use input_emulation::InputConfig;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
     IpcError, IpcListenerCreationError, Position, Status,
@@ -115,7 +116,7 @@ impl Service {
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(emulation_backend, listener, config.input_config());
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -199,6 +200,9 @@ impl Service {
             FrontendRequest::RemoveAuthorizedKey(key) => self.remove_authorized_key(key),
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
+            }
+            FrontendRequest::UpdateInputConfig(input_config) => {
+                self.update_input_config(input_config)
             }
         }
     }
@@ -509,6 +513,10 @@ impl Service {
             .map(|(c, s)| FrontendEvent::State(handle, c, s))
             .unwrap_or(FrontendEvent::NoSuchClient(handle));
         self.notify_frontend(event);
+    }
+
+    fn update_input_config(&mut self, input_config: InputConfig) {
+        self.emulation.request_input_config_upate(input_config);
     }
 
     fn spawn_hook_command(&self, handle: ClientHandle) {
