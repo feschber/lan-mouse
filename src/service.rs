@@ -118,7 +118,7 @@ impl Service {
         let emulation = Emulation::new(
             emulation_backend,
             listener,
-            (config.invert_scroll(), config.mouse_mod()),
+            (config.invert_scroll(), config.mouse_sensitivity()),
         );
 
         // create dns resolver
@@ -207,7 +207,7 @@ impl Service {
             FrontendRequest::UpdateScrollingInversion(invert_scroll) => {
                 self.update_scrolling_inversion(invert_scroll)
             }
-            FrontendRequest::UpdateMouseMod(mouse_mod) => self.update_mouse_mod(mouse_mod),
+            FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity) => self.update_mouse_sensitivity(mouse_sensitivity),
         }
     }
 
@@ -523,8 +523,8 @@ impl Service {
         self.emulation.request_scrolling_inversion(invert_scroll);
     }
 
-    fn update_mouse_mod(&mut self, mouse_mod: f64) {
-        self.emulation.request_mouse_mod_change(mouse_mod);
+    fn update_mouse_sensitivity(&mut self, mouse_sensitivity: f64) {
+        self.emulation.request_mouse_sensitivity_change(mouse_sensitivity);
     }
 
     fn spawn_hook_command(&self, handle: ClientHandle) {

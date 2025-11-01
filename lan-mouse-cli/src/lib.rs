@@ -56,13 +56,13 @@ enum CliSubcommand {
     },
     /// change port
     SetPort { id: ClientHandle, port: u16 },
-    /// invert scrolling
-    SetScrollingInversion {
+    /// invert scrolling direction
+    InvertScrolling {
         #[clap(short, long)]
         invert_scroll: bool,
     },
-    /// set mouse mod
-    SetMouseMod { mouse_mod: f64 },
+    /// set mouse mouse sensitivity
+    SetMouseSensitivity { mouse_sensitivity: f64 },
     /// set position
     SetPosition { id: ClientHandle, pos: Position },
     /// set ips
@@ -147,12 +147,12 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
         CliSubcommand::SetPort { id, port } => {
             tx.request(FrontendRequest::UpdatePort(id, port)).await?
         }
-        CliSubcommand::SetScrollingInversion { invert_scroll } => {
+        CliSubcommand::InvertScrolling { invert_scroll } => {
             tx.request(FrontendRequest::UpdateScrollingInversion(invert_scroll))
                 .await?
         }
-        CliSubcommand::SetMouseMod { mouse_mod } => {
-            tx.request(FrontendRequest::UpdateMouseMod(mouse_mod))
+        CliSubcommand::SetMouseSensitivity { mouse_sensitivity } => {
+            tx.request(FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity))
                 .await?
         }
         CliSubcommand::SetPosition { id, pos } => {

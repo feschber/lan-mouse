@@ -60,7 +60,7 @@ enum EmulationRequest {
     ChangePort(u16),
     Terminate,
     UpdateScrollingInversion(bool),
-    UpdateMouseMod(f64),
+    UpdateMouseSensitivity(f64),
 }
 
 impl Emulation {
@@ -71,7 +71,7 @@ impl Emulation {
     ) -> Self {
         let input_config = InputConfig {
             invert_scroll: input_config.0,
-            mouse_mod: input_config.1,
+            mouse_sensitivity: input_config.1,
         };
         let emulation_proxy = EmulationProxy::new(backend, input_config);
         let (request_tx, request_rx) = channel();
@@ -114,9 +114,9 @@ impl Emulation {
             .expect("channel closed")
     }
 
-    pub(crate) fn request_mouse_mod_change(&self, mouse_mod: f64) {
+    pub(crate) fn request_mouse_sensitivity_change(&self, mouse_sensitivity: f64) {
         self.request_tx
-            .send(EmulationRequest::UpdateMouseMod(mouse_mod))
+            .send(EmulationRequest::UpdateMouseSensitivity(mouse_sensitivity))
             .expect("channel closed")
     }
 
@@ -192,7 +192,7 @@ impl ListenTask {
                     // notify the other end that we hit a barrier (should release capture)
                     EmulationRequest::Release(addr) => self.listener.reply(addr, ProtoEvent::Leave(0)).await,
                     EmulationRequest::UpdateScrollingInversion(invert_scroll) => self.emulation_proxy.input_config.invert_scroll = invert_scroll,
-                    EmulationRequest::UpdateMouseMod(mouse_mod) => self.emulation_proxy.input_config.mouse_mod = mouse_mod,
+                    EmulationRequest::UpdateMouseSensitivity(mouse_sensitivity) => self.emulation_proxy.input_config.mouse_sensitivity = mouse_sensitivity,
                     EmulationRequest::ChangePort(port) => {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
