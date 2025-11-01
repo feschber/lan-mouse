@@ -18,7 +18,7 @@ pub enum CliError {
     Ipc(#[from] IpcError),
 }
 
-#[derive(Parser, Clone, Debug, PartialEq, Eq)]
+#[derive(Parser, Clone, Debug)]
 #[command(name = "lan-mouse-cli", about = "LanMouse CLI interface")]
 pub struct CliArgs {
     #[command(subcommand)]
@@ -37,7 +37,7 @@ struct Client {
     enter_hook: Option<String>,
 }
 
-#[derive(Clone, Subcommand, Debug, PartialEq, Eq)]
+#[derive(Clone, Subcommand, Debug)]
 enum CliSubcommand {
     /// add a new client
     AddClient(Client),
@@ -56,6 +56,13 @@ enum CliSubcommand {
     },
     /// change port
     SetPort { id: ClientHandle, port: u16 },
+    /// invert scrolling direction
+    InvertScrolling {
+        #[clap(short, long)]
+        invert_scroll: bool,
+    },
+    /// set mouse mouse sensitivity
+    SetMouseSensitivity { mouse_sensitivity: f64 },
     /// set position
     SetPosition { id: ClientHandle, pos: Position },
     /// set ips
@@ -139,6 +146,14 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
         }
         CliSubcommand::SetPort { id, port } => {
             tx.request(FrontendRequest::UpdatePort(id, port)).await?
+        }
+        CliSubcommand::InvertScrolling { invert_scroll } => {
+            tx.request(FrontendRequest::UpdateScrollingInversion(invert_scroll))
+                .await?
+        }
+        CliSubcommand::SetMouseSensitivity { mouse_sensitivity } => {
+            tx.request(FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity))
+                .await?
         }
         CliSubcommand::SetPosition { id, pos } => {
             tx.request(FrontendRequest::UpdatePosition(id, pos)).await?
