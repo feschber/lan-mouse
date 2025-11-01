@@ -6,12 +6,12 @@ use x11::{
 };
 
 use input_event::{
-    Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
 };
 
 use crate::error::EmulationError;
 
-use super::{error::X11EmulationCreationError, Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, error::X11EmulationCreationError};
 
 pub(crate) struct X11Emulation {
     display: *mut xlib::Display,

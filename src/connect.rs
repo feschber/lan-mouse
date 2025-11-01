@@ -1,7 +1,7 @@
 use crate::client::ClientManager;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
-use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
-use local_channel::mpsc::{channel, Receiver, Sender};
+use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
+use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -15,7 +15,7 @@ use thiserror::Error;
 use tokio::{
     net::UdpSocket,
     sync::Mutex,
-    task::{spawn_local, JoinSet},
+    task::{JoinSet, spawn_local},
 };
 use webrtc_dtls::{
     config::{Config, ExtendedMasterSecretType},

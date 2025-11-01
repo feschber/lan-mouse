@@ -1,6 +1,6 @@
 use futures::{Stream, StreamExt};
-use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
-use local_channel::mpsc::{channel, Receiver, Sender};
+use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
+use local_channel::mpsc::{Receiver, Sender, channel};
 use rustls::pki_types::CertificateDer;
 use std::{
     collections::{HashMap, VecDeque},
@@ -12,7 +12,7 @@ use std::{
 use thiserror::Error;
 use tokio::{
     sync::Mutex as AsyncMutex,
-    task::{spawn_local, JoinHandle},
+    task::{JoinHandle, spawn_local},
 };
 use webrtc_dtls::{
     config::{ClientAuthType::RequireAnyClientCert, Config, ExtendedMasterSecretType},
@@ -20,7 +20,7 @@ use webrtc_dtls::{
     crypto::Certificate,
     listener::listen,
 };
-use webrtc_util::{conn::Listener, Conn, Error};
+use webrtc_util::{Conn, Error, conn::Listener};
 
 use crate::crypto;
 

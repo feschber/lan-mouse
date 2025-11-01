@@ -1,15 +1,15 @@
-use super::{error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, Position};
+use super::{Capture, CaptureError, CaptureEvent, Position, error::MacosCaptureCreationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_foundation::{
-    base::{kCFAllocatorDefault, CFRelease},
+    base::{CFRelease, kCFAllocatorDefault},
     date::CFTimeInterval,
-    number::{kCFBooleanTrue, CFBooleanRef},
-    runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource},
-    string::{kCFStringEncodingUTF8, CFStringCreateWithCString, CFStringRef},
+    number::{CFBooleanRef, kCFBooleanTrue},
+    runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
+    string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{kCGErrorSuccess, CGError},
+    base::{CGError, kCGErrorSuccess},
     display::{CGDisplay, CGPoint},
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -18,21 +18,22 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use futures_core::Stream;
-use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use input_event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent};
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
 use std::{
     collections::HashSet,
-    ffi::{c_char, CString},
+    ffi::{CString, c_char},
     pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
     thread::{self},
 };
 use tokio::sync::{
+    Mutex,
     mpsc::{self, Receiver, Sender},
-    oneshot, Mutex,
+    oneshot,
 };
 
 #[derive(Debug, Default)]

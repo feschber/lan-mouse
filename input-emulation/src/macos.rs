@@ -1,4 +1,4 @@
-use super::{error::EmulationError, Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_graphics::base::CGFloat;
@@ -10,7 +10,7 @@ use core_graphics::event::{
     ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use input_event::{scancode, Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use input_event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent, scancode};
 use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
 use std::ops::{Index, IndexMut};

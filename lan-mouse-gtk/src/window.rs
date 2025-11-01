@@ -4,16 +4,15 @@ use std::collections::HashMap;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use glib::{clone, Object};
+use glib::{Object, clone};
 use gtk::{
-    gio,
+    NoSelection, gio,
     glib::{self, closure_local},
-    NoSelection,
 };
 
 use lan_mouse_ipc::{
-    ClientConfig, ClientHandle, ClientState, FrontendRequest, FrontendRequestWriter, Position,
-    DEFAULT_PORT,
+    ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest, FrontendRequestWriter,
+    Position,
 };
 
 use crate::{

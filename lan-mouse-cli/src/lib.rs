@@ -5,8 +5,8 @@ use std::{net::IpAddr, time::Duration};
 use thiserror::Error;
 
 use lan_mouse_ipc::{
-    connect_async, ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError,
-    Position,
+    ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError, Position,
+    connect_async,
 };
 
 #[derive(Debug, Error)]

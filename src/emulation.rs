@@ -3,7 +3,7 @@ use futures::StreamExt;
 use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
 use lan_mouse_proto::{Position, ProtoEvent};
-use local_channel::mpsc::{channel, Receiver, Sender};
+use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     select,
-    task::{spawn_local, JoinHandle},
+    task::{JoinHandle, spawn_local},
 };
 
 /// emulation handling events received from a listener

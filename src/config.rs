@@ -13,7 +13,7 @@ use thiserror::Error;
 use toml;
 
 use lan_mouse_cli::CliArgs;
-use lan_mouse_ipc::{Position, DEFAULT_PORT};
+use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
 use input_event::scancode::{
     self,

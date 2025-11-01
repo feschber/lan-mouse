@@ -10,8 +10,8 @@ use input_capture::{
 };
 use input_event::scancode;
 use lan_mouse_proto::ProtoEvent;
-use local_channel::mpsc::{channel, Receiver, Sender};
-use tokio::task::{spawn_local, JoinHandle};
+use local_channel::mpsc::{Receiver, Sender, channel};
+use tokio::task::{JoinHandle, spawn_local};
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;

@@ -2,14 +2,14 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Display,
     mem::swap,
-    task::{ready, Poll},
+    task::{Poll, ready},
 };
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures_core::Stream;
 
-use input_event::{scancode, Event, KeyboardEvent};
+use input_event::{Event, KeyboardEvent, scancode};
 
 pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
