@@ -50,11 +50,17 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
-    mouse_sensitivity: Option<f64>,
-    invert_scroll: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    input: InputConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct InputConfig {
+    // TODO: implement scroll_sensitivity and mouse_acceleration
+    invert_scroll: Option<bool>,
+    mouse_sensitivity: Option<f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -370,14 +376,14 @@ impl Config {
     pub fn invert_scroll(&self) -> bool {
         self.config_toml
             .as_ref()
-            .and_then(|c| c.invert_scroll)
+            .and_then(|c| c.input.invert_scroll)
             .unwrap_or(false)
     }
 
     pub fn mouse_sensitivity(&self) -> f64 {
         self.config_toml
             .as_ref()
-            .and_then(|c| c.mouse_sensitivity)
+            .and_then(|c| c.input.mouse_sensitivity)
             .unwrap_or(1.0)
     }
 

@@ -6,6 +6,7 @@ release_bind = ["KeyA", "KeyS", "KeyD", "KeyF"]
 # optional port (defaults to 4242)
 port = 4242
 
+[input]
 # linear mouse acceleration
 mouse_sensitivity = 1.0
 # invert scrolling direction
