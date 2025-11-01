@@ -1,12 +1,10 @@
 use async_trait::async_trait;
-use float_derive::FloatEq;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
 };
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
-use serde::{Deserialize, Serialize};
 
 pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
@@ -71,10 +69,19 @@ impl Display for Backend {
     }
 }
 
-#[derive(Clone, Copy, Debug, FloatEq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 pub struct InputConfig {
     pub invert_scroll: bool,
     pub mouse_mod: f64,
+}
+
+impl InputConfig {
+    pub fn new(invert_scroll: bool, mouse_mod: f64) -> Self {
+        InputConfig {
+            invert_scroll,
+            mouse_mod,
+        }
+    }
 }
 
 pub struct InputEmulation {

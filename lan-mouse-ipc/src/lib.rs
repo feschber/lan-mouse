@@ -1,4 +1,3 @@
-use float_derive::FloatEq;
 use std::{
     collections::{HashMap, HashSet},
     env::VarError,
@@ -16,8 +15,6 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-
-use input_emulation::InputConfig;
 
 mod connect;
 mod connect_async;
@@ -222,7 +219,7 @@ pub enum FrontendEvent {
     ConnectionAttempt { fingerprint: String },
 }
 
-#[derive(Debug, FloatEq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
     /// activate/deactivate client
     Activate(ClientHandle, bool),
@@ -257,7 +254,8 @@ pub enum FrontendRequest {
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
     /// update the input post-processing settings (invert-scroll, mouse_mod)
-    UpdateInputConfig(InputConfig),
+    UpdateScrollingInversion(bool),
+    UpdateMouseMod(f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

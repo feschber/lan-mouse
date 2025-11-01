@@ -9,11 +9,9 @@ repository = "https://github.com/feschber/lan-mouse"
 [dependencies]
 async-trait = "0.1.80"
 futures = "0.3.28"
-float-derive = "0.1.0"
 log = "0.4.22"
 input-event = { path = "../input-event", version = "0.3.0" }
 thiserror = "2.0.0"
-serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.32.0", features = [
     "io-util",
     "io-std",

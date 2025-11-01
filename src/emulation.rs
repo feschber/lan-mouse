@@ -59,15 +59,20 @@ enum EmulationRequest {
     Release(SocketAddr),
     ChangePort(u16),
     Terminate,
-    UpdateInputConfig(InputConfig),
+    UpdateScrollingInversion(bool),
+    UpdateMouseMod(f64),
 }
 
 impl Emulation {
     pub(crate) fn new(
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
-        input_config: InputConfig,
+        input_config: (bool, f64),
     ) -> Self {
+        let input_config = InputConfig {
+            invert_scroll: input_config.0,
+            mouse_mod: input_config.1,
+        };
         let emulation_proxy = EmulationProxy::new(backend, input_config);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -103,9 +108,15 @@ impl Emulation {
             .expect("channel closed")
     }
 
-    pub(crate) fn request_input_config_upate(&self, input_config: InputConfig) {
+    pub(crate) fn request_scrolling_inversion(&self, invert_scroll: bool) {
         self.request_tx
-            .send(EmulationRequest::UpdateInputConfig(input_config))
+            .send(EmulationRequest::UpdateScrollingInversion(invert_scroll))
+            .expect("channel closed")
+    }
+
+    pub(crate) fn request_mouse_mod_change(&self, mouse_mod: f64) {
+        self.request_tx
+            .send(EmulationRequest::UpdateMouseMod(mouse_mod))
             .expect("channel closed")
     }
 
@@ -180,7 +191,8 @@ impl ListenTask {
                     EmulationRequest::Reenable => self.emulation_proxy.reenable(),
                     // notify the other end that we hit a barrier (should release capture)
                     EmulationRequest::Release(addr) => self.listener.reply(addr, ProtoEvent::Leave(0)).await,
-                    EmulationRequest::UpdateInputConfig(input_config) => self.emulation_proxy.input_config = input_config,
+                    EmulationRequest::UpdateScrollingInversion(invert_scroll) => self.emulation_proxy.input_config.invert_scroll = invert_scroll,
+                    EmulationRequest::UpdateMouseMod(mouse_mod) => self.emulation_proxy.input_config.mouse_mod = mouse_mod,
                     EmulationRequest::ChangePort(port) => {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
