@@ -1,6 +1,6 @@
 use crate::error::EmulationError;
 
-use super::{error::WlrootsEmulationCreationError, Emulation};
+use super::{Emulation, error::WlrootsEmulationCreationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use std::collections::HashMap;
@@ -8,8 +8,8 @@ use std::io;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
+use wayland_client::backend::WaylandError;
 
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
@@ -25,16 +25,15 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
-    delegate_noop,
-    globals::{registry_queue_init, GlobalListContents},
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
+    globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_registry, wl_seat},
-    Connection, Dispatch, EventQueue, QueueHandle,
 };
 
-use input_event::{scancode, Event, KeyboardEvent, PointerEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 
-use super::error::WaylandBindError;
 use super::EmulationHandle;
+use super::error::WaylandBindError;
 
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,

@@ -4,8 +4,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
+    Button, CompositeTemplate, Text,
     glib::{self, subclass::Signal},
-    template_callbacks, Button, CompositeTemplate, Text,
+    template_callbacks,
 };
 
 #[derive(CompositeTemplate, Default)]
@@ -51,9 +52,11 @@ impl ObjectImpl for FingerprintWindow {
     fn signals() -> &'static [Signal] {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
         SIGNALS.get_or_init(|| {
-            vec![Signal::builder("confirm-clicked")
-                .param_types([String::static_type(), String::static_type()])
-                .build()]
+            vec![
+                Signal::builder("confirm-clicked")
+                    .param_types([String::static_type(), String::static_type()])
+                    .build(),
+            ]
         })
     }
 }

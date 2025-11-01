@@ -1,10 +1,10 @@
 use ashpd::{
     desktop::{
+        Session,
         input_capture::{
             Activated, ActivatedBarrier, Barrier, BarrierID, Capabilities, InputCapture, Region,
             Zones,
         },
-        Session,
     },
     enumflags2::BitFlags,
 };
@@ -28,8 +28,8 @@ use std::{
 };
 use tokio::{
     sync::{
-        mpsc::{self, Receiver, Sender},
         Notify,
+        mpsc::{self, Receiver, Sender},
     },
     task::JoinHandle,
 };
@@ -42,8 +42,8 @@ use input_event::Event;
 use crate::CaptureEvent;
 
 use super::{
-    error::{CaptureError, LibeiCaptureCreationError},
     Capture as LanMouseInputCapture, Position,
+    error::{CaptureError, LibeiCaptureCreationError},
 };
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that

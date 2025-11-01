@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use async_trait::async_trait;

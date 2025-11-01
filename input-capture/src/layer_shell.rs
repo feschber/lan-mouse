@@ -7,7 +7,7 @@ use std::{
     io::{self, ErrorKind},
     os::fd::{AsFd, RawFd},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 use tokio::io::unix::AsyncFd;
 
@@ -45,9 +45,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
+    Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
     backend::{ReadEventsGuard, WaylandError},
     delegate_noop,
-    globals::{registry_queue_init, Global, GlobalList, GlobalListContents},
+    globals::{Global, GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
         wl_buffer, wl_compositor,
         wl_keyboard::{self, WlKeyboard},
@@ -58,7 +59,6 @@ use wayland_client::{
         wl_seat, wl_shm, wl_shm_pool,
         wl_surface::WlSurface,
     },
-    Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
 };
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
@@ -66,8 +66,8 @@ use input_event::{Event, KeyboardEvent, PointerEvent};
 use crate::{CaptureError, CaptureEvent};
 
 use super::{
-    error::{LayerShellCaptureCreationError, WaylandBindError},
     Capture, Position,
+    error::{LayerShellCaptureCreationError, WaylandBindError},
 };
 
 struct Globals {

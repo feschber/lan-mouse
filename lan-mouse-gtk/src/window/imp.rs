@@ -1,12 +1,12 @@
 use std::cell::{Cell, RefCell};
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
+use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Image, Label, ListBox};
+use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, gdk, gio, glib};
 
-use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
+use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
 use crate::authorization_window::AuthorizationWindow;
 

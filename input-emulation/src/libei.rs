@@ -1,25 +1,25 @@
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use std::{
     io,
     os::{fd::OwnedFd, unix::net::UnixStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
 
 use ashpd::desktop::{
-    remote_desktop::{DeviceType, RemoteDesktop},
     PersistMode, Session,
+    remote_desktop::{DeviceType, RemoteDesktop},
 };
 use async_trait::async_trait;
 
 use reis::{
     ei::{
-        self, button::ButtonState, handshake::ContextType, keyboard::KeyState, Button, Keyboard,
-        Pointer, Scroll,
+        self, Button, Keyboard, Pointer, Scroll, button::ButtonState, handshake::ContextType,
+        keyboard::KeyState,
     },
     event::{self, Connection, DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
     tokio::EiConvertEventStream,
@@ -29,7 +29,7 @@ use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use crate::error::EmulationError;
 
-use super::{error::LibeiEmulationCreationError, Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 
 #[derive(Clone, Default)]
 struct Devices {
@@ -50,8 +50,8 @@ pub(crate) struct LibeiEmulation<'a> {
     session: Session<'a, RemoteDesktop<'a>>,
 }
 
-async fn get_ei_fd<'a>(
-) -> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
+async fn get_ei_fd<'a>()
+-> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
     log::debug!("creating session ...");
