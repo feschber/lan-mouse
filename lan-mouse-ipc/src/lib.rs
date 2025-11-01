@@ -253,9 +253,9 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
-    /// update the input post-processing settings (invert-scroll, mouse_mod)
+    /// update the input post-processing settings (invert-scroll, mouse_sensitivity)
     UpdateScrollingInversion(bool),
-    UpdateMouseMod(f64),
+    UpdateMouseSensitivity(f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

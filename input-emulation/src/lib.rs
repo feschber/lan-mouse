@@ -72,14 +72,14 @@ impl Display for Backend {
 #[derive(Clone, Copy, Debug)]
 pub struct InputConfig {
     pub invert_scroll: bool,
-    pub mouse_mod: f64,
+    pub mouse_sensitivity: f64,
 }
 
 impl InputConfig {
-    pub fn new(invert_scroll: bool, mouse_mod: f64) -> Self {
+    pub fn new(invert_scroll: bool, mouse_sensitivity: f64) -> Self {
         InputConfig {
             invert_scroll,
-            mouse_mod,
+            mouse_sensitivity,
         }
     }
 }
@@ -176,8 +176,8 @@ impl InputEmulation {
             Event::Pointer(PointerEvent::Motion { time, dx, dy }) => {
                 // apply mouse mod
                 let (dx, dy) = (
-                    dx * self.input_config.mouse_mod,
-                    dy * self.input_config.mouse_mod,
+                    dx * self.input_config.mouse_sensitivity,
+                    dy * self.input_config.mouse_sensitivity,
                 );
                 let event = Event::Pointer(PointerEvent::Motion { time, dx, dy });
                 self.emulation.consume(event, handle).await?;
