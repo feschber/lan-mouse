@@ -12,7 +12,6 @@ use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
 
-use input_emulation::InputConfig;
 use lan_mouse_cli::CliArgs;
 use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
@@ -104,7 +103,7 @@ struct Args {
     command: Option<Command>,
 }
 
-#[derive(Subcommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum Command {
     /// test input emulation
     TestEmulation(TestEmulationArgs),
@@ -368,20 +367,18 @@ impl Config {
             .unwrap_or(DEFAULT_PORT)
     }
 
-    pub fn input_config(&self) -> InputConfig {
-        InputConfig {
-            invert_scroll: self
-                .config_toml
-                .as_ref()
-                .and_then(|c| c.invert_scroll)
-                .unwrap_or(false),
+    pub fn invert_scroll(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.invert_scroll)
+            .unwrap_or(false)
+    }
 
-            mouse_mod: self
-                .config_toml
-                .as_ref()
-                .and_then(|c| c.mouse_mod)
-                .unwrap_or(1.0),
-        }
+    pub fn mouse_mod(&self) -> f64 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.mouse_mod)
+            .unwrap_or(1.0)
     }
 
     /// list of configured clients

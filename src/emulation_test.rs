@@ -22,7 +22,10 @@ pub async fn run(config: Config, _args: TestEmulationArgs) -> Result<(), InputEm
     log::info!("running input emulation test");
 
     let backend = config.emulation_backend().map(|b| b.into());
-    let input_config: InputConfig = config.input_config();
+    let input_config: InputConfig = InputConfig {
+        invert_scroll: config.invert_scroll(),
+        mouse_mod: config.mouse_mod(),
+    };
     let mut emulation = InputEmulation::new(backend, input_config).await?;
     emulation.create(0).await;
 
