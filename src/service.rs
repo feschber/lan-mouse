@@ -201,8 +201,12 @@ impl Service {
             FrontendRequest::ResolveDns(handle) => self.resolve(handle),
             FrontendRequest::Sync => self.sync_frontend(),
             FrontendRequest::RemoveAuthorizedKey(key) => self.remove_authorized_key(key),
-            FrontendRequest::UpdateEnterHook(handle, enter_hook) => self.update_enter_hook(handle, enter_hook),
-            FrontendRequest::UpdateScrollingInversion(invert_scroll) => self.update_scrolling_inversion(invert_scroll),
+            FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
+                self.update_enter_hook(handle, enter_hook)
+            }
+            FrontendRequest::UpdateScrollingInversion(invert_scroll) => {
+                self.update_scrolling_inversion(invert_scroll)
+            }
             FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity) => self.update_mouse_sensitivity(mouse_sensitivity),
         }
     }
