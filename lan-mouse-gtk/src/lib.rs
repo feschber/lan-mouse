@@ -13,7 +13,7 @@ use window::Window;
 use lan_mouse_ipc::FrontendEvent;
 
 use adw::Application;
-use gtk::{gdk::Display, glib::clone, prelude::*, IconTheme};
+use gtk::{IconTheme, gdk::Display, glib::clone, prelude::*};
 use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;

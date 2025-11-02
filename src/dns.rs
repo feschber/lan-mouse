@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::IpAddr};
 
-use local_channel::mpsc::{channel, Receiver, Sender};
-use tokio::task::{spawn_local, JoinHandle};
+use local_channel::mpsc::{Receiver, Sender, channel};
+use tokio::task::{JoinHandle, spawn_local};
 
 use hickory_resolver::{ResolveError, TokioResolver};
 use tokio_util::sync::CancellationToken;

@@ -12,9 +12,9 @@ pub enum InputCaptureError {
 use std::io;
 #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
 use wayland_client::{
+    ConnectError, DispatchError,
     backend::WaylandError,
     globals::{BindError, GlobalError},
-    ConnectError, DispatchError,
 };
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]

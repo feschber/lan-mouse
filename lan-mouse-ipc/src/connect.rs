@@ -1,7 +1,7 @@
 use crate::{ConnectionError, FrontendEvent, FrontendRequest, IpcError};
 use std::{
     cmp::min,
-    io::{self, prelude::*, BufReader, LineWriter, Lines},
+    io::{self, BufReader, LineWriter, Lines, prelude::*},
     thread,
     time::Duration,
 };

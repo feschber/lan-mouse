@@ -20,8 +20,8 @@ mod connect;
 mod connect_async;
 mod listen;
 
-pub use connect::{connect, FrontendEventReader, FrontendRequestWriter};
-pub use connect_async::{connect_async, AsyncFrontendEventReader, AsyncFrontendRequestWriter};
+pub use connect::{FrontendEventReader, FrontendRequestWriter, connect};
+pub use connect_async::{AsyncFrontendEventReader, AsyncFrontendRequestWriter, connect_async};
 pub use listen::AsyncFrontendListener;
 
 #[derive(Debug, Error)]

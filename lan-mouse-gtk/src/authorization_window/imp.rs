@@ -4,8 +4,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
+    Button, CompositeTemplate, Label,
     glib::{self, subclass::Signal},
-    template_callbacks, Button, CompositeTemplate, Label,
+    template_callbacks,
 };
 
 #[derive(CompositeTemplate, Default)]

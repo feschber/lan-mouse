@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
 
-use lan_mouse_ipc::{Position, DEFAULT_PORT};
+use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
 use super::ClientObject;
 
