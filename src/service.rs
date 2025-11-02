@@ -207,7 +207,9 @@ impl Service {
             FrontendRequest::UpdateScrollingInversion(invert_scroll) => {
                 self.update_scrolling_inversion(invert_scroll)
             }
-            FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity) => self.update_mouse_sensitivity(mouse_sensitivity),
+            FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity) => {
+                self.update_mouse_sensitivity(mouse_sensitivity)
+            }
         }
     }
 
@@ -524,7 +526,8 @@ impl Service {
     }
 
     fn update_mouse_sensitivity(&mut self, mouse_sensitivity: f64) {
-        self.emulation.request_mouse_sensitivity_change(mouse_sensitivity);
+        self.emulation
+            .request_mouse_sensitivity_change(mouse_sensitivity);
     }
 
     fn spawn_hook_command(&self, handle: ClientHandle) {
