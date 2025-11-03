@@ -4,7 +4,7 @@ use std::{
     fmt::Display,
 };
 
-use input_event::{Event, KeyboardEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
@@ -69,14 +69,33 @@ impl Display for Backend {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct InputConfig {
+    pub invert_scroll: bool,
+    pub mouse_sensitivity: f64,
+}
+
+impl InputConfig {
+    pub fn new(invert_scroll: bool, mouse_sensitivity: f64) -> Self {
+        InputConfig {
+            invert_scroll,
+            mouse_sensitivity,
+        }
+    }
+}
+
 pub struct InputEmulation {
     emulation: Box<dyn Emulation>,
     handles: HashSet<EmulationHandle>,
+    input_config: InputConfig,
     pressed_keys: HashMap<EmulationHandle, HashSet<u32>>,
 }
 
 impl InputEmulation {
-    async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
+    async fn with_backend(
+        backend: Backend,
+        input_config: InputConfig,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
             #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
@@ -94,14 +113,18 @@ impl InputEmulation {
         };
         Ok(Self {
             emulation,
+            input_config,
             handles: HashSet::new(),
             pressed_keys: HashMap::new(),
         })
     }
 
-    pub async fn new(backend: Option<Backend>) -> Result<InputEmulation, EmulationCreationError> {
+    pub async fn new(
+        backend: Option<Backend>,
+        input_config: InputConfig,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         if let Some(backend) = backend {
-            let b = Self::with_backend(backend).await;
+            let b = Self::with_backend(backend, input_config).await;
             if b.is_ok() {
                 log::info!("using emulation backend: {backend}");
             }
@@ -123,7 +146,7 @@ impl InputEmulation {
             Backend::MacOs,
             Backend::Dummy,
         ] {
-            match Self::with_backend(backend).await {
+            match Self::with_backend(backend, input_config).await {
                 Ok(b) => {
                     log::info!("using emulation backend: {backend}");
                     return Ok(b);
@@ -145,6 +168,39 @@ impl InputEmulation {
             Event::Keyboard(KeyboardEvent::Key { key, state, .. }) => {
                 // prevent double pressed / released keys
                 if self.update_pressed_keys(handle, key, state) {
+                    self.emulation.consume(event, handle).await?;
+                }
+                Ok(())
+            }
+
+            Event::Pointer(PointerEvent::Motion { time, dx, dy }) => {
+                // apply mouse mod
+                let (dx, dy) = (
+                    dx * self.input_config.mouse_sensitivity,
+                    dy * self.input_config.mouse_sensitivity,
+                );
+                let event = Event::Pointer(PointerEvent::Motion { time, dx, dy });
+                self.emulation.consume(event, handle).await?;
+                Ok(())
+            }
+
+            Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value }) => {
+                if self.input_config.invert_scroll {
+                    let value = -value;
+                    let event = Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value });
+                    self.emulation.consume(event, handle).await?;
+                } else {
+                    self.emulation.consume(event, handle).await?;
+                }
+                Ok(())
+            }
+
+            Event::Pointer(PointerEvent::Axis { time, axis, value }) => {
+                if self.input_config.invert_scroll {
+                    let value = -value;
+                    let event = Event::Pointer(PointerEvent::Axis { time, axis, value });
+                    self.emulation.consume(event, handle).await?;
+                } else {
                     self.emulation.consume(event, handle).await?;
                 }
                 Ok(())
@@ -208,6 +264,10 @@ impl InputEmulation {
         self.pressed_keys
             .get(&handle)
             .is_some_and(|p| !p.is_empty())
+    }
+
+    pub fn update_config(&mut self, input_config: InputConfig) {
+        self.input_config = input_config;
     }
 
     /// update the pressed_keys for the given handle

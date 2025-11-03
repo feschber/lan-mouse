@@ -219,7 +219,7 @@ pub enum FrontendEvent {
     ConnectionAttempt { fingerprint: String },
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
     /// activate/deactivate client
     Activate(ClientHandle, bool),
@@ -253,6 +253,9 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
+    /// update the input post-processing settings (invert-scroll, mouse_sensitivity)
+    UpdateScrollingInversion(bool),
+    UpdateMouseSensitivity(f64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
