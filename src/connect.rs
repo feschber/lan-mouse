@@ -223,14 +223,18 @@ async fn ping_pong(
 ) {
     loop {
         let (buf, len) = ProtoEvent::Ping.into();
-        if let Err(e) = conn.send(&buf[..len]).await {
-            log::warn!("{addr}: send error `{e}`, closing connection");
-            let _ = conn.close().await;
-            break;
-        }
-        log::trace!("PING >->->->->- {addr}");
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // send 4 pings, at least one must be answered
+        for _ in 0..4 {
+            if let Err(e) = conn.send(&buf[..len]).await {
+                log::warn!("{addr}: send error `{e}`, closing connection");
+                let _ = conn.close().await;
+                break;
+            }
+            log::trace!("PING >->->->->- {addr}");
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
 
         if !ping_response.borrow_mut().remove(&addr) {
             log::warn!("{addr} did not respond, closing connection");
