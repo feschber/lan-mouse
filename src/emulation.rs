@@ -191,8 +191,14 @@ impl ListenTask {
                     EmulationRequest::Reenable => self.emulation_proxy.reenable(),
                     // notify the other end that we hit a barrier (should release capture)
                     EmulationRequest::Release(addr) => self.listener.reply(addr, ProtoEvent::Leave(0)).await,
-                    EmulationRequest::UpdateScrollingInversion(invert_scroll) => self.emulation_proxy.input_config.invert_scroll = invert_scroll,
-                    EmulationRequest::UpdateMouseSensitivity(mouse_sensitivity) => self.emulation_proxy.input_config.mouse_sensitivity = mouse_sensitivity,
+                    EmulationRequest::UpdateScrollingInversion(invert_scroll) => {
+                        self.emulation_proxy.input_config.invert_scroll = invert_scroll;
+                        self.emulation_proxy.update_config();
+                    }
+                    EmulationRequest::UpdateMouseSensitivity(mouse_sensitivity) => {
+                        self.emulation_proxy.input_config.mouse_sensitivity = mouse_sensitivity;
+                        self.emulation_proxy.update_config();
+                    }
                     EmulationRequest::ChangePort(port) => {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
@@ -235,6 +241,7 @@ enum ProxyRequest {
     Remove(SocketAddr),
     Terminate,
     Reenable,
+    UpdateConfig(InputConfig),
 }
 
 impl EmulationProxy {
@@ -295,6 +302,12 @@ impl EmulationProxy {
             .expect("channel closed");
     }
 
+    fn update_config(&self) {
+        self.request_tx
+            .send(ProxyRequest::UpdateConfig(self.input_config))
+            .expect("channel closed");
+    }
+
     async fn terminate(&mut self) {
         self.exit_requested.replace(true);
         self.request_tx
@@ -330,6 +343,7 @@ impl EmulationTask {
                     ProxyRequest::Terminate => return,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::UpdateConfig(..) => { /* emulation inactive => ignore */ }
                 }
             }
         }
@@ -400,6 +414,10 @@ impl EmulationTask {
                             emulation.destroy(handle).await;
                         }
                     }
+                    ProxyRequest::UpdateConfig(input_config) => {
+                        self.input_config = input_config;
+                        emulation.update_config(input_config);
+                    }
                     ProxyRequest::Terminate => break Ok(()),
                     ProxyRequest::Reenable => continue,
                 },
@@ -424,6 +442,7 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
             ProxyRequest::Input(_, _) => continue,
             ProxyRequest::Remove(_) => continue,
             ProxyRequest::Reenable => continue,
+            ProxyRequest::UpdateConfig(_) => continue,
         }
     }
 }

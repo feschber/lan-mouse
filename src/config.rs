@@ -53,7 +53,7 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
-    input_post_processing: InputConfig,
+    input_post_processing: Option<InputConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -376,14 +376,16 @@ impl Config {
     pub fn invert_scroll(&self) -> bool {
         self.config_toml
             .as_ref()
-            .and_then(|c| c.input_post_processing.invert_scroll)
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.invert_scroll)
             .unwrap_or(false)
     }
 
     pub fn mouse_sensitivity(&self) -> f64 {
         self.config_toml
             .as_ref()
-            .and_then(|c| c.input_post_processing.mouse_sensitivity)
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.mouse_sensitivity)
             .unwrap_or(1.0)
     }
 
