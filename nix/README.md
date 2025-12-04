@@ -1,18 +1,18 @@
 # Nix Flake Usage
 
-## run
+## Run
 
 ```bash
 nix run github:feschber/lan-mouse
 
-# with params
+# With params
 nix run github:feschber/lan-mouse -- --help
 
 ```
 
-## home-manager module
+## Home-manager module
 
-add input
+Add input:
 
 ```nix
 inputs = {
@@ -20,14 +20,27 @@ inputs = {
 }
 ```
 
-enable lan-mouse
+Optional: add [our binary cache](https://app.cachix.org/cache/lan-mouse) to allow a faster package install.
+
+```nix
+nixConfig = {
+    extra-substituters = [
+        "https://lan-mouse.cachix.org/"
+    ];
+    extra-trusted-public-keys = [
+      "lan-mouse.cachix.org-1:KlE2AEZUgkzNKM7BIzMQo8w9yJYqUpor1CAUNRY6OyM="
+    ];
+};
+```
+
+Enable lan-mouse:
 
 ``` nix
 {
   inputs,
   ...
 }: {
-  # add the home manager module
+  # Add the Home Manager module
   imports = [inputs.lan-mouse.homeManagerModules.default];
 
   programs.lan-mouse = {
