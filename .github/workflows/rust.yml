@@ -94,7 +94,7 @@ jobs:
           target/debug/*.dll
 
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
@@ -126,7 +126,7 @@ jobs:
         path: target/debug/bundle/osx/Lan Mouse macOS (Intel).zip
 
   build-macos-aarch64:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies

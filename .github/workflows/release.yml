@@ -1,9 +1,20 @@
-name: "Tagged Release"
+name: "Release"
+run-name: "Release - ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || github.event.inputs.name || github.ref_name }}"
 
 on:
   push:
+    branches: [ "main" ]
     tags:
       - v**
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Development release name'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   linux-release-build:
@@ -16,12 +27,33 @@ jobs:
         sudo apt-get install libx11-dev libxtst-dev
         sudo apt-get install libadwaita-1-dev libgtk-4-dev
     - name: Release Build
-      run: cargo build --release
+      run: |
+        cargo build --release
+        cp target/release/lan-mouse lan-mouse-linux-x86-64
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-linux
-        path: target/release/lan-mouse
+        name: lan-mouse-linux-x86-64
+        path: lan-mouse-linux-x86-64
+
+  linux-arm64-release-build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - uses: actions/checkout@v4
+    - name: install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install libx11-dev libxtst-dev
+        sudo apt-get install libadwaita-1-dev libgtk-4-dev
+    - name: Release Build
+      run: |
+        cargo build --release
+        cp target/release/lan-mouse lan-mouse-linux-arm
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: lan-mouse-linux-arm
+        path: lan-mouse-linux-arm
 
   windows-release-build:
     runs-on: windows-latest
@@ -68,15 +100,15 @@ jobs:
         mkdir "lan-mouse-windows"
         Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "lan-mouse-windows"
         Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse-windows"
-        Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows.zip
+        Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows-x86-64.zip
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-windows
-        path: lan-mouse-windows.zip
+        name: lan-mouse-windows-x86-64
+        path: lan-mouse-windows-x86-64.zip
 
   macos-release-build:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
@@ -100,11 +132,11 @@ jobs:
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-macos-intel.zip
+        name: lan-mouse-macos-intel
         path: target/release/bundle/osx/lan-mouse-macos-intel.zip
 
-  macos-aarch64-release-build:
-    runs-on: macos-14
+  macos-arm64-release-build:
+    runs-on: macos-15
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
@@ -112,7 +144,7 @@ jobs:
     - name: Release Build
       run: |
         cargo build --release
-        cp target/release/lan-mouse lan-mouse-macos-aarch64
+        cp target/release/lan-mouse lan-mouse-macos-arm
     - name: Make icns
       run: scripts/makeicns.sh
     - name: Install cargo bundle
@@ -124,27 +156,45 @@ jobs:
     - name: Zip bundle
       run: |
         cd target/release/bundle/osx
-        zip -r "lan-mouse-macos-aarch64.zip" "Lan Mouse.app"
+        zip -r "lan-mouse-macos-arm.zip" "Lan Mouse.app"
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-macos-aarch64.zip
-        path: target/release/bundle/osx/lan-mouse-macos-aarch64.zip
+        name: lan-mouse-macos-arm
+        path: target/release/bundle/osx/lan-mouse-macos-arm.zip
 
-  tagged-release:
-    name: "Tagged Release"
-    needs: [windows-release-build, linux-release-build, macos-release-build, macos-aarch64-release-build]
+  release:
+    name: "Release"
+    needs: [windows-release-build, linux-release-build, linux-arm64-release-build, macos-release-build, macos-arm64-release-build]
     runs-on: "ubuntu-latest"
     steps:
     - name: Download build artifacts
       uses: actions/download-artifact@v4
-    - name: Create Release
-      uses: "marvinpinto/action-automatic-releases@latest"
+    - name: Create Pre-Release
+      if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      uses: softprops/action-gh-release@v2
       with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        prerelease: false
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag_name: ${{ github.event.inputs.name || github.ref_name }}
+        name: ${{ github.event.inputs.name || github.ref_name }}
+        prerelease: true
+        generate_release_notes: true
         files: |
-          lan-mouse-linux/lan-mouse
+          lan-mouse-linux-x86-64/lan-mouse-linux-x86-64
+          lan-mouse-linux-arm/lan-mouse-linux-arm
           lan-mouse-macos-intel/lan-mouse-macos-intel.zip
-          lan-mouse-macos-aarch64/lan-mouse-macos-aarch64.zip
-          lan-mouse-windows/lan-mouse-windows.zip
+          lan-mouse-macos-arm/lan-mouse-macos-arm.zip
+          lan-mouse-windows-x86-64/lan-mouse-windows-x86-64.zip
+    - name: Create Tagged Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: ${{ github.ref_name }}
+        generate_release_notes: true
+        files: |
+          lan-mouse-linux-x86-64/lan-mouse-linux-x86-64
+          lan-mouse-linux-arm/lan-mouse-linux-arm
+          lan-mouse-macos-intel/lan-mouse-macos-intel.zip
+          lan-mouse-macos-arm/lan-mouse-macos-arm.zip
+          lan-mouse-windows-x86-64/lan-mouse-windows-x86-64.zip
