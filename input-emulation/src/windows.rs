@@ -18,8 +18,22 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
+use windows::Win32::System::StationsAndDesktops::{
+    CloseDesktop, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop, DESKTOP_ACCESS_FLAGS,
+    DESKTOP_CONTROL_FLAGS,
+};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use super::{Emulation, EmulationHandle};
+
+// Desktop access rights for input injection
+// GENERIC_WRITE (0x40000000) + DESKTOP_CREATEWINDOW (0x0002) + DESKTOP_HOOKCONTROL (0x0008)
+// DF_ALLOWOTHERACCOUNTHOOK (0x0001) allows accessing desktops owned by other accounts
+const GENERIC_WRITE: u32 = 0x40000000;
+const DESKTOP_CREATEWINDOW: u32 = 0x0002;
+const DESKTOP_HOOKCONTROL: u32 = 0x0008;
+const DF_ALLOWOTHERACCOUNTHOOK: u32 = 0x0001;
+const DESKTOP_ACCESS_FOR_INPUT: u32 = DESKTOP_CREATEWINDOW | DESKTOP_HOOKCONTROL | GENERIC_WRITE;
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
@@ -37,6 +51,7 @@ impl WindowsEmulation {
 #[async_trait]
 impl Emulation for WindowsEmulation {
     async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
+        log::trace!("[WindowsEmulation] consuming event: {:?}", event);
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion { time: _, dx, dy } => {
@@ -103,14 +118,51 @@ impl WindowsEmulation {
     }
 }
 
+/// Send input with desktop switching to handle UAC prompts and other secure desktops.
+/// When running in a user session (spawned by the watchdog service), this allows
+/// input injection on the Secure Desktop (UAC prompts) by temporarily switching
+/// to the current input desktop.
 fn send_input_safe(input: INPUT) {
     unsafe {
-        loop {
-            /* retval = number of successfully submitted events */
-            if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) > 0 {
-                break;
+        // Try to open the current input desktop (may be Secure Desktop during UAC)
+        // This only works when running in the user's session, not from Session 0
+        let input_desktop = match OpenInputDesktop(
+            DESKTOP_CONTROL_FLAGS(DF_ALLOWOTHERACCOUNTHOOK),
+            true, // fInherit
+            DESKTOP_ACCESS_FLAGS(DESKTOP_ACCESS_FOR_INPUT),
+        ) {
+            Ok(desktop) => desktop,
+            Err(e) => {
+                // Desktop switching not available - fall back to direct SendInput
+                // This works for normal desktop but won't reach UAC/login screen
+                log::debug!("OpenInputDesktop failed: {} - using direct SendInput", e);
+                SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+                return;
+            }
+        };
+
+        // Save current desktop, switch to input desktop, send input, restore
+        let old_desktop = GetThreadDesktop(GetCurrentThreadId());
+
+        if SetThreadDesktop(input_desktop).is_err() {
+            log::warn!("SetThreadDesktop failed, using direct SendInput");
+            let _ = CloseDesktop(input_desktop);
+            SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+            return;
+        }
+
+        let count = SendInput(&[input], std::mem::size_of::<INPUT>() as i32);
+        if count == 0 {
+            log::warn!("SendInput failed after desktop switch");
+        }
+
+        // Restore original desktop
+        if let Ok(desktop) = old_desktop {
+            if !desktop.is_invalid() {
+                let _ = SetThreadDesktop(desktop);
             }
         }
+        let _ = CloseDesktop(input_desktop);
     }
 }
 

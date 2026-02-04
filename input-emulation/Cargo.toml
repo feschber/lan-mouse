@@ -59,6 +59,9 @@ windows = { version = "0.61.2", features = [
     "Win32_Graphics_Gdi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_RemoteDesktop",
+    "Win32_Security",
 ] }
 
 [features]

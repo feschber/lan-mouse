@@ -70,6 +70,24 @@ sha2 = "0.10.8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7.0"
+windows = { version = "0.61.2", features = [
+    "Win32_Security",
+    "Win32_System_Services",
+    "Win32_System_Registry",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_EventLog",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Environment",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Console",
+] }
+
 [features]
 default = [
     "gtk",

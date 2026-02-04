@@ -41,8 +41,49 @@ enum LanMouseError {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        // Try to start as windows service first.
+        // If it fails, it means we were not started by the SCM.
+        if let Ok(_) = lan_mouse::windows_service::run_as_service() {
+            return;
+        }
+    }
+
     // init logging
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
+    
+    #[cfg(windows)]
+    {
+        // If running as daemon without console (spawned by watchdog), log to file
+        use windows::Win32::System::Console::GetConsoleWindow;
+        
+        let has_console = unsafe { !GetConsoleWindow().is_invalid() };
+        
+        if !has_console && std::env::args().any(|arg| arg == "daemon") {
+            // No console - set up file logging for session daemon
+            let log_dir = std::path::Path::new("C:\\ProgramData\\lan-mouse");
+            let _ = std::fs::create_dir_all(log_dir);
+            let log_path = log_dir.join("daemon.log");
+            
+            if let Ok(log_file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                env_logger::Builder::from_env(env)
+                    .format_timestamp_secs()
+                    .target(env_logger::Target::Pipe(Box::new(log_file)))
+                    .init();
+            } else {
+                env_logger::init_from_env(env);
+            }
+        } else {
+            env_logger::init_from_env(env);
+        }
+    }
+    
+    #[cfg(not(windows))]
     env_logger::init_from_env(env);
 
     if let Err(e) = run() {
@@ -66,6 +107,24 @@ fn run() -> Result<(), LanMouseError> {
                     ))) => log::info!("service already running!"),
                     r => r?,
                 }
+            }
+            #[cfg(windows)]
+            Command::Install => {
+                lan_mouse::windows::install().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            }
+            #[cfg(windows)]
+            Command::Uninstall => {
+                lan_mouse::windows::uninstall().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            }
+            #[cfg(windows)]
+            Command::Status => {
+                lan_mouse::windows_service::service_status().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            }
+            #[cfg(windows)]
+            Command::Watchdog => {
+                // This should only be called by SCM, not directly by user
+                log::error!("Watchdog mode should not be invoked directly - use 'lan-mouse install'");
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "Watchdog mode is internal").into());
             }
         },
         None => {
@@ -118,6 +177,7 @@ where
     Ok(runtime.block_on(LocalSet::new().run_until(f))?)
 }
 
+#[allow(dead_code)]
 fn start_service() -> Result<Child, io::Error> {
     let child = process::Command::new(std::env::current_exe()?)
         .args(std::env::args().skip(1))

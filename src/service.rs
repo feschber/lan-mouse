@@ -142,6 +142,13 @@ impl Service {
     }
 
     pub async fn run(&mut self) -> Result<(), ServiceError> {
+        self.run_with_shutdown(None).await
+    }
+
+    pub async fn run_with_shutdown(
+        &mut self,
+        mut shutdown: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
+    ) -> Result<(), ServiceError> {
         let active = self.client_manager.active_clients();
         for handle in active.iter() {
             // small hack: `activate_client()` checks, if the client
@@ -161,7 +168,11 @@ impl Service {
                 event = self.emulation.event() => self.handle_emulation_event(event),
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
-                r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
+                r = signal::ctrl_c(), if shutdown.is_none() => break r.expect("failed to wait for CTRL+C"),
+                _ = async { shutdown.as_mut().unwrap().recv().await }, if shutdown.is_some() => {
+                    log::info!("Shutdown signal received");
+                    break;
+                },
             }
         }
 
