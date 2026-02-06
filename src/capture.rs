@@ -362,7 +362,13 @@ impl CaptureTask {
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
-        self.active_client.take();
+        // If we have an active client, notify them we're leaving
+        if let Some(handle) = self.active_client.take() {
+            log::info!("sending Leave event to client {handle}");
+            if let Err(e) = self.conn.send(ProtoEvent::Leave(0), handle).await {
+                log::warn!("failed to send Leave to client {handle}: {e}");
+            }
+        }
         capture.release().await
     }
 }
