@@ -453,8 +453,10 @@ fn create_event_tap<'a>(
                 // Returning Drop should stop the event from being processed
                 // but core fundation still returns the event
                 cg_ev.set_type(CGEventType::Null);
+                CallbackResult::Drop
+            } else {
+                CallbackResult::Keep
             }
-            CallbackResult::Replace(cg_ev.to_owned())
         };
 
     let tap = CGEventTap::new(
