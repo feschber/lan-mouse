@@ -646,6 +646,7 @@ unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
     let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| MacosCaptureCreationError::EventSourceCreation)?;
     CGEventSourceSetLocalEventsSuppressionInterval(event_source, 0.05);
+    // FIXME Memory Leak
 
     // This is a private settings that allows the cursor to be hidden while in the background.
     // It is used by Barrier and other apps.
