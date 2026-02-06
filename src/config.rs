@@ -53,6 +53,14 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    input_post_processing: Option<InputConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct InputConfig {
+    // TODO: implement scroll_sensitivity and mouse_acceleration
+    invert_scroll: Option<bool>,
+    mouse_sensitivity: Option<f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -101,7 +109,7 @@ struct Args {
     command: Option<Command>,
 }
 
-#[derive(Subcommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum Command {
     /// test input emulation
     TestEmulation(TestEmulationArgs),
@@ -363,6 +371,22 @@ impl Config {
             .port
             .or(self.config_toml.as_ref().and_then(|c| c.port))
             .unwrap_or(DEFAULT_PORT)
+    }
+
+    pub fn invert_scroll(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.invert_scroll)
+            .unwrap_or(false)
+    }
+
+    pub fn mouse_sensitivity(&self) -> f64 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.mouse_sensitivity)
+            .unwrap_or(1.0)
     }
 
     /// list of configured clients
