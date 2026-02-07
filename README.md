@@ -321,6 +321,9 @@ To do so, use the `daemon` subcommand:
 ```sh
 lan-mouse daemon
 ```
+</details>
+
+## Systemd Service
 
 In order to start lan-mouse with a graphical session automatically,
 the [systemd-service](service/lan-mouse.service) can be used:
@@ -332,7 +335,9 @@ cp service/lan-mouse.service ~/.config/systemd/user
 systemctl --user daemon-reload
 systemctl --user enable --now lan-mouse.service
 ```
-</details>
+> [!Important]
+> Make sure to point `ExecStart=/usr/bin/lan-mouse daemon` to the actual `lan-mouse` binary (in case it is not under `/usr/bin`, e.g. when installed manually.
+
 
 ## Configuration
 To automatically load clients on startup, the file `$XDG_CONFIG_HOME/lan-mouse/config.toml` is parsed.
