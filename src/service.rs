@@ -185,21 +185,48 @@ impl Service {
             Err(e) => return log::error!("error receiving request: {e}"),
         };
         match request {
-            FrontendRequest::Activate(handle, active) => self.set_client_active(handle, active),
-            FrontendRequest::AuthorizeKey(desc, fp) => self.add_authorized_key(desc, fp),
+            FrontendRequest::Activate(handle, active) => {
+                self.set_client_active(handle, active);
+                self.save_config();
+            }
+            FrontendRequest::AuthorizeKey(desc, fp) => {
+                self.add_authorized_key(desc, fp);
+                self.save_config();
+            }
             FrontendRequest::ChangePort(port) => self.change_port(port),
-            FrontendRequest::Create => self.add_client(),
-            FrontendRequest::Delete(handle) => self.remove_client(handle),
+            FrontendRequest::Create => {
+                self.add_client();
+                self.save_config();
+            }
+            FrontendRequest::Delete(handle) => {
+                self.remove_client(handle);
+                self.save_config();
+            }
             FrontendRequest::EnableCapture => self.capture.reenable(),
             FrontendRequest::EnableEmulation => self.emulation.reenable(),
             FrontendRequest::Enumerate() => self.enumerate(),
-            FrontendRequest::UpdateFixIps(handle, fix_ips) => self.update_fix_ips(handle, fix_ips),
-            FrontendRequest::UpdateHostname(handle, host) => self.update_hostname(handle, host),
-            FrontendRequest::UpdatePort(handle, port) => self.update_port(handle, port),
-            FrontendRequest::UpdatePosition(handle, pos) => self.update_pos(handle, pos),
+            FrontendRequest::UpdateFixIps(handle, fix_ips) => {
+                self.update_fix_ips(handle, fix_ips);
+                self.save_config();
+            }
+            FrontendRequest::UpdateHostname(handle, host) => {
+                self.update_hostname(handle, host);
+                self.save_config();
+            }
+            FrontendRequest::UpdatePort(handle, port) => {
+                self.update_port(handle, port);
+                self.save_config();
+            }
+            FrontendRequest::UpdatePosition(handle, pos) => {
+                self.update_pos(handle, pos);
+                self.save_config();
+            }
             FrontendRequest::ResolveDns(handle) => self.resolve(handle),
             FrontendRequest::Sync => self.sync_frontend(),
-            FrontendRequest::RemoveAuthorizedKey(key) => self.remove_authorized_key(key),
+            FrontendRequest::RemoveAuthorizedKey(key) => {
+                self.remove_authorized_key(key);
+                self.save_config();
+            }
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
