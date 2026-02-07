@@ -450,9 +450,15 @@ impl Config {
         /* the new config */
         let new_config = self.config_toml.clone().unwrap_or_default();
         // let new_config = toml_edit::ser::to_document::<ConfigToml>(&new_config).expect("fixme");
-        let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("todo");
+        let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("config");
 
-        /* TODO merge documents */
+        /*
+         * TODO merge documents => eventually we might want to split this up into clients configured
+         * via the config file and clients managed through the GUI / frontend.
+         * The latter should be saved to $XDG_DATA_HOME instead of $XDG_CONFIG_HOME,
+         * and clients configured through .config could be made permanent.
+         * For now we just override the config file.
+         */
 
         /* write new config to file */
         fs::write(&self.config_path, new_config)?;
