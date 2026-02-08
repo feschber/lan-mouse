@@ -444,14 +444,14 @@ impl Config {
         log::info!("writing config to {:?}", &self.config_path);
         /* load the current configuration file */
         let current_config = match fs::read_to_string(&self.config_path) {
-            Ok(c) => c.parse::<DocumentMut>().expect("fix me"),
+            Ok(c) => c.parse::<DocumentMut>().unwrap_or_default(),
             Err(e) => {
                 log::info!("{:?} {e} => creating new config", self.config_path());
                 Default::default()
             }
         };
         let _current_config =
-            toml_edit::de::from_document::<ConfigToml>(current_config).expect("fixme");
+            toml_edit::de::from_document::<ConfigToml>(current_config).unwrap_or_default();
 
         /* the new config */
         let new_config = self.config_toml.clone().unwrap_or_default();
