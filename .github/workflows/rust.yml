@@ -89,3 +89,8 @@ jobs:
       - name: cargo clippy
         if: matrix.job == 'clippy'
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - uses: clechasseur/rs-clippy-check@v4
+        if: matrix.job == 'clippy'
+        with:
+          args: --workspace --all-targets --all-features
