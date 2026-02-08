@@ -73,14 +73,18 @@ jobs:
           .venv\Scripts\activate.ps1
           py -m pip install gvsbuild
           gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
-      - name: Run cargo ${{ matrix.job }}
-        run: |
-          if [ "${{ matrix.job }}" = "build" ]; then
-            cargo build
-          elif [ "${{ matrix.job }}" = "check" ]; then
-            cargo check --workspace --all-targets --all-features
-          elif [ "${{ matrix.job }}" = "clippy" ]; then
-            cargo clippy --all-features --all-targets -- --deny warnings
-          elif [ "${{ matrix.job }}" = "test" ]; then
-            cargo test --workspace --all-targets --all-features
-          fi
+      - name: cargo build
+        if: matrix.job == 'build'
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: cargo check
+        if: matrix.job == 'check'
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: cargo test
+        if: matrix.job == 'test'
+        run: cargo test --workspace --all-features
+
+      - name: cargo clippy
+        if: matrix.job == 'clippy'
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
