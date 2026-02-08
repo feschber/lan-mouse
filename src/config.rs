@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env::{self, VarError};
 use std::fmt::Display;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, io};
@@ -419,7 +420,7 @@ impl Config {
             return;
         }
         if self.config_toml.is_none() {
-            self.config_toml = Default::default();
+            self.config_toml = Some(Default::default());
         }
         self.config_toml.as_mut().expect("config").clients =
             Some(clients.into_iter().map(|c| c.into()).collect::<Vec<_>>());
@@ -442,8 +443,13 @@ impl Config {
     pub fn write_back(&self) -> Result<(), io::Error> {
         log::info!("writing config to {:?}", &self.config_path);
         /* load the current configuration file */
-        let current_config = fs::read_to_string(&self.config_path)?;
-        let current_config = current_config.parse::<DocumentMut>().expect("fix me");
+        let current_config = match fs::read_to_string(&self.config_path) {
+            Ok(c) => c.parse::<DocumentMut>().expect("fix me"),
+            Err(e) => {
+                log::info!("{:?} {e} => creating new config", self.config_path());
+                Default::default()
+            }
+        };
         let _current_config =
             toml_edit::de::from_document::<ConfigToml>(current_config).expect("fixme");
 
@@ -461,7 +467,11 @@ impl Config {
          */
 
         /* write new config to file */
-        fs::write(&self.config_path, new_config)?;
+        if let Some(p) = self.config_path().parent() {
+            fs::create_dir_all(p)?;
+        }
+        let mut f = File::create(self.config_path())?;
+        f.write_all(new_config.as_bytes())?;
 
         Ok(())
     }
