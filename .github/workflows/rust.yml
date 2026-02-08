@@ -57,6 +57,7 @@ jobs:
           key: gtk-windows-build
           restore-keys: gtk-windows-build
       - name: Install Windows Dependencies - update PATH
+        if: runner.os == 'Windows'
         run: |
           echo "PKG_CONFIG=C:\gtk-build\gtk\x64\release\bin\pkgconf.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "C:\pkg-config-lite-0.28-1\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
