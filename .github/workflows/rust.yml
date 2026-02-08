@@ -65,7 +65,8 @@ jobs:
           echo $env:GITHUB_PATH
           echo $env:PATH
       - name: Install Windows dependencies - build gtk
-        if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        # if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        if: runner.os == 'Windows'
         run: |
           # choco install msys2
           # choco install visualstudio2022-workload-vctools
