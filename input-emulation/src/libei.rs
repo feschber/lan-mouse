@@ -19,8 +19,8 @@ use async_trait::async_trait;
 
 use reis::{
     ei::{
-        self, Button, Keyboard, Pointer, Scroll, button::ButtonState, handshake::ContextType,
-        keyboard::KeyState,
+        self, Button, Keyboard, Pointer, PointerAbsolute, Scroll, button::ButtonState,
+        handshake::ContextType, keyboard::KeyState,
     },
     event::{self, Connection, DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
     tokio::EiConvertEventStream,
@@ -35,6 +35,7 @@ use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 #[derive(Clone, Default)]
 struct Devices {
     pointer: Arc<RwLock<Option<(ei::Device, ei::Pointer)>>>,
+    pointer_absolute: Arc<RwLock<Option<(ei::Device, ei::PointerAbsolute)>>>,
     scroll: Arc<RwLock<Option<(ei::Device, ei::Scroll)>>>,
     button: Arc<RwLock<Option<(ei::Device, ei::Button)>>>,
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
@@ -49,6 +50,10 @@ pub(crate) struct LibeiEmulation<'a> {
     libei_error: Arc<AtomicBool>,
     _remote_desktop: RemoteDesktop<'a>,
     session: Session<'a, RemoteDesktop<'a>>,
+    /// Cursor position tracking (x, y)
+    cursor_pos: Arc<Mutex<(f64, f64)>>,
+    /// Screen dimensions (width, height) - extracted from EI device regions
+    screen_size: Arc<Mutex<(f64, f64)>>,
 }
 
 /// Get the path to the RemoteDesktop token file
@@ -129,6 +134,12 @@ impl LibeiEmulation<'_> {
         let devices = Devices::default();
         let libei_error = Arc::new(AtomicBool::default());
         let error = Arc::new(Mutex::new(None));
+
+        // Screen dimensions will be updated when we receive EI device regions
+        // Start with a reasonable default
+        let screen_size = Arc::new(Mutex::new((1920.0, 1080.0)));
+        let cursor_pos = Arc::new(Mutex::new((960.0, 540.0)));
+
         let ei_handler = ei_task(
             events,
             conn.clone(),
@@ -136,7 +147,10 @@ impl LibeiEmulation<'_> {
             devices.clone(),
             libei_error.clone(),
             error.clone(),
+            screen_size.clone(),
+            cursor_pos.clone(),
         );
+
         let ei_task = tokio::task::spawn_local(ei_handler);
 
         Ok(Self {
@@ -148,6 +162,8 @@ impl LibeiEmulation<'_> {
             libei_error,
             _remote_desktop,
             session,
+            cursor_pos,
+            screen_size,
         })
     }
 }
@@ -178,10 +194,29 @@ impl Emulation for LibeiEmulation<'_> {
         match event {
             Event::Pointer(p) => match p {
                 PointerEvent::Motion { time: _, dx, dy } => {
-                    let pointer_device = self.devices.pointer.read().unwrap();
+                    let mut cursor_position = self.cursor_pos.lock().unwrap();
+                    cursor_position.0 += dx;
+                    cursor_position.1 += dy;
+
+                    let screen = self.screen_size.lock().unwrap();
+                    let (width, height) = *screen;
+                    let (x, y) = *cursor_position;
+                    drop(screen); // Release lock before potential error return
+
+                    if x < 0.0 || x > width || y < 0.0 || y > height {
+                        return Err(EmulationError::OutOfBounds);
+                    }
+
+                    let pointer_device = self.devices.pointer_absolute.read().unwrap();
                     if let Some((d, p)) = pointer_device.as_ref() {
-                        p.motion_relative(dx as f32, dy as f32);
+                        p.motion_absolute(x as f32, y as f32);
                         d.frame(self.conn.serial(), now);
+                    } else {
+                        let pointer_device = self.devices.pointer.read().unwrap();
+                        if let Some((d, p)) = pointer_device.as_ref() {
+                            p.motion_relative(dx as f32, dy as f32);
+                            d.frame(self.conn.serial(), now);
+                        }
                     }
                 }
                 PointerEvent::Button {
@@ -269,9 +304,11 @@ async fn ei_task(
     devices: Devices,
     libei_error: Arc<AtomicBool>,
     error: Arc<Mutex<Option<EmulationError>>>,
+    screen_size: Arc<Mutex<(f64, f64)>>,
+    cursor_pos: Arc<Mutex<(f64, f64)>>,
 ) {
     loop {
-        match ei_event_handler(&mut events, &context, &devices).await {
+        match ei_event_handler(&mut events, &context, &devices, &screen_size, &cursor_pos).await {
             Ok(()) => {}
             Err(e) => {
                 libei_error.store(true, Ordering::SeqCst);
@@ -287,6 +324,8 @@ async fn ei_event_handler(
     events: &mut EiConvertEventStream,
     context: &ei::Context,
     devices: &Devices,
+    screen_size: &Arc<Mutex<(f64, f64)>>,
+    cursor_pos: &Arc<Mutex<(f64, f64)>>,
 ) -> Result<(), EmulationError> {
     loop {
         let event = events.next().await.ok_or(EmulationError::EndOfStream)??;
@@ -313,14 +352,50 @@ async fn ei_event_handler(
             EiEvent::DeviceAdded(e) => {
                 let device_type = e.device().device_type();
                 log::debug!("device added: {device_type:?}");
+
+                // Extract regions from the device to calculate screen dimensions
+                let regions = e.device().regions();
+                if !regions.is_empty() {
+                    let mut max_x = 0u32;
+                    let mut max_y = 0u32;
+
+                    for region in regions {
+                        let right = region.x + region.width;
+                        let bottom = region.y + region.height;
+                        max_x = max_x.max(right);
+                        max_y = max_y.max(bottom);
+                    }
+
+                    let new_width = max_x as f64;
+                    let new_height = max_y as f64;
+
+                    let mut size = screen_size.lock().unwrap();
+                    if *size != (new_width, new_height) {
+                        *size = (new_width, new_height);
+
+                        // Update cursor position to center of new screen
+                        let mut pos = cursor_pos.lock().unwrap();
+                        *pos = (new_width / 2.0, new_height / 2.0);
+                        log::debug!("cursor position reset to center: ({}, {})", pos.0, pos.1);
+                    }
+                }
+
                 e.device().device();
                 let device = e.device();
+
                 if let Some(pointer) = e.device().interface::<Pointer>() {
                     devices
                         .pointer
                         .write()
                         .unwrap()
                         .replace((device.device().clone(), pointer));
+                }
+                if let Some(pointer_absolute) = e.device().interface::<PointerAbsolute>() {
+                    devices
+                        .pointer_absolute
+                        .write()
+                        .unwrap()
+                        .replace((device.device().clone(), pointer_absolute));
                 }
                 if let Some(keyboard) = e.device().interface::<Keyboard>() {
                     devices

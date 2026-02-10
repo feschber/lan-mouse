@@ -67,16 +67,6 @@ pub struct Service {
     emulation_status: Status,
     /// keep track of registered connections to avoid duplicate barriers
     incoming_conns: HashSet<SocketAddr>,
-    /// map from capture handle to connection info
-    incoming_conn_info: HashMap<ClientHandle, Incoming>,
-    next_trigger_handle: u64,
-}
-
-#[derive(Debug)]
-struct Incoming {
-    fingerprint: String,
-    addr: SocketAddr,
-    pos: Position,
 }
 
 impl Service {
@@ -137,9 +127,7 @@ impl Service {
             pending_frontend_events: Default::default(),
             capture_status: Default::default(),
             emulation_status: Default::default(),
-            incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
-            next_trigger_handle: 0,
         };
         Ok(service)
     }
@@ -308,17 +296,18 @@ impl Service {
             EmulationEvent::Connected { addr, fingerprint } => {
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }
+            EmulationEvent::OutOfBounds { addr } => {
+                log::info!("emulation out of bounds for {addr}, sending Leave event");
+                self.emulation.send_leave_event(addr);
+            }
         }
     }
 
     fn handle_capture_event(&mut self, event: ICaptureEvent) {
         match event {
-            ICaptureEvent::CaptureBegin(handle) => {
-                // we entered the capture zone for an incoming connection
-                // => notify it that its capture should be released
-                if let Some(incoming) = self.incoming_conn_info.get(&handle) {
-                    self.emulation.send_leave_event(incoming.addr);
-                }
+            ICaptureEvent::CaptureBegin(_handle) => {
+                // NOTE: Incoming connections no longer create InputCapture barriers,
+                // so CaptureBegin events only come from outgoing clients now.
             }
             ICaptureEvent::CaptureDisabled => {
                 self.capture_status = Status::Disabled;
@@ -372,62 +361,27 @@ impl Service {
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
-    const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
-
-    fn add_incoming(&mut self, addr: SocketAddr, pos: Position, fingerprint: String) {
-        let handle = Self::ENTER_HANDLE_BEGIN + self.next_trigger_handle;
-        self.next_trigger_handle += 1;
-        self.capture.create(handle, pos, CaptureType::EnterOnly);
+    fn add_incoming(&mut self, addr: SocketAddr, pos: Position, _fingerprint: String) {
+        log::debug!("incoming connection from {addr} at position {pos}");
+        // NOTE: We no longer create InputCapture barriers for incoming connections.
+        // Out-of-bounds detection is now handled in the emulation layer via position tracking.
         self.incoming_conns.insert(addr);
-        self.incoming_conn_info.insert(
-            handle,
-            Incoming {
-                fingerprint,
-                addr,
-                pos,
-            },
-        );
+        // We don't need to track handle/position anymore since we're not creating barriers
     }
 
-    fn update_incoming(&mut self, addr: SocketAddr, pos: Position, fingerprint: String) {
-        let incoming = self
-            .incoming_conn_info
-            .iter_mut()
-            .find(|(_, i)| i.addr == addr)
-            .map(|(_, i)| i)
-            .expect("no such client");
-        let mut changed = false;
-        if incoming.fingerprint != fingerprint {
-            incoming.fingerprint = fingerprint.clone();
-            changed = true;
-        }
-        if incoming.pos != pos {
-            incoming.pos = pos;
-            changed = true;
-        }
-        if changed {
-            self.remove_incoming(addr);
-            self.add_incoming(addr, pos, fingerprint.clone());
-            self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
-            self.notify_frontend(FrontendEvent::DeviceEntered {
-                fingerprint,
-                addr,
-                pos,
-            });
-        }
+    fn update_incoming(&mut self, addr: SocketAddr, pos: Position, _fingerprint: String) {
+        log::debug!("updating incoming connection from {addr} at position {pos}");
+        // Just update the tracking set
+        // Note: position and fingerprint changes are just logged, not acted upon
     }
 
     fn remove_incoming(&mut self, addr: SocketAddr) -> Option<SocketAddr> {
-        let handle = self
-            .incoming_conn_info
-            .iter()
-            .find(|(_, incoming)| incoming.addr == addr)
-            .map(|(k, _)| *k)?;
-        self.capture.destroy(handle);
-        self.incoming_conns.remove(&addr);
-        self.incoming_conn_info
-            .remove(&handle)
-            .map(|incoming| incoming.addr)
+        log::debug!("removing incoming connection from {addr}");
+        if self.incoming_conns.remove(&addr) {
+            Some(addr)
+        } else {
+            None
+        }
     }
 
     fn notify_frontend(&mut self, event: FrontendEvent) {

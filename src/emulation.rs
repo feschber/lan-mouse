@@ -52,6 +52,10 @@ pub(crate) enum EmulationEvent {
     EmulationEnabled,
     /// capture should be released
     ReleaseNotify,
+    /// cursor went out of bounds, should send Leave to this address
+    OutOfBounds {
+        addr: SocketAddr,
+    },
 }
 
 enum EmulationRequest {
@@ -368,7 +372,14 @@ impl EmulationTask {
                                 handle
                             }
                         };
-                        emulation.consume(event, handle).await?;
+                        match emulation.consume(event, handle).await {
+                            Ok(()) => {},
+                            Err(input_emulation::EmulationError::OutOfBounds) => {
+                                log::info!("cursor out of bounds for {addr}, sending Leave event");
+                                self.event_tx.send(EmulationEvent::OutOfBounds { addr }).expect("channel closed");
+                            },
+                            Err(e) => return Err(e.into()),
+                        }
                     },
                     ProxyRequest::Remove(addr) => {
                         if let Some(handle) = self.handles.remove(&addr) {

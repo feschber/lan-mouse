@@ -26,6 +26,8 @@ use wayland_client::{
 pub enum EmulationError {
     #[error("event stream closed")]
     EndOfStream,
+    #[error("pointer moved out of bounds - client should leave")]
+    OutOfBounds,
     #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
     #[error("libei error: `{0}`")]
     Libei(#[from] reis::Error),
