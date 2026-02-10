@@ -1,7 +1,8 @@
 use futures::{StreamExt, future};
 use std::{
-    io,
+    env, fs, io,
     os::{fd::OwnedFd, unix::net::UnixStream},
+    path::PathBuf,
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
@@ -50,9 +51,44 @@ pub(crate) struct LibeiEmulation<'a> {
     session: Session<'a, RemoteDesktop<'a>>,
 }
 
+/// Get the path to the RemoteDesktop token file
+fn get_token_file_path() -> PathBuf {
+    let cache_dir = env::var("XDG_CACHE_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = env::var("HOME").expect("HOME not set");
+            PathBuf::from(home).join(".cache")
+        });
+
+    cache_dir.join("lan-mouse").join("remote-desktop.token")
+}
+
+/// Read the RemoteDesktop token from file
+fn read_token() -> Option<String> {
+    let token_path = get_token_file_path();
+    match fs::read_to_string(&token_path) {
+        Ok(token) => Some(token.trim().to_string()),
+        Err(_) => None,
+    }
+}
+
+/// Write the RemoteDesktop token to file
+fn write_token(token: &str) -> io::Result<()> {
+    let token_path = get_token_file_path();
+    if let Some(parent) = token_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(&token_path, token)?;
+    Ok(())
+}
+
 async fn get_ei_fd<'a>()
 -> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
+
+    let restore_token = read_token();
 
     log::debug!("creating session ...");
     let session = remote_desktop.create_session().await?;
@@ -62,13 +98,20 @@ async fn get_ei_fd<'a>()
         .select_devices(
             &session,
             DeviceType::Keyboard | DeviceType::Pointer,
-            None,
+            restore_token.as_deref(),
             PersistMode::ExplicitlyRevoked,
         )
         .await?;
 
     log::info!("requesting permission for input emulation");
-    let _devices = remote_desktop.start(&session, None).await?.response()?;
+    let start_response = remote_desktop.start(&session, None).await?.response()?;
+
+    // The restore token is only valid once, we need to re-save it each time
+    if let Some(token_str) = start_response.restore_token() {
+        if let Err(e) = write_token(token_str) {
+            log::warn!("failed to save RemoteDesktop token: {}", e);
+        }
+    }
 
     let fd = remote_desktop.connect_to_eis(&session).await?;
     Ok((remote_desktop, session, fd))
