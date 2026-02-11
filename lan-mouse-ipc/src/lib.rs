@@ -255,6 +255,14 @@ pub enum FrontendRequest {
     UpdateEnterHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
+    /// window identifier used to present input-capture / remote-desktop prompts
+    WindowIdentifier(WindowIdentifier),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WindowIdentifier {
+    Wayland(String),
+    X11(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
