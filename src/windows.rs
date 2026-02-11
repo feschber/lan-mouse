@@ -1,6 +1,6 @@
 //! Windows-specific platform support: install/uninstall commands.
 //!
-//! This module handles registering lan-mouse as a Windows service (watchdog architecture)
+//! This module handles registering lan-mouse as a Windows service
 //! and related setup tasks like config/cert migration and firewall rules.
 
 use log::info;
@@ -19,10 +19,7 @@ use windows::core::{HSTRING, PWSTR};
 use lan_mouse_ipc::DEFAULT_PORT;
 use std::os::windows::ffi::OsStrExt;
 
-/// Install lan-mouse as a Windows service (watchdog mode).
-///
-/// This registers the service with SCM, copies config/cert to ProgramData,
-/// adds a firewall rule, and starts the service.
+/// Install lan-mouse as a Windows service.
 pub fn install() -> Result<(), String> {
     unsafe {
         let scm = OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
@@ -31,9 +28,9 @@ pub fn install() -> Result<(), String> {
         let exe_path = std::env::current_exe()
             .map_err(|e| format!("Failed to get current exe path: {}", e))?;
         
-        // Add "watchdog" argument to the service command line
+        // Add "winsvc" argument to the service command line
         let exe_path_str = exe_path.to_str().ok_or("Invalid exe path")?;
-        let cmd_line = format!("\"{}\" watchdog", exe_path_str);
+        let cmd_line = format!("\"{}\" winsvc", exe_path_str);
         let cmd_line_h = HSTRING::from(cmd_line);
 
         let service_name = HSTRING::from("lan-mouse");

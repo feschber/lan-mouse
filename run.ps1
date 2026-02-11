@@ -123,7 +123,7 @@ try {
 
         Write-Host "`nDeployment complete!" -ForegroundColor Green
         Write-Host "`nTailing service log (Ctrl+C to stop)..." -ForegroundColor Cyan
-        Get-Content -Wait -Tail 20 "C:\ProgramData\lan-mouse\watchdog.log"
+        Get-Content -Wait -Tail 20 "C:\ProgramData\lan-mouse\winsvc.log"
     } elseif ($Direct) {
         Write-Host "`nRunning lan-mouse directly..." -ForegroundColor Cyan
         $ServiceExe = Join-Path $SvcDir "lan-mouse.exe"

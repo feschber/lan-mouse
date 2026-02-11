@@ -34,52 +34,25 @@ use std::ptr;
 
 define_windows_service!(ffi_service_main, lan_mouse_service_main);
 
-pub fn run_as_service() -> Result<(), windows_service::Error> {
-    // Check if we were invoked with "watchdog" command
-    // The SCM passes the service name as first arg, then our command-line args
-    let args: Vec<String> = std::env::args().collect();
-    let is_watchdog = args.iter().any(|arg| arg == "watchdog");
-    
-    if is_watchdog {
-        service_dispatcher::start("lan-mouse", ffi_service_main)
-    } else {
-        // Not invoked as watchdog service
-        Err(windows_service::Error::Winapi(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Not started by SCM",
-        )))
-    }
+/// Starts the Windows service dispatcher.
+/// This should only be called when the process is started by the Service Control Manager.
+pub fn run_dispatch() -> Result<(), windows_service::Error> {
+    service_dispatcher::start("lan-mouse", ffi_service_main)
 }
 
 fn lan_mouse_service_main(_arguments: Vec<OsString>) {
-    // Initialize file-based logging (services don't have console)
-    let log_dir = std::path::Path::new("C:\\ProgramData\\lan-mouse");
-    let _ = std::fs::create_dir_all(log_dir);
-    let log_path = log_dir.join("watchdog.log");
+    crate::set_is_service(true);
     
-    if let Ok(log_file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-    {
-        use env_logger::Env;
-        let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
-        let _ = env_logger::Builder::from_env(env)
-            .format_timestamp_secs()
-            .target(env_logger::Target::Pipe(Box::new(log_file)))
-            .try_init();
-    }
+    log::info!("lan-mouse Windows service starting");
     
-    log::info!("lan-mouse watchdog service starting");
-    
-    if let Err(e) = run_watchdog_service() {
-        log::error!("Watchdog service error: {:?}", e);
+    if let Err(e) = run_win_service() {
+        log::error!("Windows service error: {:?}", e);
     }
 }
 
-fn run_watchdog_service() -> Result<(), windows_service::Error> {
+fn run_win_service() -> Result<(), windows_service::Error> {
     /* ==================================================================================
-     * WATCHDOG SERVICE - Session Manager for lan-mouse
+     * WINDOWS SERVICE - Session Manager for lan-mouse
      * ==================================================================================
      * 
      * This service runs in Session 0 as SYSTEM and manages session daemon processes:
@@ -150,10 +123,10 @@ fn run_watchdog_service() -> Result<(), windows_service::Error> {
             })
             .unwrap();
 
-        log::info!("Watchdog service running - monitoring sessions and managing daemons");
+        log::info!("Windows service running - monitoring sessions and managing daemons");
 
-        if let Err(e) = watchdog_main_loop(rx).await {
-            log::error!("Watchdog main loop error: {:?}", e);
+        if let Err(e) = session_manager_loop(rx).await {
+            log::error!("Windows service main loop error: {:?}", e);
         }
 
         status_handle
@@ -179,12 +152,12 @@ fn run_watchdog_service() -> Result<(), windows_service::Error> {
         process_id: None,
     })?;
 
-    log::info!("Watchdog service stopped");
+    log::info!("Windows service stopped");
     Ok(())
 }
 
-async fn watchdog_main_loop(mut shutdown_rx: tokio::sync::mpsc::UnboundedReceiver<()>) -> Result<(), std::io::Error> {
-    log::info!("Watchdog main loop started - monitoring console sessions");
+async fn session_manager_loop(mut shutdown_rx: tokio::sync::mpsc::UnboundedReceiver<()>) -> Result<(), std::io::Error> {
+    log::info!("Windows service main loop started - monitoring console sessions");
     
     let mut current_session_id: Option<u32> = None;
     let mut session_daemon: Option<SessionDaemonHandle> = None;
@@ -194,7 +167,7 @@ async fn watchdog_main_loop(mut shutdown_rx: tokio::sync::mpsc::UnboundedReceive
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => {
-                log::info!("Watchdog received shutdown signal");
+                log::info!("Windows service received shutdown signal");
                 
                 // Terminate session daemon if running
                 if let Some(daemon) = session_daemon.take() {
@@ -299,7 +272,7 @@ async fn watchdog_main_loop(mut shutdown_rx: tokio::sync::mpsc::UnboundedReceive
         }
     }
     
-    log::info!("Watchdog main loop shutting down");
+    log::info!("Windows service main loop shutting down");
     Ok(())
 }
 

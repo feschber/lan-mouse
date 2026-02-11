@@ -119,7 +119,7 @@ impl WindowsEmulation {
 }
 
 /// Send input with desktop switching to handle UAC prompts and other secure desktops.
-/// When running in a user session (spawned by the watchdog service), this allows
+/// When running in a user session (spawned by the Windows service), this allows
 /// input injection on the Secure Desktop (UAC prompts) by temporarily switching
 /// to the current input desktop.
 fn send_input_safe(input: INPUT) {
