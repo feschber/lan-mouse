@@ -347,7 +347,7 @@ impl Emulation for MacOSEmulation {
                     } => {
                         let value = value as i32;
                         let (count, wheel1, wheel2, wheel3) = match axis {
-                            0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                            0 => (1, -value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis), negated: canonical (positive=down) to macOS (positive=up)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                             _ => {
                                 log::warn!("invalid scroll event: {axis}, {value}");
@@ -373,7 +373,7 @@ impl Emulation for MacOSEmulation {
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         const LINES_PER_STEP: i32 = 3;
                         let (count, wheel1, wheel2, wheel3) = match axis {
-                            0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                            0 => (1, -(value / (120 / LINES_PER_STEP)), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis), negated: canonical (positive=down) to macOS (positive=up)
                             1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                             _ => {
                                 log::warn!("invalid scroll event: {axis}, {value}");

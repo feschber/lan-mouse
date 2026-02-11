@@ -326,8 +326,8 @@ fn get_events(
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                         time: 0,
-                        axis: 0, // Vertical
-                        value: v as f64,
+                        axis: 0, // Vertical, negated: macOS (positive=up) to canonical (positive=down)
+                        value: -v as f64,
                     })));
                 }
                 if h != 0 {
@@ -346,8 +346,8 @@ fn get_events(
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(
                         PointerEvent::AxisDiscrete120 {
-                            axis: 0, // Vertical
-                            value: V120_STEPS_PER_LINE * v as i32,
+                            axis: 0, // Vertical, negated: macOS (positive=up) to canonical (positive=down)
+                            value: -(V120_STEPS_PER_LINE * v as i32),
                         },
                     )));
                 }
