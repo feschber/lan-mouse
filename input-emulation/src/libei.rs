@@ -40,15 +40,15 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub(crate) struct LibeiEmulation<'a> {
+pub(crate) struct LibeiEmulation {
     context: ei::Context,
     conn: event::Connection,
     devices: Devices,
     ei_task: JoinHandle<()>,
     error: Arc<Mutex<Option<EmulationError>>>,
     libei_error: Arc<AtomicBool>,
-    _remote_desktop: RemoteDesktop<'a>,
-    session: Session<'a, RemoteDesktop<'a>>,
+    _remote_desktop: RemoteDesktop,
+    session: Session<RemoteDesktop>,
 }
 
 /// Get the path to the RemoteDesktop token file
@@ -84,8 +84,7 @@ fn write_token(token: &str) -> io::Result<()> {
     Ok(())
 }
 
-async fn get_ei_fd<'a>()
--> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
+async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
     let restore_token = read_token();
@@ -117,7 +116,7 @@ async fn get_ei_fd<'a>()
     Ok((remote_desktop, session, fd))
 }
 
-impl LibeiEmulation<'_> {
+impl LibeiEmulation {
     pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
         let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
@@ -152,14 +151,14 @@ impl LibeiEmulation<'_> {
     }
 }
 
-impl Drop for LibeiEmulation<'_> {
+impl Drop for LibeiEmulation {
     fn drop(&mut self) {
         self.ei_task.abort();
     }
 }
 
 #[async_trait]
-impl Emulation for LibeiEmulation<'_> {
+impl Emulation for LibeiEmulation {
     async fn consume(
         &mut self,
         event: Event,

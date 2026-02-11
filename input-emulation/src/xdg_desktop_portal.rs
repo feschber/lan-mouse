@@ -17,13 +17,13 @@ use crate::error::EmulationError;
 
 use super::{Emulation, EmulationHandle, error::XdpEmulationCreationError};
 
-pub(crate) struct DesktopPortalEmulation<'a> {
-    proxy: RemoteDesktop<'a>,
-    session: Session<'a, RemoteDesktop<'a>>,
+pub(crate) struct DesktopPortalEmulation {
+    proxy: RemoteDesktop,
+    session: Session<RemoteDesktop>,
 }
 
-impl<'a> DesktopPortalEmulation<'a> {
-    pub(crate) async fn new() -> Result<DesktopPortalEmulation<'a>, XdpEmulationCreationError> {
+impl DesktopPortalEmulation {
+    pub(crate) async fn new() -> Result<DesktopPortalEmulation, XdpEmulationCreationError> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
 
@@ -52,7 +52,7 @@ impl<'a> DesktopPortalEmulation<'a> {
 }
 
 #[async_trait]
-impl Emulation for DesktopPortalEmulation<'_> {
+impl Emulation for DesktopPortalEmulation {
     async fn consume(
         &mut self,
         event: input_event::Event,
@@ -141,7 +141,7 @@ impl Emulation for DesktopPortalEmulation<'_> {
     }
 }
 
-impl AsyncDrop for DesktopPortalEmulation<'_> {
+impl AsyncDrop for DesktopPortalEmulation {
     #[doc = r" Perform the async cleanup."]
     #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
     fn async_drop<'async_trait>(
