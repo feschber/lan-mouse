@@ -14,7 +14,7 @@ use std::{env, process, str};
 
 use window::Window;
 
-use lan_mouse_ipc::FrontendEvent;
+use lan_mouse_ipc::{FrontendEvent, FrontendRequest, WindowIdentifier};
 
 use adw::Application;
 use gtk::{IconTheme, gdk::Display, glib::clone, prelude::*};
@@ -22,6 +22,8 @@ use gtk::{gio, glib, prelude::ApplicationExt};
 
 use self::client_object::ClientObject;
 use self::key_object::KeyObject;
+
+use gdk4_wayland::WaylandToplevel;
 
 use thiserror::Error;
 
@@ -226,6 +228,27 @@ fn build_ui(app: &Application) {
             }
         });
     }
+
+    // export TopLevel handle and send it to the service so that it can put the InpuCapture / RemoteDesktop
+    // windows on top of it using xdg-foreign.
+    window.connect_show(|window| {
+        // needs the surface so we have to present first!
+        if let Some(surface) = window.surface() {
+            if surface.display().backend().is_wayland() {
+                // let surface = surface.downcast::<WaylandSurface>();
+                let toplevel = surface.downcast::<WaylandToplevel>().expect("xdg-toplevel");
+                let window = window.clone();
+                toplevel.export_handle(move |_toplevel, handle| {
+                    if let Ok(handle) = handle {
+                        let handle = handle.to_string();
+                        window.request(FrontendRequest::WindowIdentifier(
+                            WindowIdentifier::Wayland(handle),
+                        ));
+                    }
+                });
+            }
+        }
+    });
 
     glib::spawn_future_local(clone!(
         #[weak]
