@@ -23,7 +23,7 @@ use std::{
     os::unix::net::UnixStream,
     pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 use tokio::{
@@ -39,7 +39,7 @@ use futures_core::Stream;
 
 use input_event::Event;
 
-use crate::CaptureEvent;
+use crate::{CaptureEvent, WindowIdentifier};
 
 use super::{
     Capture as LanMouseInputCapture, Position,
@@ -153,11 +153,15 @@ async fn update_barriers(
 
 async fn create_session(
     input_capture: &InputCapture,
+    window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
 ) -> std::result::Result<(Session<InputCapture>, BitFlags<Capabilities>), ashpd::Error> {
-    log::debug!("creating input capture session");
+    let window_identifier = window_identifier.lock().unwrap().clone();
+    log::debug!("creating input capture session: {window_identifier:?}");
+    let ashpd_window_identifier: Option<ashpd::WindowIdentifier> =
+        window_identifier.map(|i| i.into());
     input_capture
         .create_session(
-            None,
+            ashpd_window_identifier.as_ref(),
             Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
         )
         .await
@@ -202,10 +206,15 @@ async fn libei_event_handler(
 }
 
 impl LibeiInputCapture {
-    pub async fn new() -> std::result::Result<Self, LibeiCaptureCreationError> {
+    /// creates a new libei input capture
+    /// `window_id` is a window identifier for user prompts
+    pub async fn new(
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+    ) -> std::result::Result<Self, LibeiCaptureCreationError> {
         let input_capture = Box::pin(InputCapture::new().await?);
         let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture;
-        let first_session = Some(create_session(unsafe { &*input_capture_ptr }).await?);
+        let first_session =
+            Some(create_session(unsafe { &*input_capture_ptr }, window_identifier.clone()).await?);
 
         let (event_tx, event_rx) = mpsc::channel(1);
         let (notify_capture, notify_rx) = mpsc::channel(1);
@@ -220,6 +229,7 @@ impl LibeiInputCapture {
             first_session,
             event_tx,
             cancellation_token.clone(),
+            window_identifier,
         );
         let capture_task = tokio::task::spawn_local(capture);
 
@@ -244,6 +254,7 @@ async fn do_capture(
     session: Option<(Session<InputCapture>, BitFlags<Capabilities>)>,
     event_tx: Sender<(Position, CaptureEvent)>,
     cancellation_token: CancellationToken,
+    window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
 ) -> Result<(), CaptureError> {
     let mut session = session.map(|s| s.0);
 
@@ -289,7 +300,11 @@ async fn do_capture(
             // create session
             let mut session = match session.take() {
                 Some(s) => s,
-                None => create_session(input_capture).await?.0,
+                None => {
+                    create_session(input_capture, window_identifier.clone())
+                        .await?
+                        .0
+                }
             };
 
             let capture_session = do_capture_session(
