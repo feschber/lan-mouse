@@ -148,7 +148,9 @@ impl ListenTask {
                                 self.emulation_proxy.remove(addr);
                                 self.listener.reply(addr, ProtoEvent::Ack(0)).await;
                             }
-                            ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
+                            ProtoEvent::Input(input_event) => {
+                                self.emulation_proxy.consume(input_event, addr);
+                            }
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
                             _ => {}
                         }
@@ -256,6 +258,8 @@ impl EmulationProxy {
             self.request_tx
                 .send(ProxyRequest::Input(event, addr))
                 .expect("channel closed");
+        } else {
+            log::warn!("emulation inactive, dropping event: {:?}", event);
         }
     }
 
