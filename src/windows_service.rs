@@ -29,7 +29,7 @@ use windows::Win32::Security::{
     TokenUIAccess, TOKEN_ASSIGN_PRIMARY,
 };
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
-use windows::core::{HSTRING, PWSTR, w};
+use windows::core::{HSTRING, PWSTR};
 use std::ptr;
 
 define_windows_service!(ffi_service_main, lan_mouse_service_main);
@@ -215,15 +215,22 @@ async fn session_manager_loop(mut shutdown_rx: tokio::sync::mpsc::UnboundedRecei
                         // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
                         let backoff_secs = std::cmp::min(1u64 << (crash_count - 1), 30);
                         log::info!("Waiting {}s before respawn attempt...", backoff_secs);
-                        tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
-                        
+
+                        // Remain responsive to shutdown during backoff wait
+                        let shutdown = tokio::select! {
+                            _ = shutdown_rx.recv() => true,
+                            _ = tokio::time::sleep(Duration::from_secs(backoff_secs)) => false,
+                        };
+                        if shutdown {
+                            log::info!("Shutdown received during crash backoff");
+                            if let Some(d) = session_daemon.take() {
+                                d.terminate();
+                            }
+                            break;
+                        }
+
                         session_daemon = None;
                         // Will respawn below
-                    } else {
-                        // Daemon is running - reset crash count
-                        if crash_count > 0 {
-                            crash_count = 0;
-                        }
                     }
                 }
                 
@@ -365,13 +372,15 @@ fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, s
     }
 }
 
-/// Check if a process exists in a session
-fn process_exists_in_session(process_name: &str, session_id: u32) -> bool {
-    find_process_in_session(process_name, session_id).is_ok()
-}
-
-/// Get winlogon token for login screen access (elevated token with UIAccess)
-fn get_winlogon_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
+/// Get a session token for spawning the daemon in the target session.
+///
+/// Uses the winlogon.exe token because it runs with SYSTEM privileges and has
+/// access to the Secure Desktop (UAC prompts). A winlogon-derived token lets
+/// the spawned daemon call OpenInputDesktop successfully.
+///
+/// WTSQueryUserToken only yields a limited user token which cannot access the
+/// Secure Desktop even with TokenUIAccess set.
+fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
     unsafe {
         // Find winlogon.exe in the target session
         let winlogon_pid = find_process_in_session("winlogon.exe", session_id)?;
@@ -433,31 +442,6 @@ fn get_winlogon_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
     }
 }
 
-/// Determine which token to use based on session context
-/// 
-/// For UAC/secure desktop access, we ALWAYS use the winlogon token.
-/// The winlogon process runs with SYSTEM privileges and has access to the
-/// Secure Desktop (UAC prompts). When we spawn the daemon with a winlogon-derived
-/// token, it inherits those access rights, allowing OpenInputDesktop to succeed.
-/// 
-/// Using WTSQueryUserToken only gets a limited user token which cannot access
-/// the Secure Desktop even with TokenUIAccess set.
-fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
-    // Check if we're at the login screen (logonui.exe present, no explorer.exe)
-    let is_login_screen = process_exists_in_session("logonui.exe", session_id)
-        && !process_exists_in_session("explorer.exe", session_id);
-
-    if is_login_screen {
-        log::info!("Detected login screen in session {} - using winlogon token", session_id);
-    } else {
-        log::info!("Detected normal user session {} - using winlogon token for secure desktop access", session_id);
-    }
-    
-    // Always use winlogon token - it has the privileges needed to access
-    // the Secure Desktop (UAC prompts) via OpenInputDesktop
-    get_winlogon_token(session_id)
-}
-
 /// Spawn session daemon in the specified session with the given token
 fn spawn_session_daemon(session_id: u32, token: HANDLE) -> Result<SessionDaemonHandle, std::io::Error> {
     unsafe {
@@ -472,10 +456,11 @@ fn spawn_session_daemon(session_id: u32, token: HANDLE) -> Result<SessionDaemonH
         log::info!("Spawning session daemon in session {} with command: {}", session_id, command);
         
         let mut command_wide: Vec<u16> = command.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut desktop: Vec<u16> = "winsta0\\Default".encode_utf16().chain(std::iter::once(0)).collect();
         
         let startup_info = STARTUPINFOW {
             cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-            lpDesktop: PWSTR(w!("winsta0\\Default").as_ptr() as *mut u16),
+            lpDesktop: PWSTR(desktop.as_mut_ptr()),
             ..Default::default()
         };
         
@@ -524,6 +509,7 @@ fn spawn_session_daemon(session_id: u32, token: HANDLE) -> Result<SessionDaemonH
 
 pub fn service_status() -> Result<(), String> {
     unsafe {
+        // This will fail on non-administrative/elevated calls
         let scm = OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
             .map_err(|e| format!("Failed to open SCM: {}", e))?;
 
