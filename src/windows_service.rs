@@ -95,8 +95,7 @@ fn run_win_service() -> Result<(), windows_service::Error> {
         Ok(r) => r,
         Err(e) => {
             log::error!("Failed to create tokio runtime: {:?}", e);
-            return Err(windows_service::Error::Winapi(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(windows_service::Error::Winapi(std::io::Error::other(
                 "Failed to create tokio runtime",
             )));
         }
@@ -319,8 +318,7 @@ impl Drop for SessionDaemonHandle {
 fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, std::io::Error> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("CreateToolhelp32Snapshot failed: {}", e),
             )
         })?;
@@ -332,8 +330,7 @@ fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, s
 
         if Process32FirstW(snapshot, &mut entry).is_err() {
             let _ = CloseHandle(snapshot);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Process32FirstW failed",
             ));
         }
@@ -352,12 +349,12 @@ fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, s
             if process_name_str.to_lowercase() == target_name_lower {
                 // Check if process is in the target session
                 let mut proc_session_id = 0u32;
-                if ProcessIdToSessionId(entry.th32ProcessID, &mut proc_session_id).is_ok() {
-                    if proc_session_id == session_id {
-                        let pid = entry.th32ProcessID;
-                        let _ = CloseHandle(snapshot);
-                        return Ok(pid);
-                    }
+                if ProcessIdToSessionId(entry.th32ProcessID, &mut proc_session_id).is_ok()
+                    && proc_session_id == session_id
+                {
+                    let pid = entry.th32ProcessID;
+                    let _ = CloseHandle(snapshot);
+                    return Ok(pid);
                 }
             }
 
@@ -392,8 +389,7 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
 
         // Open the winlogon process
         let process_handle = OpenProcess(PROCESS_ALL_ACCESS, false, winlogon_pid).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!(
                     "OpenProcess failed for winlogon PID {}: {}",
                     winlogon_pid, e
@@ -411,8 +407,7 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
         let _ = CloseHandle(process_handle);
 
         result.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("OpenProcessToken failed for winlogon: {}", e),
             )
         })?;
@@ -429,8 +424,7 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
         )
         .map_err(|e| {
             let _ = CloseHandle(source_token);
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("DuplicateTokenEx failed: {}", e),
             )
         })?;
@@ -502,8 +496,7 @@ fn spawn_session_daemon(
         // Create environment block for the user session
         let mut env_block = ptr::null_mut();
         CreateEnvironmentBlock(&mut env_block, Some(token), false).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("CreateEnvironmentBlock failed: {}", e),
             )
         })?;
@@ -529,8 +522,7 @@ fn spawn_session_daemon(
             .ok();
 
         result.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
+            std::io::Error::other(
                 format!("CreateProcessAsUserW failed: {}", e),
             )
         })?;
