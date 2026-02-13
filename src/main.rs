@@ -14,8 +14,10 @@ use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
-    process::{self, Child},
+    process::{self},
 };
+#[cfg(feature = "gtk")]
+use std::process::Child;
 use thiserror::Error;
 use tokio::task::LocalSet;
 

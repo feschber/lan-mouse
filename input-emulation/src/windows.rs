@@ -61,7 +61,6 @@ impl WindowsEmulation {
 #[async_trait]
 impl Emulation for WindowsEmulation {
     async fn consume(&mut self, event: Event, _: EmulationHandle) -> Result<(), EmulationError> {
-        log::trace!("[WindowsEmulation] consuming event: {:?}", event);
         match event {
             Event::Pointer(pointer_event) => match pointer_event {
                 PointerEvent::Motion { time: _, dx, dy } => {

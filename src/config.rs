@@ -38,7 +38,7 @@ fn default_path() -> Result<PathBuf, VarError> {
     #[cfg(not(unix))]
     let default_path = {
         #[cfg(windows)]
-        if crate::is_service() {
+        if crate::is_windows_service() {
             "C:\\ProgramData\\lan-mouse\\".to_string()
         } else {
             let app_data =
@@ -329,7 +329,7 @@ impl Config {
     fn from_args(args: Args) -> Result<Self, ConfigError> {
         #[cfg(windows)]
         if matches!(args.command, Some(Command::WinSvc)) {
-            crate::set_is_service(true);
+            crate::set_is_windows_service(true);
         }
 
         // --config <file> overrules default location
