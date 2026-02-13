@@ -38,13 +38,23 @@ const DESKTOP_ACCESS_FOR_INPUT: u32 = DESKTOP_CREATEWINDOW | DESKTOP_HOOKCONTROL
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
+// Linux keycodes for modifier tracking
+const KEY_LEFT_META: u32 = 125;
+const KEY_RIGHT_META: u32 = 126;
+// Linux keycode for L
+const KEY_L: u32 = 38;
+
 pub(crate) struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
+    meta_pressed: bool,
 }
 
 impl WindowsEmulation {
     pub(crate) fn new() -> Result<Self, WindowsEmulationCreationError> {
-        Ok(Self { repeat_task: None })
+        Ok(Self {
+            repeat_task: None,
+            meta_pressed: false,
+        })
     }
 }
 
@@ -75,6 +85,20 @@ impl Emulation for WindowsEmulation {
                     key,
                     state,
                 } => {
+                    // Track Meta/Super key state
+                    if key == KEY_LEFT_META || key == KEY_RIGHT_META {
+                        self.meta_pressed = state == 1;
+                    }
+
+                    // Intercept Win+L: LockWorkStation() cannot be triggered
+                    // via SendInput because Windows blocks it as a Secure
+                    // Attention Sequence. Instead we lock the session directly.
+                    if key == KEY_L && state == 1 && self.meta_pressed {
+                        log::info!("Win+L detected, locking workstation");
+                        lock_workstation();
+                        return Ok(());
+                    }
+
                     match state {
                         // pressed
                         0 => self.kill_repeat_task(),
@@ -286,4 +310,38 @@ fn linux_keycode_to_windows_scancode(linux_keycode: u32) -> Option<u16> {
     };
     log::trace!("windows code: {windows_scancode:?}");
     Some(windows_scancode as u16)
+}
+
+/// Lock the workstation.
+///
+/// `Win+L` is a Secure Attention Sequence that Windows blocks from being
+/// injected via `SendInput`.  When running inside a user session (Session != 0)
+/// we can call `LockWorkStation()` which is the documented public API.
+///
+/// When running in Session 0 (the service session) there is no interactive
+/// desktop to lock, so we disconnect the console session via
+/// `WTSDisconnectSession` which achieves the same visible effect (returns to
+/// the lock / login screen).
+fn lock_workstation() {
+    // Try the simple path first — works when we are in the user's session.
+    unsafe {
+        use windows::Win32::System::Shutdown::LockWorkStation;
+        if LockWorkStation().is_ok() {
+            log::info!("LockWorkStation succeeded");
+            return;
+        }
+        log::warn!("LockWorkStation failed, trying WTSDisconnectSession");
+
+        // Fallback for Session 0: disconnect the active console session.
+        use windows::Win32::System::RemoteDesktop::{
+            WTSDisconnectSession, WTSGetActiveConsoleSessionId,
+            WTS_CURRENT_SERVER_HANDLE,
+        };
+        let session_id = WTSGetActiveConsoleSessionId();
+        if WTSDisconnectSession(Some(WTS_CURRENT_SERVER_HANDLE), session_id, true).is_err() {
+            log::error!("WTSDisconnectSession also failed");
+        } else {
+            log::info!("WTSDisconnectSession succeeded (session {})", session_id);
+        }
+    }
 }
