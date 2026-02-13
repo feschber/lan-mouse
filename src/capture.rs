@@ -1,12 +1,14 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use futures::StreamExt;
 use input_capture::{
     CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
+    WindowIdentifier,
 };
 use input_event::scancode;
 use lan_mouse_proto::ProtoEvent;
@@ -49,7 +51,7 @@ pub(crate) enum CaptureType {
     EnterOnly,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum CaptureRequest {
     /// capture must release the mouse
     Release,
@@ -66,6 +68,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -80,6 +83,7 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             state: Default::default(),
+            window_identifier,
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -160,6 +164,7 @@ struct CaptureTask {
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
 }
 
 impl CaptureTask {
@@ -194,6 +199,7 @@ impl CaptureTask {
     }
 
     async fn run(mut self) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
             if let Err(e) = self.do_capture().await {
                 log::warn!("input capture exited: {e}");
@@ -201,10 +207,10 @@ impl CaptureTask {
             loop {
                 tokio::select! {
                     r = self.request_rx.recv() => match r.expect("channel closed") {
-                        CaptureRequest::Reenable => break,
-                        CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
-                        CaptureRequest::Destroy(h) => self.remove_capture(h),
-                        CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::Reenable=>break,
+                        CaptureRequest::Create(h,p,t)=>self.add_capture(h,p,t),
+                        CaptureRequest::Destroy(h)=>self.remove_capture(h),
+                        CaptureRequest::Release=>{}
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -215,7 +221,7 @@ impl CaptureTask {
     async fn do_capture(&mut self) -> Result<(), InputCaptureError> {
         /* allow cancelling capture request */
         let mut capture = tokio::select! {
-            r = InputCapture::new(self.backend) => r?,
+            r = InputCapture::new(self.backend, self.window_identifier.clone()) => r?,
             _ = self.cancellation_token.cancelled() => return Ok(()),
         };
 
@@ -285,16 +291,10 @@ impl CaptureTask {
                     }
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
-                    CaptureRequest::Reenable => { /* already active */ },
-                    CaptureRequest::Release => self.release_capture(capture).await?,
-                    CaptureRequest::Create(h, p, t) => {
-                        self.add_capture(h, p, t);
-                        capture.create(h, p).await?;
-                    }
-                    CaptureRequest::Destroy(h) => {
-                        self.remove_capture(h);
-                        capture.destroy(h).await?;
-                    }
+                    CaptureRequest::Reenable=>{},
+                    CaptureRequest::Release=>self.release_capture(capture).await?,
+                    CaptureRequest::Create(h,p,t)=>{self.add_capture(h,p,t);capture.create(h,p).await?;}
+                    CaptureRequest::Destroy(h)=>{self.remove_capture(h);capture.destroy(h).await?;}
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }

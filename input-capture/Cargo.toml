@@ -12,7 +12,7 @@ futures-core = "0.3.30"
 log = "0.4.22"
 input-event = { path = "../input-event", version = "0.3.0" }
 memmap = "0.7"
-tempfile = "3.8"
+tempfile = "3.25.0"
 thiserror = "2.0.0"
 tokio = { version = "1.32.0", features = [
     "io-util",
@@ -41,7 +41,8 @@ wayland-protocols-wlr = { version = "0.3.1", features = [
     "client",
 ], optional = true }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-ashpd = { version = "0.11.0", default-features = false, features = [
+ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", default-features = false, features = [
+    "input_capture",
     "tokio",
 ], optional = true }
 reis = { version = "0.5.0", features = ["tokio"], optional = true }

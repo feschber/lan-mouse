@@ -40,7 +40,9 @@ wayland-protocols-misc = { version = "0.3.1", features = [
     "client",
 ], optional = true }
 x11 = { version = "2.21.0", features = ["xlib", "xtest"], optional = true }
-ashpd = { version = "0.11.0", default-features = false, features = [
+ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", default-features = false, features = [
+    "remote_desktop",
+    "screencast",
     "tokio",
 ], optional = true }
 reis = { version = "0.5.0", features = ["tokio"], optional = true }
