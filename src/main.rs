@@ -63,6 +63,9 @@ fn main() {
 fn init_logging(_command: &Option<Command>) {
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
 
+    // On Windows, log to a file only for the background daemon (no console)
+    // or the Windows service. All other cases (GTK app, CLI, terminal daemon)
+    // log to stderr via the default init below.
     #[cfg(windows)]
     {
         use windows::Win32::System::Console::GetConsoleWindow;
