@@ -113,26 +113,21 @@ fn run(config: Config, command: Option<Command>) -> Result<(), LanMouseError> {
             },
             #[cfg(windows)]
             Command::Install => {
-                lan_mouse::windows::install()
-                    .map_err(io::Error::other)?;
+                lan_mouse::windows::install().map_err(io::Error::other)?;
             }
             #[cfg(windows)]
             Command::Uninstall => {
-                lan_mouse::windows::uninstall()
-                    .map_err(io::Error::other)?;
+                lan_mouse::windows::uninstall().map_err(io::Error::other)?;
             }
             #[cfg(windows)]
             Command::Status => {
-                lan_mouse::windows_service::service_status()
-                    .map_err(io::Error::other)?;
+                lan_mouse::windows_service::service_status().map_err(io::Error::other)?;
             }
             #[cfg(windows)]
             Command::WinSvc => {
                 // This starts the Windows service dispatcher
                 lan_mouse::windows_service::run_dispatch().map_err(|e| {
-                    io::Error::other(
-                        format!("Failed to start service dispatcher: {e}"),
-                    )
+                    io::Error::other(format!("Failed to start service dispatcher: {e}"))
                 })?;
             }
         },

@@ -318,9 +318,7 @@ impl Drop for SessionDaemonHandle {
 fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, std::io::Error> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).map_err(|e| {
-            std::io::Error::other(
-                format!("CreateToolhelp32Snapshot failed: {}", e),
-            )
+            std::io::Error::other(format!("CreateToolhelp32Snapshot failed: {}", e))
         })?;
 
         let mut entry = PROCESSENTRY32W {
@@ -330,9 +328,7 @@ fn find_process_in_session(process_name: &str, session_id: u32) -> Result<u32, s
 
         if Process32FirstW(snapshot, &mut entry).is_err() {
             let _ = CloseHandle(snapshot);
-            return Err(std::io::Error::other(
-                "Process32FirstW failed",
-            ));
+            return Err(std::io::Error::other("Process32FirstW failed"));
         }
 
         let target_name_lower = process_name.to_lowercase();
@@ -389,12 +385,10 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
 
         // Open the winlogon process
         let process_handle = OpenProcess(PROCESS_ALL_ACCESS, false, winlogon_pid).map_err(|e| {
-            std::io::Error::other(
-                format!(
-                    "OpenProcess failed for winlogon PID {}: {}",
-                    winlogon_pid, e
-                ),
-            )
+            std::io::Error::other(format!(
+                "OpenProcess failed for winlogon PID {}: {}",
+                winlogon_pid, e
+            ))
         })?;
 
         // Get the winlogon process token
@@ -407,9 +401,7 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
         let _ = CloseHandle(process_handle);
 
         result.map_err(|e| {
-            std::io::Error::other(
-                format!("OpenProcessToken failed for winlogon: {}", e),
-            )
+            std::io::Error::other(format!("OpenProcessToken failed for winlogon: {}", e))
         })?;
 
         // Duplicate the token as a primary token
@@ -424,9 +416,7 @@ fn get_session_token(session_id: u32) -> Result<HANDLE, std::io::Error> {
         )
         .map_err(|e| {
             let _ = CloseHandle(source_token);
-            std::io::Error::other(
-                format!("DuplicateTokenEx failed: {}", e),
-            )
+            std::io::Error::other(format!("DuplicateTokenEx failed: {}", e))
         })?;
 
         let _ = CloseHandle(source_token);
@@ -495,11 +485,8 @@ fn spawn_session_daemon(
 
         // Create environment block for the user session
         let mut env_block = ptr::null_mut();
-        CreateEnvironmentBlock(&mut env_block, Some(token), false).map_err(|e| {
-            std::io::Error::other(
-                format!("CreateEnvironmentBlock failed: {}", e),
-            )
-        })?;
+        CreateEnvironmentBlock(&mut env_block, Some(token), false)
+            .map_err(|e| std::io::Error::other(format!("CreateEnvironmentBlock failed: {}", e)))?;
 
         let mut proc_info = PROCESS_INFORMATION::default();
 
@@ -521,11 +508,7 @@ fn spawn_session_daemon(
             .map_err(|e| log::warn!("DestroyEnvironmentBlock failed: {}", e))
             .ok();
 
-        result.map_err(|e| {
-            std::io::Error::other(
-                format!("CreateProcessAsUserW failed: {}", e),
-            )
-        })?;
+        result.map_err(|e| std::io::Error::other(format!("CreateProcessAsUserW failed: {}", e)))?;
 
         log::info!(
             "Session daemon spawned successfully: PID={}",
