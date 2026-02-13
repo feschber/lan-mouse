@@ -327,6 +327,11 @@ impl Config {
     }
 
     fn from_args(args: Args) -> Result<Self, ConfigError> {
+        #[cfg(windows)]
+        if matches!(args.command, Some(Command::WinSvc)) {
+            crate::set_is_service(true);
+        }
+
         // --config <file> overrules default location
         let config_path = args
             .config

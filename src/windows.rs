@@ -28,9 +28,9 @@ pub fn install() -> Result<(), String> {
         let exe_path = std::env::current_exe()
             .map_err(|e| format!("Failed to get current exe path: {}", e))?;
         
-        // Add "winsvc" argument to the service command line
+        // Add "win-svc" argument to the service command line
         let exe_path_str = exe_path.to_str().ok_or("Invalid exe path")?;
-        let cmd_line = format!("\"{}\" winsvc", exe_path_str);
+        let cmd_line = format!("\"{}\" win-svc", exe_path_str);
         let cmd_line_h = HSTRING::from(cmd_line);
 
         let service_name = HSTRING::from("lan-mouse");

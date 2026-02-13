@@ -41,8 +41,6 @@ pub fn run_dispatch() -> Result<(), windows_service::Error> {
 }
 
 fn lan_mouse_service_main(_arguments: Vec<OsString>) {
-    crate::set_is_service(true);
-    
     log::info!("lan-mouse Windows service starting");
     
     if let Err(e) = run_win_service() {
