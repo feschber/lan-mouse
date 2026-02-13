@@ -11,13 +11,13 @@ use lan_mouse_cli::CliError;
 #[cfg(feature = "gtk")]
 use lan_mouse_gtk::GtkError;
 use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
+#[cfg(feature = "gtk")]
+use std::process::Child;
 use std::{
     future::Future,
     io,
     process::{self},
 };
-#[cfg(feature = "gtk")]
-use std::process::Child;
 use thiserror::Error;
 use tokio::task::LocalSet;
 
@@ -105,31 +105,35 @@ fn run(config: Config, command: Option<Command>) -> Result<(), LanMouseError> {
             Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
             Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
             Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
-            Command::Daemon => {
-                match run_async(run_daemon(config)) {
-                    Err(LanMouseError::Service(ServiceError::IpcListen(
-                        IpcListenerCreationError::AlreadyRunning,
-                    ))) => log::info!("service already running!"),
-                    r => r?,
-                }
-            }
+            Command::Daemon => match run_async(run_daemon(config)) {
+                Err(LanMouseError::Service(ServiceError::IpcListen(
+                    IpcListenerCreationError::AlreadyRunning,
+                ))) => log::info!("service already running!"),
+                r => r?,
+            },
             #[cfg(windows)]
             Command::Install => {
-                lan_mouse::windows::install().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                lan_mouse::windows::install()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             }
             #[cfg(windows)]
             Command::Uninstall => {
-                lan_mouse::windows::uninstall().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                lan_mouse::windows::uninstall()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             }
             #[cfg(windows)]
             Command::Status => {
-                lan_mouse::windows_service::service_status().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                lan_mouse::windows_service::service_status()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             }
             #[cfg(windows)]
             Command::WinSvc => {
                 // This starts the Windows service dispatcher
                 lan_mouse::windows_service::run_dispatch().map_err(|e| {
-                    io::Error::new(io::ErrorKind::Other, format!("Failed to start service dispatcher: {e}"))
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Failed to start service dispatcher: {e}"),
+                    )
                 })?;
             }
         },
@@ -152,7 +156,9 @@ fn run_gui_and_daemon(_config: Config) -> Result<(), LanMouseError> {
         {
             // give the daemon a chance to terminate gracefully
             let pid = daemon.id() as libc::pid_t;
-            unsafe { libc::kill(pid, libc::SIGINT); }
+            unsafe {
+                libc::kill(pid, libc::SIGINT);
+            }
             daemon.wait()?;
         }
 

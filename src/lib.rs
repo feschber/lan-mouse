@@ -15,7 +15,8 @@ pub mod windows;
 pub mod windows_service;
 
 #[cfg(windows)]
-static IS_WINDOWS_SERVICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static IS_WINDOWS_SERVICE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(windows)]
 pub fn set_is_windows_service(is_service: bool) {

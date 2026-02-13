@@ -8,6 +8,11 @@ use async_trait::async_trait;
 use std::ops::BitOrAssign;
 use std::time::Duration;
 use tokio::task::AbortHandle;
+use windows::Win32::System::StationsAndDesktops::{
+    CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, GetThreadDesktop, OpenInputDesktop,
+    SetThreadDesktop,
+};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
     MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
@@ -18,11 +23,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
-use windows::Win32::System::StationsAndDesktops::{
-    CloseDesktop, GetThreadDesktop, OpenInputDesktop, SetThreadDesktop, DESKTOP_ACCESS_FLAGS,
-    DESKTOP_CONTROL_FLAGS,
-};
-use windows::Win32::System::Threading::GetCurrentThreadId;
 
 use super::{Emulation, EmulationHandle};
 
@@ -333,8 +333,7 @@ fn lock_workstation() {
 
         // Fallback for Session 0: disconnect the active console session.
         use windows::Win32::System::RemoteDesktop::{
-            WTSDisconnectSession, WTSGetActiveConsoleSessionId,
-            WTS_CURRENT_SERVER_HANDLE,
+            WTS_CURRENT_SERVER_HANDLE, WTSDisconnectSession, WTSGetActiveConsoleSessionId,
         };
         let session_id = WTSGetActiveConsoleSessionId();
         if WTSDisconnectSession(Some(WTS_CURRENT_SERVER_HANDLE), session_id, true).is_err() {
