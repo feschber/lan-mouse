@@ -418,10 +418,7 @@ impl Emulation for MacOSEmulation {
                     };
                     let is_modifier = update_modifiers(&self.modifier_state, key, state);
                     if is_modifier {
-                        modifier_event(
-                            self.event_source.clone(),
-                            self.modifier_state.get(),
-                        );
+                        modifier_event(self.event_source.clone(), self.modifier_state.get());
                     }
                     match state {
                         // pressed
