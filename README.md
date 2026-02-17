@@ -195,7 +195,7 @@ chmod +x .githooks/pre-commit
 git config core.hooksPath .githooks
 ```
 
-The `pre-commit` script runs `cargo fmt --all -- --check`, `cargo clippy --all-features --all-targets -- -D warnings`, and `cargo test --workspace --all-features`.
+The `pre-commit` script runs `cargo fmt --all` (and fails if files were modified), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-features`.
 
 ### Dependencies & Compiling from Source
 <details>

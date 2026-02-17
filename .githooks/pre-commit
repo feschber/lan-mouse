@@ -9,21 +9,24 @@ echo "Running cargo fmt (auto-format)..."
 # fail the commit so the user can review and stage the changes manually.
 cargo fmt --all
 if ! git diff --quiet --exit-code; then
-  echo "\nERROR: cargo fmt modified files. Review changes, `git add` them, and commit again." >&2
+  echo "" >&2
+  echo "ERROR: cargo fmt modified files. Review changes, stage them, and commit again." >&2
   git --no-pager diff --name-only
   exit 1
 fi
 
 echo "Running cargo clippy..."
 # Matches CI: deny warnings to keep code health strict
-if ! cargo clippy --all-features --all-targets -- -D warnings; then
-  echo "\nERROR: clippy found warnings/errors. Fix them before committing." >&2
+if ! cargo clippy --workspace --all-targets --all-features -- -D warnings; then
+  echo "" >&2
+  echo "ERROR: clippy found warnings/errors. Fix them before committing." >&2
   exit 1
 fi
 
 echo "Running cargo test..."
 if ! cargo test --workspace --all-features; then
-  echo "\nERROR: Some tests failed. Fix tests before committing." >&2
+  echo "" >&2
+  echo "ERROR: Some tests failed. Fix tests before committing." >&2
   exit 1
 fi
 
