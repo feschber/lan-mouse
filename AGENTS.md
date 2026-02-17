@@ -41,11 +41,11 @@ Lan Mouse is an open-source Software KVM sharing mouse/keyboard input across loc
 ## Commands
 
 ```sh
-cargo build --workspace                    # full build
-cargo build -p <crate>                     # single crate
-cargo test --workspace                     # all tests
-cargo fmt && cargo clippy --workspace      # lint
-RUST_LOG=lan_mouse=debug cargo run         # debug logging
+cargo build --workspace                                    # full build
+cargo build -p <crate>                                     # single crate
+cargo test --workspace                                     # all tests
+cargo fmt && cargo clippy --workspace --all-targets --all-features  # lint
+RUST_LOG=lan_mouse=debug cargo run                         # debug logging
 ```
 
 Run from repo root—no `cd` in scripts.
@@ -62,4 +62,4 @@ Run from repo root—no `cd` in scripts.
 1. Clarify ambiguous requirements, especially OS-specific behavior.
 2. Implement minimal change; flag follow-up work.
 3. Add proportional tests; run `cargo test` on affected crates.
-4. Run `cargo fmt` and `cargo clippy --workspace`.
+4. Run `cargo fmt` and `cargo clippy --workspace --all-targets --all-features`.
