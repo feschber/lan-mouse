@@ -177,8 +177,27 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
 
 
 
+## Development
 
-## Installing Dependencies for Development / Compiling from Source
+### Git pre-commit hook
+
+This repository includes a local git hooks directory `.githooks/` with a `pre-commit` script that enforces formatting, lints, and tests before allowing a commit.  It is optional to enable it, but it will prevent you from committing code with failing unit tests or that needs clippy/fmt fixes. To enable the hook locally:
+
+1. Make the hook executable:
+
+```sh
+chmod +x .githooks/pre-commit
+```
+
+2. Point git to the hooks directory (one-time per clone):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The `pre-commit` script runs `cargo fmt --all` (and fails if files were modified), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-features`.
+
+### Dependencies & Compiling from Source
 <details>
     <summary>MacOS</summary>
 
