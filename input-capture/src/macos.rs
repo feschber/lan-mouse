@@ -18,7 +18,9 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use futures_core::Stream;
-use input_event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent};
+use input_event::{
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
+};
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
@@ -304,16 +306,28 @@ fn get_events(
             })))
         }
         CGEventType::OtherMouseDown => {
+            let btn_num = ev.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+            let button = match btn_num {
+                3 => BTN_BACK,
+                4 => BTN_FORWARD,
+                _ => BTN_MIDDLE,
+            };
             result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                 time: 0,
-                button: BTN_MIDDLE,
+                button,
                 state: 1,
             })))
         }
         CGEventType::OtherMouseUp => {
+            let btn_num = ev.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+            let button = match btn_num {
+                3 => BTN_BACK,
+                4 => BTN_FORWARD,
+                _ => BTN_MIDDLE,
+            };
             result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                 time: 0,
-                button: BTN_MIDDLE,
+                button,
                 state: 0,
             })))
         }

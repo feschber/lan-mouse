@@ -10,7 +10,10 @@ use core_graphics::event::{
     ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use input_event::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent, scancode};
+use input_event::{
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
+    scancode,
+};
 use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
 use std::ops::{Index, IndexMut};
@@ -290,6 +293,12 @@ impl Emulation for MacOSEmulation {
                         button,
                         state,
                     } => {
+                        // button number for OtherMouse events (3 = back, 4 = forward, etc.)
+                        let cg_button_number: Option<i64> = match button {
+                            BTN_BACK => Some(3),
+                            BTN_FORWARD => Some(4),
+                            _ => None,
+                        };
                         let (event_type, mouse_button) = match (button, state) {
                             (BTN_LEFT, 1) => (CGEventType::LeftMouseDown, CGMouseButton::Left),
                             (BTN_LEFT, 0) => (CGEventType::LeftMouseUp, CGMouseButton::Left),
@@ -297,6 +306,12 @@ impl Emulation for MacOSEmulation {
                             (BTN_RIGHT, 0) => (CGEventType::RightMouseUp, CGMouseButton::Right),
                             (BTN_MIDDLE, 1) => (CGEventType::OtherMouseDown, CGMouseButton::Center),
                             (BTN_MIDDLE, 0) => (CGEventType::OtherMouseUp, CGMouseButton::Center),
+                            (BTN_BACK, 1) | (BTN_FORWARD, 1) => {
+                                (CGEventType::OtherMouseDown, CGMouseButton::Center)
+                            }
+                            (BTN_BACK, 0) | (BTN_FORWARD, 0) => {
+                                (CGEventType::OtherMouseUp, CGMouseButton::Center)
+                            }
                             _ => {
                                 log::warn!("invalid button event: {button},{state}");
                                 return Ok(());
@@ -338,6 +353,13 @@ impl Emulation for MacOSEmulation {
                             EventField::MOUSE_EVENT_CLICK_STATE,
                             self.button_click_state,
                         );
+                        // Set the button number for extra buttons (back=3, forward=4)
+                        if let Some(btn_num) = cg_button_number {
+                            event.set_integer_value_field(
+                                EventField::MOUSE_EVENT_BUTTON_NUMBER,
+                                btn_num,
+                            );
+                        }
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::Axis {
