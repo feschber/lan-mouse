@@ -76,7 +76,7 @@ jobs:
           gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
       - name: cargo build
         if: matrix.job == 'build'
-        run: cargo check --workspace --all-targets --all-features
+        run: cargo build
 
       - name: cargo check
         if: matrix.job == 'check'
