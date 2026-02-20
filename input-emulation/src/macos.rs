@@ -16,7 +16,7 @@ use input_event::{
 };
 use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
-use std::ops::{Index, IndexMut};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,10 +33,10 @@ pub(crate) struct MacOSEmulation {
     event_source: CGEventSource,
     /// task handle for key repeats
     repeat_task: Option<JoinHandle<()>>,
-    /// current state of the mouse buttons
-    button_state: ButtonState,
-    /// button previously pressed
-    previous_button: Option<CGMouseButton>,
+    /// current state of the mouse buttons (tracked by evdev button code)
+    pressed_buttons: HashSet<u32>,
+    /// button previously pressed (evdev button code)
+    previous_button: Option<u32>,
     /// timestamp of previous click (button down)
     previous_button_click: Option<Instant>,
     /// click state, i.e. number of clicks in quick succession
@@ -47,31 +47,13 @@ pub(crate) struct MacOSEmulation {
     notify_repeat_task: Arc<Notify>,
 }
 
-struct ButtonState {
-    left: bool,
-    right: bool,
-    center: bool,
-}
-
-impl Index<CGMouseButton> for ButtonState {
-    type Output = bool;
-
-    fn index(&self, index: CGMouseButton) -> &Self::Output {
-        match index {
-            CGMouseButton::Left => &self.left,
-            CGMouseButton::Right => &self.right,
-            CGMouseButton::Center => &self.center,
-        }
-    }
-}
-
-impl IndexMut<CGMouseButton> for ButtonState {
-    fn index_mut(&mut self, index: CGMouseButton) -> &mut Self::Output {
-        match index {
-            CGMouseButton::Left => &mut self.left,
-            CGMouseButton::Right => &mut self.right,
-            CGMouseButton::Center => &mut self.center,
-        }
+/// Maps an evdev button code to the CGEventType used for drag events.
+fn drag_event_type(button: u32) -> CGEventType {
+    match button {
+        BTN_LEFT => CGEventType::LeftMouseDragged,
+        BTN_RIGHT => CGEventType::RightMouseDragged,
+        // middle, back, forward, and any other button all use OtherMouseDragged
+        _ => CGEventType::OtherMouseDragged,
     }
 }
 
@@ -81,14 +63,9 @@ impl MacOSEmulation {
     pub(crate) fn new() -> Result<Self, MacOSEmulationCreationError> {
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| MacOSEmulationCreationError::EventSourceCreation)?;
-        let button_state = ButtonState {
-            left: false,
-            right: false,
-            center: false,
-        };
         Ok(Self {
             event_source,
-            button_state,
+            pressed_buttons: HashSet::new(),
             previous_button: None,
             previous_button_click: None,
             button_click_state: 0,
@@ -264,14 +241,14 @@ impl Emulation for MacOSEmulation {
                         mouse_location.x = new_mouse_x;
                         mouse_location.y = new_mouse_y;
 
-                        let mut event_type = CGEventType::MouseMoved;
-                        if self.button_state.left {
-                            event_type = CGEventType::LeftMouseDragged
-                        } else if self.button_state.right {
-                            event_type = CGEventType::RightMouseDragged
-                        } else if self.button_state.center {
-                            event_type = CGEventType::OtherMouseDragged
-                        };
+                        // If any button is held, emit a drag event for it;
+                        // otherwise emit a normal mouse-moved event.
+                        let event_type = self
+                            .pressed_buttons
+                            .iter()
+                            .next()
+                            .map(|&btn| drag_event_type(btn))
+                            .unwrap_or(CGEventType::MouseMoved);
                         let event = match CGEvent::new_mouse_event(
                             self.event_source.clone(),
                             event_type,
@@ -317,12 +294,18 @@ impl Emulation for MacOSEmulation {
                                 return Ok(());
                             }
                         };
-                        // store button state
-                        self.button_state[mouse_button] = state == 1;
-
-                        // update previous button state
+                        // store button state using the evdev button code so
+                        // back, forward, and middle are tracked independently
                         if state == 1 {
-                            if self.previous_button.is_some_and(|b| b.eq(&mouse_button))
+                            self.pressed_buttons.insert(button);
+                        } else {
+                            self.pressed_buttons.remove(&button);
+                        }
+
+                        // update double-click tracking using the evdev button
+                        // code so that back/forward don't alias with middle
+                        if state == 1 {
+                            if self.previous_button == Some(button)
                                 && self
                                     .previous_button_click
                                     .is_some_and(|i| i.elapsed() < DOUBLE_CLICK_INTERVAL)
@@ -331,7 +314,7 @@ impl Emulation for MacOSEmulation {
                             } else {
                                 self.button_click_state = 1;
                             }
-                            self.previous_button = Some(mouse_button);
+                            self.previous_button = Some(button);
                             self.previous_button_click = Some(Instant::now());
                         }
 
@@ -465,21 +448,6 @@ impl Emulation for MacOSEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
-}
-
-trait ButtonEq {
-    fn eq(&self, other: &Self) -> bool;
-}
-
-impl ButtonEq for CGMouseButton {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (CGMouseButton::Left, CGMouseButton::Left)
-                | (CGMouseButton::Right, CGMouseButton::Right)
-                | (CGMouseButton::Center, CGMouseButton::Center)
-        )
-    }
 }
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {
