@@ -422,7 +422,7 @@ impl Window {
         self.request(FrontendRequest::RemoveAuthorizedKey(fp));
     }
 
-    fn request(&self, request: FrontendRequest) {
+    pub(crate) fn request(&self, request: FrontendRequest) {
         let mut requester = self.imp().frontend_request_writer.borrow_mut();
         let requester = requester.as_mut().unwrap();
         if let Err(e) = requester.request(request) {

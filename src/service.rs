@@ -19,7 +19,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
@@ -70,6 +70,7 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    window_identifier: Arc<Mutex<Option<input_capture::WindowIdentifier>>>,
 }
 
 #[derive(Debug)]
@@ -115,7 +116,13 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let window_identifier = Arc::new(Mutex::new(None));
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            window_identifier.clone(),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
 
@@ -140,6 +147,7 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            window_identifier,
         };
         Ok(service)
     }
@@ -231,6 +239,20 @@ impl Service {
                 self.update_enter_hook(handle, enter_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::WindowIdentifier(handle) => {
+                log::info!("xdg-foreign handle: {handle:?}");
+                self.window_identifier
+                    .lock()
+                    .unwrap()
+                    .replace(match handle {
+                        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+                            input_capture::WindowIdentifier::Wayland(handle)
+                        }
+                        lan_mouse_ipc::WindowIdentifier::X11(xid) => {
+                            input_capture::WindowIdentifier::X11(xid)
+                        }
+                    });
+            }
         }
     }
 
