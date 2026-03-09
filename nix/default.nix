@@ -1,8 +1,20 @@
 {
+  stdenv,
   rustPlatform,
   lib,
-  pkgs,
-}: let
+  pkg-config,
+  libX11,
+  gtk4,
+  libadwaita,
+  libXtst,
+  wrapGAppsHook4,
+  librsvg,
+  darwin,
+  buildPackages,
+  git,
+  cmake,
+}:
+let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
   pname = cargoToml.package.name;
   version = cargoToml.package.version;
@@ -11,24 +23,30 @@ rustPlatform.buildRustPackage {
   pname = pname;
   version = version;
 
-  nativeBuildInputs = with pkgs; [
-    git
-    pkg-config
+  nativeBuildInputs = [
     cmake
-    makeWrapper
+    pkg-config
     buildPackages.gtk4
+    wrapGAppsHook4
+    git
   ];
 
-  buildInputs = with pkgs; [
-    xorg.libX11
+  buildInputs = [
     gtk4
     libadwaita
-    xorg.libXtst
-  ] ++ lib.optionals stdenv.isDarwin
-  (with darwin.apple_sdk_11_0.frameworks; [
-    CoreGraphics
-    ApplicationServices
-  ]);
+    librsvg
+  ]
+  ++ lib.optionals stdenv.isLinux [
+    libX11
+    libXtst
+  ]
+  ++ lib.optionals stdenv.isDarwin (
+    with darwin.apple_sdk_11_0.frameworks;
+    [
+      CoreGraphics
+      ApplicationServices
+    ]
+  );
 
   src = builtins.path {
     name = pname;
@@ -40,11 +58,7 @@ rustPlatform.buildRustPackage {
   # Set Environment Variables
   RUST_BACKTRACE = "full";
 
-  # Needed to enable support for SVG icons in GTK
   postInstall = ''
-    wrapProgram "$out/bin/lan-mouse" \
-      --set GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg.out}/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache
-
     install -Dm444 *.desktop -t $out/share/applications
     install -Dm444 lan-mouse-gtk/resources/*.svg -t $out/share/icons/hicolor/scalable/apps
   '';
