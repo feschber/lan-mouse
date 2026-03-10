@@ -78,14 +78,7 @@
               ++ lib.optionals pkgs.stdenv.isLinux [
                 libX11
                 libXtst
-              ]
-              ++ lib.optionals pkgs.stdenv.isDarwin (
-                with darwin.apple_sdk_11_0.frameworks;
-                [
-                  CoreGraphics
-                  ApplicationServices
-                ]
-              );
+              ];
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
         }

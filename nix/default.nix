@@ -9,7 +9,6 @@
   libXtst,
   wrapGAppsHook4,
   librsvg,
-  darwin,
   buildPackages,
   git,
   cmake,
@@ -39,14 +38,7 @@ rustPlatform.buildRustPackage {
   ++ lib.optionals stdenv.isLinux [
     libX11
     libXtst
-  ]
-  ++ lib.optionals stdenv.isDarwin (
-    with darwin.apple_sdk_11_0.frameworks;
-    [
-      CoreGraphics
-      ApplicationServices
-    ]
-  );
+  ];
 
   src = builtins.path {
     name = pname;
