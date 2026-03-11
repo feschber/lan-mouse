@@ -14,13 +14,13 @@
   cmake,
 }:
 let
-  cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
+  cargoToml = fromTOML (builtins.readFile ../Cargo.toml);
   pname = cargoToml.package.name;
   version = cargoToml.package.version;
 in
 rustPlatform.buildRustPackage {
-  pname = pname;
-  version = version;
+  inherit pname;
+  inherit version;
 
   nativeBuildInputs = [
     cmake

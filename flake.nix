@@ -79,7 +79,7 @@
                 libX11
                 libXtst
               ];
-            RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+            env.RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
         }
       );
