@@ -9,9 +9,7 @@
   libXtst,
   wrapGAppsHook4,
   librsvg,
-  buildPackages,
   git,
-  cmake,
 }:
 let
   cargoToml = fromTOML (builtins.readFile ../Cargo.toml);
@@ -23,9 +21,7 @@ rustPlatform.buildRustPackage {
   inherit version;
 
   nativeBuildInputs = [
-    cmake
     pkg-config
-    buildPackages.gtk4
     wrapGAppsHook4
     git
   ];
