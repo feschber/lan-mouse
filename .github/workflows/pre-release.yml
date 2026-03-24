@@ -84,7 +84,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick
+      run: brew install gtk4 libadwaita imagemagick librsvg
     - name: Release Build
       run: |
         cargo build --release
@@ -112,7 +112,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick
+      run: brew install gtk4 libadwaita imagemagick librsvg
     - name: Release Build
       run: |
         cargo build --release
