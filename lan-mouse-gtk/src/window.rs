@@ -4,19 +4,21 @@ use std::collections::HashMap;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use glib::{clone, Object};
+use glib::{Object, clone};
 use gtk::{
-    gio,
+    NoSelection, gio,
     glib::{self, closure_local},
-    NoSelection,
 };
 
 use lan_mouse_ipc::{
-    ClientConfig, ClientHandle, ClientState, FrontendRequest, FrontendRequestWriter, Position,
-    DEFAULT_PORT,
+    ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest, FrontendRequestWriter,
+    Position,
 };
 
-use crate::{fingerprint_window::FingerprintWindow, key_object::KeyObject, key_row::KeyRow};
+use crate::{
+    authorization_window::AuthorizationWindow, fingerprint_window::FingerprintWindow,
+    key_object::KeyObject, key_row::KeyRow,
+};
 
 use super::{client_object::ClientObject, client_row::ClientRow};
 
@@ -321,7 +323,7 @@ impl Window {
 
     pub(super) fn update_client_config(&self, handle: ClientHandle, client: ClientConfig) {
         let Some(row) = self.row_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
         row.set_hostname(client.hostname);
@@ -331,11 +333,11 @@ impl Window {
 
     pub(super) fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
         let Some(row) = self.row_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
         let Some(client_object) = self.client_object_for_handle(handle) else {
-            log::warn!("could not find row for handle {}", handle);
+            log::warn!("could not find row for handle {handle}");
             return;
         };
 
@@ -394,8 +396,8 @@ impl Window {
         self.request(FrontendRequest::Create);
     }
 
-    fn open_fingerprint_dialog(&self) {
-        let window = FingerprintWindow::new();
+    fn open_fingerprint_dialog(&self, fp: Option<String>) {
+        let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
         window.connect_closure(
             "confirm-clicked",
@@ -468,5 +470,34 @@ impl Window {
 
     pub(super) fn set_pk_fp(&self, fingerprint: &str) {
         self.imp().fingerprint_row.set_subtitle(fingerprint);
+    }
+
+    pub(super) fn request_authorization(&self, fingerprint: &str) {
+        if let Some(w) = self.imp().authorization_window.borrow_mut().take() {
+            w.close();
+        }
+        let window = AuthorizationWindow::new(fingerprint);
+        window.set_transient_for(Some(self));
+        window.connect_closure(
+            "confirm-clicked",
+            false,
+            closure_local!(
+                #[strong(rename_to = parent)]
+                self,
+                move |w: AuthorizationWindow, fp: String| {
+                    w.close();
+                    parent.open_fingerprint_dialog(Some(fp));
+                }
+            ),
+        );
+        window.connect_closure(
+            "cancel-clicked",
+            false,
+            closure_local!(move |w: AuthorizationWindow| {
+                w.close();
+            }),
+        );
+        window.present();
+        self.imp().authorization_window.replace(Some(window));
     }
 }

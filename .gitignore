@@ -8,3 +8,7 @@ result
 *.pem
 *.csr
 extfile.conf
+
+# flatpak files
+.flatpak-builder
+repo

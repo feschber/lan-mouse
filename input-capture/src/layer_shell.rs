@@ -7,7 +7,7 @@ use std::{
     io::{self, ErrorKind},
     os::fd::{AsFd, RawFd},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 use tokio::io::unix::AsyncFd;
 
@@ -45,9 +45,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 
 use wayland_client::{
+    Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
     backend::{ReadEventsGuard, WaylandError},
     delegate_noop,
-    globals::{registry_queue_init, Global, GlobalList, GlobalListContents},
+    globals::{Global, GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
         wl_buffer, wl_compositor,
         wl_keyboard::{self, WlKeyboard},
@@ -58,7 +59,6 @@ use wayland_client::{
         wl_seat, wl_shm, wl_shm_pool,
         wl_surface::WlSurface,
     },
-    Connection, Dispatch, DispatchError, EventQueue, QueueHandle, WEnum,
 };
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
@@ -66,8 +66,8 @@ use input_event::{Event, KeyboardEvent, PointerEvent};
 use crate::{CaptureError, CaptureEvent};
 
 use super::{
-    error::{LayerShellCaptureCreationError, WaylandBindError},
     Capture, Position,
+    error::{LayerShellCaptureCreationError, WaylandBindError},
 };
 
 struct Globals {
@@ -535,7 +535,7 @@ impl State {
     fn update_windows(&mut self) {
         log::info!("active outputs: ");
         for output in self.outputs.iter().filter(|o| o.info.is_some()) {
-            log::info!(" * {}", output);
+            log::info!(" * {output}");
         }
 
         self.active_windows.clear();
@@ -582,17 +582,17 @@ impl Inner {
         match self.queue.dispatch_pending(&mut self.state) {
             Ok(_) => {}
             Err(DispatchError::Backend(WaylandError::Io(e))) => {
-                log::error!("Wayland Error: {}", e);
+                log::error!("Wayland Error: {e}");
             }
             Err(DispatchError::Backend(e)) => {
-                panic!("backend error: {}", e);
+                panic!("backend error: {e}");
             }
             Err(DispatchError::BadMessage {
                 sender_id,
                 interface,
                 opcode,
             }) => {
-                panic!("bad message {}, {} , {}", sender_id, interface, opcode);
+                panic!("bad message {sender_id}, {interface} , {opcode}");
             }
         }
     }
@@ -813,7 +813,7 @@ impl Dispatch<WlPointer, ()> for State {
                     })),
                 ));
             }
-            wl_pointer::Event::Frame {} => {
+            wl_pointer::Event::Frame => {
                 // TODO properly handle frame events
                 // we simply insert a frame event on the client side
                 // after each event for now
@@ -974,7 +974,7 @@ impl Dispatch<ZxdgOutputV1, u32> for State {
             .find(|o| o.global.name == *name)
             .expect("output");
 
-        log::debug!("xdg_output {name} - {:?}", event);
+        log::debug!("xdg_output {name} - {event:?}");
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => {
                 output.pending_info.position = (x, y);
@@ -1010,7 +1010,7 @@ impl Dispatch<WlOutput, u32> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        log::debug!("wl_output {name} - {:?}", event);
+        log::debug!("wl_output {name} - {event:?}");
         if let wl_output::Event::Done = event {
             state.update_output_info(*name);
         }

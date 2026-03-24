@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow};
-use glib::{subclass::InitializingObject, Binding};
+use adw::{ActionRow, prelude::*};
+use glib::{Binding, subclass::InitializingObject};
 use gtk::glib::clone;
 use gtk::glib::subclass::Signal;
-use gtk::{glib, Button, CompositeTemplate};
+use gtk::{Button, CompositeTemplate, glib};
 use std::sync::OnceLock;
 
 #[derive(CompositeTemplate, Default)]

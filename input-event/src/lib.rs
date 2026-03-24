@@ -112,8 +112,8 @@ impl Display for KeyboardEvent {
 impl Display for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::Pointer(p) => write!(f, "{}", p),
-            Event::Keyboard(k) => write!(f, "{}", k),
+            Event::Pointer(p) => write!(f, "{p}"),
+            Event::Keyboard(k) => write!(f, "{k}"),
         }
     }
 }

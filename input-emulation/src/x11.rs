@@ -6,12 +6,12 @@ use x11::{
 };
 
 use input_event::{
-    Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
 };
 
 use crate::error::EmulationError;
 
-use super::{error::X11EmulationCreationError, Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, error::X11EmulationCreationError};
 
 pub(crate) struct X11Emulation {
     display: *mut xlib::Display,
@@ -23,7 +23,7 @@ impl X11Emulation {
     pub(crate) fn new() -> Result<Self, X11EmulationCreationError> {
         let display = unsafe {
             match xlib::XOpenDisplay(ptr::null()) {
-                d if d == ptr::null::<xlib::Display>() as *mut xlib::Display => {
+                d if std::ptr::eq(d, ptr::null_mut::<xlib::Display>()) => {
                     Err(X11EmulationCreationError::OpenDisplay)
                 }
                 display => Ok(display),

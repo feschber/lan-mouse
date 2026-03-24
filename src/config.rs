@@ -5,15 +5,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env::{self, VarError};
 use std::fmt::Display;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
+use toml_edit::{self, DocumentMut};
 
 use lan_mouse_cli::CliArgs;
-use lan_mouse_ipc::{Position, DEFAULT_PORT};
+use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
 use input_event::scancode::{
     self,
@@ -44,14 +46,14 @@ fn default_path() -> Result<PathBuf, VarError> {
     Ok(PathBuf::from(default_path))
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 struct ConfigToml {
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
     cert_path: Option<PathBuf>,
-    clients: Vec<TomlClient>,
+    clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
 }
 
@@ -61,7 +63,7 @@ struct TomlClient {
     host_name: Option<String>,
     ips: Option<Vec<IpAddr>>,
     port: Option<u16>,
-    pos: Option<Position>,
+    position: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
 }
@@ -262,13 +264,40 @@ impl From<TomlClient> for ConfigClient {
         let hostname = toml.hostname;
         let ips = HashSet::from_iter(toml.ips.into_iter().flatten());
         let port = toml.port.unwrap_or(DEFAULT_PORT);
-        let pos = toml.pos.unwrap_or_default();
+        let pos = toml.position.unwrap_or_default();
         Self {
             ips,
             hostname,
             port,
             pos,
             active,
+            enter_hook,
+        }
+    }
+}
+
+impl From<ConfigClient> for TomlClient {
+    fn from(client: ConfigClient) -> Self {
+        let hostname = client.hostname;
+        let host_name = None;
+        let mut ips = client.ips.into_iter().collect::<Vec<_>>();
+        ips.sort();
+        let ips = Some(ips);
+        let port = if client.port == DEFAULT_PORT {
+            None
+        } else {
+            Some(client.port)
+        };
+        let position = Some(client.pos);
+        let activate_on_startup = if client.active { Some(true) } else { None };
+        let enter_hook = client.enter_hook;
+        Self {
+            hostname,
+            host_name,
+            ips,
+            port,
+            position,
+            activate_on_startup,
             enter_hook,
         }
     }
@@ -370,6 +399,7 @@ impl Config {
         self.config_toml
             .as_ref()
             .map(|c| c.clients.clone())
+            .unwrap_or_default()
             .into_iter()
             .flatten()
             .map(From::<TomlClient>::from)
@@ -382,5 +412,67 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// set configured clients
+    pub fn set_clients(&mut self, clients: Vec<ConfigClient>) {
+        if clients.is_empty() {
+            return;
+        }
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml.as_mut().expect("config").clients =
+            Some(clients.into_iter().map(|c| c.into()).collect::<Vec<_>>());
+    }
+
+    /// set authorized keys
+    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, String>) {
+        if fingerprints.is_empty() {
+            return;
+        }
+        if self.config_toml.is_none() {
+            self.config_toml = Default::default();
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .authorized_fingerprints = Some(fingerprints);
+    }
+
+    pub fn write_back(&self) -> Result<(), io::Error> {
+        log::info!("writing config to {:?}", &self.config_path);
+        /* load the current configuration file */
+        let current_config = match fs::read_to_string(&self.config_path) {
+            Ok(c) => c.parse::<DocumentMut>().unwrap_or_default(),
+            Err(e) => {
+                log::info!("{:?} {e} => creating new config", self.config_path());
+                Default::default()
+            }
+        };
+        let _current_config =
+            toml_edit::de::from_document::<ConfigToml>(current_config).unwrap_or_default();
+
+        /* the new config */
+        let new_config = self.config_toml.clone().unwrap_or_default();
+        // let new_config = toml_edit::ser::to_document::<ConfigToml>(&new_config).expect("fixme");
+        let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("config");
+
+        /*
+         * TODO merge documents => eventually we might want to split this up into clients configured
+         * via the config file and clients managed through the GUI / frontend.
+         * The latter should be saved to $XDG_DATA_HOME instead of $XDG_CONFIG_HOME,
+         * and clients configured through .config could be made permanent.
+         * For now we just override the config file.
+         */
+
+        /* write new config to file */
+        if let Some(p) = self.config_path().parent() {
+            fs::create_dir_all(p)?;
+        }
+        let mut f = File::create(self.config_path())?;
+        f.write_all(new_config.as_bytes())?;
+
+        Ok(())
     }
 }

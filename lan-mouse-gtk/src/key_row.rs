@@ -8,7 +8,7 @@ use super::KeyObject;
 
 glib::wrapper! {
     pub struct KeyRow(ObjectSubclass<imp::KeyRow>)
-    @extends gtk::ListBoxRow, gtk::Widget, adw::PreferencesRow, adw::ExpanderRow,
+    @extends gtk::ListBoxRow, gtk::Widget, adw::PreferencesRow, adw::ActionRow,
     @implements gtk::Accessible, gtk::Actionable, gtk::Buildable, gtk::ConstraintTarget;
 }
 

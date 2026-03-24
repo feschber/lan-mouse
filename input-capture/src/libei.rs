@@ -1,10 +1,10 @@
 use ashpd::{
     desktop::{
+        Session,
         input_capture::{
             Activated, ActivatedBarrier, Barrier, BarrierID, Capabilities, InputCapture, Region,
             Zones,
         },
-        Session,
     },
     enumflags2::BitFlags,
 };
@@ -28,8 +28,8 @@ use std::{
 };
 use tokio::{
     sync::{
-        mpsc::{self, Receiver, Sender},
         Notify,
+        mpsc::{self, Receiver, Sender},
     },
     task::JoinHandle,
 };
@@ -42,8 +42,8 @@ use input_event::Event;
 use crate::CaptureEvent;
 
 use super::{
-    error::{CaptureError, LibeiCaptureCreationError},
     Capture as LanMouseInputCapture, Position,
+    error::{CaptureError, LibeiCaptureCreationError},
 };
 
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
@@ -587,9 +587,13 @@ impl LanMouseInputCapture for LibeiInputCapture<'_> {
         self.cancellation_token.cancel();
         let task = &mut self.capture_task;
         log::debug!("waiting for capture to terminate...");
-        let res = task.await.expect("libei task panic");
-        log::debug!("done!");
+        let res = if !task.is_finished() {
+            task.await.expect("libei task panic")
+        } else {
+            Ok(())
+        };
         self.terminated = true;
+        log::debug!("done!");
         res
     }
 }

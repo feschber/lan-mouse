@@ -29,13 +29,13 @@ iconset="${3:-./target/icon.iconset}"
 set -u
 
 mkdir -p "$iconset"
-magick convert -background none -resize 1024x1024 "$svg" "$iconset"/icon_512x512@2x.png
-magick convert -background none -resize 512x512 "$svg" "$iconset"/icon_512x512.png
-magick convert -background none -resize 256x256 "$svg" "$iconset"/icon_256x256.png
-magick convert -background none -resize 128x128 "$svg" "$iconset"/icon_128x128.png
-magick convert -background none -resize 64x64 "$svg" "$iconset"/icon_32x32@2x.png
-magick convert -background none -resize 32x32 "$svg" "$iconset"/icon_32x32.png
-magick convert -background none -resize 16x16 "$svg" "$iconset"/icon_16x16.png
+magick "$svg" -background none -resize 1024x1024 "$iconset"/icon_512x512@2x.png
+magick "$svg" -background none -resize 512x512 "$iconset"/icon_512x512.png
+magick "$svg" -background none -resize 256x256 "$iconset"/icon_256x256.png
+magick "$svg" -background none -resize 128x128 "$iconset"/icon_128x128.png
+magick "$svg" -background none -resize 64x64 "$iconset"/icon_32x32@2x.png
+magick "$svg" -background none -resize 32x32 "$iconset"/icon_32x32.png
+magick "$svg" -background none -resize 16x16 "$iconset"/icon_16x16.png
 cp "$iconset"/icon_512x512.png "$iconset"/icon_256x256@2x.png
 cp "$iconset"/icon_256x256.png "$iconset"/icon_128x128@2x.png
 cp "$iconset"/icon_32x32.png "$iconset"/icon_16x16@2x.png

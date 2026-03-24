@@ -1,31 +1,42 @@
-use super::{error::MacosCaptureCreationError, Capture, CaptureError, CaptureEvent, Position};
+use super::{Capture, CaptureError, CaptureEvent, Position, error::MacosCaptureCreationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
-use core_foundation::base::{kCFAllocatorDefault, CFRelease};
-use core_foundation::date::CFTimeInterval;
-use core_foundation::number::{kCFBooleanTrue, CFBooleanRef};
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
-use core_foundation::string::{kCFStringEncodingUTF8, CFStringCreateWithCString, CFStringRef};
-use core_graphics::base::{kCGErrorSuccess, CGError};
-use core_graphics::display::{CGDisplay, CGPoint};
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-    CGEventTapProxy, CGEventType, EventField,
+use core_foundation::{
+    base::{CFRelease, kCFAllocatorDefault},
+    date::CFTimeInterval,
+    number::{CFBooleanRef, kCFBooleanTrue},
+    runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
+    string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::{
+    base::{CGError, kCGErrorSuccess},
+    display::{CGDisplay, CGPoint},
+    event::{
+        CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
+        CGEventTapPlacement, CGEventTapProxy, CGEventType, CallbackResult, EventField,
+    },
+    event_source::{CGEventSource, CGEventSourceStateID},
+};
 use futures_core::Stream;
-use input_event::{Event, KeyboardEvent, PointerEvent, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
+use input_event::{
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
+};
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
-use std::collections::HashSet;
-use std::ffi::{c_char, CString};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{ready, Context, Poll};
-use std::thread::{self};
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::{oneshot, Mutex};
+use std::{
+    collections::HashSet,
+    ffi::{CString, c_char},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, ready},
+    thread::{self},
+};
+use tokio::sync::{
+    Mutex,
+    mpsc::{self, Receiver, Sender},
+    oneshot,
+};
 
 #[derive(Debug, Default)]
 struct Bounds {
@@ -37,9 +48,16 @@ struct Bounds {
 
 #[derive(Debug)]
 struct InputCaptureState {
+    /// active capture positions
     active_clients: Lazy<HashSet<Position>>,
+    /// the currently entered capture position, if any
     current_pos: Option<Position>,
+    /// position where the cursor was captured
+    enter_position: Option<CGPoint>,
+    /// bounds of the input capture area
     bounds: Bounds,
+    /// current state of modifier keys
+    modifier_state: XMods,
 }
 
 #[derive(Debug)]
@@ -56,7 +74,9 @@ impl InputCaptureState {
         let mut res = Self {
             active_clients: Lazy::new(HashSet::new),
             current_pos: None,
+            enter_position: None,
             bounds: Bounds::default(),
+            modifier_state: Default::default(),
         };
         res.update_bounds()?;
         Ok(res)
@@ -96,45 +116,34 @@ impl InputCaptureState {
         Ok(())
     }
 
-    // We can't disable mouse movement when in a client so we need to reset the cursor position
-    // to the edge of the screen, the cursor will be hidden but we dont want it to appear in a
-    // random location when we exit the client
-    fn reset_mouse_position(&self, event: &CGEvent) -> Result<(), CaptureError> {
-        if let Some(pos) = self.current_pos {
-            let location = event.location();
-            let edge_offset = 1.0;
+    /// start the input capture by
+    fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
+        let mut location = event.location();
+        let edge_offset = 1.0;
+        // move cursor location to display bounds
+        match position {
+            Position::Left => location.x = self.bounds.xmin + edge_offset,
+            Position::Right => location.x = self.bounds.xmax - edge_offset,
+            Position::Top => location.y = self.bounds.ymin + edge_offset,
+            Position::Bottom => location.y = self.bounds.ymax - edge_offset,
+        };
+        self.enter_position = Some(location);
+        self.reset_cursor()
+    }
 
-            // After the cursor is warped no event is produced but the next event
-            // will carry the delta from the warp so only half the delta is needed to move the cursor
-            let delta_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y) / 2.0;
-            let delta_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X) / 2.0;
+    /// resets the cursor to the position, where the capture started
+    fn reset_cursor(&mut self) -> Result<(), CaptureError> {
+        let pos = self.enter_position.expect("capture active");
+        log::trace!("Resetting cursor position to: {}, {}", pos.x, pos.y);
+        CGDisplay::warp_mouse_cursor_position(pos).map_err(CaptureError::WarpCursor)
+    }
 
-            let mut new_x = location.x + delta_x;
-            let mut new_y = location.y + delta_y;
+    fn hide_cursor(&self) -> Result<(), CaptureError> {
+        CGDisplay::hide_cursor(&CGDisplay::main()).map_err(CaptureError::CoreGraphics)
+    }
 
-            match pos {
-                Position::Left => {
-                    new_x = self.bounds.xmin + edge_offset;
-                }
-                Position::Right => {
-                    new_x = self.bounds.xmax - edge_offset;
-                }
-                Position::Top => {
-                    new_y = self.bounds.ymin + edge_offset;
-                }
-                Position::Bottom => {
-                    new_y = self.bounds.ymax - edge_offset;
-                }
-            }
-            let new_pos = CGPoint::new(new_x, new_y);
-
-            log::trace!("Resetting cursor position to: {new_x}, {new_y}");
-
-            return CGDisplay::warp_mouse_cursor_position(new_pos)
-                .map_err(CaptureError::WarpCursor);
-        }
-
-        Err(CaptureError::ResetMouseWithoutClient)
+    fn show_cursor(&self) -> Result<(), CaptureError> {
+        CGDisplay::show_cursor(&CGDisplay::main()).map_err(CaptureError::CoreGraphics)
     }
 
     async fn handle_producer_event(
@@ -145,15 +154,13 @@ impl InputCaptureState {
         match producer_event {
             ProducerEvent::Release => {
                 if self.current_pos.is_some() {
-                    CGDisplay::show_cursor(&CGDisplay::main())
-                        .map_err(CaptureError::CoreGraphics)?;
+                    self.show_cursor()?;
                     self.current_pos = None;
                 }
             }
             ProducerEvent::Grab(pos) => {
                 if self.current_pos.is_none() {
-                    CGDisplay::hide_cursor(&CGDisplay::main())
-                        .map_err(CaptureError::CoreGraphics)?;
+                    self.hide_cursor()?;
                     self.current_pos = Some(pos);
                 }
             }
@@ -163,8 +170,7 @@ impl InputCaptureState {
             ProducerEvent::Destroy(p) => {
                 if let Some(current) = self.current_pos {
                     if current == p {
-                        CGDisplay::show_cursor(&CGDisplay::main())
-                            .map_err(CaptureError::CoreGraphics)?;
+                        self.show_cursor()?;
                         self.current_pos = None;
                     };
                 }
@@ -180,6 +186,7 @@ fn get_events(
     ev_type: &CGEventType,
     ev: &CGEvent,
     result: &mut Vec<CaptureEvent>,
+    modifier_state: &mut XMods,
 ) -> Result<(), CaptureError> {
     fn map_pointer_event(ev: &CGEvent) -> PointerEvent {
         PointerEvent::Motion {
@@ -215,29 +222,42 @@ fn get_events(
             })));
         }
         CGEventType::FlagsChanged => {
-            let mut mods = XMods::empty();
+            let mut depressed = XMods::empty();
             let mut mods_locked = XMods::empty();
             let cg_flags = ev.get_flags();
 
             if cg_flags.contains(CGEventFlags::CGEventFlagShift) {
-                mods |= XMods::ShiftMask;
+                depressed |= XMods::ShiftMask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagControl) {
-                mods |= XMods::ControlMask;
+                depressed |= XMods::ControlMask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagAlternate) {
-                mods |= XMods::Mod1Mask;
+                depressed |= XMods::Mod1Mask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagCommand) {
-                mods |= XMods::Mod4Mask;
+                depressed |= XMods::Mod4Mask;
             }
             if cg_flags.contains(CGEventFlags::CGEventFlagAlphaShift) {
-                mods |= XMods::LockMask;
+                depressed |= XMods::LockMask;
                 mods_locked |= XMods::LockMask;
             }
 
+            // check if pressed or released
+            let state = if depressed > *modifier_state { 1 } else { 0 };
+            *modifier_state = depressed;
+
+            if let Ok(key) = map_key(ev) {
+                let key_event = CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key,
+                    state,
+                }));
+                result.push(key_event);
+            }
+
             let modifier_event = KeyboardEvent::Modifiers {
-                depressed: mods.bits(),
+                depressed: depressed.bits(),
                 latched: 0,
                 locked: mods_locked.bits(),
                 group: 0,
@@ -286,35 +306,73 @@ fn get_events(
             })))
         }
         CGEventType::OtherMouseDown => {
+            let btn_num = ev.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+            let button = match btn_num {
+                3 => BTN_BACK,
+                4 => BTN_FORWARD,
+                _ => BTN_MIDDLE,
+            };
             result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                 time: 0,
-                button: BTN_MIDDLE,
+                button,
                 state: 1,
             })))
         }
         CGEventType::OtherMouseUp => {
+            let btn_num = ev.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
+            let button = match btn_num {
+                3 => BTN_BACK,
+                4 => BTN_FORWARD,
+                _ => BTN_MIDDLE,
+            };
             result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Button {
                 time: 0,
-                button: BTN_MIDDLE,
+                button,
                 state: 0,
             })))
         }
         CGEventType::ScrollWheel => {
-            let v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-            let h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
-            if v != 0 {
-                result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
-                    time: 0,
-                    axis: 0, // Vertical
-                    value: v as f64,
-                })));
-            }
-            if h != 0 {
-                result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
-                    time: 0,
-                    axis: 1, // Horizontal
-                    value: h as f64,
-                })));
+            if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
+                let v =
+                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+                let h =
+                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
+                if v != 0 {
+                    result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
+                        time: 0,
+                        axis: 0, // Vertical
+                        value: v as f64,
+                    })));
+                }
+                if h != 0 {
+                    result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
+                        time: 0,
+                        axis: 1, // Horizontal
+                        value: h as f64,
+                    })));
+                }
+            } else {
+                // line based scrolling
+                const LINES_PER_STEP: i32 = 3;
+                const V120_STEPS_PER_LINE: i32 = 120 / LINES_PER_STEP;
+                let v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+                let h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
+                if v != 0 {
+                    result.push(CaptureEvent::Input(Event::Pointer(
+                        PointerEvent::AxisDiscrete120 {
+                            axis: 0, // Vertical
+                            value: V120_STEPS_PER_LINE * v as i32,
+                        },
+                    )));
+                }
+                if h != 0 {
+                    result.push(CaptureEvent::Input(Event::Pointer(
+                        PointerEvent::AxisDiscrete120 {
+                            axis: 1, // Horizontal
+                            value: V120_STEPS_PER_LINE * h as i32,
+                        },
+                    )));
+                }
             }
         }
         _ => (),
@@ -348,7 +406,7 @@ fn create_event_tap<'a>(
         move |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
             log::trace!("Got event from tap: {event_type:?}");
             let mut state = client_state.blocking_lock();
-            let mut pos = None;
+            let mut capture_position = None;
             let mut res_events = vec![];
 
             if matches!(
@@ -365,22 +423,34 @@ fn create_event_tap<'a>(
 
             // Are we in a client?
             if let Some(current_pos) = state.current_pos {
-                pos = Some(current_pos);
-                get_events(&event_type, cg_ev, &mut res_events).unwrap_or_else(|e| {
+                capture_position = Some(current_pos);
+                get_events(
+                    &event_type,
+                    cg_ev,
+                    &mut res_events,
+                    &mut state.modifier_state,
+                )
+                .unwrap_or_else(|e| {
                     log::error!("Failed to get events: {e}");
                 });
 
                 // Keep (hidden) cursor at the edge of the screen
-                if matches!(event_type, CGEventType::MouseMoved) {
-                    state.reset_mouse_position(cg_ev).unwrap_or_else(|e| {
-                        log::error!("Failed to reset mouse position: {e}");
-                    })
+                if matches!(
+                    event_type,
+                    CGEventType::MouseMoved
+                        | CGEventType::LeftMouseDragged
+                        | CGEventType::RightMouseDragged
+                        | CGEventType::OtherMouseDragged
+                ) {
+                    state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
                 }
-            }
-            // Did we cross a barrier?
-            else if matches!(event_type, CGEventType::MouseMoved) {
+            } else if matches!(event_type, CGEventType::MouseMoved) {
+                // Did we cross a barrier?
                 if let Some(new_pos) = state.crossed(cg_ev) {
-                    pos = Some(new_pos);
+                    capture_position = Some(new_pos);
+                    state
+                        .start_capture(cg_ev, new_pos)
+                        .unwrap_or_else(|e| log::warn!("{e}"));
                     res_events.push(CaptureEvent::Begin);
                     notify_tx
                         .blocking_send(ProducerEvent::Grab(new_pos))
@@ -388,17 +458,19 @@ fn create_event_tap<'a>(
                 }
             }
 
-            if let Some(pos) = pos {
+            if let Some(pos) = capture_position {
                 res_events.iter().for_each(|e| {
-                    event_tx
-                        .blocking_send((pos, *e))
-                        .expect("Failed to send event");
+                    // error must be ignored, since the event channel
+                    // may already be closed when the InputCapture instance is dropped.
+                    let _ = event_tx.blocking_send((pos, *e));
                 });
-                // Returning None should stop the event from being processed
+                // Returning Drop should stop the event from being processed
                 // but core fundation still returns the event
                 cg_ev.set_type(CGEventType::Null);
+                CallbackResult::Drop
+            } else {
+                CallbackResult::Keep
             }
-            Some(cg_ev.to_owned())
         };
 
     let tap = CGEventTap::new(
@@ -411,7 +483,7 @@ fn create_event_tap<'a>(
     .map_err(|_| MacosCaptureCreationError::EventTapCreation)?;
 
     let tap_source: CFRunLoopSource = tap
-        .mach_port
+        .mach_port()
         .create_runloop_source(0)
         .expect("Failed creating loop source");
 
@@ -426,8 +498,8 @@ fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
     event_tx: Sender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
-    ready: std::sync::mpsc::Sender<Result<(), MacosCaptureCreationError>>,
-    exit: oneshot::Sender<Result<(), &'static str>>,
+    ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
+    exit: oneshot::Sender<()>,
 ) {
     let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
         Err(e) => {
@@ -435,18 +507,22 @@ fn event_tap_thread(
             return;
         }
         Ok(tap) => {
-            ready.send(Ok(())).expect("channel closed");
+            let run_loop = CFRunLoop::get_current();
+            ready.send(Ok(run_loop)).expect("channel closed");
             tap
         }
     };
+    log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
+    log::debug!("event tap thread exiting!...");
 
-    let _ = exit.send(Err("tap thread exited"));
+    let _ = exit.send(());
 }
 
 pub struct MacOSInputCapture {
     event_rx: Receiver<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
+    run_loop: CFRunLoop,
 }
 
 impl MacOSInputCapture {
@@ -475,33 +551,38 @@ impl MacOSInputCapture {
         });
 
         // wait for event tap creation result
-        ready_rx.recv().expect("channel closed")?;
+        let run_loop = ready_rx.recv().expect("channel closed")?;
 
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
                     producer_event = notify_rx.recv() => {
-                        let producer_event = producer_event.expect("channel closed");
+                        let Some(producer_event) = producer_event else {
+                            break;
+                        };
                         let mut state = state.lock().await;
                         state.handle_producer_event(producer_event).await.unwrap_or_else(|e| {
                             log::error!("Failed to handle producer event: {e}");
                         })
                     }
-
-                    res = &mut tap_exit_rx => {
-                        if let Err(e) = res.expect("channel closed") {
-                            log::error!("Tap thread failed: {:?}", e);
-                            break;
-                        }
-                    }
+                    _ = &mut tap_exit_rx => break,
                 }
             }
+            // show cursor
+            let _ = CGDisplay::show_cursor(&CGDisplay::main());
         });
 
         Ok(Self {
             event_rx,
             notify_tx,
+            run_loop,
         })
+    }
+}
+
+impl Drop for MacOSInputCapture {
+    fn drop(&mut self) {
+        self.run_loop.stop();
     }
 }
 
@@ -579,6 +660,7 @@ unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
     let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| MacosCaptureCreationError::EventSourceCreation)?;
     CGEventSourceSetLocalEventsSuppressionInterval(event_source, 0.05);
+    // FIXME Memory Leak
 
     // This is a private settings that allows the cursor to be hidden while in the background.
     // It is used by Barrier and other apps.

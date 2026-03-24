@@ -1,7 +1,7 @@
 use crate::client::ClientManager;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
-use lan_mouse_proto::{ProtoEvent, MAX_EVENT_SIZE};
-use local_channel::mpsc::{channel, Receiver, Sender};
+use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
+use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -15,7 +15,7 @@ use thiserror::Error;
 use tokio::{
     net::UdpSocket,
     sync::Mutex,
-    task::{spawn_local, JoinSet},
+    task::{JoinSet, spawn_local},
 };
 use webrtc_dtls::{
     config::{Config, ExtendedMasterSecretType},
@@ -223,14 +223,18 @@ async fn ping_pong(
 ) {
     loop {
         let (buf, len) = ProtoEvent::Ping.into();
-        if let Err(e) = conn.send(&buf[..len]).await {
-            log::warn!("{addr}: send error `{e}`, closing connection");
-            let _ = conn.close().await;
-            break;
-        }
-        log::trace!("PING >->->->->- {addr}");
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // send 4 pings, at least one must be answered
+        for _ in 0..4 {
+            if let Err(e) = conn.send(&buf[..len]).await {
+                log::warn!("{addr}: send error `{e}`, closing connection");
+                let _ = conn.close().await;
+                break;
+            }
+            log::trace!("PING >->->->->- {addr}");
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
 
         if !ping_response.borrow_mut().remove(&addr) {
             log::warn!("{addr} did not respond, closing connection");

@@ -1,7 +1,7 @@
 use crate::{ConnectionError, FrontendEvent, FrontendRequest, IpcError};
 use std::{
     cmp::min,
-    task::{ready, Poll},
+    task::{Poll, ready},
     time::Duration,
 };
 

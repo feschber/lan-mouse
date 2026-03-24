@@ -1,4 +1,4 @@
-use futures::{stream::SelectAll, Stream, StreamExt};
+use futures::{Stream, StreamExt, stream::SelectAll};
 #[cfg(unix)]
 use std::path::PathBuf;
 use std::{
@@ -45,7 +45,7 @@ impl AsyncFrontendListener {
         let (socket_path, listener) = {
             let socket_path = crate::default_socket_path()?;
 
-            log::debug!("remove socket: {:?}", socket_path);
+            log::debug!("remove socket: {socket_path:?}");
             if socket_path.exists() {
                 // try to connect to see if some other instance
                 // of lan-mouse is already running
@@ -63,7 +63,7 @@ impl AsyncFrontendListener {
                 Ok(ls) => ls,
                 // some other lan-mouse instance has bound the socket in the meantime
                 Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                    return Err(IpcListenerCreationError::AlreadyRunning)
+                    return Err(IpcListenerCreationError::AlreadyRunning);
                 }
                 Err(e) => return Err(IpcListenerCreationError::Bind(e)),
             };
@@ -75,7 +75,7 @@ impl AsyncFrontendListener {
             Ok(ls) => ls,
             // some other lan-mouse instance has bound the socket in the meantime
             Err(e) if e.kind() == ErrorKind::AddrInUse => {
-                return Err(IpcListenerCreationError::AlreadyRunning)
+                return Err(IpcListenerCreationError::AlreadyRunning);
             }
             Err(e) => return Err(IpcListenerCreationError::Bind(e)),
         };

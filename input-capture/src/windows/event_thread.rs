@@ -6,33 +6,32 @@ use std::default::Default;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::Sender;
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{FALSE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use tokio::sync::mpsc::error::TrySendError;
+use windows::Win32::Foundation::{FALSE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    EnumDisplayDevicesW, EnumDisplaySettingsW, DEVMODEW, DISPLAY_DEVICEW,
-    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, ENUM_CURRENT_SETTINGS,
+    DEVMODEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::core::{PCWSTR, w};
 
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, DispatchMessageW, GetMessageW, PostThreadMessageW,
-    RegisterClassW, SetWindowsHookExW, TranslateMessage, EDD_GET_DEVICE_INTERFACE_NAME, HHOOK,
-    HMENU, HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
-    WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW,
-    WNDPROC,
+    CallNextHookEx, CreateWindowExW, DispatchMessageW, EDD_GET_DEVICE_INTERFACE_NAME, GetMessageW,
+    HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PostThreadMessageW,
+    RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
+    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
 
 use input_event::{
+    BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
     scancode::{self, Linux},
-    Event, KeyboardEvent, PointerEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT,
 };
 
-use super::{display_util, CaptureEvent, Position};
+use super::{CaptureEvent, Position, display_util};
 
 pub(crate) struct EventThread {
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
@@ -128,7 +127,7 @@ thread_local! {
 fn get_msg() -> Option<MSG> {
     unsafe {
         let mut msg = std::mem::zeroed();
-        let ret = GetMessageW(addr_of_mut!(msg), HWND::default(), 0, 0);
+        let ret = GetMessageW(addr_of_mut!(msg), None, 0, 0);
         match ret.0 {
             0 => None,
             x if x > 0 => Some(msg),
@@ -176,14 +175,15 @@ fn start_routine(
 
     /* register hooks */
     unsafe {
-        let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, HINSTANCE::default(), 0).unwrap();
-        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, HINSTANCE::default(), 0).unwrap();
+        let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, None, 0).unwrap();
+        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, None, 0).unwrap();
     }
 
     let instance = unsafe { GetModuleHandleW(None).unwrap() };
+    let instance = instance.into();
     let window_class: WNDCLASSW = WNDCLASSW {
         lpfnWndProc: window_proc,
-        hInstance: instance.into(),
+        hInstance: instance,
         lpszClassName: w!("lan-mouse-message-window-class"),
         ..Default::default()
     };
@@ -213,9 +213,9 @@ fn start_routine(
             0,
             0,
             0,
-            HWND::default(),
-            HMENU::default(),
-            instance,
+            None,
+            None,
+            Some(instance),
             None,
         )
         .expect("CreateWindowExW");
@@ -312,7 +312,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
 
     /* no client was active */
     if !active {
-        return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam);
+        return CallNextHookEx(None, ncode, wparam, lparam);
     }
 
     /* get active client if any */
@@ -337,7 +337,7 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
 unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     /* get active client if any */
     let Some(client) = ACTIVE_CLIENT.get() else {
-        return CallNextHookEx(HHOOK::default(), ncode, wparam, lparam);
+        return CallNextHookEx(None, ncode, wparam, lparam);
     };
 
     /* convert to key event */
@@ -388,7 +388,10 @@ fn enumerate_displays(display_rects: &mut Vec<RECT>) {
             if ret == FALSE {
                 break;
             }
-            if device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP != 0 {
+            if device
+                .StateFlags
+                .contains(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
+            {
                 devices.push(device.DeviceName);
             }
         }
@@ -537,6 +540,10 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
                 state: if p == WM_XBUTTONDOWN as usize { 1 } else { 0 },
             })
         }
+        WPARAM(p) if p == WM_MOUSEHWHEEL as usize => Some(PointerEvent::AxisDiscrete120 {
+            axis: 1, // Horizontal
+            value: mouse_low_level.mouseData as i32 >> 16,
+        }),
         w => {
             log::warn!("unknown mouse event: {w:?}");
             None

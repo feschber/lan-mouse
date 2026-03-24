@@ -1,7 +1,7 @@
 use ashpd::{
     desktop::{
-        remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
         PersistMode, Session,
+        remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
     },
     zbus::AsyncDrop,
 };
@@ -15,7 +15,7 @@ use input_event::{
 
 use crate::error::EmulationError;
 
-use super::{error::XdpEmulationCreationError, Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, error::XdpEmulationCreationError};
 
 pub(crate) struct DesktopPortalEmulation<'a> {
     proxy: RemoteDesktop<'a>,
@@ -143,7 +143,6 @@ impl Emulation for DesktopPortalEmulation<'_> {
 
 impl AsyncDrop for DesktopPortalEmulation<'_> {
     #[doc = r" Perform the async cleanup."]
-    #[must_use]
     #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
     fn async_drop<'async_trait>(
         self,

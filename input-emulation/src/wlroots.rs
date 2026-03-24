@@ -1,6 +1,6 @@
 use crate::error::EmulationError;
 
-use super::{error::WlrootsEmulationCreationError, Emulation};
+use super::{Emulation, error::WlrootsEmulationCreationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use std::collections::HashMap;
@@ -8,11 +8,11 @@ use std::io;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use wayland_client::backend::WaylandError;
 use wayland_client::WEnum;
+use wayland_client::backend::WaylandError;
 
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
-use wayland_client::protocol::wl_pointer::{Axis, ButtonState};
+use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
@@ -25,16 +25,15 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
-    delegate_noop,
-    globals::{registry_queue_init, GlobalListContents},
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
+    globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_registry, wl_seat},
-    Connection, Dispatch, EventQueue, QueueHandle,
 };
 
-use input_event::{scancode, Event, KeyboardEvent, PointerEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 
-use super::error::WaylandBindError;
 use super::EmulationHandle;
+use super::error::WaylandBindError;
 
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,
@@ -163,13 +162,13 @@ impl Emulation for WlrootsEmulation {
     async fn create(&mut self, handle: EmulationHandle) {
         self.state.add_client(handle);
         if let Err(e) = self.queue.flush() {
-            log::error!("{}", e);
+            log::error!("{e}");
         }
     }
     async fn destroy(&mut self, handle: EmulationHandle) {
         self.state.destroy_client(handle);
         if let Err(e) = self.queue.flush() {
-            log::error!("{}", e);
+            log::error!("{e}");
         }
     }
     async fn terminate(&mut self) {
@@ -210,7 +209,8 @@ impl VirtualInput {
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
                         self.pointer
-                            .axis_discrete(now, axis, value as f64 / 6., value / 120);
+                            .axis_discrete(now, axis, value as f64 / 8., value / 120);
+                        self.pointer.axis_source(AxisSource::Wheel);
                         self.pointer.frame();
                     }
                 }
@@ -221,7 +221,7 @@ impl VirtualInput {
                     self.keyboard.key(time, key, state as u32);
                     if let Ok(mut mods) = self.modifiers.lock() {
                         if mods.update_by_key_event(key, state) {
-                            log::trace!("Key triggers modifier change: {:?}", mods);
+                            log::trace!("Key triggers modifier change: {mods:?}");
                             self.keyboard.modifiers(
                                 mods.mask_pressed().bits(),
                                 0,
@@ -330,7 +330,7 @@ impl XMods {
 
     fn update_by_key_event(&mut self, key: u32, state: u8) -> bool {
         if let Ok(key) = scancode::Linux::try_from(key) {
-            log::trace!("Attempting to process modifier from: {:#?}", key);
+            log::trace!("Attempting to process modifier from: {key:#?}");
             let pressed_mask = match key {
                 scancode::Linux::KeyLeftShift | scancode::Linux::KeyRightShift => XMods::ShiftMask,
                 scancode::Linux::KeyLeftCtrl | scancode::Linux::KeyRightCtrl => XMods::ControlMask,
@@ -348,7 +348,7 @@ impl XMods {
 
             // unchanged
             if pressed_mask.is_empty() && locked_mask.is_empty() {
-                log::trace!("{:#?} is not a modifier key", key);
+                log::trace!("{key:#?} is not a modifier key");
                 return false;
             }
             match state {

@@ -12,5 +12,5 @@ log = "0.4.22"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.107"
 thiserror = "2.0.0"
-tokio = { version = "1.32.0", features = ["net", "io-util", "time"] }
+tokio = { version = "1.32.0", features = ["macros", "net", "io-util", "time"] }
 tokio-stream = { version = "0.1.15", features = ["io-util"] }

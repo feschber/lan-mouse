@@ -20,8 +20,8 @@ mod connect;
 mod connect_async;
 mod listen;
 
-pub use connect::{connect, FrontendEventReader, FrontendRequestWriter};
-pub use connect_async::{connect_async, AsyncFrontendEventReader, AsyncFrontendRequestWriter};
+pub use connect::{FrontendEventReader, FrontendRequestWriter, connect};
+pub use connect_async::{AsyncFrontendEventReader, AsyncFrontendRequestWriter, connect_async};
 pub use listen::AsyncFrontendListener;
 
 #[derive(Debug, Error)]
@@ -59,6 +59,7 @@ pub enum IpcError {
 pub const DEFAULT_PORT: u16 = 4242;
 
 #[derive(Debug, Default, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Position {
     #[default]
     Left,
@@ -201,10 +202,21 @@ pub enum FrontendEvent {
     AuthorizedUpdated(HashMap<String, String>),
     /// public key fingerprint of this device
     PublicKeyFingerprint(String),
-    /// incoming connected
-    IncomingConnected(String, SocketAddr, Position),
+    /// new device connected
+    DeviceConnected {
+        addr: SocketAddr,
+        fingerprint: String,
+    },
+    /// incoming device entered the screen
+    DeviceEntered {
+        fingerprint: String,
+        addr: SocketAddr,
+        pos: Position,
+    },
     /// incoming disconnected
     IncomingDisconnected(SocketAddr),
+    /// failed connection attempt (approval for fingerprint required)
+    ConnectionAttempt { fingerprint: String },
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -241,6 +253,8 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
+    /// save config file
+    SaveConfiguration,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

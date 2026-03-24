@@ -3,7 +3,7 @@ use std::task::Poll;
 use async_trait::async_trait;
 use futures_core::Stream;
 
-use super::{error::X11InputCaptureCreationError, Capture, CaptureError, CaptureEvent, Position};
+use super::{Capture, CaptureError, CaptureEvent, Position, error::X11InputCaptureCreationError};
 
 pub struct X11InputCapture {}
 

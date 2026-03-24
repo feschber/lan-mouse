@@ -1,12 +1,14 @@
 use std::cell::{Cell, RefCell};
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow, PreferencesGroup, ToastOverlay};
+use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{gdk, gio, glib, Button, CompositeTemplate, Entry, Image, Label, ListBox};
+use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, gdk, gio, glib};
 
-use lan_mouse_ipc::{FrontendRequestWriter, DEFAULT_PORT};
+use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
+
+use crate::authorization_window::AuthorizationWindow;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
@@ -49,6 +51,7 @@ pub struct Window {
     pub port: Cell<u16>,
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,
+    pub authorization_window: RefCell<Option<AuthorizationWindow>>,
 }
 
 #[glib::object_subclass]
@@ -149,7 +152,7 @@ impl Window {
 
     #[template_callback]
     fn handle_add_cert_fingerprint(&self, _button: &Button) {
-        self.obj().open_fingerprint_dialog();
+        self.obj().open_fingerprint_dialog(None);
     }
 
     pub fn set_port(&self, port: u16) {

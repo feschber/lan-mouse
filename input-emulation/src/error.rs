@@ -11,15 +11,15 @@ pub enum InputEmulationError {
     any(feature = "remote_desktop_portal", feature = "libei"),
     not(target_os = "macos")
 ))]
-use ashpd::{desktop::ResponseError, Error::Response};
+use ashpd::{Error::Response, desktop::ResponseError};
 use std::io;
 use thiserror::Error;
 
 #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
 use wayland_client::{
+    ConnectError, DispatchError,
     backend::WaylandError,
     globals::{BindError, GlobalError},
-    ConnectError, DispatchError,
 };
 
 #[derive(Debug, Error)]

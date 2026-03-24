@@ -1,7 +1,7 @@
 mod imp;
 
 use glib::Object;
-use gtk::{gio, glib};
+use gtk::{gio, glib, prelude::ObjectExt, subclass::prelude::ObjectSubclassIsExt};
 
 glib::wrapper! {
     pub struct FingerprintWindow(ObjectSubclass<imp::FingerprintWindow>)
@@ -11,8 +11,12 @@ glib::wrapper! {
 }
 
 impl FingerprintWindow {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(fingerprint: Option<String>) -> Self {
         let window: Self = Object::builder().build();
+        if let Some(fp) = fingerprint {
+            window.imp().fingerprint.set_property("text", fp);
+            window.imp().fingerprint.set_property("editable", false);
+        }
         window
     }
 }

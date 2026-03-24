@@ -10,8 +10,8 @@ use input_capture::{
 };
 use input_event::scancode;
 use lan_mouse_proto::ProtoEvent;
-use local_channel::mpsc::{channel, Receiver, Sender};
-use tokio::task::{spawn_local, JoinHandle};
+use local_channel::mpsc::{Receiver, Sender, channel};
+use tokio::task::{JoinHandle, spawn_local};
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;
@@ -362,7 +362,13 @@ impl CaptureTask {
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
-        self.active_client.take();
+        // If we have an active client, notify them we're leaving
+        if let Some(handle) = self.active_client.take() {
+            log::info!("sending Leave event to client {handle}");
+            if let Err(e) = self.conn.send(ProtoEvent::Leave(0), handle).await {
+                log::warn!("failed to send Leave to client {handle}: {e}");
+            }
+        }
         capture.release().await
     }
 }

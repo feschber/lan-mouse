@@ -5,8 +5,8 @@ use std::{net::IpAddr, time::Duration};
 use thiserror::Error;
 
 use lan_mouse_ipc::{
-    connect_async, ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError,
-    Position,
+    ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError, Position,
+    connect_async,
 };
 
 #[derive(Debug, Error)]
@@ -71,6 +71,8 @@ enum CliSubcommand {
     },
     /// deauthorize a public key
     RemoveAuthorizedKey { sha256_fingerprint: String },
+    /// save configuration to file
+    SaveConfig,
 }
 
 pub async fn run(args: CliArgs) -> Result<(), CliError> {
@@ -162,6 +164,7 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
             tx.request(FrontendRequest::RemoveAuthorizedKey(sha256_fingerprint))
                 .await?
         }
+        CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
     }
     Ok(())
 }

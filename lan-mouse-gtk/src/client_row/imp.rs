@@ -1,11 +1,11 @@
 use std::cell::RefCell;
 
 use adw::subclass::prelude::*;
-use adw::{prelude::*, ActionRow, ComboRow};
-use glib::{subclass::InitializingObject, Binding};
+use adw::{ActionRow, ComboRow, prelude::*};
+use glib::{Binding, subclass::InitializingObject};
 use gtk::glib::subclass::Signal;
-use gtk::glib::{clone, SignalHandlerId};
-use gtk::{glib, Button, CompositeTemplate, Entry, Switch};
+use gtk::glib::{SignalHandlerId, clone};
+use gtk::{Button, CompositeTemplate, Entry, Switch, glib};
 use lan_mouse_ipc::Position;
 use std::sync::OnceLock;
 

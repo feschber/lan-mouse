@@ -81,15 +81,37 @@ paru -S lan-mouse-git
 - flake: [README.md](./nix/README.md)
 </details>
 
+<details>
+    <summary>Fedora</summary>
+You can install Lan Mouse from the [Terra Repository](https://terra.fyralabs.com).
+
+
+After enabling Terra:
+
+```sh
+dnf install lan-mouse
+```
+</details>
+
+<details>
+    <summary>MacOS</summary>
+
+- Download the package for your Mac (Intel or ARM) from the releases page
+- Unzip it
+- Remove the quarantine with `xattr -rd com.apple.quarantine "Lan Mouse.app"`
+- Launch the app
+- Grant accessibility permissions in System Preferences
+
+</details>
 
 
 <details>
     <summary>Manual Installation</summary>
 
-First make sure to [install the necessary dependencies](#installing-dependencies).
+First make sure to [install the necessary dependencies](#installing-dependencies-for-development--compiling-from-source).
 
 Precompiled release binaries for Windows, MacOS and Linux are available in the [releases section](https://github.com/feschber/lan-mouse/releases).
-For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies).
+For Windows, the depenedencies are included in the .zip file, for other operating systems see [Installing Dependencies](#installing-dependencies-for-development--compiling-from-source).
 
 Alternatively, the `lan-mouse` binary can be compiled from source (see below).
 
@@ -161,7 +183,15 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
     <summary>MacOS</summary>
 
 ```sh
-brew install libadwaita pkg-config
+# Install dependencies
+brew install libadwaita pkg-config imagemagick
+cargo install cargo-bundle
+# Create the macOS icon file
+scripts/makeicns.sh
+# Create the .app bundle
+cargo bundle
+# Copy all dynamic libraries into the bundle, and update the bundle to find them there
+scripts/copy-macos-dylib.sh
 ```
 </details>
 
@@ -291,6 +321,9 @@ To do so, use the `daemon` subcommand:
 ```sh
 lan-mouse daemon
 ```
+</details>
+
+## Systemd Service
 
 In order to start lan-mouse with a graphical session automatically,
 the [systemd-service](service/lan-mouse.service) can be used:
@@ -302,7 +335,9 @@ cp service/lan-mouse.service ~/.config/systemd/user
 systemctl --user daemon-reload
 systemctl --user enable --now lan-mouse.service
 ```
-</details>
+> [!Important]
+> Make sure to point `ExecStart=/usr/bin/lan-mouse daemon` to the actual `lan-mouse` binary (in case it is not under `/usr/bin`, e.g. when installed manually.
+
 
 ## Configuration
 To automatically load clients on startup, the file `$XDG_CONFIG_HOME/lan-mouse/config.toml` is parsed.
