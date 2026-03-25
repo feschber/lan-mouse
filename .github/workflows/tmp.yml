@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick librsvg
+      run: brew install gtk4 libadwaita imagemagick-full
     - name: Make icns
       run: scripts/makeicns.sh
 
@@ -21,6 +21,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: install dependencies
-      run: brew install gtk4 libadwaita imagemagick librsvg
+      run: brew install gtk4 libadwaita imagemagick-full
     - name: Make icns
       run: scripts/makeicns.sh
