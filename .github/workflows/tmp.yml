@@ -1,0 +1,26 @@
+name: Test Icon script
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  macos-release-build:
+    runs-on: macos-15-intel
+    steps:
+    - uses: actions/checkout@v4
+    - name: install dependencies
+      run: brew install gtk4 libadwaita imagemagick librsvg
+    - name: Make icns
+      run: scripts/makeicns.sh
+
+  macos-aarch64-release-build:
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+    - name: install dependencies
+      run: brew install gtk4 libadwaita imagemagick librsvg
+    - name: Make icns
+      run: scripts/makeicns.sh
