@@ -20,7 +20,7 @@ jobs:
   linux-release-build:
     runs-on: ubuntu-22.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: install dependencies
       run: |
         sudo apt-get update
@@ -31,7 +31,7 @@ jobs:
         cargo build --release
         cp target/release/lan-mouse lan-mouse-linux-x86_64
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: lan-mouse-linux-x86_64
         path: lan-mouse-linux-x86_64
@@ -39,7 +39,7 @@ jobs:
   linux-arm64-release-build:
     runs-on: ubuntu-22.04-arm
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: install dependencies
       run: |
         sudo apt-get update
@@ -50,7 +50,7 @@ jobs:
         cargo build --release
         cp target/release/lan-mouse lan-mouse-linux-arm64
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: lan-mouse-linux-arm64
         path: lan-mouse-linux-arm64
@@ -92,7 +92,7 @@ jobs:
         gvsbuild build --msys-dir=C:\msys64 gtk4 libadwaita librsvg
         Move-Item "C:\Program Files\Git\usr\notbin" "C:\Program Files\Git\usr\bin"
         Move-Item "C:\Program Files\Git\notbin" "C:\Program Files\Git\bin"
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Release Build
       run: cargo build --release
     - name: Create Archive
@@ -102,7 +102,7 @@ jobs:
         Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse-windows"
         Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows-x86_64.zip
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: lan-mouse-windows-x86_64
         path: lan-mouse-windows-x86_64.zip
@@ -110,7 +110,7 @@ jobs:
   macos-release-build:
     runs-on: macos-15-intel
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: install dependencies
       run: |
         brew install --cask inkscape
@@ -132,7 +132,7 @@ jobs:
         cd target/release/bundle/osx
         zip -r "lan-mouse-macos-intel.zip" "Lan Mouse.app"
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: lan-mouse-macos-intel
         path: target/release/bundle/osx/lan-mouse-macos-intel.zip
@@ -140,7 +140,7 @@ jobs:
   macos-arm64-release-build:
     runs-on: macos-15
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: install dependencies
       run: |
         brew install --cask inkscape
@@ -162,7 +162,7 @@ jobs:
         cd target/release/bundle/osx
         zip -r "lan-mouse-macos-arm64.zip" "Lan Mouse.app"
     - name: Upload build artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: lan-mouse-macos-arm64
         path: target/release/bundle/osx/lan-mouse-macos-arm64.zip
