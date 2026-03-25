@@ -29,12 +29,12 @@ jobs:
     - name: Release Build
       run: |
         cargo build --release
-        cp target/release/lan-mouse lan-mouse-linux-x86-64
+        cp target/release/lan-mouse lan-mouse-linux-x86_64
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-linux-x86-64
-        path: lan-mouse-linux-x86-64
+        name: lan-mouse-linux-x86_64
+        path: lan-mouse-linux-x86_64
 
   linux-arm64-release-build:
     runs-on: ubuntu-24.04-arm
@@ -100,12 +100,12 @@ jobs:
         mkdir "lan-mouse-windows"
         Get-Childitem -Path "C:\\gtk-build\\gtk\\x64\\release\\bin\\*.dll" -File -Recurse | Copy-Item -Destination "lan-mouse-windows"
         Copy-Item -Path "target\release\lan-mouse.exe" -Destination "lan-mouse-windows"
-        Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows-x86-64.zip
+        Compress-Archive -Path "lan-mouse-windows\*" -DestinationPath lan-mouse-windows-x86_64.zip
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lan-mouse-windows-x86-64
-        path: lan-mouse-windows-x86-64.zip
+        name: lan-mouse-windows-x86_64
+        path: lan-mouse-windows-x86_64.zip
 
   macos-release-build:
     runs-on: macos-15-intel
@@ -184,11 +184,11 @@ jobs:
         prerelease: true
         generate_release_notes: true
         files: |
-          lan-mouse-linux-x86-64/lan-mouse-linux-x86-64
+          lan-mouse-linux-x86_64/lan-mouse-linux-x86_64
           lan-mouse-linux-arm/lan-mouse-linux-arm
           lan-mouse-macos-intel/lan-mouse-macos-intel.zip
           lan-mouse-macos-arm/lan-mouse-macos-arm.zip
-          lan-mouse-windows-x86-64/lan-mouse-windows-x86-64.zip
+          lan-mouse-windows-x86_64/lan-mouse-windows-x86_64.zip
     - name: Create Tagged Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
@@ -197,8 +197,8 @@ jobs:
         name: ${{ github.ref_name }}
         generate_release_notes: true
         files: |
-          lan-mouse-linux-x86-64/lan-mouse-linux-x86-64
+          lan-mouse-linux-x86_64/lan-mouse-linux-x86_64
           lan-mouse-linux-arm/lan-mouse-linux-arm
           lan-mouse-macos-intel/lan-mouse-macos-intel.zip
           lan-mouse-macos-arm/lan-mouse-macos-arm.zip
-          lan-mouse-windows-x86-64/lan-mouse-windows-x86-64.zip
+          lan-mouse-windows-x86_64/lan-mouse-windows-x86_64.zip
