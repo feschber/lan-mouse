@@ -49,7 +49,7 @@ pub(crate) enum CaptureType {
     EnterOnly,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum CaptureRequest {
     /// capture must release the mouse
     Release,
@@ -59,6 +59,8 @@ enum CaptureRequest {
     Destroy(CaptureHandle),
     /// reenable input capture
     Reenable,
+    /// set release bind
+    SetReleaseBind(Vec<scancode::Linux>),
 }
 
 impl Capture {
@@ -130,6 +132,10 @@ impl Capture {
 
     pub(crate) async fn event(&mut self) -> ICaptureEvent {
         self.event_rx.recv().await.expect("channel closed")
+    }
+
+    pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
+        let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
 }
 
@@ -205,6 +211,9 @@ impl CaptureTask {
                         CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
                         CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::SetReleaseBind(bind) => {
+                            self.release_bind.borrow_mut().clone_from(&bind);
+                        }
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -294,6 +303,9 @@ impl CaptureTask {
                     CaptureRequest::Destroy(h) => {
                         self.remove_capture(h);
                         capture.destroy(h).await?;
+                    }
+                    CaptureRequest::SetReleaseBind(bind) => {
+                        self.release_bind.borrow_mut().clone_from(&bind);
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,

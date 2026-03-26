@@ -1,6 +1,7 @@
 use crate::capture_test::TestCaptureArgs;
 use crate::emulation_test::TestEmulationArgs;
 use clap::{Parser, Subcommand, ValueEnum};
+use notify::{EventKind, RecommendedWatcher, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env::{self, VarError};
@@ -46,7 +47,7 @@ fn default_path() -> Result<PathBuf, VarError> {
     Ok(PathBuf::from(default_path))
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 struct ConfigToml {
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
@@ -244,8 +245,14 @@ pub struct Config {
     cert_path: PathBuf,
     /// path to the config file used
     config_path: PathBuf,
+    /// path to config directory (parent of above)
+    config_dir: PathBuf,
     /// the (optional) toml config and it's path
     config_toml: Option<ConfigToml>,
+    // filesystem watcher
+    watcher: notify::RecommendedWatcher,
+    // channel for filesystem events
+    watch_rx: tokio::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 }
 
 pub struct ConfigClient {
@@ -311,6 +318,8 @@ pub enum ConfigError {
     Io(#[from] io::Error),
     #[error(transparent)]
     Var(#[from] VarError),
+    #[error(transparent)]
+    Watcher(#[from] notify::Error),
 }
 
 const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
@@ -342,12 +351,55 @@ impl Config {
             .or(config_toml.as_ref().and_then(|c| c.cert_path.clone()))
             .unwrap_or(default_path()?.join(CERT_FILE_NAME));
 
-        Ok(Config {
+        let (tx, watch_rx) = tokio::sync::mpsc::channel(16);
+        let watcher = RecommendedWatcher::new(
+            move |res| {
+                let _ = tx.blocking_send(res);
+            },
+            notify::Config::default(),
+        )?;
+        let config_dir = config_path
+            .parent()
+            .expect("config directory")
+            .to_path_buf();
+        let mut config = Config {
             args,
             cert_path,
             config_path,
+            config_dir,
             config_toml,
-        })
+            watcher,
+            watch_rx,
+        };
+        config.watch()?;
+        Ok(config)
+    }
+
+    fn watch(&mut self) -> Result<(), notify::Error> {
+        self.watcher
+            .watch(&self.config_dir, notify::RecursiveMode::NonRecursive)?;
+        Ok(())
+    }
+
+    fn unwatch(&mut self) -> Result<(), notify::Error> {
+        self.watcher.unwatch(&self.config_dir)?;
+        Ok(())
+    }
+
+    pub async fn changed(&mut self) -> Result<(), notify::Error> {
+        loop {
+            let event = self.watch_rx.recv().await.expect("channel closed");
+            let event = event.expect("filesystem event");
+            if event.paths.contains(&self.config_path)
+                && matches!(
+                    event.kind,
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                )
+                && self.read_from_disk()?
+            {
+                return Ok(());
+            }
+        }
     }
 
     /// the command to run
@@ -428,9 +480,6 @@ impl Config {
 
     /// set authorized keys
     pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, String>) {
-        if fingerprints.is_empty() {
-            return;
-        }
         if self.config_toml.is_none() {
             self.config_toml = Some(Default::default());
         }
@@ -440,38 +489,58 @@ impl Config {
             .authorized_fingerprints = Some(fingerprints);
     }
 
-    pub fn write_back(&self) -> Result<(), io::Error> {
-        log::info!("writing config to {:?}", &self.config_path);
-        /* load the current configuration file */
-        let current_config = match fs::read_to_string(&self.config_path) {
-            Ok(c) => c.parse::<DocumentMut>().unwrap_or_default(),
+    pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {
+        log::info!("reading config from {:?}", &self.config_path);
+
+        let current_config = fs::read_to_string(&self.config_path)?;
+        let current_config = match current_config.parse::<DocumentMut>() {
+            Ok(c) => c,
             Err(e) => {
-                log::info!("{:?} {e} => creating new config", self.config_path());
-                Default::default()
+                log::warn!("{:?} {e}", self.config_path());
+                return Ok(false);
             }
         };
-        let _current_config =
-            toml_edit::de::from_document::<ConfigToml>(current_config).unwrap_or_default();
+        let mut changed = false;
+        match toml_edit::de::from_document::<ConfigToml>(current_config) {
+            Ok(current_config) => {
+                changed = self
+                    .config_toml
+                    .as_ref()
+                    .is_none_or(|c| c != &current_config);
+                self.config_toml.replace(current_config);
+            }
+            Err(e) => log::warn!("{:?} {e}", self.config_path()),
+        };
+        Ok(changed)
+    }
 
+    pub fn write_back(&mut self) -> Result<(), io::Error> {
+        log::info!("writing config to {:?}", &self.config_path);
         /* the new config */
         let new_config = self.config_toml.clone().unwrap_or_default();
-        // let new_config = toml_edit::ser::to_document::<ConfigToml>(&new_config).expect("fixme");
         let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("config");
 
         /*
-         * TODO merge documents => eventually we might want to split this up into clients configured
+         * TODO merge with current config file to preserve comments
+         * => eventually we might want to split this up into clients configured
          * via the config file and clients managed through the GUI / frontend.
          * The latter should be saved to $XDG_DATA_HOME instead of $XDG_CONFIG_HOME,
          * and clients configured through .config could be made permanent.
          * For now we just override the config file.
          */
 
+        let _ = self.unwatch();
         /* write new config to file */
         if let Some(p) = self.config_path().parent() {
             fs::create_dir_all(p)?;
         }
-        let mut f = File::create(self.config_path())?;
-        f.write_all(new_config.as_bytes())?;
+        {
+            let mut f = File::create(self.config_path())?;
+            f.write_all(new_config.as_bytes())?;
+            f.sync_all()?;
+        }
+
+        let _ = self.watch();
 
         Ok(())
     }

@@ -11,8 +11,8 @@ use crate::{
 use futures::StreamExt;
 use hickory_resolver::ResolveError;
 use lan_mouse_ipc::{
-    AsyncFrontendListener, ClientConfig, ClientHandle, ClientState, FrontendEvent, FrontendRequest,
-    IpcError, IpcListenerCreationError, Position, Status,
+    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
+    IpcListenerCreationError, Position, Status,
 };
 use log;
 use std::{
@@ -83,21 +83,7 @@ impl Service {
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
         let client_manager = ClientManager::default();
         for client in config.clients() {
-            let config = ClientConfig {
-                hostname: client.hostname,
-                fix_ips: client.ips.into_iter().collect(),
-                port: client.port,
-                pos: client.pos,
-                cmd: client.enter_hook,
-            };
-            let state = ClientState {
-                active: client.active,
-                ips: HashSet::from_iter(config.fix_ips.iter().cloned()),
-                ..Default::default()
-            };
-            let handle = client_manager.add_client();
-            client_manager.set_config(handle, config);
-            client_manager.set_state(handle, state);
+            client_manager.add_with_config(client);
         }
 
         // load certificate
@@ -164,6 +150,7 @@ impl Service {
                 event = self.emulation.event() => self.handle_emulation_event(event),
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
+                _ = self.config.changed() => self.handle_config_change(),
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
         }
@@ -253,6 +240,30 @@ impl Service {
         if let Err(e) = self.config.write_back() {
             log::warn!("failed to write config: {e}");
         }
+    }
+
+    fn handle_config_change(&mut self) {
+        for h in self.client_manager.registered_clients() {
+            self.remove_client(h);
+        }
+        for c in self.config.clients() {
+            let handle = self.client_manager.add_with_config(c);
+            log::info!("added client {handle}");
+            let (c, s) = self.client_manager.get_state(handle).unwrap();
+            if s.active {
+                self.client_manager.deactivate_client(handle);
+                self.activate_client(handle);
+            }
+            self.notify_frontend(FrontendEvent::Created(handle, c, s));
+        }
+        let release_bind = self.config.release_bind();
+        self.capture.set_release_bind(release_bind);
+        let authorized_keys = self.config.authorized_fingerprints();
+        self.authorized_keys
+            .write()
+            .unwrap()
+            .clone_from(&authorized_keys);
+        self.sync_frontend();
     }
 
     async fn handle_frontend_pending(&mut self) {
@@ -477,7 +488,7 @@ impl Service {
     }
 
     fn activate_client(&mut self, handle: ClientHandle) {
-        log::debug!("activating client");
+        log::debug!("activating client {handle}");
 
         /* resolve dns on activate */
         self.resolve(handle);
