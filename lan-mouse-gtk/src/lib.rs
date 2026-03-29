@@ -167,7 +167,7 @@ fn setup_menu(app: &adw::Application) {
 
 fn build_ui(app: &Application) {
     // If a window already exists (re-activation), just present it
-    if let Some(window) = app.active_window() {
+    if let Some(window) = app.windows().first() {
         window.present();
         return;
     }
