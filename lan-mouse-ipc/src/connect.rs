@@ -45,8 +45,40 @@ impl FrontendRequestWriter {
     }
 }
 
+/// Try to connect to the service once without retrying.
+pub fn try_connect() -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
+    #[cfg(unix)]
+    let rx = {
+        let socket_path = crate::default_socket_path()?;
+        UnixStream::connect(&socket_path)?
+    };
+    #[cfg(windows)]
+    let rx = TcpStream::connect("127.0.0.1:5252")?;
+    make_connection(rx)
+}
+
 pub fn connect() -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
     let rx = wait_for_service()?;
+    make_connection(rx)
+}
+
+#[cfg(unix)]
+fn make_connection(
+    rx: UnixStream,
+) -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
+    let tx = rx.try_clone()?;
+    let buf_reader = BufReader::new(rx);
+    let lines = buf_reader.lines();
+    let line_writer = LineWriter::new(tx);
+    let reader = FrontendEventReader { lines };
+    let writer = FrontendRequestWriter { line_writer };
+    Ok((reader, writer))
+}
+
+#[cfg(windows)]
+fn make_connection(
+    rx: TcpStream,
+) -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
     let tx = rx.try_clone()?;
     let buf_reader = BufReader::new(rx);
     let lines = buf_reader.lines();
