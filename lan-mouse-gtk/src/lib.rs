@@ -98,12 +98,34 @@ fn setup_menu(app: &adw::Application) {
 }
 
 fn build_ui(app: &Application) {
+    // If a window already exists (re-activation), just present it
+    if let Some(window) = app.active_window() {
+        window.present();
+        return;
+    }
+
     log::debug!("connecting to lan-mouse-socket");
-    let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
+    let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::try_connect() {
         Ok(conn) => conn,
         Err(e) => {
-            log::error!("{e}");
-            process::exit(1);
+            log::warn!("could not connect to daemon ({e}), spawning a new one");
+            if let Err(spawn_err) = process::Command::new(
+                env::current_exe().expect("could not determine executable path"),
+            )
+            .args(env::args().skip(1))
+            .arg("daemon")
+            .spawn()
+            {
+                log::error!("failed to spawn daemon: {spawn_err}");
+                process::exit(1);
+            }
+            match lan_mouse_ipc::connect() {
+                Ok(conn) => conn,
+                Err(e) => {
+                    log::error!("{e}");
+                    process::exit(1);
+                }
+            }
         }
     };
     log::debug!("connected to lan-mouse-socket");
