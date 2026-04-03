@@ -137,8 +137,10 @@ pub enum LayerShellCaptureCreationError {
 #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
 #[derive(Debug, Error)]
 pub enum X11InputCaptureCreationError {
-    #[error("X11 input capture is not yet implemented :(")]
-    NotImplemented,
+    #[error("could not open X11 display")]
+    OpenDisplay,
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[cfg(target_os = "macos")]
