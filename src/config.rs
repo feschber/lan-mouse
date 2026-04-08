@@ -432,7 +432,7 @@ impl Config {
             return;
         }
         if self.config_toml.is_none() {
-            self.config_toml = Default::default();
+            self.config_toml = Some(Default::default());
         }
         self.config_toml
             .as_mut()
