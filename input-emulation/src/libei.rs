@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 
 use ashpd::desktop::{
     PersistMode, Session,
-    remote_desktop::{DeviceType, RemoteDesktop},
+    remote_desktop::{DeviceType, RemoteDesktop, SelectDevicesOptions},
 };
 use async_trait::async_trait;
 
@@ -40,15 +40,15 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub(crate) struct LibeiEmulation<'a> {
+pub(crate) struct LibeiEmulation {
     context: ei::Context,
     conn: event::Connection,
     devices: Devices,
     ei_task: JoinHandle<()>,
     error: Arc<Mutex<Option<EmulationError>>>,
     libei_error: Arc<AtomicBool>,
-    _remote_desktop: RemoteDesktop<'a>,
-    session: Session<'a, RemoteDesktop<'a>>,
+    _remote_desktop: RemoteDesktop,
+    session: Session<RemoteDesktop>,
 }
 
 /// Get the path to the RemoteDesktop token file
@@ -84,27 +84,26 @@ fn write_token(token: &str) -> io::Result<()> {
     Ok(())
 }
 
-async fn get_ei_fd<'a>()
--> Result<(RemoteDesktop<'a>, Session<'a, RemoteDesktop<'a>>, OwnedFd), ashpd::Error> {
+async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
     let restore_token = read_token();
 
     log::debug!("creating session ...");
-    let session = remote_desktop.create_session().await?;
+    let session = remote_desktop.create_session(Default::default()).await?;
 
     log::debug!("selecting devices ...");
-    remote_desktop
-        .select_devices(
-            &session,
-            DeviceType::Keyboard | DeviceType::Pointer,
-            restore_token.as_deref(),
-            PersistMode::ExplicitlyRevoked,
-        )
-        .await?;
+    let options = SelectDevicesOptions::default()
+        .set_devices(DeviceType::Keyboard | DeviceType::Pointer)
+        .set_persist_mode(PersistMode::ExplicitlyRevoked)
+        .set_restore_token(restore_token.as_deref());
+    remote_desktop.select_devices(&session, options).await?;
 
     log::info!("requesting permission for input emulation");
-    let start_response = remote_desktop.start(&session, None).await?.response()?;
+    let start_response = remote_desktop
+        .start(&session, None, Default::default())
+        .await?
+        .response()?;
 
     // The restore token is only valid once, we need to re-save it each time
     if let Some(token_str) = start_response.restore_token() {
@@ -113,11 +112,13 @@ async fn get_ei_fd<'a>()
         }
     }
 
-    let fd = remote_desktop.connect_to_eis(&session).await?;
+    let fd = remote_desktop
+        .connect_to_eis(&session, Default::default())
+        .await?;
     Ok((remote_desktop, session, fd))
 }
 
-impl LibeiEmulation<'_> {
+impl LibeiEmulation {
     pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
         let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
@@ -152,14 +153,14 @@ impl LibeiEmulation<'_> {
     }
 }
 
-impl Drop for LibeiEmulation<'_> {
+impl Drop for LibeiEmulation {
     fn drop(&mut self) {
         self.ei_task.abort();
     }
 }
 
 #[async_trait]
-impl Emulation for LibeiEmulation<'_> {
+impl Emulation for LibeiEmulation {
     async fn consume(
         &mut self,
         event: Event,

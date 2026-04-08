@@ -1,7 +1,10 @@
 use ashpd::{
     desktop::{
         PersistMode, Session,
-        remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop},
+        remote_desktop::{
+            Axis, DeviceType, KeyState, NotifyPointerAxisOptions, RemoteDesktop,
+            SelectDevicesOptions,
+        },
     },
     zbus::AsyncDrop,
 };
@@ -17,32 +20,31 @@ use crate::error::EmulationError;
 
 use super::{Emulation, EmulationHandle, error::XdpEmulationCreationError};
 
-pub(crate) struct DesktopPortalEmulation<'a> {
-    proxy: RemoteDesktop<'a>,
-    session: Session<'a, RemoteDesktop<'a>>,
+pub(crate) struct DesktopPortalEmulation {
+    proxy: RemoteDesktop,
+    session: Session<RemoteDesktop>,
 }
 
-impl<'a> DesktopPortalEmulation<'a> {
-    pub(crate) async fn new() -> Result<DesktopPortalEmulation<'a>, XdpEmulationCreationError> {
+impl DesktopPortalEmulation {
+    pub(crate) async fn new() -> Result<DesktopPortalEmulation, XdpEmulationCreationError> {
         log::debug!("connecting to org.freedesktop.portal.RemoteDesktop portal ...");
         let proxy = RemoteDesktop::new().await?;
 
         // retry when user presses the cancel button
         log::debug!("creating session ...");
-        let session = proxy.create_session().await?;
+        let session = proxy.create_session(Default::default()).await?;
 
         log::debug!("selecting devices ...");
-        proxy
-            .select_devices(
-                &session,
-                DeviceType::Keyboard | DeviceType::Pointer,
-                None,
-                PersistMode::ExplicitlyRevoked,
-            )
-            .await?;
+        let options = SelectDevicesOptions::default()
+            .set_devices(DeviceType::Keyboard | DeviceType::Pointer)
+            .set_persist_mode(PersistMode::ExplicitlyRevoked);
+        proxy.select_devices(&session, options).await?;
 
         log::info!("requesting permission for input emulation");
-        let _devices = proxy.start(&session, None).await?.response()?;
+        let _devices = proxy
+            .start(&session, None, Default::default())
+            .await?
+            .response()?;
 
         log::debug!("started session");
         let session = session;
@@ -52,7 +54,7 @@ impl<'a> DesktopPortalEmulation<'a> {
 }
 
 #[async_trait]
-impl Emulation for DesktopPortalEmulation<'_> {
+impl Emulation for DesktopPortalEmulation {
     async fn consume(
         &mut self,
         event: input_event::Event,
@@ -62,7 +64,7 @@ impl Emulation for DesktopPortalEmulation<'_> {
             Pointer(p) => match p {
                 PointerEvent::Motion { time: _, dx, dy } => {
                     self.proxy
-                        .notify_pointer_motion(&self.session, dx, dy)
+                        .notify_pointer_motion(&self.session, dx, dy, Default::default())
                         .await?;
                 }
                 PointerEvent::Button {
@@ -75,7 +77,12 @@ impl Emulation for DesktopPortalEmulation<'_> {
                         _ => KeyState::Pressed,
                     };
                     self.proxy
-                        .notify_pointer_button(&self.session, button as i32, state)
+                        .notify_pointer_button(
+                            &self.session,
+                            button as i32,
+                            state,
+                            Default::default(),
+                        )
                         .await?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
@@ -84,7 +91,12 @@ impl Emulation for DesktopPortalEmulation<'_> {
                         _ => Axis::Horizontal,
                     };
                     self.proxy
-                        .notify_pointer_axis_discrete(&self.session, axis, value / 120)
+                        .notify_pointer_axis_discrete(
+                            &self.session,
+                            axis,
+                            value / 120,
+                            Default::default(),
+                        )
                         .await?;
                 }
                 PointerEvent::Axis {
@@ -101,7 +113,12 @@ impl Emulation for DesktopPortalEmulation<'_> {
                         Axis::Horizontal => (value, 0.),
                     };
                     self.proxy
-                        .notify_pointer_axis(&self.session, dx, dy, true)
+                        .notify_pointer_axis(
+                            &self.session,
+                            dx,
+                            dy,
+                            NotifyPointerAxisOptions::default().set_finish(true),
+                        )
                         .await?;
                 }
             },
@@ -117,7 +134,12 @@ impl Emulation for DesktopPortalEmulation<'_> {
                             _ => KeyState::Pressed,
                         };
                         self.proxy
-                            .notify_keyboard_keycode(&self.session, key as i32, state)
+                            .notify_keyboard_keycode(
+                                &self.session,
+                                key as i32,
+                                state,
+                                Default::default(),
+                            )
                             .await?;
                     }
                     KeyboardEvent::Modifiers { .. } => {
@@ -141,7 +163,7 @@ impl Emulation for DesktopPortalEmulation<'_> {
     }
 }
 
-impl AsyncDrop for DesktopPortalEmulation<'_> {
+impl AsyncDrop for DesktopPortalEmulation {
     #[doc = r" Perform the async cleanup."]
     #[allow(clippy::type_complexity, clippy::type_repetition_in_bounds)]
     fn async_drop<'async_trait>(
