@@ -39,9 +39,20 @@ fn default_path() -> Result<PathBuf, VarError> {
 
     #[cfg(not(unix))]
     let default_path = {
-        let app_data =
-            env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
-        format!("{app_data}\\lan-mouse\\")
+        #[cfg(windows)]
+        if crate::is_windows_service() {
+            "C:\\ProgramData\\lan-mouse\\".to_string()
+        } else {
+            let app_data =
+                env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
+            format!("{app_data}\\lan-mouse\\")
+        }
+        #[cfg(not(windows))]
+        {
+            let app_data =
+                env::var("LOCALAPPDATA").unwrap_or(format!("{}/.config", env::var("USERPROFILE")?));
+            format!("{app_data}\\lan-mouse\\")
+        }
     };
     Ok(PathBuf::from(default_path))
 }
@@ -113,6 +124,19 @@ pub enum Command {
     Cli(CliArgs),
     /// run in daemon mode
     Daemon,
+    /// Install as system service (Windows: SCM service, Linux: systemd, macOS: launchd)
+    #[cfg(windows)]
+    Install,
+    /// Uninstall system service
+    #[cfg(windows)]
+    Uninstall,
+    /// Query service status
+    #[cfg(windows)]
+    Status,
+    /// Run as Windows service (internal - spawns session daemons)
+    #[cfg(windows)]
+    #[command(hide = true)]
+    WinSvc,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -319,6 +343,23 @@ const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
 impl Config {
     pub fn new() -> Result<Self, ConfigError> {
         let args = Args::parse();
+        Self::from_args(args)
+    }
+
+    pub fn new_with_args<I, T>(args_iter: I) -> Result<Self, ConfigError>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let args = Args::parse_from(args_iter);
+        Self::from_args(args)
+    }
+
+    fn from_args(args: Args) -> Result<Self, ConfigError> {
+        #[cfg(windows)]
+        if matches!(args.command, Some(Command::WinSvc)) {
+            crate::set_is_windows_service(true);
+        }
 
         // --config <file> overrules default location
         let config_path = args
