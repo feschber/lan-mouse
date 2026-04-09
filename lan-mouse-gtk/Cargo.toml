@@ -15,5 +15,13 @@ log = "0.4.20"
 lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.2.0" }
 thiserror = "2.0.0"
 
+[target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
+gdk4_wayland = { package = "gdk4-wayland", version="0.9.6", optional=true }
+
 [build-dependencies]
 glib-build-tools = { version = "0.20.0" }
+
+
+[features]
+default = ["wayland_window_identifier"]
+wayland_window_identifier = ["dep:gdk4_wayland"]
