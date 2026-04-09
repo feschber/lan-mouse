@@ -9,6 +9,8 @@ use slab::Slab;
 
 use lan_mouse_ipc::{ClientConfig, ClientHandle, ClientState, Position};
 
+use crate::config::ConfigClient;
+
 #[derive(Clone, Default)]
 pub struct ClientManager {
     clients: Rc<RefCell<Slab<(ClientConfig, ClientState)>>>,
@@ -22,6 +24,25 @@ impl ClientManager {
             .iter()
             .map(|(_, c)| c.clone())
             .collect::<Vec<_>>()
+    }
+
+    pub fn add_with_config(&self, config_client: ConfigClient) -> ClientHandle {
+        let config = ClientConfig {
+            hostname: config_client.hostname,
+            fix_ips: config_client.ips.into_iter().collect(),
+            port: config_client.port,
+            pos: config_client.pos,
+            cmd: config_client.enter_hook,
+        };
+        let state = ClientState {
+            active: config_client.active,
+            ips: HashSet::from_iter(config.fix_ips.iter().cloned()),
+            ..Default::default()
+        };
+        let handle = self.add_client();
+        self.set_config(handle, config);
+        self.set_state(handle, state);
+        handle
     }
 
     /// add a new client to this manager
@@ -228,6 +249,15 @@ impl ClientManager {
             .borrow()
             .get(handle as usize)
             .and_then(|(c, _)| c.cmd.clone())
+    }
+
+    /// returns all clients that are currently registered
+    pub(crate) fn registered_clients(&self) -> Vec<ClientHandle> {
+        self.clients
+            .borrow()
+            .iter()
+            .map(|(h, _)| h as ClientHandle)
+            .collect()
     }
 
     /// returns all clients that are currently active
