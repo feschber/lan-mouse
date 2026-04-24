@@ -149,6 +149,10 @@ pub enum MacosCaptureCreationError {
     #[cfg(target_os = "macos")]
     #[error("event tap creation failed")]
     EventTapCreation,
+    #[error("accessibility permission is required")]
+    AccessibilityPermission,
+    #[error("input monitoring permission is required")]
+    InputMonitoringPermission,
     #[error("failed to set CG Cursor property")]
     CGCursorProperty,
     #[cfg(target_os = "macos")]

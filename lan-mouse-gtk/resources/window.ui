@@ -63,7 +63,7 @@
                                 <signal name="clicked" handler="handle_capture" swapped="true"/>
                                 <property name="valign">center</property>
                                 <style>
-                                  <class name="circular"/>
+                                  <class name="pill"/>
                                   <class name="flat"/>
                                 </style>
                               </object>
@@ -89,7 +89,7 @@
                                 <property name="valign">center</property>
                                 <signal name="clicked" handler="handle_emulation" swapped="true"/>
                                 <style>
-                                  <class name="circular"/>
+                                  <class name="pill"/>
                                   <class name="flat"/>
                                 </style>
                               </object>
