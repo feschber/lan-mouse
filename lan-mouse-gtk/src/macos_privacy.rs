@@ -2,10 +2,12 @@
 
 //! Tiny macOS Privacy-pane helpers used by the GUI.
 //!
-//! Clicking "Reenable" on the capture/emulation warning row should take the
-//! user to whichever Privacy pane is actually missing a grant — opening the
-//! Accessibility pane when the user has already granted Accessibility (and
-//! only needs Input Monitoring) is confusing and hides the real request.
+//! On macOS 13+, the Accessibility grant transitively confers the
+//! listen-only event-tap privilege that Input Monitoring gates and the
+//! synthesize-event privilege that Post Event gates, and the bundle
+//! typically isn't even listed in those separate panes. So the single
+//! user-facing action for any missing-capture or missing-emulation
+//! scenario is "re-toggle Accessibility" — we don't route elsewhere.
 
 use std::ffi::{c_uchar, c_void};
 use std::process::Command;
@@ -48,9 +50,7 @@ extern "C" {
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
-    fn CGPreflightListenEventAccess() -> c_uchar;
     fn CGRequestListenEventAccess() -> c_uchar;
-    fn CGPreflightPostEventAccess() -> c_uchar;
     fn CGRequestPostEventAccess() -> c_uchar;
 
     // CFMachPortRef CGEventTapCreate(
@@ -73,67 +73,6 @@ pub fn accessibility_granted() -> bool {
     raw != 0
 }
 
-pub fn input_monitoring_granted() -> bool {
-    let raw = unsafe { CGPreflightListenEventAccess() };
-    log::debug!("CGPreflightListenEventAccess() = {raw}");
-    raw != 0
-}
-
-pub fn post_event_granted() -> bool {
-    let raw = unsafe { CGPreflightPostEventAccess() };
-    log::debug!("CGPreflightPostEventAccess() = {raw}");
-    raw != 0
-}
-
-// Variants `InputMonitoring` and `PostEvent` are currently never returned
-// by `missing_capture_pane` / `missing_emulation_pane` — on macOS 13+ those
-// categories auto-grant via Accessibility and the bundle typically isn't
-// listed in those separate panes, so routing users there is a dead end.
-// Kept in the enum so older-macOS behavior can be restored without a
-// structural change.
-#[allow(dead_code)]
-pub enum CapturePane {
-    Accessibility,
-    InputMonitoring,
-    /// Everything is already granted; the caller should just retry.
-    None,
-}
-
-#[allow(dead_code)]
-pub enum EmulationPane {
-    Accessibility,
-    PostEvent,
-    None,
-}
-
-pub fn missing_capture_pane() -> CapturePane {
-    if !accessibility_granted() {
-        CapturePane::Accessibility
-    } else if !input_monitoring_granted() {
-        // On macOS 13+, Accessibility trust confers the listen-only
-        // event-tap privilege that Input Monitoring gates, and on Sequoia
-        // the bundle typically isn't listed in the Input Monitoring pane
-        // at all. The actionable fix when IM preflight is still 0 is to
-        // re-toggle Accessibility, so send the user there rather than to
-        // an empty IM list.
-        CapturePane::Accessibility
-    } else {
-        CapturePane::None
-    }
-}
-
-pub fn missing_emulation_pane() -> EmulationPane {
-    if !accessibility_granted() {
-        EmulationPane::Accessibility
-    } else if !post_event_granted() {
-        // Post Event is nested under Accessibility on modern macOS and
-        // auto-grants alongside it. Point the user back to Accessibility
-        // for the same reason as the capture case above.
-        EmulationPane::Accessibility
-    } else {
-        EmulationPane::None
-    }
-}
 
 /// Poll for an Accessibility grant transition. Starts a 1-second GLib
 /// timer that fires `on_granted` once, the first time
@@ -163,20 +102,6 @@ where
 
 pub fn open_accessibility_settings() {
     open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
-}
-
-pub fn open_input_monitoring_settings() {
-    unsafe {
-        ensure_listed_in_input_monitoring();
-    }
-    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent");
-}
-
-pub fn open_post_event_settings() {
-    unsafe {
-        CGRequestPostEventAccess();
-    }
-    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_PostEvent");
 }
 
 /// Make sure the app appears in System Settings → Privacy → Input Monitoring.

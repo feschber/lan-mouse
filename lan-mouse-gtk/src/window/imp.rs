@@ -10,6 +10,16 @@ use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
 use crate::authorization_window::AuthorizationWindow;
 
+#[cfg(target_os = "macos")]
+fn open_accessibility_if_missing(ctx: &str) {
+    if crate::macos_privacy::accessibility_granted() {
+        log::info!("{ctx}: Accessibility already granted, retry only");
+    } else {
+        log::info!("{ctx}: opening Accessibility pane");
+        crate::macos_privacy::open_accessibility_settings();
+    }
+}
+
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
 pub struct Window {
@@ -143,44 +153,14 @@ impl Window {
     #[template_callback]
     fn handle_emulation(&self) {
         #[cfg(target_os = "macos")]
-        {
-            use crate::macos_privacy::{self, EmulationPane};
-            match macos_privacy::missing_emulation_pane() {
-                EmulationPane::Accessibility => {
-                    log::info!("Reenable emulation: opening Accessibility pane");
-                    macos_privacy::open_accessibility_settings();
-                }
-                EmulationPane::PostEvent => {
-                    log::info!("Reenable emulation: opening Post Event pane");
-                    macos_privacy::open_post_event_settings();
-                }
-                EmulationPane::None => {
-                    log::info!("Reenable emulation: both grants present, retry only");
-                }
-            }
-        }
+        open_accessibility_if_missing("Reenable emulation");
         self.obj().request_emulation();
     }
 
     #[template_callback]
     fn handle_capture(&self) {
         #[cfg(target_os = "macos")]
-        {
-            use crate::macos_privacy::{self, CapturePane};
-            match macos_privacy::missing_capture_pane() {
-                CapturePane::Accessibility => {
-                    log::info!("Reenable capture: opening Accessibility pane");
-                    macos_privacy::open_accessibility_settings();
-                }
-                CapturePane::InputMonitoring => {
-                    log::info!("Reenable capture: opening Input Monitoring pane");
-                    macos_privacy::open_input_monitoring_settings();
-                }
-                CapturePane::None => {
-                    log::info!("Reenable capture: both grants present, retry only");
-                }
-            }
-        }
+        open_accessibility_if_missing("Reenable capture");
         self.obj().request_capture();
     }
 
