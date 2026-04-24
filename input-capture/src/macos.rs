@@ -176,7 +176,17 @@ impl InputCaptureState {
                 }
                 self.active_clients.remove(&p);
             }
-            ProducerEvent::EventTapDisabled => return Err(CaptureError::EventTapDisabled),
+            ProducerEvent::EventTapDisabled => {
+                // Tap death can happen mid-capture (TCC Accessibility
+                // revoked, tap-timeout, etc). Release state so we
+                // don't leave the cursor hidden even if the outer
+                // task only logs this error rather than propagating.
+                if self.current_pos.is_some() {
+                    self.show_cursor()?;
+                    self.current_pos = None;
+                }
+                return Err(CaptureError::EventTapDisabled);
+            }
         };
         Ok(())
     }
@@ -413,12 +423,27 @@ fn create_event_tap<'a>(
                 event_type,
                 CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
             ) {
-                log::error!("CGEventTap disabled");
+                // When the tap is disabled (including the case where TCC
+                // Accessibility is revoked mid-session), we MUST drop
+                // captured state synchronously and return Keep on this
+                // event. Otherwise the `current_pos.is_some()` branch
+                // below would drop this event (and any racing callback
+                // still in flight) back into `CallbackResult::Drop`,
+                // silently eating the user's clicks and keypresses while
+                // the tap winds down. Clear state + show the cursor
+                // here, then notify the producer loop so the service
+                // can tear down cleanly.
+                log::error!("CGEventTap disabled, releasing capture state");
+                if state.current_pos.is_some() {
+                    let _ = CGDisplay::show_cursor(&CGDisplay::main());
+                    state.current_pos = None;
+                }
                 notify_tx
                     .blocking_send(ProducerEvent::EventTapDisabled)
                     .unwrap_or_else(|e| {
                         log::error!("Failed to send notification: {e}");
                     });
+                return CallbackResult::Keep;
             }
 
             // Are we in a client?
