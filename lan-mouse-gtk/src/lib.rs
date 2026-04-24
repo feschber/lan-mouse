@@ -200,17 +200,31 @@ fn build_ui(app: &Application) {
         macos_status_item::setup(app, &window);
         // First-launch TCC prompts. No-op when already granted.
         macos_privacy::fire_initial_prompts();
-        // If Accessibility wasn't granted at startup, watch for the grant
-        // and switch the status row into its "relaunch required" state
-        // when it lands. The daemon subprocess initialized without AX
-        // (bailed with "accessibility permission is required") and can't
-        // recover without a restart, so a live AX toggle without a
-        // relaunch leaves the app in a broken state otherwise.
+        // Watch the Accessibility grant continuously for the lifetime
+        // of the process. On a grant, swap the warning row into its
+        // "relaunch required" state (the daemon subprocess already
+        // bailed and can't recover without a restart). On a REVOKE,
+        // quit immediately — an active CGEventTap at
+        // HeadInsertEventTap can wedge system input if the process
+        // lingers after losing AX, and forcing the process to exit is
+        // the only bulletproof way to guarantee the kernel tears the
+        // tap down.
         let window_weak = window.downgrade();
-        macos_privacy::watch_for_accessibility_grant(move || {
-            if let Some(window) = window_weak.upgrade() {
-                window.present();
-                window.refresh_capture_emulation_status();
+        let app_weak = app.downgrade();
+        macos_privacy::watch_accessibility_state(move |change| match change {
+            macos_privacy::AccessibilityChange::Granted => {
+                if let Some(window) = window_weak.upgrade() {
+                    window.present();
+                    window.refresh_capture_emulation_status();
+                }
+            }
+            macos_privacy::AccessibilityChange::Revoked => {
+                log::warn!(
+                    "Accessibility revoked — quitting to avoid wedging system input"
+                );
+                if let Some(app) = app_weak.upgrade() {
+                    app.quit();
+                }
             }
         });
     }
