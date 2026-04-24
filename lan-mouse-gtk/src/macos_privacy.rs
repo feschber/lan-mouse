@@ -144,7 +144,11 @@ pub fn relaunch_bundle() {
 
     // Trailing `&` backgrounds the sleep+open so our shell call returns
     // immediately; the spawned shell is adopted by launchd once we exit.
-    let cmd = format!("(sleep 1 && open {bundle:?}) &");
+    // `--env LAN_MOUSE_RELAUNCHED=1` sets an env var on the new process
+    // so `build_ui` can present the main window on this specific launch
+    // (confirming to the user that the grant + relaunch worked) while
+    // still starting hidden in the menu bar on normal fresh launches.
+    let cmd = format!("(sleep 1 && open --env LAN_MOUSE_RELAUNCHED=1 {bundle:?}) &");
     let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
 }
 

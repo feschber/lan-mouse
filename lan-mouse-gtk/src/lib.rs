@@ -278,5 +278,15 @@ fn build_ui(app: &Application) {
 
     #[cfg(not(target_os = "macos"))]
     window.present();
+
+    // On macOS, surface the window on the specific launch that follows
+    // the user clicking "Relaunch" after granting Accessibility, so
+    // they see the app come up in its working state rather than just
+    // a menu-bar icon and wonder whether anything happened.
+    // relaunch_bundle() sets LAN_MOUSE_RELAUNCHED=1 via `open --env`.
+    #[cfg(target_os = "macos")]
+    if env::var_os("LAN_MOUSE_RELAUNCHED").is_some() {
+        window.present();
+    }
 }
 
