@@ -432,6 +432,10 @@ impl Window {
 
     pub(super) fn show_toast(&self, msg: &str) {
         let toast = adw::Toast::new(msg);
+        self.add_toast(toast);
+    }
+
+    pub(super) fn add_toast(&self, toast: adw::Toast) {
         let toast_overlay = &self.imp().toast_overlay;
         toast_overlay.add_toast(toast);
     }

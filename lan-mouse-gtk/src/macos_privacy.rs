@@ -11,6 +11,8 @@ use std::ffi::{c_uchar, c_void};
 use std::process::Command;
 use std::sync::Once;
 
+use gtk::glib;
+
 // Apple declares `AXIsProcessTrusted` as returning `Boolean` (`unsigned char`),
 // NOT C's `bool`. Rust's `bool` has a strict bit pattern (0 or 1) so binding
 // a `Boolean`-returning function as `-> bool` is technically UB if Apple ever
@@ -83,6 +85,13 @@ pub fn post_event_granted() -> bool {
     raw != 0
 }
 
+// Variants `InputMonitoring` and `PostEvent` are currently never returned
+// by `missing_capture_pane` / `missing_emulation_pane` — on macOS 13+ those
+// categories auto-grant via Accessibility and the bundle typically isn't
+// listed in those separate panes, so routing users there is a dead end.
+// Kept in the enum so older-macOS behavior can be restored without a
+// structural change.
+#[allow(dead_code)]
 pub enum CapturePane {
     Accessibility,
     InputMonitoring,
@@ -90,6 +99,7 @@ pub enum CapturePane {
     None,
 }
 
+#[allow(dead_code)]
 pub enum EmulationPane {
     Accessibility,
     PostEvent,
@@ -100,7 +110,13 @@ pub fn missing_capture_pane() -> CapturePane {
     if !accessibility_granted() {
         CapturePane::Accessibility
     } else if !input_monitoring_granted() {
-        CapturePane::InputMonitoring
+        // On macOS 13+, Accessibility trust confers the listen-only
+        // event-tap privilege that Input Monitoring gates, and on Sequoia
+        // the bundle typically isn't listed in the Input Monitoring pane
+        // at all. The actionable fix when IM preflight is still 0 is to
+        // re-toggle Accessibility, so send the user there rather than to
+        // an empty IM list.
+        CapturePane::Accessibility
     } else {
         CapturePane::None
     }
@@ -110,10 +126,39 @@ pub fn missing_emulation_pane() -> EmulationPane {
     if !accessibility_granted() {
         EmulationPane::Accessibility
     } else if !post_event_granted() {
-        EmulationPane::PostEvent
+        // Post Event is nested under Accessibility on modern macOS and
+        // auto-grants alongside it. Point the user back to Accessibility
+        // for the same reason as the capture case above.
+        EmulationPane::Accessibility
     } else {
         EmulationPane::None
     }
+}
+
+/// Poll for an Accessibility grant transition. Starts a 1-second GLib
+/// timer that fires `on_granted` once, the first time
+/// `AXIsProcessTrusted()` returns true. A no-op if AX is already granted.
+///
+/// We rely on polling rather than AXObserver because the AX notification
+/// API requires a trusted process to subscribe — the precondition we're
+/// waiting for. This runs on the GTK main thread (via timeout_add_seconds_local).
+pub fn watch_for_accessibility_grant<F>(mut on_granted: F)
+where
+    F: FnMut() + 'static,
+{
+    if accessibility_granted() {
+        return;
+    }
+    log::info!("watching for Accessibility grant");
+    glib::timeout_add_seconds_local(1, move || {
+        if accessibility_granted() {
+            log::info!("Accessibility granted; firing relaunch prompt");
+            on_granted();
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
 }
 
 pub fn open_accessibility_settings() {
