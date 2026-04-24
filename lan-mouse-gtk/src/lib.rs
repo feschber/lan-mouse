@@ -4,6 +4,10 @@ mod client_row;
 mod fingerprint_window;
 mod key_object;
 mod key_row;
+#[cfg(target_os = "macos")]
+mod macos_privacy;
+#[cfg(target_os = "macos")]
+mod macos_status_item;
 mod window;
 
 use std::{env, process, str};
@@ -47,6 +51,12 @@ pub fn run() -> Result<(), GtkError> {
 }
 
 fn gtk_main() -> glib::ExitCode {
+    #[cfg(target_os = "macos")]
+    {
+        configure_macos_bundle_environment();
+        install_macos_gtk_log_filter();
+    }
+
     gio::resources_register_include!("lan-mouse.gresource").expect("Failed to register resources.");
 
     let app = Application::builder()
@@ -62,6 +72,64 @@ fn gtk_main() -> glib::ExitCode {
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_gtk_log_filter() {
+    glib::log_set_writer_func(|level, fields| {
+        if level == glib::LogLevel::Warning && is_gtk_theme_parser_warning(fields) {
+            return glib::LogWriterOutput::Handled;
+        }
+
+        glib::log_writer_default(level, fields)
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn is_gtk_theme_parser_warning(fields: &[glib::LogField<'_>]) -> bool {
+    let mut domain = None;
+    let mut message = None;
+
+    for field in fields {
+        match field.key() {
+            "GLIB_DOMAIN" => domain = field.value_str(),
+            "MESSAGE" => message = field.value_str(),
+            _ => {}
+        }
+    }
+
+    domain == Some("Gtk")
+        && message.is_some_and(|message| message.starts_with("Theme parser warning: gtk.css:"))
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_bundle_environment() {
+    let Ok(exe) = env::current_exe() else {
+        return;
+    };
+    let Some(contents) = exe
+        .parent()
+        .and_then(|dir| dir.parent())
+        .map(std::path::Path::to_owned)
+    else {
+        return;
+    };
+
+    let share = contents.join("Resources").join("share");
+    if !share.exists() {
+        return;
+    }
+
+    let schemas = share.join("glib-2.0").join("schemas");
+    if schemas.exists() {
+        env::set_var("GSETTINGS_SCHEMA_DIR", schemas);
+    }
+
+    env::set_var("XDG_DATA_DIRS", &share);
+    env::set_var(
+        "GTK_DATA_PREFIX",
+        contents.join("Resources").to_string_lossy().as_ref(),
+    );
 }
 
 fn load_icons() {
@@ -123,6 +191,16 @@ fn build_ui(app: &Application) {
     });
 
     let window = Window::new(app, frontend_tx);
+    #[cfg(target_os = "macos")]
+    {
+        window.connect_close_request(|window| {
+            window.set_visible(false);
+            glib::Propagation::Stop
+        });
+        macos_status_item::setup(app, &window);
+        // First-launch TCC prompts. No-op when already granted.
+        macos_privacy::fire_initial_prompts();
+    }
 
     glib::spawn_future_local(clone!(
         #[weak]
@@ -171,5 +249,6 @@ fn build_ui(app: &Application) {
         }
     ));
 
+    #[cfg(not(target_os = "macos"))]
     window.present();
 }

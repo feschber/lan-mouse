@@ -1682,6 +1682,8 @@ dependencies = [
  "ashpd",
  "async-trait",
  "bitflags 2.11.0",
+ "core-foundation",
+ "core-foundation-sys",
  "core-graphics",
  "futures",
  "input-event",
