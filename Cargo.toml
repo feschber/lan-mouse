@@ -96,3 +96,5 @@ rdp_emulation = ["input-emulation/remote_desktop_portal"]
 name = "Lan Mouse"
 icon = ["target/icon.icns"]
 identifier = "de.feschber.LanMouse"
+osx_info_plist_exts = ["build-aux/macos-lsui-element.plist"]
+resources = ["target/menubar-template.png"]
