@@ -200,6 +200,20 @@ fn build_ui(app: &Application) {
         macos_status_item::setup(app, &window);
         // First-launch TCC prompts. No-op when already granted.
         macos_privacy::fire_initial_prompts();
+        // If Accessibility wasn't granted at startup, watch for the grant
+        // and prompt the user to relaunch when it lands. The daemon
+        // subprocess initialized without AX (bailed with "accessibility
+        // permission is required") and can't recover without a restart,
+        // so a live AX toggle without a relaunch leaves the app in a
+        // broken state otherwise.
+        let app_weak = app.downgrade();
+        let window_weak = window.downgrade();
+        macos_privacy::watch_for_accessibility_grant(move || {
+            if let (Some(app), Some(window)) = (app_weak.upgrade(), window_weak.upgrade())
+            {
+                show_macos_relaunch_dialog(&app, &window);
+            }
+        });
     }
 
     glib::spawn_future_local(clone!(
@@ -251,4 +265,61 @@ fn build_ui(app: &Application) {
 
     #[cfg(not(target_os = "macos"))]
     window.present();
+}
+
+#[cfg(target_os = "macos")]
+fn show_macos_relaunch_dialog(app: &Application, window: &Window) {
+    // Present the window so the toast is visible — on macOS the main
+    // window starts hidden (LSUIElement accessory app), so a toast
+    // otherwise fires into a surface the user can't see.
+    window.present();
+
+    let toast = adw::Toast::builder()
+        .title(
+            "Accessibility granted. Relaunch Lan Mouse so capture and \
+             emulation can initialize.",
+        )
+        .button_label("Relaunch")
+        .priority(adw::ToastPriority::High)
+        // 0 => never auto-dismiss. Relaunch is mandatory for things to
+        // work, so don't let the user miss the action.
+        .timeout(0)
+        .build();
+
+    let app = app.clone();
+    toast.connect_button_clicked(move |_| {
+        relaunch_macos_bundle();
+        app.quit();
+    });
+
+    window.add_toast(toast);
+}
+
+#[cfg(target_os = "macos")]
+fn relaunch_macos_bundle() {
+    // Resolve the .app bundle path from the current executable: it lives
+    // at <bundle>/Contents/MacOS/lan-mouse, so three parents up is the
+    // bundle root we hand to `open`.
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(bundle) = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+    else {
+        return;
+    };
+
+    // Fire `sleep 1 && open <bundle>` in a detached shell so the new
+    // instance starts *after* we've quit — otherwise Launch Services
+    // reactivates the existing process instead of launching a fresh one,
+    // and the stale IPC socket would block the new daemon subprocess.
+    // The trailing `&` backgrounds the command, and we don't wait on the
+    // spawn, so the shell is adopted by launchd after we exit.
+    let cmd = format!("(sleep 1 && open {bundle:?}) &", bundle = bundle);
+    let _ = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .spawn();
 }

@@ -50,7 +50,7 @@
                         <child>
                           <object class="AdwActionRow" id="capture_status_row">
                             <property name="title">input capture is disabled</property>
-                            <property name="subtitle">required for outgoing and incoming connections</property>
+                            <property name="subtitle">required for outgoing connections — click Reenable to grant permission</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
@@ -76,7 +76,7 @@
                         <child>
                           <object class="AdwActionRow" id="emulation_status_row">
                             <property name="title">input emulation is disabled</property>
-                            <property name="subtitle">required for incoming connections</property>
+                            <property name="subtitle">required for incoming connections — click Reenable to grant permission</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_emulation_button">
