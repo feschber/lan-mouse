@@ -362,6 +362,11 @@ impl Config {
             .parent()
             .expect("config directory")
             .to_path_buf();
+        // notify::Watcher requires the directory to exist on macOS (FSEvents)
+        // and some Linux backends. Create it eagerly so a first launch on a
+        // fresh machine — where ~/.config/lan-mouse/ has never been touched —
+        // doesn't surface as a notify::Error out of Config::new().
+        fs::create_dir_all(&config_dir)?;
         let mut config = Config {
             args,
             cert_path,
