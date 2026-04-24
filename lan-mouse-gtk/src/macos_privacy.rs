@@ -74,29 +74,46 @@ pub fn accessibility_granted() -> bool {
 }
 
 
-/// Poll for an Accessibility grant transition. Starts a 1-second GLib
-/// timer that fires `on_granted` once, the first time
-/// `AXIsProcessTrusted()` returns true. A no-op if AX is already granted.
+pub enum AccessibilityChange {
+    /// AX was missing at startup and the user has now granted it.
+    /// Capture/emulation still need a relaunch to take effect, since
+    /// the daemon subprocess already bailed.
+    Granted,
+    /// AX was granted and the user has now revoked it. Quit immediately
+    /// — leaving the process alive with an active CGEventTap at
+    /// HeadInsertEventTap can wedge system input (clicks/keys silently
+    /// consumed) until the process dies. See
+    /// macos-cgeventtap-drop-fallthrough-tcc-revoke skill for the
+    /// underlying event-tap-disable footgun.
+    Revoked,
+}
+
+/// Poll for Accessibility grant/revoke transitions. Starts a 1-second
+/// GLib timer that fires `on_change` every time `AXIsProcessTrusted()`
+/// flips, and keeps running for the lifetime of the process.
 ///
 /// We rely on polling rather than AXObserver because the AX notification
-/// API requires a trusted process to subscribe — the precondition we're
-/// waiting for. This runs on the GTK main thread (via timeout_add_seconds_local).
-pub fn watch_for_accessibility_grant<F>(mut on_granted: F)
+/// API requires a trusted process to subscribe — the precondition we
+/// can't assume. This runs on the GTK main thread (via
+/// `timeout_add_seconds_local`).
+pub fn watch_accessibility_state<F>(mut on_change: F)
 where
-    F: FnMut() + 'static,
+    F: FnMut(AccessibilityChange) + 'static,
 {
-    if accessibility_granted() {
-        return;
-    }
-    log::info!("watching for Accessibility grant");
+    let mut last = accessibility_granted();
+    log::info!("watching Accessibility state (initial = {last})");
     glib::timeout_add_seconds_local(1, move || {
-        if accessibility_granted() {
-            log::info!("Accessibility granted; firing relaunch prompt");
-            on_granted();
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
+        let current = accessibility_granted();
+        if current != last {
+            log::info!("Accessibility state flip: {last} -> {current}");
+            on_change(if current {
+                AccessibilityChange::Granted
+            } else {
+                AccessibilityChange::Revoked
+            });
+            last = current;
         }
+        glib::ControlFlow::Continue
     });
 }
 
