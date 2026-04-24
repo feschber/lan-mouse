@@ -104,6 +104,33 @@ pub fn open_accessibility_settings() {
     open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
 }
 
+/// Spawn a fresh instance of the current `.app` bundle via Launch Services
+/// after a 1-second delay, so the new instance starts *after* the current
+/// process has exited — otherwise Launch Services reactivates the existing
+/// process instead of launching a fresh one, and the stale IPC socket
+/// would block the new daemon subprocess. The caller is responsible for
+/// quitting the current process (e.g. `Application::quit()`) after this.
+pub fn relaunch_bundle() {
+    // Resolve the .app bundle path from the current executable: it lives
+    // at <bundle>/Contents/MacOS/lan-mouse, so three parents up is the
+    // bundle root we hand to `open`.
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(bundle) = exe
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+    else {
+        return;
+    };
+
+    // Trailing `&` backgrounds the sleep+open so our shell call returns
+    // immediately; the spawned shell is adopted by launchd once we exit.
+    let cmd = format!("(sleep 1 && open {bundle:?}) &");
+    let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
+}
+
 /// Make sure the app appears in System Settings → Privacy → Input Monitoring.
 ///
 /// `CGRequestListenEventAccess()` is *supposed* to register the app in the
