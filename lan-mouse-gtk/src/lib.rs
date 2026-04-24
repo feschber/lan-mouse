@@ -279,13 +279,15 @@ fn build_ui(app: &Application) {
     #[cfg(not(target_os = "macos"))]
     window.present();
 
-    // On macOS, surface the window on the specific launch that follows
-    // the user clicking "Relaunch" after granting Accessibility, so
-    // they see the app come up in its working state rather than just
-    // a menu-bar icon and wonder whether anything happened.
-    // relaunch_bundle() sets LAN_MOUSE_RELAUNCHED=1 via `open --env`.
+    // On macOS, default to presenting the main window on every launch
+    // so the user gets a visible confirmation that the app is running
+    // — including the post-grant relaunch and normal Dock/Finder/`open`
+    // launches. Opt out by setting `LAN_MOUSE_HIDDEN=1` in the
+    // environment (useful for a LaunchAgent / login-item configuration
+    // where the user wants the app to come up quietly into the menu
+    // bar only, with no window on boot).
     #[cfg(target_os = "macos")]
-    if env::var_os("LAN_MOUSE_RELAUNCHED").is_some() {
+    if env::var_os("LAN_MOUSE_HIDDEN").is_none() {
         window.present();
     }
 }
