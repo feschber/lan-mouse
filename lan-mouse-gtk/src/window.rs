@@ -450,14 +450,33 @@ impl Window {
         self.update_capture_emulation_status();
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn refresh_capture_emulation_status(&self) {
+        self.update_capture_emulation_status();
+    }
+
     fn update_capture_emulation_status(&self) {
         let capture = self.imp().capture_active.get();
         let emulation = self.imp().emulation_active.get();
-        self.imp().capture_status_row.set_visible(!capture);
-        self.imp().emulation_status_row.set_visible(!emulation);
+
+        // On macOS the yellow "Reenable" row only makes sense when
+        // Accessibility is actually missing. When AX is granted but
+        // capture/emulation are still off, the daemon simply hasn't been
+        // restarted yet — the Relaunch toast covers that state, and a
+        // yellow "grant permission" warning on top of it would be
+        // redundant and confusing.
+        #[cfg(target_os = "macos")]
+        let show_warning = !crate::macos_privacy::accessibility_granted();
+        #[cfg(not(target_os = "macos"))]
+        let show_warning = true;
+
+        let show_capture_row = !capture && show_warning;
+        let show_emulation_row = !emulation && show_warning;
+        self.imp().capture_status_row.set_visible(show_capture_row);
+        self.imp().emulation_status_row.set_visible(show_emulation_row);
         self.imp()
             .capture_emulation_group
-            .set_visible(!capture || !emulation);
+            .set_visible(show_capture_row || show_emulation_row);
     }
 
     pub(super) fn set_authorized_keys(&self, fingerprints: HashMap<String, String>) {

@@ -274,6 +274,12 @@ fn show_macos_relaunch_dialog(app: &Application, window: &Window) {
     // otherwise fires into a surface the user can't see.
     window.present();
 
+    // Refresh the capture/emulation status rows so the yellow
+    // "Reenable" warning disappears. It was showing because the daemon
+    // reports capture/emulation inactive; now that AX is granted the
+    // Relaunch toast is the right prompt and the warning is redundant.
+    window.refresh_capture_emulation_status();
+
     let toast = adw::Toast::builder()
         .title(
             "Accessibility granted. Relaunch Lan Mouse so capture and \
