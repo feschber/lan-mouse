@@ -527,6 +527,8 @@ pub struct MacOSInputCapture {
 
 impl MacOSInputCapture {
     pub async fn new() -> Result<Self, MacosCaptureCreationError> {
+        request_macos_capture_permissions()?;
+
         let state = Arc::new(Mutex::new(InputCaptureState::new()?));
         let (event_tx, event_rx) = mpsc::channel(32);
         let (notify_tx, mut notify_rx) = mpsc::channel(32);
@@ -578,6 +580,38 @@ impl MacOSInputCapture {
             run_loop,
         })
     }
+}
+
+fn request_macos_capture_permissions() -> Result<(), MacosCaptureCreationError> {
+    // Call both request functions unconditionally so macOS surfaces both
+    // TCC prompts on the very first launch. TCC always returns `false` the
+    // first time a permission is requested (the grant only becomes visible
+    // on the next process launch), so returning early on the first failure
+    // would skip the second prompt and force the user through an extra
+    // relaunch just to see it.
+    let accessibility = request_accessibility_permission();
+    let input_monitoring = request_input_monitoring_permission();
+
+    if !accessibility {
+        return Err(MacosCaptureCreationError::AccessibilityPermission);
+    }
+    if !input_monitoring {
+        return Err(MacosCaptureCreationError::InputMonitoringPermission);
+    }
+    Ok(())
+}
+
+fn request_accessibility_permission() -> bool {
+    // Silent check. The GUI owns the one-time user-visible prompt at
+    // startup (see lan_mouse_gtk::macos_privacy) so retries triggered by
+    // clicking the "Reenable" button don't pop a fresh Accessibility
+    // alert every time.
+    unsafe { AXIsProcessTrusted() }
+}
+
+fn request_input_monitoring_permission() -> bool {
+    // Silent check, same reasoning as above.
+    unsafe { CGPreflightListenEventAccess() }
 }
 
 impl Drop for MacOSInputCapture {
@@ -651,6 +685,12 @@ extern "C" {
         event_source: CGEventSource,
         seconds: CFTimeInterval,
     );
+    fn CGPreflightListenEventAccess() -> bool;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
 }
 
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
