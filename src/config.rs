@@ -334,6 +334,23 @@ impl Config {
             .config
             .clone()
             .unwrap_or(default_path()?.join(CONFIG_FILE_NAME));
+        let config_dir = config_path
+            .parent()
+            .expect("config directory")
+            .to_path_buf();
+
+        // Ensure the config directory exists and write a default config file
+        // if none is present. Runs on every Config::new(), regardless of which
+        // entry path (GUI main, spawned daemon, CLI, test commands) we're on,
+        // so a fresh Mac never hits "No such file or directory" on config.toml
+        // and notify::Watcher (which requires the dir to exist on macOS
+        // FSEvents and some Linux backends) has a concrete path to watch.
+        fs::create_dir_all(&config_dir)?;
+        if !config_path.exists() {
+            let default_toml = toml::to_string_pretty(&ConfigToml::default())
+                .expect("default ConfigToml serialization cannot fail");
+            fs::write(&config_path, default_toml)?;
+        }
 
         let config_toml = match ConfigToml::new(&config_path) {
             Err(e) => {
@@ -358,15 +375,6 @@ impl Config {
             },
             notify::Config::default(),
         )?;
-        let config_dir = config_path
-            .parent()
-            .expect("config directory")
-            .to_path_buf();
-        // notify::Watcher requires the directory to exist on macOS (FSEvents)
-        // and some Linux backends. Create it eagerly so a first launch on a
-        // fresh machine — where ~/.config/lan-mouse/ has never been touched —
-        // doesn't surface as a notify::Error out of Config::new().
-        fs::create_dir_all(&config_dir)?;
         let mut config = Config {
             args,
             cert_path,
