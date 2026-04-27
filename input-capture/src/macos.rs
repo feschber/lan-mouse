@@ -2,7 +2,7 @@ use super::{Capture, CaptureError, CaptureEvent, Position, error::MacosCaptureCr
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_foundation::{
-    base::{CFRelease, kCFAllocatorDefault},
+    base::{CFRelease, TCFType, kCFAllocatorDefault},
     date::CFTimeInterval,
     number::{CFBooleanRef, kCFBooleanTrue},
     runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
@@ -28,7 +28,7 @@ use std::{
     collections::HashSet,
     ffi::{CString, c_char},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     task::{Context, Poll, ready},
     thread::{self},
 };
@@ -395,6 +395,14 @@ fn create_event_tap<'a>(
     notify_tx: Sender<ProducerEvent>,
     event_tx: Sender<(Position, CaptureEvent)>,
 ) -> Result<CGEventTap<'a>, MacosCaptureCreationError> {
+    // Shared slot for the tap's mach port pointer. Stored as `usize`
+    // because raw pointers aren't `Send`, but the integer
+    // representation is — and CGEventTapEnable is documented as
+    // thread-safe. Set immediately after CGEventTap::new returns;
+    // read by the callback to recover from a TapDisabledByTimeout.
+    let tap_mach_port: Arc<OnceLock<usize>> = Arc::new(OnceLock::new());
+    let tap_mach_port_cb = Arc::clone(&tap_mach_port);
+
     let cg_events_of_interest: Vec<CGEventType> = vec![
         CGEventType::LeftMouseDown,
         CGEventType::LeftMouseUp,
@@ -419,21 +427,43 @@ fn create_event_tap<'a>(
             let mut capture_position = None;
             let mut res_events = vec![];
 
-            if matches!(
-                event_type,
-                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
-            ) {
-                // When the tap is disabled (including the case where TCC
-                // Accessibility is revoked mid-session), we MUST drop
-                // captured state synchronously and return Keep on this
-                // event. Otherwise the `current_pos.is_some()` branch
-                // below would drop this event (and any racing callback
-                // still in flight) back into `CallbackResult::Drop`,
-                // silently eating the user's clicks and keypresses while
-                // the tap winds down. Clear state + show the cursor
-                // here, then notify the producer loop so the service
-                // can tear down cleanly.
-                log::error!("CGEventTap disabled, releasing capture state");
+            if matches!(event_type, CGEventType::TapDisabledByTimeout) {
+                // The kernel disables the tap when our callback runs
+                // longer than ~1s on a single event — typical causes
+                // are heavy load, scheduler contention, or this
+                // process being briefly suspended (e.g. App Nap on a
+                // long idle). It is NOT a fatal condition: Apple's
+                // documented recovery is to call CGEventTapEnable
+                // and resume processing. Re-enable in place and KEEP
+                // existing capture state so the user doesn't see the
+                // cursor pop back to the local screen mid-session.
+                if let Some(&port) = tap_mach_port_cb.get() {
+                    log::warn!("CGEventTap disabled by timeout — re-enabling");
+                    unsafe {
+                        CGEventTapEnable(port as *mut c_void, true);
+                    }
+                } else {
+                    log::error!(
+                        "CGEventTap disabled by timeout, but mach port not yet stored — cannot re-enable"
+                    );
+                }
+                return CallbackResult::Keep;
+            }
+
+            if matches!(event_type, CGEventType::TapDisabledByUserInput) {
+                // Deliberate kill — secure-input mode (e.g. password
+                // field), TCC Accessibility revoked mid-session, or
+                // the user disabling event-monitoring. We can't
+                // recover from this; drop captured state synchronously
+                // and return Keep on this event. Otherwise the
+                // `current_pos.is_some()` branch below would drop this
+                // event (and any racing callback still in flight) back
+                // into `CallbackResult::Drop`, silently eating the
+                // user's clicks and keypresses while the tap winds
+                // down. Clear state + show the cursor here, then
+                // notify the producer loop so the service can tear
+                // down cleanly.
+                log::error!("CGEventTap disabled by user input, releasing capture state");
                 if state.current_pos.is_some() {
                     let _ = CGDisplay::show_cursor(&CGDisplay::main());
                     state.current_pos = None;
@@ -506,6 +536,13 @@ fn create_event_tap<'a>(
         event_tap_callback,
     )
     .map_err(|_| MacosCaptureCreationError::EventTapCreation)?;
+
+    // Hand the mach port pointer to the callback so it can re-enable
+    // the tap on TapDisabledByTimeout. The pointer is valid for the
+    // lifetime of `tap` (which lives on the event-tap thread until
+    // the run loop exits).
+    let port_ptr = tap.mach_port().as_concrete_TypeRef() as usize;
+    let _ = tap_mach_port.set(port_ptr);
 
     let tap_source: CFRunLoopSource = tap
         .mach_port()
@@ -711,6 +748,12 @@ extern "C" {
         seconds: CFTimeInterval,
     );
     fn CGPreflightListenEventAccess() -> bool;
+    /// Re-enable an event tap that was disabled by a
+    /// `kCGEventTapDisabledByTimeout` event. The Apple-documented
+    /// recovery path: see Quartz Event Services Reference. The `tap`
+    /// argument is a `CFMachPortRef`; we pass the raw pointer so we
+    /// can store it as `usize` for cross-thread sharing.
+    fn CGEventTapEnable(tap: *mut c_void, enable: bool);
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
