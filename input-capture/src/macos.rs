@@ -67,6 +67,7 @@ enum ProducerEvent {
     Destroy(Position),
     Grab(Position),
     EventTapDisabled,
+    DisplayReconfigured,
 }
 
 impl InputCaptureState {
@@ -186,6 +187,20 @@ impl InputCaptureState {
                     self.current_pos = None;
                 }
                 return Err(CaptureError::EventTapDisabled);
+            }
+            ProducerEvent::DisplayReconfigured => {
+                // The macOS display configuration changed — a monitor
+                // was plugged in/out, the resolution changed, the
+                // arrangement was rearranged, etc. Re-fetch the
+                // active-display bounds so barrier crossings and the
+                // cursor-warp on capture-start use the current
+                // geometry instead of whatever was true at process
+                // start.
+                if let Err(e) = self.update_bounds() {
+                    log::warn!("failed to refresh display bounds: {e}");
+                } else {
+                    log::info!("display reconfigured: {:?}", self.bounds);
+                }
             }
         };
         Ok(())
@@ -563,6 +578,9 @@ fn event_tap_thread(
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
 ) {
+    // Clone now: create_event_tap consumes notify_tx into its closure.
+    let display_notify_tx = notify_tx.clone();
+
     let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
         Err(e) => {
             ready.send(Err(e)).expect("channel closed");
@@ -574,11 +592,68 @@ fn event_tap_thread(
             tap
         }
     };
+
+    // Register a Quartz display-reconfiguration callback so the
+    // capture state's bounds get refreshed when the user plugs in a
+    // monitor, changes resolution, or rearranges displays. The
+    // callback runs on this thread's CFRunLoop. Box-leak the sender
+    // so the C side has a stable user_info pointer; reclaim it after
+    // the run loop exits.
+    let display_user_info =
+        Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
+    unsafe {
+        CGDisplayRegisterReconfigurationCallback(
+            display_reconfiguration_callback,
+            display_user_info,
+        );
+    }
+
     log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
     log::debug!("event tap thread exiting!...");
 
+    unsafe {
+        CGDisplayRemoveReconfigurationCallback(
+            display_reconfiguration_callback,
+            display_user_info,
+        );
+        // Reclaim the leaked sender Box so we don't leak a tokio
+        // channel sender on every capture create/destroy cycle.
+        drop(Box::from_raw(
+            display_user_info as *mut Sender<ProducerEvent>,
+        ));
+    }
+
     let _ = exit.send(());
+}
+
+/// Quartz display-reconfiguration callback. Fires twice per change:
+/// once with `kCGDisplayBeginConfigurationFlag` set (BEFORE the
+/// change is applied — the bounds are still stale at this point),
+/// then again afterwards with the actual change flags (Add, Remove,
+/// Mode, DesktopShapeChanged, etc.). Skip the begin phase; on the
+/// real notification, kick the producer task to refresh bounds.
+extern "C" fn display_reconfiguration_callback(
+    _display: u32,
+    flags: u32,
+    user_info: *mut c_void,
+) {
+    const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
+    if flags & K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG != 0 {
+        return;
+    }
+    if user_info.is_null() {
+        return;
+    }
+    // SAFETY: user_info is a Box::into_raw of Sender<ProducerEvent>
+    // owned by `event_tap_thread`. It's valid for the lifetime of
+    // that thread; the registration is removed before the box is
+    // freed. The callback only fires while the run loop is running
+    // on that thread, so we know the box is live here.
+    let sender = unsafe { &*(user_info as *const Sender<ProducerEvent>) };
+    if let Err(e) = sender.blocking_send(ProducerEvent::DisplayReconfigured) {
+        log::warn!("failed to notify display reconfiguration: {e}");
+    }
 }
 
 pub struct MacOSInputCapture {
@@ -754,6 +829,18 @@ extern "C" {
     /// argument is a `CFMachPortRef`; we pass the raw pointer so we
     /// can store it as `usize` for cross-thread sharing.
     fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+
+    /// Register a callback invoked when the display configuration
+    /// changes (monitor add/remove, resolution change, mirror,
+    /// rearrange, etc). See Quartz Display Services Reference.
+    fn CGDisplayRegisterReconfigurationCallback(
+        callback: extern "C" fn(u32, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> CGError;
+    fn CGDisplayRemoveReconfigurationCallback(
+        callback: extern "C" fn(u32, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> CGError;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
