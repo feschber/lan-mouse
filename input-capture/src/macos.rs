@@ -435,113 +435,114 @@ fn create_event_tap<'a>(
         CGEventType::FlagsChanged,
     ];
 
-    let event_tap_callback =
-        move |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
-            log::trace!("Got event from tap: {event_type:?}");
-            let mut state = client_state.blocking_lock();
-            let mut capture_position = None;
-            let mut res_events = vec![];
+    let event_tap_callback = move |_proxy: CGEventTapProxy,
+                                   event_type: CGEventType,
+                                   cg_ev: &CGEvent| {
+        log::trace!("Got event from tap: {event_type:?}");
+        let mut state = client_state.blocking_lock();
+        let mut capture_position = None;
+        let mut res_events = vec![];
 
-            if matches!(event_type, CGEventType::TapDisabledByTimeout) {
-                // The kernel disables the tap when our callback runs
-                // longer than ~1s on a single event — typical causes
-                // are heavy load, scheduler contention, or this
-                // process being briefly suspended (e.g. App Nap on a
-                // long idle). It is NOT a fatal condition: Apple's
-                // documented recovery is to call CGEventTapEnable
-                // and resume processing. Re-enable in place and KEEP
-                // existing capture state so the user doesn't see the
-                // cursor pop back to the local screen mid-session.
-                if let Some(&port) = tap_mach_port_cb.get() {
-                    log::warn!("CGEventTap disabled by timeout — re-enabling");
-                    unsafe {
-                        CGEventTapEnable(port as *mut c_void, true);
-                    }
-                } else {
-                    log::error!(
-                        "CGEventTap disabled by timeout, but mach port not yet stored — cannot re-enable"
-                    );
+        if matches!(event_type, CGEventType::TapDisabledByTimeout) {
+            // The kernel disables the tap when our callback runs
+            // longer than ~1s on a single event — typical causes
+            // are heavy load, scheduler contention, or this
+            // process being briefly suspended (e.g. App Nap on a
+            // long idle). It is NOT a fatal condition: Apple's
+            // documented recovery is to call CGEventTapEnable
+            // and resume processing. Re-enable in place and KEEP
+            // existing capture state so the user doesn't see the
+            // cursor pop back to the local screen mid-session.
+            if let Some(&port) = tap_mach_port_cb.get() {
+                log::warn!("CGEventTap disabled by timeout — re-enabling");
+                unsafe {
+                    CGEventTapEnable(port as *mut c_void, true);
                 }
-                return CallbackResult::Keep;
-            }
-
-            if matches!(event_type, CGEventType::TapDisabledByUserInput) {
-                // Deliberate kill — secure-input mode (e.g. password
-                // field), TCC Accessibility revoked mid-session, or
-                // the user disabling event-monitoring. We can't
-                // recover from this; drop captured state synchronously
-                // and return Keep on this event. Otherwise the
-                // `current_pos.is_some()` branch below would drop this
-                // event (and any racing callback still in flight) back
-                // into `CallbackResult::Drop`, silently eating the
-                // user's clicks and keypresses while the tap winds
-                // down. Clear state + show the cursor here, then
-                // notify the producer loop so the service can tear
-                // down cleanly.
-                log::error!("CGEventTap disabled by user input, releasing capture state");
-                if state.current_pos.is_some() {
-                    let _ = CGDisplay::show_cursor(&CGDisplay::main());
-                    state.current_pos = None;
-                }
-                notify_tx
-                    .blocking_send(ProducerEvent::EventTapDisabled)
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to send notification: {e}");
-                    });
-                return CallbackResult::Keep;
-            }
-
-            // Are we in a client?
-            if let Some(current_pos) = state.current_pos {
-                capture_position = Some(current_pos);
-                get_events(
-                    &event_type,
-                    cg_ev,
-                    &mut res_events,
-                    &mut state.modifier_state,
-                )
-                .unwrap_or_else(|e| {
-                    log::error!("Failed to get events: {e}");
-                });
-
-                // Keep (hidden) cursor at the edge of the screen
-                if matches!(
-                    event_type,
-                    CGEventType::MouseMoved
-                        | CGEventType::LeftMouseDragged
-                        | CGEventType::RightMouseDragged
-                        | CGEventType::OtherMouseDragged
-                ) {
-                    state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
-                }
-            } else if matches!(event_type, CGEventType::MouseMoved) {
-                // Did we cross a barrier?
-                if let Some(new_pos) = state.crossed(cg_ev) {
-                    capture_position = Some(new_pos);
-                    state
-                        .start_capture(cg_ev, new_pos)
-                        .unwrap_or_else(|e| log::warn!("{e}"));
-                    res_events.push(CaptureEvent::Begin);
-                    notify_tx
-                        .blocking_send(ProducerEvent::Grab(new_pos))
-                        .expect("Failed to send notification");
-                }
-            }
-
-            if let Some(pos) = capture_position {
-                res_events.iter().for_each(|e| {
-                    // error must be ignored, since the event channel
-                    // may already be closed when the InputCapture instance is dropped.
-                    let _ = event_tx.blocking_send((pos, *e));
-                });
-                // Returning Drop should stop the event from being processed
-                // but core fundation still returns the event
-                cg_ev.set_type(CGEventType::Null);
-                CallbackResult::Drop
             } else {
-                CallbackResult::Keep
+                log::error!(
+                    "CGEventTap disabled by timeout, but mach port not yet stored — cannot re-enable"
+                );
             }
-        };
+            return CallbackResult::Keep;
+        }
+
+        if matches!(event_type, CGEventType::TapDisabledByUserInput) {
+            // Deliberate kill — secure-input mode (e.g. password
+            // field), TCC Accessibility revoked mid-session, or
+            // the user disabling event-monitoring. We can't
+            // recover from this; drop captured state synchronously
+            // and return Keep on this event. Otherwise the
+            // `current_pos.is_some()` branch below would drop this
+            // event (and any racing callback still in flight) back
+            // into `CallbackResult::Drop`, silently eating the
+            // user's clicks and keypresses while the tap winds
+            // down. Clear state + show the cursor here, then
+            // notify the producer loop so the service can tear
+            // down cleanly.
+            log::error!("CGEventTap disabled by user input, releasing capture state");
+            if state.current_pos.is_some() {
+                let _ = CGDisplay::show_cursor(&CGDisplay::main());
+                state.current_pos = None;
+            }
+            notify_tx
+                .blocking_send(ProducerEvent::EventTapDisabled)
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to send notification: {e}");
+                });
+            return CallbackResult::Keep;
+        }
+
+        // Are we in a client?
+        if let Some(current_pos) = state.current_pos {
+            capture_position = Some(current_pos);
+            get_events(
+                &event_type,
+                cg_ev,
+                &mut res_events,
+                &mut state.modifier_state,
+            )
+            .unwrap_or_else(|e| {
+                log::error!("Failed to get events: {e}");
+            });
+
+            // Keep (hidden) cursor at the edge of the screen
+            if matches!(
+                event_type,
+                CGEventType::MouseMoved
+                    | CGEventType::LeftMouseDragged
+                    | CGEventType::RightMouseDragged
+                    | CGEventType::OtherMouseDragged
+            ) {
+                state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
+            }
+        } else if matches!(event_type, CGEventType::MouseMoved) {
+            // Did we cross a barrier?
+            if let Some(new_pos) = state.crossed(cg_ev) {
+                capture_position = Some(new_pos);
+                state
+                    .start_capture(cg_ev, new_pos)
+                    .unwrap_or_else(|e| log::warn!("{e}"));
+                res_events.push(CaptureEvent::Begin);
+                notify_tx
+                    .blocking_send(ProducerEvent::Grab(new_pos))
+                    .expect("Failed to send notification");
+            }
+        }
+
+        if let Some(pos) = capture_position {
+            res_events.iter().for_each(|e| {
+                // error must be ignored, since the event channel
+                // may already be closed when the InputCapture instance is dropped.
+                let _ = event_tx.blocking_send((pos, *e));
+            });
+            // Returning Drop should stop the event from being processed
+            // but core fundation still returns the event
+            cg_ev.set_type(CGEventType::Null);
+            CallbackResult::Drop
+        } else {
+            CallbackResult::Keep
+        }
+    };
 
     let tap = CGEventTap::new(
         CGEventTapLocation::Session,
@@ -599,8 +600,7 @@ fn event_tap_thread(
     // callback runs on this thread's CFRunLoop. Box-leak the sender
     // so the C side has a stable user_info pointer; reclaim it after
     // the run loop exits.
-    let display_user_info =
-        Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
+    let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
     unsafe {
         CGDisplayRegisterReconfigurationCallback(
             display_reconfiguration_callback,
@@ -613,10 +613,7 @@ fn event_tap_thread(
     log::debug!("event tap thread exiting!...");
 
     unsafe {
-        CGDisplayRemoveReconfigurationCallback(
-            display_reconfiguration_callback,
-            display_user_info,
-        );
+        CGDisplayRemoveReconfigurationCallback(display_reconfiguration_callback, display_user_info);
         // Reclaim the leaked sender Box so we don't leak a tokio
         // channel sender on every capture create/destroy cycle.
         drop(Box::from_raw(
@@ -633,11 +630,7 @@ fn event_tap_thread(
 /// then again afterwards with the actual change flags (Add, Remove,
 /// Mode, DesktopShapeChanged, etc.). Skip the begin phase; on the
 /// real notification, kick the producer task to refresh bounds.
-extern "C" fn display_reconfiguration_callback(
-    _display: u32,
-    flags: u32,
-    user_info: *mut c_void,
-) {
+extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_info: *mut c_void) {
     const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
     if flags & K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG != 0 {
         return;

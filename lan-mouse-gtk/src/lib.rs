@@ -219,9 +219,7 @@ fn build_ui(app: &Application) {
                 }
             }
             macos_privacy::AccessibilityChange::Revoked => {
-                log::warn!(
-                    "Accessibility revoked — quitting to avoid wedging system input"
-                );
+                log::warn!("Accessibility revoked — quitting to avoid wedging system input");
                 if let Some(app) = app_weak.upgrade() {
                     app.quit();
                 }
@@ -291,4 +289,3 @@ fn build_ui(app: &Application) {
         window.present();
     }
 }
-
