@@ -2,7 +2,7 @@
 
 use std::{
     cell::RefCell,
-    ffi::{CStr, CString, c_char, c_double, c_void},
+    ffi::{CStr, CString, c_char, c_double, c_uint, c_void},
     sync::OnceLock,
 };
 
@@ -45,7 +45,10 @@ pub fn setup(app: &adw::Application, window: &Window) {
             let hold = app.hold();
 
             let ns_app = msg_send_id(class(c"NSApplication"), sel(c"sharedApplication"));
-            assert!(!ns_app.is_null(), "NSApplication sharedApplication returned null");
+            assert!(
+                !ns_app.is_null(),
+                "NSApplication sharedApplication returned null"
+            );
             msg_send_bool_usize(ns_app, sel(c"setActivationPolicy:"), 1);
 
             let delegate = new_delegate();
@@ -56,7 +59,10 @@ pub fn setup(app: &adw::Application, window: &Window) {
             ]);
 
             let status_bar = msg_send_id(class(c"NSStatusBar"), sel(c"systemStatusBar"));
-            assert!(!status_bar.is_null(), "NSStatusBar systemStatusBar returned null");
+            assert!(
+                !status_bar.is_null(),
+                "NSStatusBar systemStatusBar returned null"
+            );
             let status_item = msg_send_id_f64(status_bar, sel(c"statusItemWithLength:"), -1.0);
             assert!(!status_item.is_null(), "statusItemWithLength returned null");
             // Retain so the status item survives autorelease pool drain.
@@ -71,6 +77,8 @@ pub fn setup(app: &adw::Application, window: &Window) {
             for item in menu_items(menu) {
                 msg_send_void_id(item, sel(c"setTarget:"), delegate);
             }
+
+            install_reopen_handler(delegate);
 
             log::debug!("macos_status_item ready at {:p}", status_item);
 
@@ -194,12 +202,29 @@ fn delegate_class() -> Class {
             quit_lan_mouse as *const c_void,
             c"v@:@".as_ptr(),
         );
+        // kAEReopenApplication handler — fires when the user re-launches
+        // the .app while it's already running (Finder, `open`, Dock).
+        class_addMethod(
+            class,
+            sel(c"handleReopenEvent:withReplyEvent:"),
+            handle_reopen_event as *const c_void,
+            c"v@:@@".as_ptr(),
+        );
         objc_registerClassPair(class);
         class as usize
     }) as Class
 }
 
 extern "C" fn show_lan_mouse(_this: Id, _cmd: Sel, _sender: Id) {
+    present_window();
+}
+
+extern "C" fn handle_reopen_event(_this: Id, _cmd: Sel, _event: Id, _reply: Id) {
+    log::debug!("kAEReopenApplication received — presenting main window");
+    present_window();
+}
+
+fn present_window() {
     STATUS_ITEM.with(|item| {
         let item = item.borrow();
         let Some(item) = item.as_ref() else {
@@ -214,6 +239,35 @@ extern "C" fn show_lan_mouse(_this: Id, _cmd: Sel, _sender: Id) {
             msg_send_void_bool(ns_app, sel(c"activateIgnoringOtherApps:"), 1);
         }
     });
+}
+
+// Register the status-item delegate as the handler for the
+// kAEReopenApplication Apple Event ('aevt'/'rapp'). NSApplication
+// installs a default handler at -finishLaunching that just delegates to
+// applicationShouldHandleReopen:hasVisibleWindows: — which is a no-op
+// here because GApplication owns NSApp's delegate. Replacing it lets us
+// re-present the window when the user double-clicks the .app while
+// we're already running.
+unsafe fn install_reopen_handler(delegate: Id) {
+    const K_CORE_EVENT_CLASS: c_uint = 0x6165_7674; // 'aevt'
+    const K_AE_REOPEN_APPLICATION: c_uint = 0x7261_7070; // 'rapp'
+
+    let manager = msg_send_id(
+        class(c"NSAppleEventManager"),
+        sel(c"sharedAppleEventManager"),
+    );
+    if manager.is_null() {
+        log::warn!("NSAppleEventManager unavailable; re-launch will not re-open window");
+        return;
+    }
+    msg_send_void_id_sel_u32_u32(
+        manager,
+        sel(c"setEventHandler:andSelector:forEventClass:andEventID:"),
+        delegate,
+        sel(c"handleReopenEvent:withReplyEvent:"),
+        K_CORE_EVENT_CLASS,
+        K_AE_REOPEN_APPLICATION,
+    );
 }
 
 extern "C" fn quit_lan_mouse(_this: Id, _cmd: Sel, _sender: Id) {
@@ -280,4 +334,13 @@ extern "C" {
     fn msg_send_void_id(receiver: Id, selector: Sel, value: Id);
     #[link_name = "objc_msgSend"]
     fn msg_send_bool_usize(receiver: Id, selector: Sel, value: usize) -> Bool;
+    #[link_name = "objc_msgSend"]
+    fn msg_send_void_id_sel_u32_u32(
+        receiver: Id,
+        selector: Sel,
+        a: Id,
+        b: Sel,
+        c: c_uint,
+        d: c_uint,
+    );
 }
