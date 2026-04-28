@@ -73,7 +73,6 @@ pub fn accessibility_granted() -> bool {
     raw != 0
 }
 
-
 pub enum AccessibilityChange {
     /// AX was missing at startup and the user has now granted it.
     /// Capture/emulation still need a relaunch to take effect, since
