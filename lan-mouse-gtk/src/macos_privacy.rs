@@ -1,5 +1,3 @@
-#![cfg(target_os = "macos")]
-
 //! Tiny macOS Privacy-pane helpers used by the GUI.
 //!
 //! On macOS 13+, the Accessibility grant transitively confers the

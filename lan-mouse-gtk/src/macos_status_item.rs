@@ -80,7 +80,7 @@ pub fn setup(app: &adw::Application, window: &Window) {
 
             install_reopen_handler(delegate);
 
-            log::debug!("macos_status_item ready at {:p}", status_item);
+            log::debug!("macos_status_item ready at {status_item:p}");
 
             item.replace(Some(StatusItem {
                 app: app.downgrade(),
