@@ -59,6 +59,9 @@ pub(crate) struct MacOSEmulation {
     /// the idle timer. Initialized to 0; the first call returns a
     /// real ID, subsequent calls within 5s return the same ID.
     user_activity_assertion: Cell<u32>,
+    /// invert scroll deltas before injection (matches the libinput
+    /// natural_scroll concept)
+    natural_scroll: bool,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -89,6 +92,7 @@ impl MacOSEmulation {
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
             user_activity_assertion: Cell::new(0),
+            natural_scroll: false,
         })
     }
 
@@ -454,6 +458,7 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
+                        let value = if self.natural_scroll { -value } else { value };
                         let value = value as i32;
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
@@ -481,6 +486,7 @@ impl Emulation for MacOSEmulation {
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         const LINES_PER_STEP: i32 = 3;
+                        let value = if self.natural_scroll { -value } else { value };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -587,6 +593,10 @@ impl Emulation for MacOSEmulation {
         // call; it doesn't matter which CGDisplay receiver we use.
         let _ = CGDisplay::warp_mouse_cursor_position(pt);
         Ok(())
+    }
+
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
     }
 }
 

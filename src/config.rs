@@ -77,6 +77,11 @@ struct ConfigToml {
     /// blindly. Default true; turn off on networks where mDNS
     /// multicast (224.0.0.251) is firewalled.
     mdns_discovery: Option<bool>,
+    /// invert the sign of scroll events received from peers before
+    /// emulation. Equivalent to the libinput `natural_scroll`
+    /// preference, but applied to forwarded events that bypass
+    /// libinput entirely on Wayland virtual-pointer paths.
+    natural_scroll: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -544,6 +549,22 @@ impl Config {
             self.config_toml = Some(Default::default());
         }
         self.config_toml.as_mut().expect("config").mdns_discovery = Some(enabled);
+    }
+
+    /// Whether forwarded scroll events should be sign-inverted on
+    /// injection. Default false.
+    pub fn natural_scroll(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.natural_scroll)
+            .unwrap_or(false)
+    }
+
+    pub fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml.as_mut().expect("config").natural_scroll = Some(natural_scroll);
     }
 
     /// set configured clients

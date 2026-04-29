@@ -28,11 +28,15 @@ const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
 pub(crate) struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
+    natural_scroll: bool,
 }
 
 impl WindowsEmulation {
     pub(crate) fn new() -> Result<Self, WindowsEmulationCreationError> {
-        Ok(Self { repeat_task: None })
+        Ok(Self {
+            repeat_task: None,
+            natural_scroll: false,
+        })
     }
 }
 
@@ -53,8 +57,14 @@ impl Emulation for WindowsEmulation {
                     time: _,
                     axis,
                     value,
-                } => scroll(axis, value as i32),
-                PointerEvent::AxisDiscrete120 { axis, value } => scroll(axis, value),
+                } => {
+                    let value = if self.natural_scroll { -value } else { value };
+                    scroll(axis, value as i32);
+                }
+                PointerEvent::AxisDiscrete120 { axis, value } => {
+                    let value = if self.natural_scroll { -value } else { value };
+                    scroll(axis, value);
+                }
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key {
@@ -102,6 +112,10 @@ impl Emulation for WindowsEmulation {
             let _ = SetCursorPos(x, y);
         }
         Ok(())
+    }
+
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
     }
 }
 
