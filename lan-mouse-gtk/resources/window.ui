@@ -257,22 +257,6 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Scroll</property>
-                        <child>
-                          <object class="AdwActionRow" id="natural_scroll_row">
-                            <property name="title" translatable="yes">Natural scrolling</property>
-                            <property name="subtitle" translatable="yes">invert the direction of forwarded scroll events</property>
-                            <child type="suffix">
-                              <object class="GtkSwitch" id="natural_scroll_switch">
-                                <property name="valign">center</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Outgoing Connections</property>
                         <property name="header-suffix">
                           <object class="GtkButton">
@@ -333,6 +317,23 @@
                             <style>
                               <class name="boxed-list" />
                             </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Scroll Direction</property>
+                        <property name="description" translatable="yes">Forwarded scroll events bypass OS-level preferences. Choose a scroll direction below.</property>
+                        <child>
+                          <object class="AdwActionRow" id="natural_scroll_row">
+                            <property name="title" translatable="yes">Natural Scrolling</property>
+                            <property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events.</property>
+                            <child type="suffix">
+                              <object class="GtkSwitch" id="natural_scroll_switch">
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
