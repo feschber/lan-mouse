@@ -309,6 +309,13 @@ impl CaptureTask {
                             log::info!("releasing capture: left remote client device region");
                             self.release_capture(capture).await?;
                         },
+                        // Peer reported its display geometry — cache it
+                        // so the wall-press model has a real upper
+                        // clamp on virtual_pos for this position.
+                        ProtoEvent::Bounds { width, height } => {
+                            let pos = self.get_pos(handle);
+                            capture.set_peer_bounds(pos, width, height);
+                        }
                         _ => {}
                     }
                 },
@@ -320,8 +327,13 @@ impl CaptureTask {
                         capture.create(h, p).await?;
                     }
                     CaptureRequest::Destroy(h) => {
+                        let pos = self.get_pos(h);
                         self.remove_capture(h);
                         capture.destroy(h).await?;
+                        // Drop the cached geometry — the next client
+                        // added at this position may report different
+                        // bounds.
+                        capture.clear_peer_bounds(pos);
                     }
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
