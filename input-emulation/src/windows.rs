@@ -17,7 +17,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
-use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SetCursorPos, XBUTTON1, XBUTTON2,
+};
 
 use super::{Emulation, EmulationHandle};
 
@@ -80,6 +82,27 @@ impl Emulation for WindowsEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Virtual-screen metrics cover the union of every monitor
+        // attached to the system, matching the host-side capture
+        // model that uses the union of all displays.
+        unsafe {
+            let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if w <= 0 || h <= 0 {
+                return None;
+            }
+            Some((w as u32, h as u32))
+        }
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        unsafe {
+            let _ = SetCursorPos(x, y);
+        }
+        Ok(())
+    }
 }
 
 impl WindowsEmulation {

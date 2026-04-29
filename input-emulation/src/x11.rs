@@ -151,4 +151,31 @@ impl Emulation for X11Emulation {
     async fn terminate(&mut self) {
         /* nothing to do */
     }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        unsafe {
+            // DisplayWidth/DisplayHeight on the default screen
+            // returns the union extent of the X server's logical
+            // screen across all monitors (Xinerama / RandR).
+            let screen = xlib::XDefaultScreen(self.display);
+            let w = xlib::XDisplayWidth(self.display, screen);
+            let h = xlib::XDisplayHeight(self.display, screen);
+            if w <= 0 || h <= 0 {
+                return None;
+            }
+            Some((w as u32, h as u32))
+        }
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        unsafe {
+            let root = xlib::XDefaultRootWindow(self.display);
+            // XWarpPointer with src_w = 0 means "no source window",
+            // so the cursor moves to (x, y) relative to dest_w
+            // (the root window) regardless of where it currently is.
+            xlib::XWarpPointer(self.display, 0, root, 0, 0, 0, 0, x, y);
+            xlib::XFlush(self.display);
+        }
+        Ok(())
+    }
 }
