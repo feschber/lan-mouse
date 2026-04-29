@@ -191,6 +191,12 @@ impl InputEmulation {
         self.emulation.warp_cursor(x, y).await
     }
 
+    /// Configure whether the backend should invert scroll deltas on
+    /// injection. See `Emulation::set_natural_scroll`.
+    pub fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.emulation.set_natural_scroll(natural_scroll);
+    }
+
     pub async fn release_keys(&mut self, handle: EmulationHandle) -> Result<(), EmulationError> {
         if let Some(keys) = self.pressed_keys.get_mut(&handle) {
             let keys = keys.drain().collect::<Vec<_>>();
@@ -273,4 +279,11 @@ trait Emulation: Send {
     async fn warp_cursor(&mut self, _x: i32, _y: i32) -> Result<(), EmulationError> {
         Ok(())
     }
+
+    /// Configure whether the backend should sign-invert scroll
+    /// (axis / axis-discrete) values before injection. Used to
+    /// match the user's libinput natural-scroll preference for
+    /// forwarded events that bypass libinput. Default no-op so
+    /// backends that haven't been updated keep classic behavior.
+    fn set_natural_scroll(&mut self, _natural_scroll: bool) {}
 }

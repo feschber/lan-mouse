@@ -15,6 +15,7 @@ use super::{Emulation, EmulationHandle, error::X11EmulationCreationError};
 
 pub(crate) struct X11Emulation {
     display: *mut xlib::Display,
+    natural_scroll: bool,
 }
 
 unsafe impl Send for X11Emulation {}
@@ -29,7 +30,10 @@ impl X11Emulation {
                 display => Ok(display),
             }
         }?;
-        Ok(Self { display })
+        Ok(Self {
+            display,
+            natural_scroll: false,
+        })
     }
 
     fn relative_motion(&self, dx: i32, dy: i32) {
@@ -118,9 +122,11 @@ impl Emulation for X11Emulation {
                     axis,
                     value,
                 } => {
+                    let value = if self.natural_scroll { -value } else { value };
                     self.emulate_scroll(axis, value);
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
+                    let value = if self.natural_scroll { -value } else { value };
                     self.emulate_scroll(axis, value as f64);
                 }
             },
@@ -177,5 +183,9 @@ impl Emulation for X11Emulation {
             xlib::XFlush(self.display);
         }
         Ok(())
+    }
+
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
     }
 }
