@@ -200,6 +200,58 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Auto-release</property>
+                        <property name="description" translatable="yes">Auto-release capture when the cursor reaches the host-adjacent edge of the guest and you keep pushing. 0 disables; rely on the release-bind chord or a peer-side leave event.</property>
+                        <child>
+                          <object class="AdwActionRow" id="release_threshold_row">
+                            <property name="title" translatable="yes">Release threshold</property>
+                            <property name="subtitle" translatable="yes">pixels of wall-press past the entry edge before auto-release fires</property>
+                            <child type="suffix">
+                              <object class="GtkLabel" id="release_threshold_value">
+                                <property name="label">disabled</property>
+                                <property name="valign">center</property>
+                                <property name="width-chars">8</property>
+                                <property name="xalign">1.0</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                  <class name="numeric"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkScale" id="release_threshold_scale">
+                            <property name="orientation">horizontal</property>
+                            <property name="hexpand">true</property>
+                            <property name="draw-value">false</property>
+                            <property name="round-digits">0</property>
+                            <property name="margin-start">12</property>
+                            <property name="margin-end">12</property>
+                            <property name="margin-top">4</property>
+                            <property name="margin-bottom">8</property>
+                            <property name="adjustment">
+                              <object class="GtkAdjustment" id="release_threshold_adjustment">
+                                <property name="lower">0</property>
+                                <property name="upper">500</property>
+                                <property name="step-increment">10</property>
+                                <property name="page-increment">50</property>
+                                <property name="value">0</property>
+                              </object>
+                            </property>
+                            <marks>
+                              <mark value="0" position="bottom">off</mark>
+                              <mark value="50" position="bottom">50</mark>
+                              <mark value="100" position="bottom">100</mark>
+                              <mark value="200" position="bottom">200</mark>
+                              <mark value="500" position="bottom">500</mark>
+                            </marks>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Connections</property>
                         <property name="header-suffix">
                           <object class="GtkButton">

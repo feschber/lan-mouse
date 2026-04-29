@@ -217,6 +217,9 @@ pub enum FrontendEvent {
     IncomingDisconnected(SocketAddr),
     /// failed connection attempt (approval for fingerprint required)
     ConnectionAttempt { fingerprint: String },
+    /// pixel threshold for the wall-press auto-release fallback.
+    /// 0 means disabled.
+    ReleaseThreshold(u32),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -255,6 +258,8 @@ pub enum FrontendRequest {
     UpdateEnterHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
+    /// set the wall-press auto-release pixel threshold (0 = disabled)
+    SetReleaseThreshold(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
