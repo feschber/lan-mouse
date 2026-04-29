@@ -9,8 +9,8 @@
     </item>
   </menu>
   <template class="LanMouseWindow" parent="AdwApplicationWindow">
-    <property name="width-request">600</property>
-    <property name="height-request">700</property>
+    <property name="default-width">600</property>
+    <property name="default-height">700</property>
     <property name="title" translatable="yes">Lan Mouse</property>
     <property name="show-menubar">True</property>
     <property name="content">
@@ -37,7 +37,6 @@
                 <property name="hexpand">true</property>
                 <property name="hscrollbar-policy">never</property>
                 <property name="vscrollbar-policy">automatic</property>
-                <property name="propagate-natural-height">true</property>
                 <child>
                   <object class="AdwStatusPage">
                     <property name="title" translatable="yes">Lan Mouse</property>
@@ -51,6 +50,7 @@
                     <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <property name="spacing">12</property>
+                    <property name="margin-bottom">36</property>
                     <child>
                       <object class="AdwPreferencesGroup" id="capture_emulation_group">
                       <property name="title" translatable="yes">Capture / Emulation Status</property>
