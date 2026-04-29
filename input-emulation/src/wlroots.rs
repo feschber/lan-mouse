@@ -8,6 +8,7 @@ use std::io;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use wayland_client::Proxy;
 use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 
@@ -294,9 +295,24 @@ impl VirtualInput {
                         let state: ButtonState = state.try_into()?;
                         self.pointer.button(time, button, state);
                     }
-                    PointerEvent::Axis { time, axis, value } => {
+                    PointerEvent::Axis {
+                        time: _,
+                        axis,
+                        value,
+                    } => {
+                        // wl_pointer requires `axis_source` to be sent
+                        // alongside the axis event; without it many
+                        // compositors (Hyprland, Sway, …) silently
+                        // drop continuous scroll. AxisSource::Finger
+                        // matches a Mac trackpad gesture, which is the
+                        // typical source for continuous scroll
+                        // forwarded by Lan Mouse. We also use the
+                        // local `now` timestamp because the upstream
+                        // CGEventTap path passes time=0 and some
+                        // compositors filter zero-time events.
                         let axis: Axis = (axis as u32).try_into()?;
-                        self.pointer.axis(time, axis, value);
+                        self.pointer.axis(now, axis, value);
+                        self.pointer.axis_source(AxisSource::Finger);
                         self.pointer.frame();
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
