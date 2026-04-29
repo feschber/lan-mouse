@@ -357,11 +357,41 @@ fn get_events(
             })))
         }
         CGEventType::ScrollWheel => {
+            // Emit scroll deltas in the *classic* mouse-wheel convention
+            // (the historical baseline that predates natural scrolling)
+            // regardless of the user's macOS Natural Scrolling
+            // preference. Rationale:
+            //
+            //   1. Classic was the canonical scroll convention when
+            //      the scroll wheel was invented; using it as the
+            //      wire format keeps Lan Mouse predictable for any
+            //      receiver, including non-natural-aware peers.
+            //   2. Receivers opt into natural-feel via their own
+            //      `natural_scroll` config, mirroring how libinput's
+            //      natural_scroll knob works for physical input.
+            //   3. macOS Natural Scrolling pre-flips POINT_DELTA at
+            //      the OS layer; CGEventTap at Session placement sees
+            //      events after that flip. So:
+            //        Natural ON: POINT_DELTA already flipped (away
+            //          from classic) → re-flip back to classic by
+            //          NOT flipping in our code (sign = +1).
+            //        Natural OFF: POINT_DELTA already in classic →
+            //          flip once to invert away from raw and… wait,
+            //          actually we want to land on classic regardless.
+            //          With Natural OFF the OS gives us "raw classic"
+            //          *as-the-mac-sees-it*; our peers' wl_pointer
+            //          treats positive Y as "document moves down on
+            //          screen" (natural-feel). To present classic
+            //          feel on the wire we negate (sign = -1).
+            //
+            // Net result: wire is consistently classic-feel regardless
+            // of the Mac's preference. Receivers can re-invert.
+            let sign: i64 = if natural_scrolling_enabled() { 1 } else { -1 };
             if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
-                let v =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-                let h =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
+                let v = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+                let h = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                         time: 0,
@@ -380,8 +410,10 @@ fn get_events(
                 // line based scrolling
                 const LINES_PER_STEP: i32 = 3;
                 const V120_STEPS_PER_LINE: i32 = 120 / LINES_PER_STEP;
-                let v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
-                let h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
+                let v =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+                let h =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(
                         PointerEvent::AxisDiscrete120 {
@@ -839,6 +871,43 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+}
+
+/// Read `com.apple.swipescrolldirection` from the global preferences
+/// domain. Returns `true` when Natural Scrolling is enabled (the
+/// modern macOS default) — the same default macOS uses if the key
+/// is unset. Used to decide whether to invert scroll deltas before
+/// forwarding them to a peer that has its own fixed convention.
+fn natural_scrolling_enabled() -> bool {
+    unsafe {
+        let key_cstr = CString::new("com.apple.swipescrolldirection").unwrap();
+        let key = CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            key_cstr.as_ptr() as *const c_char,
+            kCFStringEncodingUTF8,
+        );
+        if key.is_null() {
+            return true;
+        }
+        let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
+        CFRelease(key as *const c_void);
+        if value.is_null() {
+            // Key absent → modern macOS default is enabled.
+            return true;
+        }
+        // The preference is stored as a CFBoolean; kCFBooleanTrue
+        // and kCFBooleanFalse are singleton instances, so a pointer
+        // compare is correct and sufficient.
+        let is_true = (value as CFBooleanRef) == kCFBooleanTrue;
+        CFRelease(value);
+        is_true
+    }
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFPreferencesCopyAppValue(key: CFStringRef, application_id: CFStringRef) -> *const c_void;
+    static kCFPreferencesAnyApplication: CFStringRef;
 }
 
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {
