@@ -73,18 +73,26 @@ fn run() -> Result<(), LanMouseError> {
             //  run a frontend
             #[cfg(feature = "gtk")]
             {
-                let mut service = start_service()?;
+                // Only spawn a new daemon if one isn't already running
+                let mut service = if lan_mouse_ipc::is_service_running() {
+                    log::info!("daemon already running, connecting to existing instance");
+                    None
+                } else {
+                    Some(start_service()?)
+                };
                 let res = lan_mouse_gtk::run();
-                #[cfg(unix)]
-                {
-                    // on unix we give the service a chance to terminate gracefully
-                    let pid = service.id() as libc::pid_t;
-                    unsafe {
-                        libc::kill(pid, libc::SIGINT);
+                if let Some(ref mut service) = service {
+                    #[cfg(unix)]
+                    {
+                        // on unix we give the service a chance to terminate gracefully
+                        let pid = service.id() as libc::pid_t;
+                        unsafe {
+                            libc::kill(pid, libc::SIGINT);
+                        }
+                        service.wait()?;
                     }
-                    service.wait()?;
+                    service.kill()?;
                 }
-                service.kill()?;
                 res?;
             }
             #[cfg(not(feature = "gtk"))]
