@@ -255,16 +255,23 @@ async fn receive_loop(
 ) {
     let mut buf = [0u8; MAX_EVENT_SIZE];
     while conn.recv(&mut buf).await.is_ok() {
-        if let Ok(event) = buf.try_into() {
-            log::trace!("{addr} <==<==<== {event}");
-            match event {
-                ProtoEvent::Pong(b) => {
-                    client_manager.set_active_addr(handle, Some(addr));
-                    client_manager.set_alive(handle, b);
-                    ping_response.borrow_mut().insert(addr);
+        match buf.try_into() {
+            Ok(event) => {
+                log::trace!("{addr} <==<==<== {event}");
+                match event {
+                    ProtoEvent::Pong(b) => {
+                        client_manager.set_active_addr(handle, Some(addr));
+                        client_manager.set_alive(handle, b);
+                        ping_response.borrow_mut().insert(addr);
+                    }
+                    event => tx.send((handle, event)).expect("channel closed"),
                 }
-                event => tx.send((handle, event)).expect("channel closed"),
             }
+            // Skip undecodable datagrams without dropping the
+            // connection. Each DTLS recv is one framed message, so
+            // skipping is safe and keeps us forward-compatible with
+            // peers that send event types we don't yet know about.
+            Err(e) => log::debug!("ignoring undecodable event from {addr}: {e}"),
         }
     }
     log::warn!("recv error");
