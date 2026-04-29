@@ -4,7 +4,7 @@ use adw::subclass::prelude::*;
 use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, gdk, gio, glib};
+use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, Scale, gdk, gio, glib};
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
@@ -45,6 +45,12 @@ pub struct Window {
     pub input_capture_button: TemplateChild<Button>,
     #[template_child]
     pub authorized_list: TemplateChild<ListBox>,
+    #[template_child]
+    pub release_threshold_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub release_threshold_scale: TemplateChild<Scale>,
+    #[template_child]
+    pub release_threshold_value: TemplateChild<Label>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -52,6 +58,10 @@ pub struct Window {
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,
     pub authorization_window: RefCell<Option<AuthorizationWindow>>,
+    /// Connected handler for the auto-release-threshold scale's
+    /// value-changed signal, so we can block it when programmatically
+    /// updating the slider in response to a Sync event.
+    pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -200,6 +210,26 @@ impl ObjectImpl for Window {
         obj.setup_icon();
         obj.setup_clients();
         obj.setup_authorized();
+
+        // Connect the auto-release threshold slider. Stash the handler
+        // id so set_release_threshold() can block the signal when the
+        // daemon-driven Sync sets the value programmatically.
+        let scale = self.release_threshold_scale.clone();
+        let handler_id = scale.connect_value_changed(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            move |scale| {
+                let value = scale.value().round() as u32;
+                let label = if value == 0 {
+                    "disabled".to_string()
+                } else {
+                    format!("{value} px")
+                };
+                window.imp().release_threshold_value.set_label(&label);
+                window.request_release_threshold(value);
+            }
+        ));
+        self.release_threshold_handler.replace(Some(handler_id));
     }
 }
 

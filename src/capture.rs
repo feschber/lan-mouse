@@ -61,6 +61,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the auto-release pixel threshold (macOS only). 0 disables.
+    SetReleaseThreshold(u32),
 }
 
 impl Capture {
@@ -68,6 +70,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        release_threshold_px: u32,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -81,6 +84,7 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            release_threshold_px: Rc::new(RefCell::new(release_threshold_px)),
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -137,6 +141,12 @@ impl Capture {
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
+
+    pub(crate) fn set_release_threshold(&mut self, threshold: u32) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetReleaseThreshold(threshold));
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -164,6 +174,7 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    release_threshold_px: Rc<RefCell<u32>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
@@ -214,6 +225,9 @@ impl CaptureTask {
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
+                        CaptureRequest::SetReleaseThreshold(threshold) => {
+                            *self.release_threshold_px.borrow_mut() = threshold;
+                        }
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -240,6 +254,11 @@ impl CaptureTask {
             capture.terminate().await?;
             return Err(e.into());
         }
+
+        // Push the configured auto-release threshold to the freshly
+        // created InputCapture. The wall-press detection is
+        // cross-platform — every backend benefits.
+        capture.set_release_threshold(*self.release_threshold_px.borrow());
 
         let r = self.do_capture_session(&mut capture).await;
 
@@ -307,6 +326,10 @@ impl CaptureTask {
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
+                    CaptureRequest::SetReleaseThreshold(threshold) => {
+                        *self.release_threshold_px.borrow_mut() = threshold;
+                        capture.set_release_threshold(threshold);
+                    }
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }
@@ -324,6 +347,15 @@ impl CaptureTask {
 
         if capture.keys_pressed(&self.release_bind.borrow()) {
             log::info!("releasing capture: release-bind pressed");
+            return self.release_capture(capture).await;
+        }
+
+        // Backend self-released (currently only macOS, when sustained
+        // back-toward-host motion crosses the configured threshold).
+        // Drive the same teardown path as the release-bind chord so
+        // the peer gets a Leave + key-up flush.
+        if matches!(event, CaptureEvent::AutoRelease) {
+            log::info!("releasing capture: backend auto-release");
             return self.release_capture(capture).await;
         }
 
@@ -363,6 +395,7 @@ impl CaptureTask {
                 State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
                 State::Sending => ProtoEvent::Input(e),
             },
+            CaptureEvent::AutoRelease => unreachable!("handled in early return above"),
         };
 
         if let Err(e) = self.conn.send(event, handle).await {

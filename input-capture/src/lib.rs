@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use futures_core::Stream;
 
-use input_event::{Event, KeyboardEvent, scancode};
+use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 
 pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
@@ -41,6 +41,11 @@ pub enum CaptureEvent {
     Begin,
     /// input event coming from capture handle
     Input(Event),
+    /// the capture wrapper detected sustained back-toward-host motion
+    /// past the configured threshold (the user has pinned the cursor
+    /// at the host-adjacent edge of the guest and kept pushing). The
+    /// capture loop should treat this like a release-bind chord.
+    AutoRelease,
 }
 
 impl Display for CaptureEvent {
@@ -48,6 +53,7 @@ impl Display for CaptureEvent {
         match self {
             CaptureEvent::Begin => write!(f, "begin capture"),
             CaptureEvent::Input(e) => write!(f, "{e}"),
+            CaptureEvent::AutoRelease => write!(f, "auto-release"),
         }
     }
 }
@@ -127,6 +133,37 @@ pub struct InputCapture {
     id_map: HashMap<CaptureHandle, Position>,
     /// pending events
     pending: VecDeque<(CaptureHandle, CaptureEvent)>,
+    /// pixel threshold for the cross-platform auto-release-on-wall-
+    /// press fallback. 0 disables. See `track_wall_press`.
+    release_threshold_px: u32,
+    /// position the cursor is currently captured into, if any. Tracks
+    /// `Begin`/release transitions so the wall-press accumulator
+    /// resets correctly across capture sessions.
+    capture_pos: Option<Position>,
+    /// Modeled cursor position on the guest along the entry axis,
+    /// relative to the host-adjacent edge. 0 = at the entry edge,
+    /// growing values = further into the guest. Clamped at 0 from
+    /// below; *not* clamped from above (the wrapper can't know the
+    /// guest's far-edge extent without a protocol-level Bounds event,
+    /// and any proxy is wrong for some user's setup).
+    virtual_pos: f64,
+    /// Pixels of back-toward-host motion that the modeled cursor
+    /// could not absorb (proposed virtual_pos < 0). Resets whenever
+    /// the cursor is back in the interior or moving deeper.
+    wall_pressure: f64,
+}
+
+/// Project a motion delta onto the entry axis. Positive return =
+/// "into guest", so virtual_pos increases as the user pushes deeper.
+fn entry_axis_delta(position: Position, dx: f64, dy: f64) -> f64 {
+    match position {
+        // Position::Left = guest is to the LEFT of host. User entered
+        // by moving left (-dx). Convention: positive = into guest.
+        Position::Left => -dx,
+        Position::Right => dx,
+        Position::Top => -dy,
+        Position::Bottom => dy,
+    }
 }
 
 impl InputCapture {
@@ -168,7 +205,80 @@ impl InputCapture {
     /// release mouse
     pub async fn release(&mut self) -> Result<(), CaptureError> {
         self.pressed_keys.clear();
+        self.reset_wall_press_state();
         self.capture.release().await
+    }
+
+    /// Configure the wall-press auto-release pixel threshold.
+    /// 0 disables. Effective immediately for the next motion event;
+    /// no need to recreate the backend.
+    pub fn set_release_threshold(&mut self, threshold: u32) {
+        self.release_threshold_px = threshold;
+    }
+
+    fn reset_wall_press_state(&mut self) {
+        self.capture_pos = None;
+        self.virtual_pos = 0.0;
+        self.wall_pressure = 0.0;
+    }
+
+    /// Update the wall-press accumulator from one event coming up
+    /// from the backend. Returns true if the threshold was reached
+    /// and an `AutoRelease` should be synthesized for the active
+    /// capture position.
+    fn track_wall_press(&mut self, pos: Position, event: &CaptureEvent) -> bool {
+        match event {
+            CaptureEvent::Begin => {
+                self.capture_pos = Some(pos);
+                self.virtual_pos = 0.0;
+                self.wall_pressure = 0.0;
+                false
+            }
+            CaptureEvent::AutoRelease => {
+                self.reset_wall_press_state();
+                false
+            }
+            CaptureEvent::Input(Event::Pointer(PointerEvent::Motion { dx, dy, .. })) => {
+                if self.release_threshold_px == 0 {
+                    return false;
+                }
+                let Some(active_pos) = self.capture_pos else {
+                    return false;
+                };
+                if active_pos != pos {
+                    return false;
+                }
+
+                let delta = entry_axis_delta(active_pos, *dx, *dy);
+                let proposed = self.virtual_pos + delta;
+                self.virtual_pos = proposed.max(0.0);
+
+                if proposed < 0.0 {
+                    // Motion overshot the host-adjacent edge —
+                    // accumulate the unabsorbed amount as wall
+                    // pressure.
+                    self.wall_pressure += -proposed;
+                } else {
+                    // Cursor moved into the interior or further in;
+                    // reset so a brief bump against the wall followed
+                    // by motion deeper into the guest doesn't combine
+                    // with a later wall-press to fire spuriously.
+                    self.wall_pressure = 0.0;
+                }
+
+                if self.wall_pressure >= f64::from(self.release_threshold_px) {
+                    log::info!(
+                        "auto-release: {:.0}px wall-press past entry edge ({}px threshold)",
+                        self.wall_pressure,
+                        self.release_threshold_px
+                    );
+                    self.reset_wall_press_state();
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Drain and return every key the capture has forwarded as
@@ -198,6 +308,10 @@ impl InputCapture {
             pending: Default::default(),
             position_map: Default::default(),
             pressed_keys: HashSet::new(),
+            release_threshold_px: 0,
+            capture_pos: None,
+            virtual_pos: 0.0,
+            wall_pressure: 0.0,
         })
     }
 
@@ -248,6 +362,11 @@ impl Stream for InputCapture {
             self.update_pressed_keys(key, state);
         }
 
+        // wall-press auto-release tracking. Runs against every event
+        // before routing so a single global accumulator stays consistent
+        // regardless of how many handles exist at this position.
+        let auto_release = self.track_wall_press(pos, &event);
+
         let len = self
             .position_map
             .get(&pos)
@@ -256,16 +375,25 @@ impl Stream for InputCapture {
 
         match len {
             0 => Poll::Pending,
-            1 => Poll::Ready(Some(Ok((
-                self.position_map.get(&pos).expect("no id")[0],
-                event,
-            )))),
+            1 => {
+                let id = self.position_map.get(&pos).expect("no id")[0];
+                if auto_release {
+                    // Deliver the original motion first; queue the
+                    // synthesized AutoRelease so the next poll picks
+                    // it up.
+                    self.pending.push_back((id, CaptureEvent::AutoRelease));
+                }
+                Poll::Ready(Some(Ok((id, event))))
+            }
             _ => {
                 let mut position_map = HashMap::new();
                 swap(&mut self.position_map, &mut position_map);
                 {
                     for &id in position_map.get(&pos).expect("position") {
                         self.pending.push_back((id, event));
+                        if auto_release {
+                            self.pending.push_back((id, CaptureEvent::AutoRelease));
+                        }
                     }
                 }
                 swap(&mut self.position_map, &mut position_map);
