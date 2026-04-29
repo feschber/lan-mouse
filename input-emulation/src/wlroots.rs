@@ -12,6 +12,7 @@ use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
+use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
@@ -42,6 +43,25 @@ struct State {
     qh: QueueHandle<Self>,
     vpm: VpManager,
     vkm: VkManager,
+    /// All wl_outputs the compositor advertises, keyed by their
+    /// proxy id. Updated via Geometry/Mode events. We keep the
+    /// `WlOutput` proxy alive in the value so events keep flowing.
+    outputs: HashMap<u32, (WlOutput, OutputInfo)>,
+    /// Dedicated virtual pointer used only for absolute-position
+    /// warps on `Enter`. Separate from per-handle pointers so warp
+    /// works regardless of which client is active.
+    warp_pointer: Vp,
+}
+
+#[derive(Default, Clone, Copy)]
+struct OutputInfo {
+    /// Position in the compositor's global coordinate space, from
+    /// wl_output::Event::Geometry.
+    x: i32,
+    y: i32,
+    /// Pixel dimensions of the active mode, from wl_output::Event::Mode.
+    width: i32,
+    height: i32,
 }
 
 // App State, implements Dispatch event handlers
@@ -68,6 +88,26 @@ impl WlrootsEmulation {
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "virtual-keyboard-unstable-v1"))?;
 
+        // Bind every advertised wl_output so we receive Geometry +
+        // Mode events for each one. Used to compute display_bounds.
+        let mut outputs: HashMap<u32, (WlOutput, OutputInfo)> = HashMap::new();
+        for global in globals.contents().clone_list() {
+            if global.interface == "wl_output" {
+                // version 2 is enough for Geometry + Mode events.
+                let output: WlOutput =
+                    globals
+                        .registry()
+                        .bind(global.name, global.version.min(2), &qh, ());
+                let id = output.id().protocol_id();
+                outputs.insert(id, (output, OutputInfo::default()));
+            }
+        }
+
+        // Dedicated warp pointer — used only for motion_absolute on
+        // Enter, so warp works even when no per-handle virtual
+        // pointer is currently active.
+        let warp_pointer: Vp = vpm.create_virtual_pointer(None, &qh, ());
+
         let input_for_client: HashMap<EmulationHandle, VirtualInput> = HashMap::new();
 
         let mut emulate = WlrootsEmulation {
@@ -79,6 +119,8 @@ impl WlrootsEmulation {
                 vpm,
                 vkm,
                 qh,
+                outputs,
+                warp_pointer,
             },
             queue,
         };
@@ -118,6 +160,33 @@ impl State {
             input.pointer.destroy();
             input.keyboard.destroy();
         }
+    }
+
+    /// Bounding rectangle of every active wl_output's logical
+    /// position + active mode. Returns None if no output has
+    /// reported both Geometry and Mode yet.
+    fn union_bounds(&self) -> Option<(u32, u32)> {
+        let mut xmin = i32::MAX;
+        let mut ymin = i32::MAX;
+        let mut xmax = i32::MIN;
+        let mut ymax = i32::MIN;
+        let mut any = false;
+        for (_, o) in self.outputs.values() {
+            if o.width <= 0 || o.height <= 0 {
+                continue;
+            }
+            any = true;
+            xmin = xmin.min(o.x);
+            ymin = ymin.min(o.y);
+            xmax = xmax.max(o.x + o.width);
+            ymax = ymax.max(o.y + o.height);
+        }
+        if !any {
+            return None;
+        }
+        let w = (xmax - xmin) as u32;
+        let h = (ymax - ymin) as u32;
+        Some((w, h))
     }
 }
 
@@ -172,7 +241,31 @@ impl Emulation for WlrootsEmulation {
         }
     }
     async fn terminate(&mut self) {
-        /* nothing to do */
+        self.state.warp_pointer.destroy();
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        self.state.union_bounds()
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        let Some((width, height)) = self.state.union_bounds() else {
+            return Ok(());
+        };
+        let now: u32 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u32;
+        let cx = x.clamp(0, width as i32) as u32;
+        let cy = y.clamp(0, height as i32) as u32;
+        self.state
+            .warp_pointer
+            .motion_absolute(now, cx, cy, width, height);
+        self.state.warp_pointer.frame();
+        if let Err(e) = self.queue.flush() {
+            log::warn!("warp_cursor flush failed: {e}");
+        }
+        Ok(())
     }
 }
 
@@ -278,6 +371,38 @@ impl Dispatch<WlKeyboard, ()> for State {
     ) {
         if let wl_keyboard::Event::Keymap { format, fd, size } = event {
             state.keymap = Some((u32::from(format), fd, size));
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        output: &WlOutput,
+        event: <WlOutput as wayland_client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let id = output.id().protocol_id();
+        let Some((_, info)) = state.outputs.get_mut(&id) else {
+            return;
+        };
+        match event {
+            wl_output::Event::Geometry { x, y, .. } => {
+                info.x = x;
+                info.y = y;
+            }
+            wl_output::Event::Mode {
+                flags: WEnum::Value(flags),
+                width,
+                height,
+                ..
+            } if flags.contains(wl_output::Mode::Current) => {
+                info.width = width;
+                info.height = height;
+            }
+            _ => {}
         }
     }
 }
