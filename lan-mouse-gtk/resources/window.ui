@@ -37,6 +37,7 @@
                 <property name="hexpand">true</property>
                 <property name="hscrollbar-policy">never</property>
                 <property name="vscrollbar-policy">automatic</property>
+                <property name="propagate-natural-height">true</property>
                 <child>
                   <object class="AdwStatusPage">
                     <property name="title" translatable="yes">Lan Mouse</property>
