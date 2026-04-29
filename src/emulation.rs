@@ -141,6 +141,24 @@ impl ListenTask {
                                     log::info!("releasing capture: {addr} entered this device");
                                     self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
                                     self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                    // Send the receiving device's display
+                                    // geometry so the capturing peer can
+                                    // model the guest cursor's position
+                                    // accurately. Old peers that don't
+                                    // recognize this event will skip it
+                                    // per the forward-compat fix.
+                                    if let Some((width, height)) = self.emulation_proxy.display_bounds() {
+                                        self.listener.reply(addr, ProtoEvent::Bounds { width, height }).await;
+                                        // Seat the local cursor at the
+                                        // entry edge so the host's
+                                        // virtual_pos = 0 corresponds to
+                                        // the guest's actual column 0
+                                        // (or width-1, etc.) instead of
+                                        // wherever the previous capture
+                                        // session left it.
+                                        let (x, y) = entry_edge_for(pos, width, height);
+                                        self.emulation_proxy.warp_cursor(x, y);
+                                    }
                                     self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
                                 }
                             }
@@ -206,6 +224,11 @@ pub(crate) struct EmulationProxy {
     request_tx: Sender<ProxyRequest>,
     event_rx: Receiver<EmulationEvent>,
     task: JoinHandle<()>,
+    /// Cached display bounds. Refreshed each time the underlying
+    /// InputEmulation is (re)created. `None` until the first
+    /// successful query, or if the active backend doesn't report
+    /// geometry.
+    display_bounds: Rc<Cell<Option<(u32, u32)>>>,
 }
 
 enum ProxyRequest {
@@ -213,6 +236,10 @@ enum ProxyRequest {
     Remove(SocketAddr),
     Terminate,
     Reenable,
+    /// Warp the local cursor to an absolute position. Used on
+    /// `Enter` to seat the cursor at the entry edge so the
+    /// capturing peer's wall-press model is synchronized.
+    Warp(i32, i32),
 }
 
 impl EmulationProxy {
@@ -221,9 +248,11 @@ impl EmulationProxy {
         let (event_tx, event_rx) = channel();
         let emulation_active = Rc::new(Cell::new(false));
         let exit_requested = Rc::new(Cell::new(false));
+        let display_bounds = Rc::new(Cell::new(None));
         let emulation_task = EmulationTask {
             backend,
             exit_requested: exit_requested.clone(),
+            display_bounds: display_bounds.clone(),
             request_rx,
             event_tx,
             handles: Default::default(),
@@ -236,7 +265,24 @@ impl EmulationProxy {
             request_tx,
             task,
             event_rx,
+            display_bounds,
         }
+    }
+
+    /// Display geometry of this device (cached). Refreshed each
+    /// time the input emulation backend is (re)created.
+    pub(crate) fn display_bounds(&self) -> Option<(u32, u32)> {
+        self.display_bounds.get()
+    }
+
+    /// Fire-and-forget cursor warp. Drops silently if emulation
+    /// isn't currently active (no live backend to receive the
+    /// request).
+    pub(crate) fn warp_cursor(&self, x: i32, y: i32) {
+        if !self.emulation_active.get() {
+            return;
+        }
+        let _ = self.request_tx.send(ProxyRequest::Warp(x, y));
     }
 
     async fn event(&mut self) -> EmulationEvent {
@@ -283,6 +329,9 @@ impl EmulationProxy {
 struct EmulationTask {
     backend: Option<input_emulation::Backend>,
     exit_requested: Rc<Cell<bool>>,
+    /// Shared cache; refreshed each time we (re)create the inner
+    /// InputEmulation. Read by `EmulationProxy::display_bounds`.
+    display_bounds: Rc<Cell<Option<(u32, u32)>>>,
     request_rx: Receiver<ProxyRequest>,
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
@@ -305,6 +354,7 @@ impl EmulationTask {
                     ProxyRequest::Terminate => return,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::Warp(..) => { /* emulation inactive => ignore */ }
                 }
             }
         }
@@ -317,6 +367,11 @@ impl EmulationTask {
             // allow termination event while requesting input emulation
             _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
         };
+
+        // Refresh the shared display-bounds cache. Goes through
+        // EmulationProxy::display_bounds() so the daemon can include
+        // it in the ProtoEvent::Bounds reply on Enter.
+        self.display_bounds.set(emulation.display_bounds());
 
         // used to send enabled and disabled events
         let _emulation_guard = DropGuard::new(
@@ -375,6 +430,11 @@ impl EmulationTask {
                             emulation.destroy(handle).await;
                         }
                     }
+                    ProxyRequest::Warp(x, y) => {
+                        if let Err(e) = emulation.warp_cursor(x, y).await {
+                            log::warn!("warp_cursor failed: {e}");
+                        }
+                    }
                     ProxyRequest::Terminate => break Ok(()),
                     ProxyRequest::Reenable => continue,
                 },
@@ -392,12 +452,31 @@ fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
     }
 }
 
+/// Where to seat the local cursor when this device is entered.
+/// `pos` is the protocol-level position in *this device's* frame
+/// (already inverted from the host's perspective by the capture
+/// side). For example, `Position::Left` means "the host is to my
+/// left, the cursor entered from my left edge", so the cursor
+/// should land at x=0. Y is centered along the entry edge for
+/// Left/Right; X is centered for Top/Bottom.
+fn entry_edge_for(pos: Position, width: u32, height: u32) -> (i32, i32) {
+    let w = width as i32;
+    let h = height as i32;
+    match pos {
+        Position::Left => (0, h / 2),
+        Position::Right => (w.saturating_sub(1), h / 2),
+        Position::Top => (w / 2, 0),
+        Position::Bottom => (w / 2, h.saturating_sub(1)),
+    }
+}
+
 async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
     loop {
         match rx.recv().await.expect("channel closed") {
             ProxyRequest::Terminate => return,
             ProxyRequest::Input(_, _) => continue,
             ProxyRequest::Remove(_) => continue,
+            ProxyRequest::Warp(_, _) => continue,
             ProxyRequest::Reenable => continue,
         }
     }
