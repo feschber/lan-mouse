@@ -220,6 +220,11 @@ pub enum FrontendEvent {
     /// pixel threshold for the wall-press auto-release fallback.
     /// 0 means disabled.
     ReleaseThreshold(u32),
+    /// whether scroll events received from peers should be inverted
+    /// before being injected on this device. Mirrors the user's
+    /// libinput natural-scroll preference for forwarded events,
+    /// since virtual-pointer events bypass libinput entirely.
+    NaturalScroll(bool),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -260,6 +265,10 @@ pub enum FrontendRequest {
     SaveConfiguration,
     /// set the wall-press auto-release pixel threshold (0 = disabled)
     SetReleaseThreshold(u32),
+    /// set whether forwarded scroll events should be inverted on
+    /// injection (matches the libinput natural-scroll concept for
+    /// virtual-pointer-injected events that bypass libinput)
+    SetNaturalScroll(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

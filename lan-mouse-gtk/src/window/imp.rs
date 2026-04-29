@@ -4,7 +4,7 @@ use adw::subclass::prelude::*;
 use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, Scale, gdk, gio, glib};
+use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, Scale, Switch, gdk, gio, glib};
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
@@ -51,6 +51,10 @@ pub struct Window {
     pub release_threshold_scale: TemplateChild<Scale>,
     #[template_child]
     pub release_threshold_value: TemplateChild<Label>,
+    #[template_child]
+    pub natural_scroll_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub natural_scroll_switch: TemplateChild<Switch>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -62,6 +66,10 @@ pub struct Window {
     /// value-changed signal, so we can block it when programmatically
     /// updating the slider in response to a Sync event.
     pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Connected handler for the natural-scroll switch's
+    /// state-set signal, blocked while the daemon is pushing the
+    /// initial value via Sync.
+    pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -230,6 +238,21 @@ impl ObjectImpl for Window {
             }
         ));
         self.release_threshold_handler.replace(Some(handler_id));
+
+        // Connect the natural-scroll switch. Same pattern: stash the
+        // handler id so the daemon's Sync push doesn't ricochet back.
+        let switch = self.natural_scroll_switch.clone();
+        let switch_handler = switch.connect_state_set(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                window.request_natural_scroll(state);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.natural_scroll_handler.replace(Some(switch_handler));
     }
 }
 

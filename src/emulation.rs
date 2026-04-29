@@ -58,6 +58,7 @@ enum EmulationRequest {
     Reenable,
     Release(SocketAddr),
     ChangePort(u16),
+    SetNaturalScroll(bool),
     Terminate,
 }
 
@@ -98,6 +99,15 @@ impl Emulation {
     pub(crate) fn request_port_change(&self, port: u16) {
         self.request_tx
             .send(EmulationRequest::ChangePort(port))
+            .expect("channel closed")
+    }
+
+    /// Configure whether the active emulation backend should
+    /// sign-invert scroll deltas before injection. Persists across
+    /// backend respawns via the EmulationTask cache.
+    pub(crate) fn set_natural_scroll(&self, natural_scroll: bool) {
+        self.request_tx
+            .send(EmulationRequest::SetNaturalScroll(natural_scroll))
             .expect("channel closed")
     }
 
@@ -195,6 +205,9 @@ impl ListenTask {
                         let result = self.listener.port_changed().await;
                         self.event_tx.send(EmulationEvent::PortChanged(result)).expect("channel closed");
                     }
+                    EmulationRequest::SetNaturalScroll(natural_scroll) => {
+                        self.emulation_proxy.set_natural_scroll(natural_scroll);
+                    }
                     EmulationRequest::Terminate => break,
                 },
                 _ = interval.tick() => {
@@ -240,6 +253,10 @@ enum ProxyRequest {
     /// `Enter` to seat the cursor at the entry edge so the
     /// capturing peer's wall-press model is synchronized.
     Warp(i32, i32),
+    /// Configure whether incoming scroll events should be sign-
+    /// inverted before injection. Mirrors the libinput
+    /// natural-scroll concept for forwarded events.
+    SetNaturalScroll(bool),
 }
 
 impl EmulationProxy {
@@ -253,6 +270,7 @@ impl EmulationProxy {
             backend,
             exit_requested: exit_requested.clone(),
             display_bounds: display_bounds.clone(),
+            natural_scroll: false,
             request_rx,
             event_tx,
             handles: Default::default(),
@@ -283,6 +301,15 @@ impl EmulationProxy {
             return;
         }
         let _ = self.request_tx.send(ProxyRequest::Warp(x, y));
+    }
+
+    /// Fire-and-forget natural-scroll preference update. Persists in
+    /// the EmulationTask so a freshly-created emulation backend
+    /// inherits the last-set value.
+    pub(crate) fn set_natural_scroll(&self, natural_scroll: bool) {
+        let _ = self
+            .request_tx
+            .send(ProxyRequest::SetNaturalScroll(natural_scroll));
     }
 
     async fn event(&mut self) -> EmulationEvent {
@@ -332,6 +359,11 @@ struct EmulationTask {
     /// Shared cache; refreshed each time we (re)create the inner
     /// InputEmulation. Read by `EmulationProxy::display_bounds`.
     display_bounds: Rc<Cell<Option<(u32, u32)>>>,
+    /// Cached natural-scroll preference. Re-applied to every newly
+    /// created InputEmulation so a backend respawn (e.g. after
+    /// CGEventTap timeout / portal session restart) doesn't drop
+    /// the user's setting.
+    natural_scroll: bool,
     request_rx: Receiver<ProxyRequest>,
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
@@ -355,6 +387,11 @@ impl EmulationTask {
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Warp(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::SetNaturalScroll(natural_scroll) => {
+                        // No live backend yet, but cache the value so
+                        // the next created backend picks it up.
+                        self.natural_scroll = natural_scroll;
+                    }
                 }
             }
         }
@@ -372,6 +409,10 @@ impl EmulationTask {
         // EmulationProxy::display_bounds() so the daemon can include
         // it in the ProtoEvent::Bounds reply on Enter.
         self.display_bounds.set(emulation.display_bounds());
+
+        // Re-apply the natural-scroll preference so a freshly-spawned
+        // backend inherits the user's setting.
+        emulation.set_natural_scroll(self.natural_scroll);
 
         // used to send enabled and disabled events
         let _emulation_guard = DropGuard::new(
@@ -435,6 +476,10 @@ impl EmulationTask {
                             log::warn!("warp_cursor failed: {e}");
                         }
                     }
+                    ProxyRequest::SetNaturalScroll(natural_scroll) => {
+                        self.natural_scroll = natural_scroll;
+                        emulation.set_natural_scroll(natural_scroll);
+                    }
                     ProxyRequest::Terminate => break Ok(()),
                     ProxyRequest::Reenable => continue,
                 },
@@ -477,6 +522,7 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
             ProxyRequest::Input(_, _) => continue,
             ProxyRequest::Remove(_) => continue,
             ProxyRequest::Warp(_, _) => continue,
+            ProxyRequest::SetNaturalScroll(_) => continue,
             ProxyRequest::Reenable => continue,
         }
     }

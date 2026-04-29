@@ -259,6 +259,23 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Scroll</property>
+                        <property name="description" translatable="yes">Behavior of scroll events received from peer machines. Mirrors the libinput natural_scroll preference for forwarded events, which bypass libinput on Wayland.</property>
+                        <child>
+                          <object class="AdwActionRow" id="natural_scroll_row">
+                            <property name="title" translatable="yes">Natural scrolling</property>
+                            <property name="subtitle" translatable="yes">invert the direction of forwarded scroll events to match a natural-scroll setup</property>
+                            <child type="suffix">
+                              <object class="GtkSwitch" id="natural_scroll_switch">
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Connections</property>
                         <property name="header-suffix">
                           <object class="GtkButton">

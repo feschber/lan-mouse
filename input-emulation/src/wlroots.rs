@@ -70,6 +70,9 @@ pub(crate) struct WlrootsEmulation {
     last_flush_failed: bool,
     state: State,
     queue: EventQueue<State>,
+    /// Whether forwarded scroll deltas should be sign-inverted.
+    /// Set via Emulation::set_natural_scroll. Default false.
+    natural_scroll: bool,
 }
 
 impl WlrootsEmulation {
@@ -124,6 +127,7 @@ impl WlrootsEmulation {
                 warp_pointer,
             },
             queue,
+            natural_scroll: false,
         };
         while emulate.state.keymap.is_none() {
             emulate.queue.blocking_dispatch(&mut emulate.state)?;
@@ -214,7 +218,7 @@ impl Emulation for WlrootsEmulation {
                 }
             }
             virtual_input
-                .consume_event(event)
+                .consume_event(event, self.natural_scroll)
                 .unwrap_or_else(|_| panic!("failed to convert event: {event:?}"));
             match self.queue.flush() {
                 Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -249,6 +253,10 @@ impl Emulation for WlrootsEmulation {
         self.state.union_bounds()
     }
 
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
+    }
+
     async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
         let Some((width, height)) = self.state.union_bounds() else {
             return Ok(());
@@ -277,7 +285,8 @@ struct VirtualInput {
 }
 
 impl VirtualInput {
-    fn consume_event(&self, event: Event) -> Result<(), ()> {
+    fn consume_event(&self, event: Event, natural_scroll: bool) -> Result<(), ()> {
+        let scroll_sign = if natural_scroll { -1.0 } else { 1.0 };
         let now: u32 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -311,12 +320,13 @@ impl VirtualInput {
                         // CGEventTap path passes time=0 and some
                         // compositors filter zero-time events.
                         let axis: Axis = (axis as u32).try_into()?;
-                        self.pointer.axis(now, axis, value);
+                        self.pointer.axis(now, axis, scroll_sign * value);
                         self.pointer.axis_source(AxisSource::Finger);
                         self.pointer.frame();
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
+                        let value = (scroll_sign as i32) * value;
                         self.pointer
                             .axis_discrete(now, axis, value as f64 / 8., value / 120);
                         self.pointer.axis_source(AxisSource::Wheel);

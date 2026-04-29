@@ -109,6 +109,9 @@ impl Service {
         );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
+        // Apply persisted natural-scroll preference at startup so
+        // the freshly-spawned emulation backend picks it up.
+        emulation.set_natural_scroll(config.natural_scroll());
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -229,6 +232,12 @@ impl Service {
                 self.notify_frontend(FrontendEvent::ReleaseThreshold(threshold));
                 self.save_config();
             }
+            FrontendRequest::SetNaturalScroll(natural_scroll) => {
+                self.config.set_natural_scroll(natural_scroll);
+                self.emulation.set_natural_scroll(natural_scroll);
+                self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
+                self.save_config();
+            }
         }
     }
 
@@ -272,6 +281,9 @@ impl Service {
         let release_threshold = self.config.release_threshold_px();
         self.capture.set_release_threshold(release_threshold);
         self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
+        let natural_scroll = self.config.natural_scroll();
+        self.emulation.set_natural_scroll(natural_scroll);
+        self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
@@ -396,6 +408,7 @@ impl Service {
         self.notify_frontend(FrontendEvent::ReleaseThreshold(
             self.config.release_threshold_px(),
         ));
+        self.notify_frontend(FrontendEvent::NaturalScroll(self.config.natural_scroll()));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
