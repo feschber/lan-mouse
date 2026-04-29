@@ -44,7 +44,7 @@
                     <property name="icon-name">de.feschber.LanMouse</property>
                     <property name="child">
                   <object class="AdwClamp">
-                  <property name="maximum-size">600</property>
+                  <property name="maximum-size">800</property>
                   <property name="tightening-threshold">0</property>
                   <property name="child">
                     <object class="GtkBox">
@@ -128,7 +128,7 @@
                         -->
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">Hostname &#38;amp; port</property>
+                            <property name="title">Hostname &#38;amp; Port</property>
                             <child>
                               <object class="GtkButton" id="copy-hostname-button">
                                     <!--<property name="icon-name">edit-copy-symbolic</property>-->
@@ -192,7 +192,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="fingerprint_row">
-                            <property name="title">Certificate fingerprint</property>
+                            <property name="title">Certificate Fingerprint</property>
                             <property name="icon-name">auth-fingerprint-symbolic</property>
                             <child>
                               <object class="GtkButton" id="copy-fingerprint-button">
@@ -207,11 +207,11 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Auto-release</property>
-                        <property name="description" translatable="yes">Auto-release capture when the cursor reaches the host-adjacent edge of the guest and you keep pushing. 0 disables; rely on the release-bind chord or a peer-side leave event.</property>
+                        <property name="title" translatable="yes">Auto-Release</property>
+                        <property name="description" translatable="yes">Releases forwarded mouse capture when the cursor pushes past the host-adjacent edge. When set to off, release still happens via the bind chord, or normal peer-side leave events. Enable this if you need to auto-release mouse capture between one or more lock screens.</property>
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
-                            <property name="title" translatable="yes">Release threshold</property>
+                            <property name="title" translatable="yes">Release Threshold</property>
                             <property name="subtitle" translatable="yes">Pixels of wall-press past the entry edge before auto-release fires</property>
                             <child type="suffix">
                               <object class="GtkLabel" id="release_threshold_value">
@@ -255,7 +255,7 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Connections</property>
+                        <property name="title" translatable="yes">Outgoing Connections</property>
                         <property name="header-suffix">
                           <object class="GtkButton">
                             <signal name="clicked" handler="handle_add_client_pressed" swapped="true"/>
@@ -321,8 +321,8 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Scroll</property>
-                        <property name="description" translatable="yes">Applies to scroll events received from peers above.</property>
+                        <property name="title" translatable="yes">Scroll Direction</property>
+                        <property name="description" translatable="yes">Forwarded scroll events bypass OS-level preferences. Choose a scroll direction below.</property>
                         <child>
                           <object class="AdwActionRow" id="natural_scroll_row">
                             <property name="title" translatable="yes">Natural scrolling</property>
