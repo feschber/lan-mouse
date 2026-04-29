@@ -143,14 +143,19 @@ pub struct InputCapture {
     /// Modeled cursor position on the guest along the entry axis,
     /// relative to the host-adjacent edge. 0 = at the entry edge,
     /// growing values = further into the guest. Clamped at 0 from
-    /// below; *not* clamped from above (the wrapper can't know the
-    /// guest's far-edge extent without a protocol-level Bounds event,
-    /// and any proxy is wrong for some user's setup).
+    /// below; clamped at the cached peer extent from above when
+    /// available, otherwise unbounded (degraded fallback).
     virtual_pos: f64,
     /// Pixels of back-toward-host motion that the modeled cursor
     /// could not absorb (proposed virtual_pos < 0). Resets whenever
     /// the cursor is back in the interior or moving deeper.
     wall_pressure: f64,
+    /// Per-position cache of peer display geometry. Populated when
+    /// the peer responds with a `ProtoEvent::Bounds` event after
+    /// Ack. Used as the upper clamp for `virtual_pos` so that
+    /// pushing past the guest's actual far edge doesn't make the
+    /// model run away. Only the entry-axis dimension is consulted.
+    peer_bounds: HashMap<Position, (u32, u32)>,
 }
 
 /// Project a motion delta onto the entry axis. Positive return =
@@ -216,6 +221,35 @@ impl InputCapture {
         self.release_threshold_px = threshold;
     }
 
+    /// Cache the peer's display geometry for a position. Used by
+    /// the wall-press tracker as the upper bound for `virtual_pos`
+    /// so the model can't run away when the user pushes past the
+    /// peer's actual far edge.
+    pub fn set_peer_bounds(&mut self, pos: Position, width: u32, height: u32) {
+        log::debug!("peer at {pos} reports bounds {width}x{height}");
+        self.peer_bounds.insert(pos, (width, height));
+    }
+
+    /// Forget the cached peer geometry for a position. Called when
+    /// the corresponding capture is destroyed so re-adding the same
+    /// peer later (potentially with new geometry) starts fresh.
+    pub fn clear_peer_bounds(&mut self, pos: Position) {
+        self.peer_bounds.remove(&pos);
+    }
+
+    /// Returns the upper-clamp value (along the entry axis) for the
+    /// given position, or `f64::INFINITY` if the peer hasn't reported
+    /// bounds yet.
+    fn peer_extent(&self, pos: Position) -> f64 {
+        let Some(&(w, h)) = self.peer_bounds.get(&pos) else {
+            return f64::INFINITY;
+        };
+        match pos {
+            Position::Left | Position::Right => f64::from(w),
+            Position::Top | Position::Bottom => f64::from(h),
+        }
+    }
+
     fn reset_wall_press_state(&mut self) {
         self.capture_pos = None;
         self.virtual_pos = 0.0;
@@ -251,7 +285,17 @@ impl InputCapture {
 
                 let delta = entry_axis_delta(active_pos, *dx, *dy);
                 let proposed = self.virtual_pos + delta;
-                self.virtual_pos = proposed.max(0.0);
+                let upper = self.peer_extent(active_pos);
+                // Clamp at 0 from below (host-adjacent edge — wall
+                // pressure accumulates here) and at the peer's
+                // entry-axis extent from above when known. The upper
+                // clamp prevents the model from running away if the
+                // user obliviously pushes their physical mouse past
+                // the guest's actual far edge. When the peer hasn't
+                // reported bounds yet (older peer, or pre-Ack
+                // window), `upper` is INFINITY and we fall back to
+                // the heuristic behavior.
+                self.virtual_pos = proposed.clamp(0.0, upper);
 
                 if proposed < 0.0 {
                     // Motion overshot the host-adjacent edge —
@@ -312,6 +356,7 @@ impl InputCapture {
             capture_pos: None,
             virtual_pos: 0.0,
             wall_pressure: 0.0,
+            peer_bounds: HashMap::new(),
         })
     }
 
