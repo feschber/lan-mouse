@@ -32,11 +32,18 @@
         <child>
           <object class="AdwToastOverlay" id="toast_overlay">
             <child>
-              <object class="AdwStatusPage">
-                <property name="title" translatable="yes">Lan Mouse</property>
-                <property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
-                <property name="icon-name">de.feschber.LanMouse</property>
-                <property name="child">
+              <object class="GtkScrolledWindow">
+                <property name="vexpand">true</property>
+                <property name="hexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <property name="vscrollbar-policy">automatic</property>
+                <property name="propagate-natural-height">true</property>
+                <child>
+                  <object class="AdwStatusPage">
+                    <property name="title" translatable="yes">Lan Mouse</property>
+                    <property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
+                    <property name="icon-name">de.feschber.LanMouse</property>
+                    <property name="child">
                   <object class="AdwClamp">
                   <property name="maximum-size">600</property>
                   <property name="tightening-threshold">0</property>
@@ -320,6 +327,8 @@
                   </property>
                   </object>
                 </property>
+              </object>
+                </child>
               </object>
             </child>
           </object>
