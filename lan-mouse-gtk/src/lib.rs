@@ -197,6 +197,19 @@ fn build_ui(app: &Application) {
             window.set_visible(false);
             glib::Propagation::Stop
         });
+        // Toggle the Dock icon based on the window's visibility:
+        // Regular while the window is open (Dock icon shown so the
+        // user has a familiar way back to the app), Accessory while
+        // the window is hidden and only the menu-bar item is around
+        // (matches the LSUIElement-style background-helper feel).
+        window.connect_show(|_| {
+            macos_status_item::set_activation_policy(macos_status_item::ACTIVATION_POLICY_REGULAR);
+        });
+        window.connect_hide(|_| {
+            macos_status_item::set_activation_policy(
+                macos_status_item::ACTIVATION_POLICY_ACCESSORY,
+            );
+        });
         macos_status_item::setup(app, &window);
         // First-launch TCC prompts. No-op when already granted.
         macos_privacy::fire_initial_prompts();

@@ -229,7 +229,7 @@ impl ObjectImpl for Window {
             move |scale| {
                 let value = scale.value().round() as u32;
                 let label = if value == 0 {
-                    "disabled".to_string()
+                    "Disabled".to_string()
                 } else {
                     format!("{value} px")
                 };

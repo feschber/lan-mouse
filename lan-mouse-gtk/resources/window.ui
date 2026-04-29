@@ -41,7 +41,7 @@
                 <child>
                   <object class="AdwStatusPage">
                     <property name="title" translatable="yes">Lan Mouse</property>
-                    <property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
+                    <property name="description" translatable="yes">Easily use your mouse and keyboard on multiple computers.</property>
                     <property name="icon-name">de.feschber.LanMouse</property>
                     <property name="child">
                   <object class="AdwClamp">
@@ -56,8 +56,8 @@
                       <property name="title" translatable="yes">Capture / Emulation Status</property>
                         <child>
                           <object class="AdwActionRow" id="capture_status_row">
-                            <property name="title">input capture is disabled</property>
-                            <property name="subtitle">required for outgoing and incoming connections</property>
+                            <property name="title">Input capture is disabled</property>
+                            <property name="subtitle">Required for outgoing and incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
@@ -82,8 +82,8 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="emulation_status_row">
-                            <property name="title">input emulation is disabled</property>
-                            <property name="subtitle">required for incoming connections</property>
+                            <property name="title">Input emulation is disabled</property>
+                            <property name="subtitle">Required for incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_emulation_button">
@@ -128,7 +128,7 @@
                         -->
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">hostname &#38;amp; port</property>
+                            <property name="title">Hostname &#38;amp; port</property>
                             <child>
                               <object class="GtkButton" id="copy-hostname-button">
                                     <!--<property name="icon-name">edit-copy-symbolic</property>-->
@@ -192,7 +192,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="fingerprint_row">
-                            <property name="title">certificate fingerprint</property>
+                            <property name="title">Certificate fingerprint</property>
                             <property name="icon-name">auth-fingerprint-symbolic</property>
                             <child>
                               <object class="GtkButton" id="copy-fingerprint-button">
@@ -212,10 +212,10 @@
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
                             <property name="title" translatable="yes">Release threshold</property>
-                            <property name="subtitle" translatable="yes">pixels of wall-press past the entry edge before auto-release fires</property>
+                            <property name="subtitle" translatable="yes">Pixels of wall-press past the entry edge before auto-release fires</property>
                             <child type="suffix">
                               <object class="GtkLabel" id="release_threshold_value">
-                                <property name="label">disabled</property>
+                                <property name="label">Disabled</property>
                                 <property name="valign">center</property>
                                 <property name="width-chars">8</property>
                                 <property name="xalign">1.0</property>
@@ -233,10 +233,6 @@
                             <property name="hexpand">true</property>
                             <property name="draw-value">false</property>
                             <property name="round-digits">0</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">4</property>
-                            <property name="margin-bottom">8</property>
                             <property name="adjustment">
                               <object class="GtkAdjustment" id="release_threshold_adjustment">
                                 <property name="lower">0</property>
@@ -280,7 +276,7 @@
                             <child type="placeholder">
                               <object class="AdwActionRow" id="client_placeholder">
                                 <property name="title">No connections!</property>
-                                <property name="subtitle">add a new client via the + button</property>
+                                <property name="subtitle">Add a new client via the + button</property>
                               </object>
                             </child>
                             <style>
@@ -312,8 +308,8 @@
                             <property name="selection-mode">none</property>
                             <child type="placeholder">
                               <object class="AdwActionRow" id="authorized_placeholder">
-                                <property name="title">no devices registered!</property>
-                                <property name="subtitle">authorize a new device via the "Authorize" button</property>
+                                <property name="title">No devices registered</property>
+                                <property name="subtitle">Authorize a new device via the "Authorize" button</property>
                               </object>
                             </child>
                             <style>
@@ -330,7 +326,7 @@
                         <child>
                           <object class="AdwActionRow" id="natural_scroll_row">
                             <property name="title" translatable="yes">Natural scrolling</property>
-                            <property name="subtitle" translatable="yes">invert the direction of forwarded scroll events</property>
+                            <property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events</property>
                             <child type="suffix">
                               <object class="GtkSwitch" id="natural_scroll_switch">
                                 <property name="valign">center</property>

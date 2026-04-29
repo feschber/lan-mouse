@@ -498,7 +498,7 @@ impl Window {
             scale.unblock_signal(id);
         }
         let label = if threshold == 0 {
-            "disabled".to_string()
+            "Disabled".to_string()
         } else {
             format!("{threshold} px")
         };
@@ -556,8 +556,8 @@ impl Window {
             set_button_content_label(button, "Relaunch");
         } else {
             // AX missing → send the user to System Settings.
-            row.set_title("input capture is disabled");
-            row.set_subtitle("grant Accessibility permission to enable");
+            row.set_title("Input capture is disabled");
+            row.set_subtitle("Grant Accessibility permission to enable");
             set_button_content_label(button, "Grant");
         }
     }
