@@ -63,6 +63,13 @@ pub enum ProtoEvent {
     Ping,
     /// Response to [`ProtoEvent::Ping`], true if emulation is enabled / available
     Pong(bool),
+    /// Display geometry of the receiving device. Sent by the
+    /// emulation side immediately after the [`ProtoEvent::Ack`] of
+    /// an [`ProtoEvent::Enter`] so the capturing peer can model the
+    /// guest cursor's position along the entry axis. Width and
+    /// height are in pixels of the union of all displays on the
+    /// emulating device.
+    Bounds { width: u32, height: u32 },
 }
 
 impl Display for ProtoEvent {
@@ -80,6 +87,7 @@ impl Display for ProtoEvent {
                     if *alive { "alive" } else { "not available" }
                 )
             }
+            ProtoEvent::Bounds { width, height } => write!(f, "Bounds({width}x{height})"),
         }
     }
 }
@@ -98,6 +106,7 @@ pub enum EventType {
     Enter,
     Leave,
     Ack,
+    Bounds,
 }
 
 impl ProtoEvent {
@@ -120,6 +129,7 @@ impl ProtoEvent {
             ProtoEvent::Enter(_) => EventType::Enter,
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
+            ProtoEvent::Bounds { .. } => EventType::Bounds,
         }
     }
 }
@@ -174,6 +184,10 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
             EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
+            EventType::Bounds => Ok(Self::Bounds {
+                width: decode_u32(&mut buf)?,
+                height: decode_u32(&mut buf)?,
+            }),
         }
     }
 }
@@ -238,6 +252,10 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
                 ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
+                ProtoEvent::Bounds { width, height } => {
+                    encode_u32(buf, len, width);
+                    encode_u32(buf, len, height);
+                }
             }
         }
         (buf, len)
