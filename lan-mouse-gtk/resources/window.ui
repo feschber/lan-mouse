@@ -200,8 +200,8 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Auto-release</property>
-                        <property name="description" translatable="yes">Auto-release capture when the cursor reaches the host-adjacent edge of the guest and you keep pushing. 0 disables; rely on the release-bind chord or a peer-side leave event.</property>
+                        <property name="title" translatable="yes">Outgoing Auto-Release</property>
+                        <property name="description" translatable="yes">When this machine is capturing input for a peer, releases capture automatically once the cursor pushes past the host-adjacent edge. With the slider off, release still happens via the bind chord or a peer-side leave event. Useful when crossing one or more lock screens between machines.</property>
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
                             <property name="title" translatable="yes">Release threshold</property>
