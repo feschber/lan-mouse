@@ -10,7 +10,7 @@
   </menu>
   <template class="LanMouseWindow" parent="AdwApplicationWindow">
     <property name="default-width">600</property>
-    <property name="default-height">700</property>
+    <property name="default-height">1400</property>
     <property name="title" translatable="yes">Lan Mouse</property>
     <property name="show-menubar">True</property>
     <property name="content">
