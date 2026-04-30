@@ -39,12 +39,14 @@ pub type CaptureHandle = u64;
 pub enum CaptureEvent {
     /// Capture on this handle is now active. `cursor`, when present,
     /// is the host's screen-space cursor position (in pixels) at the
-    /// instant of the edge crossing — the capture loop forwards it to
-    /// the peer as a [`ProtoEvent::MotionAbsolute`] so the guest's
-    /// cursor lands at the visually-corresponding point on its own
-    /// screen rather than snapping to the entry-edge midpoint.
-    /// Backends that can't report cursor position emit `None` and
-    /// the peer falls back to the entry-edge-midpoint warp.
+    /// instant of the edge crossing — the capture loop normalizes it
+    /// against the host's display bounds and forwards it to the peer
+    /// as a [`ProtoEvent::CursorPos`] so the guest's cursor lands at
+    /// the visually-corresponding point on its own screen. Backends
+    /// that can't report cursor position emit `None`; the peer's
+    /// cursor stays where it was on remote-takeover (no forced
+    /// midpoint warp — that masquerades as a mid-screen crossing on
+    /// fast re-crosses).
     Begin { cursor: Option<(i32, i32)> },
     /// input event coming from capture handle
     Input(Event),
@@ -274,9 +276,9 @@ impl InputCapture {
     /// Host's own display geometry — width and height in pixels of
     /// the union of all displays. Returns `None` when the active
     /// backend can't query its own bounds (e.g. xdg-desktop-portal,
-    /// dummy). Used together with `peer_bounds` to compute a
-    /// [`ProtoEvent::MotionAbsolute`] target so the guest cursor
-    /// lands at the visually-corresponding point on Enter.
+    /// dummy). Used by `host_normalized_cursor` to compute the
+    /// [`ProtoEvent::CursorPos`] fraction the guest scales against
+    /// its own bounds on Enter.
     pub fn display_bounds(&self) -> Option<(u32, u32)> {
         self.capture.display_bounds()
     }
@@ -319,8 +321,9 @@ impl InputCapture {
     /// given the host's screen-space cursor position at the moment
     /// of crossing. Returns `None` when either the host's own
     /// `display_bounds` or the cached peer geometry is unavailable —
-    /// in that case the capture loop just doesn't send MotionAbsolute
-    /// and the guest falls back to its entry-edge-midpoint warp.
+    /// in that case there's no warp target to compute and the peer's
+    /// cursor stays wherever the most recent `CursorPos` (or, if none
+    /// arrived this session, where it was) put it.
     ///
     /// Coordinates returned are pixels in the peer's screen space:
     /// the cross-axis is preserved as a normalized fraction of the
@@ -373,10 +376,10 @@ impl InputCapture {
 
     /// Initial guest-space cursor position for a freshly-started
     /// capture. Mirrors what the guest's emulation will visibly do on
-    /// the corresponding `Enter`: a `MotionAbsolute` warp target if
-    /// the host can compute one (peer bounds known + capture backend
-    /// reports cursor), otherwise the entry-edge midpoint that
-    /// `entry_edge_for` produces on the guest side.
+    /// the corresponding `Enter`: the `CursorPos` proportional warp
+    /// target if the host can compute one (capture backend reports
+    /// cursor), otherwise the entry-edge midpoint as a fallback for
+    /// the wall-press model's starting position.
     fn initial_virtual_cursor(
         &self,
         pos: Position,

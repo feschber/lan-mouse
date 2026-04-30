@@ -168,42 +168,32 @@ impl ListenTask {
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
-                            // Capturing peer told us where on our
-                            // screen the user's cursor was at the
-                            // moment of crossing — warp directly there
-                            // and override the entry-edge-midpoint
-                            // warp from the prior Enter so the
-                            // transition is visually continuous.
-                            ProtoEvent::MotionAbsolute { x, y } => {
-                                self.emulation_proxy.warp_cursor(x, y);
-                            }
-                            // Self-sufficient counterpart to
-                            // MotionAbsolute. Carries the host's
-                            // cursor as a fraction of the host's own
-                            // screen plus the entry side. Scale by
-                            // our display bounds, pin the on-axis
-                            // dimension to the matching edge, and
-                            // warp. Works without a prior Bounds
-                            // round-trip — the bug MotionAbsolute hit
-                            // on the very first crossing, where the
-                            // host had no peer geometry to compute
-                            // pixel coords from.
+                            // Capturing peer told us where on its own
+                            // screen the user's cursor was, as a
+                            // normalized fraction (nx, ny) ∈ [0, 1]
+                            // plus the entry side (from our frame).
+                            // Scale against our live display bounds
+                            // and pin the on-axis dimension to the
+                            // matching edge so the cursor lands at
+                            // the visually-corresponding point.
+                            // Works without a prior Bounds round-trip,
+                            // so the very first crossing of a session
+                            // also lands at the visually-corresponding
+                            // point. The cross-axis multiply is
+                            // clamped to dim - 1 so a host edge
+                            // (nx == 1.0 or ny == 1.0) doesn't compute
+                            // one pixel past the addressable column.
                             ProtoEvent::CursorPos { pos, nx, ny } => {
                                 if let Some((w, h)) = self.emulation_proxy.display_bounds() {
-                                    let pw = w as f32;
-                                    let ph = h as f32;
                                     let pwi = w as i32;
                                     let phi = h as i32;
+                                    let cx = ((nx * w as f32) as i32).clamp(0, pwi.saturating_sub(1));
+                                    let cy = ((ny * h as f32) as i32).clamp(0, phi.saturating_sub(1));
                                     let (tx, ty) = match pos {
-                                        // host on our left → cursor enters our left edge
-                                        Position::Left => (0, (ny * ph) as i32),
-                                        Position::Right => {
-                                            (pwi.saturating_sub(1), (ny * ph) as i32)
-                                        }
-                                        Position::Top => ((nx * pw) as i32, 0),
-                                        Position::Bottom => {
-                                            ((nx * pw) as i32, phi.saturating_sub(1))
-                                        }
+                                        Position::Left => (0, cy),
+                                        Position::Right => (pwi.saturating_sub(1), cy),
+                                        Position::Top => (cx, 0),
+                                        Position::Bottom => (cx, phi.saturating_sub(1)),
                                     };
                                     self.emulation_proxy.warp_cursor(tx, ty);
                                 }
