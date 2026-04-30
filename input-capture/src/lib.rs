@@ -235,6 +235,14 @@ impl InputCapture {
         let warp_target = self
             .capture_pos
             .and_then(|pos| self.host_warp_target_on_release(pos));
+        log::info!(
+            "[release-warp] capture_pos={:?} virtual_cursor={:?} peer_bounds={:?} display_bounds={:?} → warp_target={warp_target:?}",
+            self.capture_pos,
+            self.virtual_cursor,
+            self.capture_pos
+                .and_then(|p| self.peer_bounds.get(&p).copied()),
+            self.capture.display_bounds(),
+        );
         self.pressed_keys.clear();
         self.reset_wall_press_state();
         self.capture.release(warp_target).await

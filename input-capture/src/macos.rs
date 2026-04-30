@@ -161,6 +161,10 @@ impl InputCaptureState {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
             ProducerEvent::Release { warp_target } => {
+                log::info!(
+                    "[release-warp] handle_producer_event Release: current_pos={:?} warp_target={warp_target:?}",
+                    self.current_pos
+                );
                 if self.current_pos.is_some() {
                     // Warp BEFORE clearing current_pos so the
                     // event-tap callback can't see Some(pos) and
@@ -168,10 +172,13 @@ impl InputCaptureState {
                     // make it visible again. Then show_cursor() reveals
                     // it at the warped point.
                     if let Some((x, y)) = warp_target {
-                        let _ = CGDisplay::warp_mouse_cursor_position(CGPoint {
+                        log::info!("[release-warp] warping local cursor to ({x}, {y})");
+                        if let Err(e) = CGDisplay::warp_mouse_cursor_position(CGPoint {
                             x: x as CGFloat,
                             y: y as CGFloat,
-                        });
+                        }) {
+                            log::warn!("[release-warp] warp_mouse_cursor_position failed: {e:?}");
+                        }
                     }
                     self.show_cursor()?;
                     self.current_pos = None;
@@ -830,6 +837,7 @@ impl Capture for MacOSInputCapture {
     }
 
     async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
+        log::info!("[release-warp] macOS backend release(warp_target={warp_target:?})");
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
