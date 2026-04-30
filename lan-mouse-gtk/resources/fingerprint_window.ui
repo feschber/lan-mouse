@@ -4,8 +4,8 @@
   <requires lib="libadwaita" version="1.0"/>
   <template class="FingerprintWindow" parent="AdwWindow">
     <property name="modal">True</property>
-    <property name="width-request">560</property>
-    <property name="default-width">560</property>
+    <property name="width-request">280</property>
+    <property name="default-width">460</property>
     <property name="height-request">380</property>
     <property name="default-height">380</property>
     <property name="title" translatable="yes">Add Certificate Fingerprint</property>
