@@ -551,7 +551,8 @@ impl State {
         );
         outputs.iter().for_each(|o| {
             if let Some(info) = o.info.as_ref() {
-                let window = Window::new(self, &self.qh, &o.wl_output, pos, info.position, info.size);
+                let window =
+                    Window::new(self, &self.qh, &o.wl_output, pos, info.position, info.size);
                 let window = Arc::new(window);
                 self.active_windows.push(window);
             }
