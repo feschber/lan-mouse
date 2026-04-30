@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Button, CompositeTemplate, Label,
+    Button, CompositeTemplate, Entry,
     glib::{self, subclass::Signal},
     template_callbacks,
 };
@@ -13,7 +13,7 @@ use gtk::{
 #[template(resource = "/de/feschber/LanMouse/authorization_window.ui")]
 pub struct AuthorizationWindow {
     #[template_child]
-    pub fingerprint: TemplateChild<Label>,
+    pub fingerprint: TemplateChild<Entry>,
     #[template_child]
     pub cancel_button: TemplateChild<Button>,
     #[template_child]
