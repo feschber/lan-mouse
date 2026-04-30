@@ -840,6 +840,31 @@ impl Capture for MacOSInputCapture {
         }
         Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
     }
+
+    fn display_origin(&self) -> (i32, i32) {
+        // Top-left of the union of all active displays. Matters when
+        // a secondary monitor is positioned LEFT of (or ABOVE) the
+        // primary — the global pointer-coordinate system is anchored
+        // at the primary's top-left, so a left-attached external
+        // gives cursor x ∈ [-w, 0). Without this offset,
+        // host_normalized_cursor / peer_warp_target's clamp(0, 1)
+        // silently maps every point on the external to "left edge"
+        // and the receiver warps to the wrong column.
+        let Ok(displays) = CGDisplay::active_displays() else {
+            return (0, 0);
+        };
+        let mut xmin = f64::INFINITY;
+        let mut ymin = f64::INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            ymin = ymin.min(bounds.origin.y);
+        }
+        if xmin.is_infinite() || ymin.is_infinite() {
+            return (0, 0);
+        }
+        (xmin as i32, ymin as i32)
+    }
 }
 
 impl Stream for MacOSInputCapture {
