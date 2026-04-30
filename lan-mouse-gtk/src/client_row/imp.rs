@@ -31,6 +31,7 @@ pub struct ClientRow {
     #[template_child]
     pub dns_loading_indicator: TemplateChild<gtk::Spinner>,
     pub bindings: RefCell<Vec<Binding>>,
+    pub title_handlers: RefCell<Vec<SignalHandlerId>>,
     hostname_change_handler: RefCell<Option<SignalHandlerId>>,
     port_change_handler: RefCell<Option<SignalHandlerId>>,
     position_change_handler: RefCell<Option<SignalHandlerId>>,
