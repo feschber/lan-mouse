@@ -59,6 +59,7 @@
 		<child>
 			<object class="AdwComboRow" id="position">
 				<property name="title" translatable="yes">Position</property>
+				<property name="subtitle" translatable="yes">Where this device sits relative to your screen.</property>
 				<property name="model">
 					<object class="GtkStringList">
 						<items>
@@ -74,7 +75,7 @@
 		<!-- delete button -->
 		<child>
 			<object class="AdwActionRow" id="delete_row">
-				<property name="title">Delete this client</property>
+				<property name="title">Delete This Client</property>
 				<child>
 					<object class="GtkButton" id="delete_button">
 						<signal name="activate" handler="handle_client_delete" object="delete_row" swapped="true"/>

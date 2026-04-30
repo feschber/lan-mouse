@@ -56,8 +56,8 @@
                       <property name="title" translatable="yes">Capture / Emulation Status</property>
                         <child>
                           <object class="AdwActionRow" id="capture_status_row">
-                            <property name="title">Input capture is disabled</property>
-                            <property name="subtitle">Required for outgoing and incoming connections</property>
+                            <property name="title">Input Capture Disabled</property>
+                            <property name="subtitle">Required for outgoing and incoming connections.</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
@@ -82,8 +82,8 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="emulation_status_row">
-                            <property name="title">Input emulation is disabled</property>
-                            <property name="subtitle">Required for incoming connections</property>
+                            <property name="title">Input Emulation Disabled</property>
+                            <property name="subtitle">Required for incoming connections.</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_emulation_button">
@@ -212,7 +212,7 @@
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
                             <property name="title" translatable="yes">Release Threshold</property>
-                            <property name="subtitle" translatable="yes">Pixels of wall-press past the entry edge before auto-release fires</property>
+                            <property name="subtitle" translatable="yes">Pixels of wall-press past the entry edge before auto-release fires.</property>
                             <child type="suffix">
                               <object class="GtkLabel" id="release_threshold_value">
                                 <property name="label">Disabled</property>
@@ -276,8 +276,8 @@
                             <property name="selection-mode">none</property>
                             <child type="placeholder">
                               <object class="AdwActionRow" id="client_placeholder">
-                                <property name="title">No connections!</property>
-                                <property name="subtitle">Add a new client via the + button</property>
+                                <property name="title">No Connections</property>
+                                <property name="subtitle">Add a new client via the + button.</property>
                               </object>
                             </child>
                             <style>
@@ -309,8 +309,8 @@
                             <property name="selection-mode">none</property>
                             <child type="placeholder">
                               <object class="AdwActionRow" id="authorized_placeholder">
-                                <property name="title">No devices registered</property>
-                                <property name="subtitle">Authorize a new device via the "Authorize" button</property>
+                                <property name="title">No Devices Registered</property>
+                                <property name="subtitle">Authorize a new device via the "Authorize" button.</property>
                               </object>
                             </child>
                             <style>
@@ -326,8 +326,8 @@
                         <property name="description" translatable="yes">Forwarded scroll events bypass OS-level preferences. Choose a scroll direction below.</property>
                         <child>
                           <object class="AdwActionRow" id="natural_scroll_row">
-                            <property name="title" translatable="yes">Natural scrolling</property>
-                            <property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events</property>
+                            <property name="title" translatable="yes">Natural Scrolling</property>
+                            <property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events.</property>
                             <child type="suffix">
                               <object class="GtkSwitch" id="natural_scroll_switch">
                                 <property name="valign">center</property>

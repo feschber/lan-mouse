@@ -9,7 +9,7 @@ use lan_mouse_ipc::{DEFAULT_PORT, Position};
 use super::ClientObject;
 
 const NO_HOSTNAME_MARKUP: &str =
-    "<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">no hostname!</span>";
+    "<span font_style=\"italic\" font_weight=\"light\" foreground=\"darkgrey\">No Hostname</span>";
 
 fn collapsed_title(hostname: Option<String>, port: u32) -> String {
     match hostname.as_deref() {
