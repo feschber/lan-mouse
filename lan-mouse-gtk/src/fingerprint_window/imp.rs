@@ -44,7 +44,24 @@ impl FingerprintWindow {
     fn handle_confirm(&self, _button: Button) {
         let desc = self.description.text().as_str().trim().to_owned();
         let fp = self.fingerprint.text().as_str().trim().to_owned();
+        // Defensive guard: the button is wired to be insensitive while
+        // either field is empty (see `constructed`), but a user could
+        // theoretically trigger the action via the keyboard accelerator
+        // before the validity recompute finishes. Drop empty submits.
+        if desc.is_empty() || fp.is_empty() {
+            return;
+        }
         self.obj().emit_by_name("confirm-clicked", &[&desc, &fp])
+    }
+}
+
+impl FingerprintWindow {
+    fn both_filled(&self) -> bool {
+        !self.description.text().trim().is_empty() && !self.fingerprint.text().trim().is_empty()
+    }
+
+    fn refresh_confirm_sensitivity(&self) {
+        self.confirm_button.set_sensitive(self.both_filled());
     }
 }
 
@@ -58,6 +75,29 @@ impl ObjectImpl for FingerprintWindow {
                     .build(),
             ]
         })
+    }
+
+    fn constructed(&self) {
+        self.parent_constructed();
+
+        // Confirm is disabled while either Description or
+        // SHA-256 Fingerprint is empty (after trim). Recompute on
+        // every keystroke via the GtkEditable `changed` signal.
+        self.refresh_confirm_sensitivity();
+
+        let obj = self.obj();
+        let weak_desc = obj.downgrade();
+        self.description.connect_changed(move |_| {
+            if let Some(o) = weak_desc.upgrade() {
+                o.imp().refresh_confirm_sensitivity();
+            }
+        });
+        let weak_fp = obj.downgrade();
+        self.fingerprint.connect_changed(move |_| {
+            if let Some(o) = weak_fp.upgrade() {
+                o.imp().refresh_confirm_sensitivity();
+            }
+        });
     }
 }
 
