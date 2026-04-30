@@ -281,6 +281,27 @@ impl InputCapture {
         self.capture.display_bounds()
     }
 
+    /// Host's screen-space cursor position normalized to the host's
+    /// own display bounds (each axis in 0..1, clamped). Returns
+    /// `None` when the active backend can't report its own bounds.
+    /// Used for the self-sufficient `ProtoEvent::CursorPos` event
+    /// (the receiver scales the normalized fraction against its
+    /// own bounds and pins the entry axis to the matching edge), so
+    /// the first crossing isn't blocked by the bootstrap problem
+    /// `peer_warp_target` has — that variant requires a prior
+    /// `Bounds` round-trip from the peer, which can't have happened
+    /// yet on the very first Enter.
+    pub fn host_normalized_cursor(&self, cursor: (i32, i32)) -> Option<(f32, f32)> {
+        let (host_w, host_h) = self.display_bounds()?;
+        if host_w == 0 || host_h == 0 {
+            return None;
+        }
+        let (cx, cy) = cursor;
+        let nx = (cx as f32 / host_w as f32).clamp(0.0, 1.0);
+        let ny = (cy as f32 / host_h as f32).clamp(0.0, 1.0);
+        Some((nx, ny))
+    }
+
     /// Cursor warp target on the peer for a transition at `pos`,
     /// given the host's screen-space cursor position at the moment
     /// of crossing. Returns `None` when either the host's own
