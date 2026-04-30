@@ -37,8 +37,15 @@ pub type CaptureHandle = u64;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CaptureEvent {
-    /// capture on this capture handle is now active
-    Begin,
+    /// Capture on this handle is now active. `cursor`, when present,
+    /// is the host's screen-space cursor position (in pixels) at the
+    /// instant of the edge crossing — the capture loop forwards it to
+    /// the peer as a [`ProtoEvent::MotionAbsolute`] so the guest's
+    /// cursor lands at the visually-corresponding point on its own
+    /// screen rather than snapping to the entry-edge midpoint.
+    /// Backends that can't report cursor position emit `None` and
+    /// the peer falls back to the entry-edge-midpoint warp.
+    Begin { cursor: Option<(i32, i32)> },
     /// input event coming from capture handle
     Input(Event),
     /// the capture wrapper detected sustained back-toward-host motion
@@ -51,7 +58,10 @@ pub enum CaptureEvent {
 impl Display for CaptureEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CaptureEvent::Begin => write!(f, "begin capture"),
+            CaptureEvent::Begin { cursor: None } => write!(f, "begin capture"),
+            CaptureEvent::Begin {
+                cursor: Some((x, y)),
+            } => write!(f, "begin capture @ ({x}, {y})"),
             CaptureEvent::Input(e) => write!(f, "{e}"),
             CaptureEvent::AutoRelease => write!(f, "auto-release"),
         }
@@ -237,6 +247,49 @@ impl InputCapture {
         self.peer_bounds.remove(&pos);
     }
 
+    /// Host's own display geometry — width and height in pixels of
+    /// the union of all displays. Returns `None` when the active
+    /// backend can't query its own bounds (e.g. xdg-desktop-portal,
+    /// dummy). Used together with `peer_bounds` to compute a
+    /// [`ProtoEvent::MotionAbsolute`] target so the guest cursor
+    /// lands at the visually-corresponding point on Enter.
+    pub fn display_bounds(&self) -> Option<(u32, u32)> {
+        self.capture.display_bounds()
+    }
+
+    /// Cursor warp target on the peer for a transition at `pos`,
+    /// given the host's screen-space cursor position at the moment
+    /// of crossing. Returns `None` when either the host's own
+    /// `display_bounds` or the cached peer geometry is unavailable —
+    /// in that case the capture loop just doesn't send MotionAbsolute
+    /// and the guest falls back to its entry-edge-midpoint warp.
+    ///
+    /// Coordinates returned are pixels in the peer's screen space:
+    /// the cross-axis is preserved as a normalized fraction of the
+    /// host screen (so a host_y near the top maps to a peer_y near
+    /// the top regardless of resolution mismatch), the on-axis is
+    /// pinned to the peer's far edge for the entering side.
+    pub fn peer_warp_target(&self, pos: Position, cursor: (i32, i32)) -> Option<(i32, i32)> {
+        let (host_w, host_h) = self.display_bounds()?;
+        let &(peer_w, peer_h) = self.peer_bounds.get(&pos)?;
+        let (cx, cy) = cursor;
+        let nx = (cx as f64 / host_w as f64).clamp(0.0, 1.0);
+        let ny = (cy as f64 / host_h as f64).clamp(0.0, 1.0);
+        let peer_w_i = peer_w as i32;
+        let peer_h_i = peer_h as i32;
+        let target = match pos {
+            // Peer to our Left → cursor exits on left, enters peer on right
+            Position::Left => (peer_w_i.saturating_sub(1), (ny * peer_h as f64) as i32),
+            // Peer to our Right → cursor enters peer on left
+            Position::Right => (0, (ny * peer_h as f64) as i32),
+            // Peer above → cursor enters peer on bottom
+            Position::Top => ((nx * peer_w as f64) as i32, peer_h_i.saturating_sub(1)),
+            // Peer below → cursor enters peer on top
+            Position::Bottom => ((nx * peer_w as f64) as i32, 0),
+        };
+        Some(target)
+    }
+
     /// Returns the upper-clamp value (along the entry axis) for the
     /// given position, or `f64::INFINITY` if the peer hasn't reported
     /// bounds yet.
@@ -262,7 +315,7 @@ impl InputCapture {
     /// capture position.
     fn track_wall_press(&mut self, pos: Position, event: &CaptureEvent) -> bool {
         match event {
-            CaptureEvent::Begin => {
+            CaptureEvent::Begin { .. } => {
                 self.capture_pos = Some(pos);
                 self.virtual_pos = 0.0;
                 self.wall_pressure = 0.0;
@@ -462,6 +515,13 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
     /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;
+
+    /// Host's own display geometry. Default implementation returns
+    /// `None`; backends that can query their own dimensions override
+    /// (currently macOS via CGDisplay; others may add this later).
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        None
+    }
 }
 
 async fn create_backend(
