@@ -84,7 +84,7 @@ pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
     app.quit();
 }
 
-pub fn run(local_commit: [u8; 8], gui_lock: Option<GuiLock>) -> Result<(), GtkError> {
+pub fn run(gui_lock: Option<GuiLock>, local_commit: [u8; 8]) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
     LOCAL_COMMIT
         .set(local_commit)
@@ -361,9 +361,27 @@ fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
     glib::spawn_future_local(clone!(
         #[weak]
         window,
+        #[weak]
+        app,
         async move {
             loop {
-                let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
+                // If the daemon-IPC channel drops, the daemon child has
+                // exited (e.g. its CGEventTap died after AX was revoked
+                // — see input-capture/macos.rs ProducerEvent::EventTapDisabled).
+                // Quit the GUI cleanly instead of staying alive with a
+                // dead daemon, and route through the macOS quit-backstop
+                // so a wedged event loop can't leave the process around.
+                let notify = match receiver.recv().await {
+                    Ok(n) => n,
+                    Err(_) => {
+                        log::warn!("daemon IPC closed — quitting GUI");
+                        #[cfg(target_os = "macos")]
+                        request_quit_with_backstop(&app);
+                        #[cfg(not(target_os = "macos"))]
+                        app.quit();
+                        return;
+                    }
+                };
                 match notify {
                     FrontendEvent::Created(handle, client, state) => {
                         window.new_client(handle, client, state)
