@@ -178,6 +178,15 @@ impl ListenTask {
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
+                            // Capturing peer told us where on our
+                            // screen the user's cursor was at the
+                            // moment of crossing — warp directly there
+                            // and override the entry-edge-midpoint
+                            // warp from the prior Enter so the
+                            // transition is visually continuous.
+                            ProtoEvent::MotionAbsolute { x, y } => {
+                                self.emulation_proxy.warp_cursor(x, y);
+                            }
                             _ => {}
                         }
                     }

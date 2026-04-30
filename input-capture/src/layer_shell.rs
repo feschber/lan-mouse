@@ -753,7 +753,8 @@ impl Dispatch<WlPointer, ()> for State {
                     .find(|w| w.surface == surface)
                     .map(|w| w.pos)
                     .unwrap();
-                app.pending_events.push_back((pos, CaptureEvent::Begin));
+                app.pending_events
+                    .push_back((pos, CaptureEvent::Begin { cursor: None }));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in

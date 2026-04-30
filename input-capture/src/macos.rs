@@ -551,10 +551,17 @@ fn create_event_tap<'a>(
             // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
                 capture_position = Some(new_pos);
+                // Snapshot the cursor's screen-space position at the
+                // instant of crossing — before start_capture's
+                // reset_cursor() snaps it to the edge. The peer uses
+                // this for the visually-corresponding warp on Enter
+                // so the cursor doesn't jump to the entry-edge midpoint.
+                let cross_loc = cg_ev.location();
+                let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
                 state
                     .start_capture(cg_ev, new_pos)
                     .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
+                res_events.push(CaptureEvent::Begin { cursor });
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
                     .expect("Failed to send notification");
@@ -815,6 +822,29 @@ impl Capture for MacOSInputCapture {
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Mirror the InputEmulation-side implementation: the union of
+        // every active display's rectangle, in points (which match
+        // the units used by CGEvent.location() so the
+        // MotionAbsolute math stays internally consistent).
+        let displays = CGDisplay::active_displays().ok()?;
+        let mut xmin = f64::INFINITY;
+        let mut xmax = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            xmax = xmax.max(bounds.origin.x + bounds.size.width);
+            ymin = ymin.min(bounds.origin.y);
+            ymax = ymax.max(bounds.origin.y + bounds.size.height);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
     }
 }
 
