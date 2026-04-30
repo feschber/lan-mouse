@@ -654,7 +654,7 @@ impl Capture for LayerShellInputCapture {
         Ok(inner.flush_events()?)
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, _warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();

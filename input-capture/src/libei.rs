@@ -592,7 +592,7 @@ impl LanMouseInputCapture for LibeiInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, _warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         self.notify_release.notify_waiters();
         Ok(())
     }

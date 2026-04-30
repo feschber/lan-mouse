@@ -160,6 +160,15 @@ pub struct InputCapture {
     /// could not absorb (proposed virtual_pos < 0). Resets whenever
     /// the cursor is back in the interior or moving deeper.
     wall_pressure: f64,
+    /// Modeled guest cursor position in the guest's screen space,
+    /// updated by accumulating Motion deltas while captured. Seeded
+    /// on `Begin` from the cross-axis warp target (if peer bounds
+    /// are known) or the entry-edge midpoint otherwise — i.e. wherever
+    /// the guest's cursor visually lands at Enter. Read on release
+    /// to compute a host-side warp so the local cursor reappears at
+    /// the matching point on the host's screen instead of jumping
+    /// back to where capture started.
+    virtual_cursor: Option<(f64, f64)>,
     /// Per-position cache of peer display geometry. Populated when
     /// the peer responds with a `ProtoEvent::Bounds` event after
     /// Ack. Used as the upper clamp for `virtual_pos` so that
@@ -219,9 +228,16 @@ impl InputCapture {
 
     /// release mouse
     pub async fn release(&mut self) -> Result<(), CaptureError> {
+        // Compute the host-side warp target before resetting the
+        // wall-press / virtual_cursor state — once those are cleared
+        // we lose the data needed to figure out where the guest's
+        // cursor visually was.
+        let warp_target = self
+            .capture_pos
+            .and_then(|pos| self.host_warp_target_on_release(pos));
         self.pressed_keys.clear();
         self.reset_wall_press_state();
-        self.capture.release().await
+        self.capture.release(warp_target).await
     }
 
     /// Configure the wall-press auto-release pixel threshold.
@@ -307,6 +323,64 @@ impl InputCapture {
         self.capture_pos = None;
         self.virtual_pos = 0.0;
         self.wall_pressure = 0.0;
+        self.virtual_cursor = None;
+    }
+
+    /// Initial guest-space cursor position for a freshly-started
+    /// capture. Mirrors what the guest's emulation will visibly do on
+    /// the corresponding `Enter`: a `MotionAbsolute` warp target if
+    /// the host can compute one (peer bounds known + capture backend
+    /// reports cursor), otherwise the entry-edge midpoint that
+    /// `entry_edge_for` produces on the guest side.
+    fn initial_virtual_cursor(
+        &self,
+        pos: Position,
+        host_cursor: Option<(i32, i32)>,
+    ) -> Option<(f64, f64)> {
+        if let Some(host_cursor) = host_cursor {
+            if let Some((x, y)) = self.peer_warp_target(pos, host_cursor) {
+                return Some((x as f64, y as f64));
+            }
+        }
+        let &(peer_w, peer_h) = self.peer_bounds.get(&pos)?;
+        let pw = peer_w as f64;
+        let ph = peer_h as f64;
+        Some(match pos {
+            Position::Left => (0.0, ph / 2.0),
+            Position::Right => ((pw - 1.0).max(0.0), ph / 2.0),
+            Position::Top => (pw / 2.0, 0.0),
+            Position::Bottom => (pw / 2.0, (ph - 1.0).max(0.0)),
+        })
+    }
+
+    /// Where on the host's own screen the cursor should land when
+    /// capture is released, given the modeled guest cursor position
+    /// at the moment of release. Symmetric inverse of
+    /// `peer_warp_target`: cross-axis is preserved as a normalized
+    /// fraction of the peer's screen, on-axis is pinned to the
+    /// host's far edge for the side the guest is on so the cursor
+    /// reappears at the boundary it just crossed back through.
+    fn host_warp_target_on_release(&self, pos: Position) -> Option<(i32, i32)> {
+        let (gx, gy) = self.virtual_cursor?;
+        let &(peer_w, peer_h) = self.peer_bounds.get(&pos)?;
+        let (host_w, host_h) = self.capture.display_bounds()?;
+        if peer_w == 0 || peer_h == 0 || host_w == 0 || host_h == 0 {
+            return None;
+        }
+        let nx = (gx / peer_w as f64).clamp(0.0, 1.0);
+        let ny = (gy / peer_h as f64).clamp(0.0, 1.0);
+        let host_w_i = host_w as i32;
+        let host_h_i = host_h as i32;
+        Some(match pos {
+            // Peer to our Left → cursor returns through host's left edge
+            Position::Left => (0, (ny * host_h as f64) as i32),
+            // Peer to our Right → cursor returns through host's right edge
+            Position::Right => (host_w_i.saturating_sub(1), (ny * host_h as f64) as i32),
+            // Peer above → cursor returns through host's top edge
+            Position::Top => ((nx * host_w as f64) as i32, 0),
+            // Peer below → cursor returns through host's bottom edge
+            Position::Bottom => ((nx * host_w as f64) as i32, host_h_i.saturating_sub(1)),
+        })
     }
 
     /// Update the wall-press accumulator from one event coming up
@@ -315,24 +389,39 @@ impl InputCapture {
     /// capture position.
     fn track_wall_press(&mut self, pos: Position, event: &CaptureEvent) -> bool {
         match event {
-            CaptureEvent::Begin { .. } => {
+            CaptureEvent::Begin { cursor } => {
                 self.capture_pos = Some(pos);
                 self.virtual_pos = 0.0;
                 self.wall_pressure = 0.0;
+                self.virtual_cursor = self.initial_virtual_cursor(pos, *cursor);
                 false
             }
             CaptureEvent::AutoRelease => {
-                self.reset_wall_press_state();
+                // Don't reset virtual_cursor here — release() needs it
+                // to compute the host-side warp target. The wrapper's
+                // release() resets state after consuming it.
                 false
             }
             CaptureEvent::Input(Event::Pointer(PointerEvent::Motion { dx, dy, .. })) => {
-                if self.release_threshold_px == 0 {
-                    return false;
-                }
                 let Some(active_pos) = self.capture_pos else {
                     return false;
                 };
                 if active_pos != pos {
+                    return false;
+                }
+
+                // Track guest-space cursor for the on-release warp
+                // back to the host. Clamped to the peer's bounds so
+                // the model doesn't drift past the guest's screen
+                // when the user pushes obliviously.
+                if let (Some(vc), Some(&(peer_w, peer_h))) =
+                    (self.virtual_cursor.as_mut(), self.peer_bounds.get(&active_pos))
+                {
+                    vc.0 = (vc.0 + *dx).clamp(0.0, peer_w as f64);
+                    vc.1 = (vc.1 + *dy).clamp(0.0, peer_h as f64);
+                }
+
+                if self.release_threshold_px == 0 {
                     return false;
                 }
 
@@ -409,6 +498,7 @@ impl InputCapture {
             capture_pos: None,
             virtual_pos: 0.0,
             wall_pressure: 0.0,
+            virtual_cursor: None,
             peer_bounds: HashMap::new(),
         })
     }
@@ -510,8 +600,14 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
     /// destroy the client with the given id, if it exists
     async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError>;
 
-    /// release mouse
-    async fn release(&mut self) -> Result<(), CaptureError>;
+    /// release mouse. `warp_target`, when present, is a screen-space
+    /// pixel point on the host's own display where the local cursor
+    /// should be placed before becoming visible again — used to
+    /// preserve cross-axis continuity when capture ends so the cursor
+    /// reappears next to where it visually was on the guest, not at
+    /// the spot where capture started. Backends that don't hide the
+    /// system cursor or can't warp it can ignore the parameter.
+    async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError>;
 
     /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;

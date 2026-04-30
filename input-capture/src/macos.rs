@@ -62,7 +62,14 @@ struct InputCaptureState {
 
 #[derive(Debug)]
 enum ProducerEvent {
-    Release,
+    /// `warp_target`, when present, is a screen-space (Quartz) point
+    /// at which to warp the local cursor before showing it. Used to
+    /// preserve cross-axis continuity on release: the visible cursor
+    /// reappears at the host point matching where it visually was on
+    /// the guest, instead of snapping back to the capture-start edge.
+    Release {
+        warp_target: Option<(i32, i32)>,
+    },
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -153,8 +160,19 @@ impl InputCaptureState {
     ) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
-            ProducerEvent::Release => {
+            ProducerEvent::Release { warp_target } => {
                 if self.current_pos.is_some() {
+                    // Warp BEFORE clearing current_pos so the
+                    // event-tap callback can't see Some(pos) and
+                    // re-snap the cursor to the entry edge before we
+                    // make it visible again. Then show_cursor() reveals
+                    // it at the warped point.
+                    if let Some((x, y)) = warp_target {
+                        let _ = CGDisplay::warp_mouse_cursor_position(CGPoint {
+                            x: x as CGFloat,
+                            y: y as CGFloat,
+                        });
+                    }
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -811,11 +829,13 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
+            let _ = notify_tx
+                .send(ProducerEvent::Release { warp_target })
+                .await;
         });
         Ok(())
     }
