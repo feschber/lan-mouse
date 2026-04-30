@@ -371,7 +371,7 @@ impl CaptureTask {
             return self.release_capture(capture).await;
         }
 
-        if event == CaptureEvent::Begin {
+        if matches!(event, CaptureEvent::Begin { .. }) {
             self.event_tx
                 .send(ICaptureEvent::CaptureBegin(handle))
                 .expect("channel closed");
@@ -390,7 +390,7 @@ impl CaptureTask {
         }
 
         // activated a new client
-        if event == CaptureEvent::Begin && Some(handle) != self.active_client {
+        if matches!(event, CaptureEvent::Begin { .. }) && Some(handle) != self.active_client {
             self.state = State::WaitingForAck;
             self.active_client.replace(handle);
             self.event_tx
@@ -400,8 +400,23 @@ impl CaptureTask {
 
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
-        let event = match event {
-            CaptureEvent::Begin => ProtoEvent::Enter(opposite_pos),
+        // If we're starting a fresh capture and the backend reported a
+        // cursor position at the moment of crossing, compute the
+        // visually-corresponding target on the peer's screen so we can
+        // follow Enter with a MotionAbsolute event. Falls back to the
+        // entry-edge-midpoint warp on the guest when this is None
+        // (host can't report cursor or peer hasn't sent Bounds yet).
+        let warp_target = if let CaptureEvent::Begin {
+            cursor: Some(cursor),
+        } = event
+        {
+            capture.peer_warp_target(self.get_pos(handle), cursor)
+        } else {
+            None
+        };
+
+        let proto_event = match event {
+            CaptureEvent::Begin { .. } => ProtoEvent::Enter(opposite_pos),
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
                 State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
@@ -410,10 +425,27 @@ impl CaptureTask {
             CaptureEvent::AutoRelease => unreachable!("handled in early return above"),
         };
 
-        if let Err(e) = self.conn.send(event, handle).await {
+        if let Err(e) = self.conn.send(proto_event, handle).await {
             const DUR: Duration = Duration::from_millis(500);
             debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
             capture.release().await?;
+            return Ok(());
+        }
+
+        // Send MotionAbsolute right after Enter so the guest can warp
+        // its cursor to the right point on its own screen. Done as a
+        // separate event so peers running an older protocol just
+        // tolerate-and-skip via the forward-compat decode path; new
+        // peers warp to (x, y) and override the entry-edge-midpoint
+        // warp triggered by Enter.
+        if let Some((x, y)) = warp_target {
+            if let Err(e) = self
+                .conn
+                .send(ProtoEvent::MotionAbsolute { x, y }, handle)
+                .await
+            {
+                log::warn!("MotionAbsolute send failed: {e}");
+            }
         }
         Ok(())
     }

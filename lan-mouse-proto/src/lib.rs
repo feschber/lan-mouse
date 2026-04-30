@@ -70,6 +70,15 @@ pub enum ProtoEvent {
     /// height are in pixels of the union of all displays on the
     /// emulating device.
     Bounds { width: u32, height: u32 },
+    /// Absolute cursor warp on the receiving device. Sent by the
+    /// capturing peer after [`ProtoEvent::Enter`] so the guest's
+    /// cursor lands at the position that visually corresponds to
+    /// where the user's physical cursor was at the moment of
+    /// crossing. `x` and `y` are pixel coordinates in the receiver's
+    /// screen space, computed by the capturing peer using its own
+    /// display bounds and the receiver-supplied [`ProtoEvent::Bounds`]
+    /// from a prior Enter.
+    MotionAbsolute { x: i32, y: i32 },
 }
 
 impl Display for ProtoEvent {
@@ -88,6 +97,7 @@ impl Display for ProtoEvent {
                 )
             }
             ProtoEvent::Bounds { width, height } => write!(f, "Bounds({width}x{height})"),
+            ProtoEvent::MotionAbsolute { x, y } => write!(f, "MotionAbsolute({x}, {y})"),
         }
     }
 }
@@ -107,6 +117,7 @@ pub enum EventType {
     Leave,
     Ack,
     Bounds,
+    MotionAbsolute,
 }
 
 impl ProtoEvent {
@@ -130,6 +141,7 @@ impl ProtoEvent {
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
             ProtoEvent::Bounds { .. } => EventType::Bounds,
+            ProtoEvent::MotionAbsolute { .. } => EventType::MotionAbsolute,
         }
     }
 }
@@ -187,6 +199,10 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             EventType::Bounds => Ok(Self::Bounds {
                 width: decode_u32(&mut buf)?,
                 height: decode_u32(&mut buf)?,
+            }),
+            EventType::MotionAbsolute => Ok(Self::MotionAbsolute {
+                x: decode_i32(&mut buf)?,
+                y: decode_i32(&mut buf)?,
             }),
         }
     }
@@ -255,6 +271,10 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 ProtoEvent::Bounds { width, height } => {
                     encode_u32(buf, len, width);
                     encode_u32(buf, len, height);
+                }
+                ProtoEvent::MotionAbsolute { x, y } => {
+                    encode_i32(buf, len, x);
+                    encode_i32(buf, len, y);
                 }
             }
         }
