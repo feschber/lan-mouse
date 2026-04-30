@@ -290,7 +290,7 @@ unsafe fn install_reopen_handler(delegate: Id) {
 extern "C" fn quit_lan_mouse(_this: Id, _cmd: Sel, _sender: Id) {
     STATUS_ITEM.with(|item| {
         if let Some(app) = item.borrow().as_ref().and_then(|item| item.app.upgrade()) {
-            app.quit();
+            crate::request_quit_with_backstop(&app);
         }
     });
 }
