@@ -281,6 +281,13 @@ impl InputCapture {
         self.capture.display_bounds()
     }
 
+    /// Top-left corner of the host's display union in pointer-event
+    /// coordinate space. See `Capture::display_origin` for why this
+    /// matters on multi-monitor macOS hosts.
+    fn display_origin(&self) -> (i32, i32) {
+        self.capture.display_origin()
+    }
+
     /// Host's screen-space cursor position normalized to the host's
     /// own display bounds (each axis in 0..1, clamped). Returns
     /// `None` when the active backend can't report its own bounds.
@@ -296,9 +303,15 @@ impl InputCapture {
         if host_w == 0 || host_h == 0 {
             return None;
         }
+        let (origin_x, origin_y) = self.display_origin();
         let (cx, cy) = cursor;
-        let nx = (cx as f32 / host_w as f32).clamp(0.0, 1.0);
-        let ny = (cy as f32 / host_h as f32).clamp(0.0, 1.0);
+        // Subtract the union origin before normalizing so that
+        // points on a non-origin display (e.g. a macOS external
+        // monitor positioned to the left of the primary, where
+        // cursor x is negative) map correctly. Without this, the
+        // clamp masks every off-primary point as the screen edge.
+        let nx = ((cx - origin_x) as f32 / host_w as f32).clamp(0.0, 1.0);
+        let ny = ((cy - origin_y) as f32 / host_h as f32).clamp(0.0, 1.0);
         Some((nx, ny))
     }
 
@@ -317,9 +330,12 @@ impl InputCapture {
     pub fn peer_warp_target(&self, pos: Position, cursor: (i32, i32)) -> Option<(i32, i32)> {
         let (host_w, host_h) = self.display_bounds()?;
         let &(peer_w, peer_h) = self.peer_bounds.get(&pos)?;
+        let (origin_x, origin_y) = self.display_origin();
         let (cx, cy) = cursor;
-        let nx = (cx as f64 / host_w as f64).clamp(0.0, 1.0);
-        let ny = (cy as f64 / host_h as f64).clamp(0.0, 1.0);
+        // Subtract the union origin before normalizing — same
+        // rationale as in host_normalized_cursor.
+        let nx = ((cx - origin_x) as f64 / host_w as f64).clamp(0.0, 1.0);
+        let ny = ((cy - origin_y) as f64 / host_h as f64).clamp(0.0, 1.0);
         let peer_w_i = peer_w as i32;
         let peer_h_i = peer_h as i32;
         let target = match pos {
@@ -647,6 +663,21 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
     /// (currently macOS via CGDisplay; others may add this later).
     fn display_bounds(&self) -> Option<(u32, u32)> {
         None
+    }
+
+    /// Top-left corner of the union of all displays in the host's
+    /// global pointer-coordinate system. Defaults to (0, 0) — fine
+    /// for any backend whose primary display is the origin (Windows,
+    /// most X11/Wayland setups). Returns the actual `(xmin, ymin)`
+    /// on macOS, where the global coordinate system is anchored at
+    /// the primary's top-left and a left-attached external display
+    /// occupies negative x. Used by `host_normalized_cursor` and
+    /// `peer_warp_target` to correctly normalize cursor positions
+    /// outside the primary display — without this, the
+    /// `clamp(0.0, 1.0)` in those helpers silently maps every point
+    /// on a non-origin display to the screen edge.
+    fn display_origin(&self) -> (i32, i32) {
+        (0, 0)
     }
 }
 
