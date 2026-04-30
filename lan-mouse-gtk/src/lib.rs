@@ -171,6 +171,17 @@ fn setup_actions(app: &adw::Application) {
         }
     });
     app.add_action(&quit_action);
+
+    // Cmd+W → close the front window. GtkWindow's built-in `close`
+    // action fires `close-request`, which on macOS we've hooked to
+    // hide the window instead of destroying it (see `build_ui`). The
+    // window's connect_hide handler then flips the activation policy
+    // to Accessory — net effect is that Cmd+W collapses the GUI to a
+    // menu-bar-only background helper, freeing focus for whatever the
+    // user does next. Wired only on macOS so we don't override the
+    // native Ctrl+W behavior on Linux/Windows.
+    #[cfg(target_os = "macos")]
+    app.set_accels_for_action("window.close", &["<Meta>w"]);
 }
 
 // Set up a global menu
@@ -180,6 +191,7 @@ fn setup_menu(app: &adw::Application) {
     let menu = gio::Menu::new();
 
     let file_menu = gio::Menu::new();
+    file_menu.append(Some("Close Window"), Some("window.close"));
     file_menu.append(Some("Quit"), Some("app.quit"));
     menu.append_submenu(Some("_File"), &file_menu);
 
