@@ -414,9 +414,10 @@ impl InputCapture {
                 // back to the host. Clamped to the peer's bounds so
                 // the model doesn't drift past the guest's screen
                 // when the user pushes obliviously.
-                if let (Some(vc), Some(&(peer_w, peer_h))) =
-                    (self.virtual_cursor.as_mut(), self.peer_bounds.get(&active_pos))
-                {
+                if let (Some(vc), Some(&(peer_w, peer_h))) = (
+                    self.virtual_cursor.as_mut(),
+                    self.peer_bounds.get(&active_pos),
+                ) {
                     vc.0 = (vc.0 + *dx).clamp(0.0, peer_w as f64);
                     vc.1 = (vc.1 + *dy).clamp(0.0, peer_h as f64);
                 }

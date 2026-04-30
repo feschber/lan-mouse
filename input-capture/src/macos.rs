@@ -9,7 +9,7 @@ use core_foundation::{
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{CGError, kCGErrorSuccess},
+    base::{CGError, CGFloat, kCGErrorSuccess},
     display::{CGDisplay, CGPoint},
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -833,9 +833,7 @@ impl Capture for MacOSInputCapture {
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx
-                .send(ProducerEvent::Release { warp_target })
-                .await;
+            let _ = notify_tx.send(ProducerEvent::Release { warp_target }).await;
         });
         Ok(())
     }
