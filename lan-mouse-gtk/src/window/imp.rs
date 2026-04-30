@@ -4,7 +4,10 @@ use adw::subclass::prelude::*;
 use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, Scale, Switch, gdk, gio, glib};
+use gtk::{
+    Button, CompositeTemplate, Entry, EventControllerScroll, EventControllerScrollFlags, Image,
+    Label, ListBox, PropagationPhase, Scale, Switch, gdk, gio, glib,
+};
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
@@ -238,6 +241,21 @@ impl ObjectImpl for Window {
             }
         ));
         self.release_threshold_handler.replace(Some(handler_id));
+
+        // Eat scroll-wheel events on the threshold slider. By default
+        // GtkScale treats vertical scroll as increment / decrement,
+        // which makes the threshold drift any time the user scrolls
+        // the window and the cursor passes over the slider. We
+        // intercept in the capture phase and return Stop so the scale's
+        // own controller never sees the event. Side effect: scrolling
+        // doesn't pass through to the parent ScrolledWindow while the
+        // cursor is on the slider — to scroll, move the cursor off it.
+        let scroll_block = EventControllerScroll::new(
+            EventControllerScrollFlags::VERTICAL | EventControllerScrollFlags::HORIZONTAL,
+        );
+        scroll_block.set_propagation_phase(PropagationPhase::Capture);
+        scroll_block.connect_scroll(|_, _, _| glib::Propagation::Stop);
+        self.release_threshold_scale.add_controller(scroll_block);
 
         // Connect the natural-scroll switch. Same pattern: stash the
         // handler id so the daemon's Sync push doesn't ricochet back.
