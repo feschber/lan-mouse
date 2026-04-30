@@ -29,7 +29,7 @@
                 </child>
                 <child>
                   <object class="GtkLabel">
-                    <property name="label">You can find it under the `General` section of the device you want to connect</property>
+                    <property name="label">You can find it under the `General` section of the device you want to connect.</property>
                   </object>
                 </child>
                 <child>
@@ -55,7 +55,7 @@
                 </child>
                 <child>
                   <object class="AdwPreferencesGroup">
-                    <property name="title">SHA-256 fingerprint</property>
+                    <property name="title">SHA-256 Fingerprint</property>
                     <child>
                       <object class="AdwActionRow">
                         <property name="child">

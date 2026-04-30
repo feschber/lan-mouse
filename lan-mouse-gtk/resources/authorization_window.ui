@@ -37,7 +37,7 @@
             </child>
             <child>
               <object class="AdwPreferencesGroup">
-                <property name="title">SHA-256 fingerprint</property>
+                <property name="title">SHA-256 Fingerprint</property>
                 <child>
                   <object class="AdwActionRow">
                     <property name="child">
