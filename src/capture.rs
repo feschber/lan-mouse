@@ -401,18 +401,34 @@ impl CaptureTask {
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
         // If we're starting a fresh capture and the backend reported a
-        // cursor position at the moment of crossing, compute the
-        // visually-corresponding target on the peer's screen so we can
-        // follow Enter with a MotionAbsolute event. Falls back to the
-        // entry-edge-midpoint warp on the guest when this is None
-        // (host can't report cursor or peer hasn't sent Bounds yet).
-        let warp_target = if let CaptureEvent::Begin {
+        // cursor position at the moment of crossing, compute two
+        // representations to follow Enter with:
+        //
+        //   * `MotionAbsolute` (peer pixel coords): more precise when
+        //     the peer's geometry is already cached, but None on the
+        //     very first crossing because we haven't seen `Bounds`
+        //     from the peer yet.
+        //   * `CursorPos` (host-normalized fraction + entry side):
+        //     self-sufficient — the receiver scales against its own
+        //     bounds. Works on the first crossing.
+        //
+        // Both events are emitted when applicable; the receiver
+        // tolerates either order and the second warp wins. Old peers
+        // that don't recognize `CursorPos` skip it via the proto
+        // forward-compat path.
+        let (warp_target, cursor_pos) = if let CaptureEvent::Begin {
             cursor: Some(cursor),
         } = event
         {
-            capture.peer_warp_target(self.get_pos(handle), cursor)
+            let pos = self.get_pos(handle);
+            let warp = capture.peer_warp_target(pos, cursor);
+            let norm = capture.host_normalized_cursor(cursor).map(|(nx, ny)| {
+                let proto_pos = to_proto_pos(pos.opposite());
+                (proto_pos, nx, ny)
+            });
+            (warp, norm)
         } else {
-            None
+            (None, None)
         };
 
         let proto_event = match event {
@@ -445,6 +461,21 @@ impl CaptureTask {
                 .await
             {
                 log::warn!("MotionAbsolute send failed: {e}");
+            }
+        }
+        // Self-sufficient companion event: doesn't need cached peer
+        // bounds, so the very first crossing also lands the cursor
+        // at the visually-corresponding point. Sent after
+        // MotionAbsolute so a new peer that handles both ends up
+        // with the more recent (and more accurate, since it uses
+        // the peer's *current* display bounds) CursorPos warp.
+        if let Some((pos, nx, ny)) = cursor_pos {
+            if let Err(e) = self
+                .conn
+                .send(ProtoEvent::CursorPos { pos, nx, ny }, handle)
+                .await
+            {
+                log::warn!("CursorPos send failed: {e}");
             }
         }
         Ok(())
