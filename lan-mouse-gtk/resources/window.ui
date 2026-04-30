@@ -49,7 +49,7 @@
                   <property name="child">
                     <object class="GtkBox">
                     <property name="orientation">vertical</property>
-                    <property name="spacing">12</property>
+                    <property name="spacing">24</property>
                     <property name="margin-bottom">36</property>
                     <child>
                       <object class="AdwPreferencesGroup" id="capture_emulation_group">
@@ -233,6 +233,7 @@
                             <property name="hexpand">true</property>
                             <property name="draw-value">false</property>
                             <property name="round-digits">0</property>
+                            <property name="margin-top">12</property>
                             <property name="adjustment">
                               <object class="GtkAdjustment" id="release_threshold_adjustment">
                                 <property name="lower">0</property>
