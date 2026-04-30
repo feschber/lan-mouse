@@ -211,6 +211,25 @@ impl InputCaptureState {
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
+                // Distinguish AX revocation from a recoverable cause
+                // (secure-input mode while typing in a password field
+                // also fires TapDisabledByUserInput). If AX is gone,
+                // the tap can't be recreated and the GUI's polling
+                // watcher may not flip for a while when the user
+                // *removed* the entry from System Settings → Privacy
+                // & Security → Accessibility (vs just toggling it
+                // off — removal can leave AXIsProcessTrusted reporting
+                // cached-true in already-running processes). Exit
+                // the daemon process directly: the GUI will see its
+                // IPC connection drop and trigger its own
+                // quit-with-backstop path. This is the only reliable
+                // way to tear down a wedged HID-level tap quickly.
+                if !unsafe { AXIsProcessTrusted() } {
+                    log::error!(
+                        "CGEventTap disabled and Accessibility no longer granted — daemon exiting"
+                    );
+                    std::process::exit(0);
+                }
                 return Err(CaptureError::EventTapDisabled);
             }
             ProducerEvent::DisplayReconfigured => {
