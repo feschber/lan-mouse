@@ -4,20 +4,24 @@
   <requires lib="libadwaita" version="1.0"/>
   <template class="FingerprintWindow" parent="AdwWindow">
     <property name="modal">True</property>
+    <property name="resizable">False</property>
     <property name="width-request">280</property>
     <property name="default-width">460</property>
-    <property name="height-request">380</property>
-    <property name="default-height">380</property>
     <property name="title" translatable="yes">Add Certificate Fingerprint</property>
     <property name="content">
       <object class="AdwToolbarView">
         <child type="top">
-            <object class="AdwHeaderBar"/>
+            <object class="AdwHeaderBar">
+              <style>
+                <class name="flat"/>
+              </style>
+            </object>
         </child>
         <property name="content">
           <object class="AdwClamp">
             <property name="maximum-size">800</property>
             <property name="tightening-threshold">0</property>
+            <property name="valign">start</property>
             <property name="child">
               <object class="GtkBox">
                 <property name="orientation">vertical</property>
@@ -46,6 +50,7 @@
                   <object class="GtkBox">
                     <property name="orientation">vertical</property>
                     <property name="spacing">6</property>
+                    <property name="margin-top">12</property>
                     <child>
                       <object class="GtkLabel">
                         <property name="label">Description</property>
