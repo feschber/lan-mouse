@@ -171,6 +171,21 @@ pub struct InputCapture {
     /// the matching point on the host's screen instead of jumping
     /// back to where capture started.
     virtual_cursor: Option<(f64, f64)>,
+    /// Host-coord cursor at the moment of `Begin`, retained until
+    /// `peer_bounds` arrives so we can retroactively seed
+    /// `virtual_cursor` once the round-trip completes. Without this,
+    /// a `Begin` that fires before the peer's `Bounds` reply leaves
+    /// `virtual_cursor` stuck at `None` for the rest of the session
+    /// — the wall-press accumulator skips updates and the
+    /// release-time warp falls back to the original crossing
+    /// y-value instead of where the cursor visually was on the peer.
+    pending_begin_cursor: Option<(i32, i32)>,
+    /// Motion deltas that arrived while `virtual_cursor` was still
+    /// `None` (between `Begin` and the late-arriving
+    /// `set_peer_bounds`). Drained into the freshly-seeded
+    /// `virtual_cursor` when the bootstrap completes so deltas
+    /// during the round-trip aren't lost.
+    pending_motion: (f64, f64),
     /// Per-position cache of peer display geometry. Populated when
     /// the peer responds with a `ProtoEvent::Bounds` event after
     /// Ack. Used as the upper clamp for `virtual_pos` so that
@@ -261,9 +276,39 @@ impl InputCapture {
     /// the wall-press tracker as the upper bound for `virtual_pos`
     /// so the model can't run away when the user pushes past the
     /// peer's actual far edge.
+    ///
+    /// If `Begin` fired before this arrived (the round-trip
+    /// bootstrap case — `Bounds` is sent in response to `Enter`,
+    /// which is sent by the host AFTER `Begin` fires), seed
+    /// `virtual_cursor` retroactively so the wall-press / release
+    /// machinery has a baseline to track from. Drains any motion
+    /// that piled up in `pending_motion` so deltas during the
+    /// round-trip aren't lost.
     pub fn set_peer_bounds(&mut self, pos: Position, width: u32, height: u32) {
         log::debug!("peer at {pos} reports bounds {width}x{height}");
         self.peer_bounds.insert(pos, (width, height));
+
+        if self.virtual_cursor.is_none()
+            && self.capture_pos == Some(pos)
+            && self.pending_begin_cursor.is_some()
+        {
+            let begin_cursor = self.pending_begin_cursor;
+            let seeded = self.initial_virtual_cursor(pos, begin_cursor);
+            if let Some((sx, sy)) = seeded {
+                let (mx, my) = self.pending_motion;
+                let peer_w = width as f64;
+                let peer_h = height as f64;
+                self.virtual_cursor = Some((
+                    (sx + mx).clamp(0.0, peer_w),
+                    (sy + my).clamp(0.0, peer_h),
+                ));
+                self.pending_motion = (0.0, 0.0);
+                log::info!(
+                    "[bootstrap] seeded virtual_cursor={:?} after late peer_bounds at {pos} (drained pending_motion=({mx:.1}, {my:.1}))",
+                    self.virtual_cursor
+                );
+            }
+        }
     }
 
     /// Forget the cached peer geometry for a position. Called when
@@ -372,6 +417,8 @@ impl InputCapture {
         self.virtual_pos = 0.0;
         self.wall_pressure = 0.0;
         self.virtual_cursor = None;
+        self.pending_begin_cursor = None;
+        self.pending_motion = (0.0, 0.0);
     }
 
     /// Initial guest-space cursor position for a freshly-started
@@ -442,6 +489,16 @@ impl InputCapture {
                 self.virtual_pos = 0.0;
                 self.wall_pressure = 0.0;
                 self.virtual_cursor = self.initial_virtual_cursor(pos, *cursor);
+                // Stash the host-coord cursor so set_peer_bounds can
+                // retroactively seed virtual_cursor if peer_bounds
+                // arrives after Begin.
+                self.pending_begin_cursor = *cursor;
+                self.pending_motion = (0.0, 0.0);
+                log::info!(
+                    "[wp-begin] pos={pos} cursor={cursor:?} peer_bounds={:?} virtual_cursor={:?}",
+                    self.peer_bounds.get(&pos).copied(),
+                    self.virtual_cursor,
+                );
                 false
             }
             CaptureEvent::AutoRelease => {
@@ -462,12 +519,31 @@ impl InputCapture {
                 // back to the host. Clamped to the peer's bounds so
                 // the model doesn't drift past the guest's screen
                 // when the user pushes obliviously.
-                if let (Some(vc), Some(&(peer_w, peer_h))) = (
+                match (
                     self.virtual_cursor.as_mut(),
                     self.peer_bounds.get(&active_pos),
                 ) {
-                    vc.0 = (vc.0 + *dx).clamp(0.0, peer_w as f64);
-                    vc.1 = (vc.1 + *dy).clamp(0.0, peer_h as f64);
+                    (Some(vc), Some(&(peer_w, peer_h))) => {
+                        vc.0 = (vc.0 + *dx).clamp(0.0, peer_w as f64);
+                        vc.1 = (vc.1 + *dy).clamp(0.0, peer_h as f64);
+                    }
+                    // virtual_cursor not yet seeded (peer_bounds was
+                    // None at Begin time and the round-trip hasn't
+                    // completed yet). Buffer the deltas so they can
+                    // be applied retroactively in set_peer_bounds
+                    // once the bootstrap finishes — otherwise the
+                    // motion that happened during the round-trip is
+                    // silently lost and the release-time warp picks
+                    // the wrong y.
+                    (None, _) => {
+                        self.pending_motion.0 += *dx;
+                        self.pending_motion.1 += *dy;
+                        log::debug!(
+                            "[wp-motion] deferred dx={dx:.1} dy={dy:.1} (peer_bounds for {active_pos}: {:?})",
+                            self.peer_bounds.get(&active_pos).copied(),
+                        );
+                    }
+                    _ => {}
                 }
 
                 if self.release_threshold_px == 0 {
@@ -548,6 +624,8 @@ impl InputCapture {
             virtual_pos: 0.0,
             wall_pressure: 0.0,
             virtual_cursor: None,
+            pending_begin_cursor: None,
+            pending_motion: (0.0, 0.0),
             peer_bounds: HashMap::new(),
         })
     }
