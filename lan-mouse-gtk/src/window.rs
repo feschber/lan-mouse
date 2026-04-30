@@ -425,6 +425,16 @@ impl Window {
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
         let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
+        // Size the popup 40 px narrower than the parent so it stays
+        // fully visible when the parent has been tiled into a narrow
+        // split (Hyprland and similar). Falls back to the XML default
+        // (460 px) when the parent's allocated width isn't yet known
+        // and clamps to the XML width-request floor.
+        let parent_w = self.width();
+        if parent_w > 0 {
+            let popup_w = (parent_w - 40).clamp(280, 460);
+            window.set_default_width(popup_w);
+        }
         window.connect_closure(
             "confirm-clicked",
             false,
@@ -591,6 +601,15 @@ impl Window {
         }
         let window = AuthorizationWindow::new(fingerprint);
         window.set_transient_for(Some(self));
+        // Same parent-relative sizing as the fingerprint dialog —
+        // 40 px narrower than the parent, capped at 460 to match the
+        // Add-Certificate modal, floored at 280 so it doesn't shrink
+        // under content.
+        let parent_w = self.width();
+        if parent_w > 0 {
+            let popup_w = (parent_w - 40).clamp(280, 460);
+            window.set_default_width(popup_w);
+        }
         window.connect_closure(
             "confirm-clicked",
             false,
