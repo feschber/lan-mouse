@@ -79,6 +79,15 @@ pub enum ProtoEvent {
     /// display bounds and the receiver-supplied [`ProtoEvent::Bounds`]
     /// from a prior Enter.
     MotionAbsolute { x: i32, y: i32 },
+    /// Self-sufficient counterpart to [`ProtoEvent::MotionAbsolute`].
+    /// Carries the host's cursor position normalized to the host's
+    /// own display bounds (0..1 along each axis) plus the entry
+    /// side from the receiver's frame. The receiver scales nx/ny
+    /// against its own bounds and pins the on-axis dimension to
+    /// the entry edge, eliminating the bootstrap problem where
+    /// MotionAbsolute couldn't be sent on the first crossing
+    /// because the host had no cached peer geometry.
+    CursorPos { pos: Position, nx: f32, ny: f32 },
 }
 
 impl Display for ProtoEvent {
@@ -98,6 +107,9 @@ impl Display for ProtoEvent {
             }
             ProtoEvent::Bounds { width, height } => write!(f, "Bounds({width}x{height})"),
             ProtoEvent::MotionAbsolute { x, y } => write!(f, "MotionAbsolute({x}, {y})"),
+            ProtoEvent::CursorPos { pos, nx, ny } => {
+                write!(f, "CursorPos({pos}, {nx:.4}, {ny:.4})")
+            }
         }
     }
 }
@@ -118,6 +130,7 @@ pub enum EventType {
     Ack,
     Bounds,
     MotionAbsolute,
+    CursorPos,
 }
 
 impl ProtoEvent {
@@ -142,6 +155,7 @@ impl ProtoEvent {
             ProtoEvent::Ack(_) => EventType::Ack,
             ProtoEvent::Bounds { .. } => EventType::Bounds,
             ProtoEvent::MotionAbsolute { .. } => EventType::MotionAbsolute,
+            ProtoEvent::CursorPos { .. } => EventType::CursorPos,
         }
     }
 }
@@ -203,6 +217,11 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             EventType::MotionAbsolute => Ok(Self::MotionAbsolute {
                 x: decode_i32(&mut buf)?,
                 y: decode_i32(&mut buf)?,
+            }),
+            EventType::CursorPos => Ok(Self::CursorPos {
+                pos: decode_u8(&mut buf)?.try_into()?,
+                nx: decode_f32(&mut buf)?,
+                ny: decode_f32(&mut buf)?,
             }),
         }
     }
@@ -276,6 +295,11 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                     encode_i32(buf, len, x);
                     encode_i32(buf, len, y);
                 }
+                ProtoEvent::CursorPos { pos, nx, ny } => {
+                    encode_u8(buf, len, pos as u8);
+                    encode_f32(buf, len, nx);
+                    encode_f32(buf, len, ny);
+                }
             }
         }
         (buf, len)
@@ -297,6 +321,7 @@ macro_rules! decode_impl {
 decode_impl!(u8);
 decode_impl!(u32);
 decode_impl!(i32);
+decode_impl!(f32);
 decode_impl!(f64);
 
 macro_rules! encode_impl {
@@ -317,4 +342,5 @@ macro_rules! encode_impl {
 encode_impl!(u8);
 encode_impl!(u32);
 encode_impl!(i32);
+encode_impl!(f32);
 encode_impl!(f64);
