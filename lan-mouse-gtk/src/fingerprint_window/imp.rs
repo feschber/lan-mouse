@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Button, CompositeTemplate, Text,
+    Button, CompositeTemplate, Entry,
     glib::{self, subclass::Signal},
     template_callbacks,
 };
@@ -13,9 +13,9 @@ use gtk::{
 #[template(resource = "/de/feschber/LanMouse/fingerprint_window.ui")]
 pub struct FingerprintWindow {
     #[template_child]
-    pub description: TemplateChild<Text>,
+    pub description: TemplateChild<Entry>,
     #[template_child]
-    pub fingerprint: TemplateChild<Text>,
+    pub fingerprint: TemplateChild<Entry>,
     #[template_child]
     pub confirm_button: TemplateChild<Button>,
 }
