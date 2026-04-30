@@ -31,6 +31,42 @@ pub enum GtkError {
     NonZeroExitCode(i32),
 }
 
+/// Arm a process-level force-exit backstop and request a normal app
+/// quit. macOS-only because shutdown wedges (GTK main loop pumping
+/// pending events while the daemon is also being torn down, a
+/// CGEventTap that hasn't been removed yet, an outgoing IPC write
+/// blocked on a closing socket) only show up on macOS in practice.
+///
+/// The backstop thread sleeps outside the GTK main loop so it fires
+/// even if the loop itself is the thing that's wedged. If normal
+/// cleanup completes first (the usual case) the process exits via
+/// `main` returning and the sleeping backstop thread is killed by
+/// the OS along with everything else — the timer never fires.
+///
+/// Calling this twice in quick succession is a no-op on the second
+/// call so we don't spawn multiple backstops.
+#[cfg(target_os = "macos")]
+pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ARMED: OnceLock<AtomicBool> = OnceLock::new();
+    let armed = ARMED.get_or_init(|| AtomicBool::new(false));
+    if armed.swap(true, Ordering::SeqCst) {
+        app.quit();
+        return;
+    }
+
+    std::thread::Builder::new()
+        .name("lan-mouse-quit-backstop".into())
+        .spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            log::warn!("quit cleanup did not complete in 5s — force-exiting");
+            std::process::exit(0);
+        })
+        .ok();
+    app.quit();
+}
+
 pub fn run(gui_lock: Option<GuiLock>) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
 
@@ -167,6 +203,9 @@ fn setup_actions(app: &adw::Application) {
     quit_action.connect_activate({
         let app = app.clone();
         move |_, _| {
+            #[cfg(target_os = "macos")]
+            request_quit_with_backstop(&app);
+            #[cfg(not(target_os = "macos"))]
             app.quit();
         }
     });
@@ -276,7 +315,7 @@ fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
             macos_privacy::AccessibilityChange::Revoked => {
                 log::warn!("Accessibility revoked — quitting to avoid wedging system input");
                 if let Some(app) = app_weak.upgrade() {
-                    app.quit();
+                    request_quit_with_backstop(&app);
                 }
             }
         });

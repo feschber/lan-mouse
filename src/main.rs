@@ -98,16 +98,42 @@ fn run() -> Result<(), LanMouseError> {
 
                 let mut service = start_service()?;
                 let res = lan_mouse_gtk::run(gui_lock);
+
+                // Bound the daemon-child cleanup so a wedged daemon
+                // (CGEventTap stuck on macOS, hung syscall, etc.)
+                // can't freeze the GUI on quit. SIGINT first, give it
+                // a few seconds to exit cleanly, then SIGKILL.
                 #[cfg(unix)]
                 {
-                    // on unix we give the service a chance to terminate gracefully
                     let pid = service.id() as libc::pid_t;
                     unsafe {
                         libc::kill(pid, libc::SIGINT);
                     }
-                    service.wait()?;
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    loop {
+                        match service.try_wait() {
+                            Ok(Some(_)) => break,
+                            Ok(None) if std::time::Instant::now() >= deadline => {
+                                log::warn!(
+                                    "daemon child did not exit on SIGINT in 3s — sending SIGKILL"
+                                );
+                                let _ = service.kill();
+                                let _ = service.wait();
+                                break;
+                            }
+                            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                            Err(e) => {
+                                log::error!("waiting for daemon child: {e}");
+                                break;
+                            }
+                        }
+                    }
                 }
-                service.kill()?;
+                #[cfg(not(unix))]
+                {
+                    let _ = service.kill();
+                    let _ = service.wait();
+                }
                 res?;
             }
             #[cfg(not(feature = "gtk"))]
