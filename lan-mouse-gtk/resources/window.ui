@@ -207,8 +207,8 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Auto-Release</property>
-                        <property name="description" translatable="yes">Releases forwarded mouse capture when the cursor pushes past the host-adjacent edge. When set to off, release still happens via the bind chord, or normal peer-side leave events. Enable this if you need to auto-release mouse capture between one or more lock screens.</property>
+                        <property name="title" translatable="yes">Outgoing Auto-Release</property>
+                        <property name="description" translatable="yes">When this machine is capturing input for a peer, releases capture automatically once the cursor pushes past the host-adjacent edge. With the slider off, release still happens via the bind chord or a peer-side leave event. Useful when crossing one or more lock screens between machines.</property>
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
                             <property name="title" translatable="yes">Release Threshold</property>

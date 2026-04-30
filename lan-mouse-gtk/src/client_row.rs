@@ -85,12 +85,11 @@ impl ClientRow {
                 row_for_hostname.set_title(&collapsed_title(hostname, port));
             });
         let row_for_port = self.clone();
-        let port_title_handler =
-            client_object.connect_notify_local(Some("port"), move |obj, _| {
-                let hostname: Option<String> = obj.property("hostname");
-                let port: u32 = obj.property("port");
-                row_for_port.set_title(&collapsed_title(hostname, port));
-            });
+        let port_title_handler = client_object.connect_notify_local(Some("port"), move |obj, _| {
+            let hostname: Option<String> = obj.property("hostname");
+            let port: u32 = obj.property("port");
+            row_for_port.set_title(&collapsed_title(hostname, port));
+        });
         self.set_title(&collapsed_title(
             client_object.property::<Option<String>>("hostname"),
             client_object.property::<u32>("port"),
