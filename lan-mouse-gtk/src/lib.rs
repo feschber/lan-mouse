@@ -31,7 +31,7 @@ pub(crate) fn local_commit_str() -> String {
         .to_string()
 }
 
-use lan_mouse_ipc::FrontendEvent;
+use lan_mouse_ipc::{FrontendEvent, GuiLock};
 
 use adw::Application;
 use gtk::{IconTheme, gdk::Display, glib::clone, prelude::*};
@@ -84,22 +84,42 @@ pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
     app.quit();
 }
 
-pub fn run(local_commit: [u8; 8]) -> Result<(), GtkError> {
+pub fn run(local_commit: [u8; 8], gui_lock: Option<GuiLock>) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
     LOCAL_COMMIT
         .set(local_commit)
         .expect("local_commit set once");
 
+    // Spawn the GUI lock listener: a blocking thread that waits for
+    // future `lan-mouse` invocations to connect and ask us to show
+    // ourselves. Forwards each request to the GTK main loop via an
+    // async channel. When `gui_lock` is None (lock acquisition failed
+    // earlier — non-fatal) we just don't have a singleton-show path.
+    let show_rx = gui_lock.map(|lock| {
+        let (tx, rx) = async_channel::unbounded::<()>();
+        std::thread::Builder::new()
+            .name("lan-mouse-gui-lock".into())
+            .spawn(move || {
+                while let Some(()) = lock.next_show() {
+                    if tx.send_blocking(()).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn gui lock listener");
+        rx
+    });
+
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
         .name("gtk".into())
-        .spawn(gtk_main)
+        .spawn(move || gtk_main(show_rx))
         .unwrap()
         .join()
         .unwrap();
     #[cfg(not(windows))]
-    let ret = gtk_main();
+    let ret = gtk_main(show_rx);
 
     match ret {
         glib::ExitCode::SUCCESS => Ok(()),
@@ -107,7 +127,7 @@ pub fn run(local_commit: [u8; 8]) -> Result<(), GtkError> {
     }
 }
 
-fn gtk_main() -> glib::ExitCode {
+fn gtk_main(show_rx: Option<async_channel::Receiver<()>>) -> glib::ExitCode {
     #[cfg(target_os = "macos")]
     {
         configure_macos_bundle_environment();
@@ -125,7 +145,7 @@ fn gtk_main() -> glib::ExitCode {
         setup_actions(app);
         setup_menu(app);
     });
-    app.connect_activate(build_ui);
+    app.connect_activate(move |app| build_ui(app, show_rx.clone()));
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
@@ -237,7 +257,16 @@ fn setup_menu(app: &adw::Application) {
     app.set_menubar(Some(&menu))
 }
 
-fn build_ui(app: &Application) {
+fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
+    // Defense in depth: if `activate` fires a second time in the same
+    // process — the GApplication DBus single-instance hand-off does
+    // this on Linux, and `kAEReopenApplication` does this on macOS —
+    // present the existing window instead of building another one.
+    if let Some(existing) = app.windows().first() {
+        existing.present();
+        return;
+    }
+
     log::debug!("connecting to lan-mouse-socket");
     let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
         Ok(conn) => conn,
@@ -310,6 +339,23 @@ fn build_ui(app: &Application) {
                 }
             }
         });
+    }
+
+    // Wire up the GUI singleton: when a later `lan-mouse` invocation
+    // signals us, present (and on macOS also un-hide) the window. The
+    // sender lives on a dedicated std::thread spawned in `run()`.
+    if let Some(show_rx) = show_rx {
+        glib::spawn_future_local(clone!(
+            #[weak]
+            window,
+            async move {
+                while show_rx.recv().await.is_ok() {
+                    log::debug!("show signal from second instance — presenting window");
+                    window.set_visible(true);
+                    window.present();
+                }
+            }
+        ));
     }
 
     glib::spawn_future_local(clone!(

@@ -10,7 +10,7 @@ use lan_mouse::{
 use lan_mouse_cli::CliError;
 #[cfg(feature = "gtk")]
 use lan_mouse_gtk::GtkError;
-use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
+use lan_mouse_ipc::{GuiLock, IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
@@ -84,8 +84,31 @@ fn run() -> Result<(), LanMouseError> {
             //  run a frontend
             #[cfg(feature = "gtk")]
             {
+                // Cross-platform GUI singleton: only one Lan Mouse
+                // window per user session. If another GUI is already
+                // listening we send it a "show yourself" byte and
+                // exit; otherwise we hold the lock for the GUI's
+                // lifetime. Decoupled from the daemon socket so a
+                // headless `lan-mouse daemon` doesn't block a later
+                // GUI launch.
+                let gui_lock = match GuiLock::acquire_or_signal() {
+                    Ok(Some(lock)) => Some(lock),
+                    Ok(None) => {
+                        log::info!(
+                            "lan-mouse GUI is already running; brought it to the foreground"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        // Don't fail the whole launch over the lock —
+                        // log and proceed without singleton coverage.
+                        log::warn!("could not acquire GUI singleton lock: {e}");
+                        None
+                    }
+                };
+
                 let mut service = start_service()?;
-                let res = lan_mouse_gtk::run(config::local_commit());
+                let res = lan_mouse_gtk::run(gui_lock, config::local_commit());
 
                 // Bound the daemon-child cleanup so a wedged daemon
                 // (CGEventTap stuck on macOS, hung syscall, etc.)
