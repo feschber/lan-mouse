@@ -14,7 +14,7 @@ use std::{env, process, str};
 
 use window::Window;
 
-use lan_mouse_ipc::FrontendEvent;
+use lan_mouse_ipc::{FrontendEvent, GuiLock};
 
 use adw::Application;
 use gtk::{IconTheme, gdk::Display, glib::clone, prelude::*};
@@ -31,18 +31,75 @@ pub enum GtkError {
     NonZeroExitCode(i32),
 }
 
-pub fn run() -> Result<(), GtkError> {
+/// Arm a process-level force-exit backstop and request a normal app
+/// quit. macOS-only because shutdown wedges (GTK main loop pumping
+/// pending events while the daemon is also being torn down, a
+/// CGEventTap that hasn't been removed yet, an outgoing IPC write
+/// blocked on a closing socket) only show up on macOS in practice.
+///
+/// The backstop thread sleeps outside the GTK main loop so it fires
+/// even if the loop itself is the thing that's wedged. If normal
+/// cleanup completes first (the usual case) the process exits via
+/// `main` returning and the sleeping backstop thread is killed by
+/// the OS along with everything else — the timer never fires.
+///
+/// Calling this twice in quick succession is a no-op on the second
+/// call so we don't spawn multiple backstops.
+#[cfg(target_os = "macos")]
+pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ARMED: OnceLock<AtomicBool> = OnceLock::new();
+    let armed = ARMED.get_or_init(|| AtomicBool::new(false));
+    if armed.swap(true, Ordering::SeqCst) {
+        app.quit();
+        return;
+    }
+
+    std::thread::Builder::new()
+        .name("lan-mouse-quit-backstop".into())
+        .spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            log::warn!("quit cleanup did not complete in 5s — force-exiting");
+            std::process::exit(0);
+        })
+        .ok();
+    app.quit();
+}
+
+pub fn run(gui_lock: Option<GuiLock>) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
+
+    // Spawn the GUI lock listener: a blocking thread that waits for
+    // future `lan-mouse` invocations to connect and ask us to show
+    // ourselves. Forwards each request to the GTK main loop via an
+    // async channel. When `gui_lock` is None (lock acquisition failed
+    // earlier — non-fatal) we just don't have a singleton-show path.
+    let show_rx = gui_lock.map(|lock| {
+        let (tx, rx) = async_channel::unbounded::<()>();
+        std::thread::Builder::new()
+            .name("lan-mouse-gui-lock".into())
+            .spawn(move || {
+                while let Some(()) = lock.next_show() {
+                    if tx.send_blocking(()).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn gui lock listener");
+        rx
+    });
+
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
         .name("gtk".into())
-        .spawn(gtk_main)
+        .spawn(move || gtk_main(show_rx))
         .unwrap()
         .join()
         .unwrap();
     #[cfg(not(windows))]
-    let ret = gtk_main();
+    let ret = gtk_main(show_rx);
 
     match ret {
         glib::ExitCode::SUCCESS => Ok(()),
@@ -50,7 +107,7 @@ pub fn run() -> Result<(), GtkError> {
     }
 }
 
-fn gtk_main() -> glib::ExitCode {
+fn gtk_main(show_rx: Option<async_channel::Receiver<()>>) -> glib::ExitCode {
     #[cfg(target_os = "macos")]
     {
         configure_macos_bundle_environment();
@@ -68,7 +125,7 @@ fn gtk_main() -> glib::ExitCode {
         setup_actions(app);
         setup_menu(app);
     });
-    app.connect_activate(build_ui);
+    app.connect_activate(move |app| build_ui(app, show_rx.clone()));
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
@@ -146,10 +203,24 @@ fn setup_actions(app: &adw::Application) {
     quit_action.connect_activate({
         let app = app.clone();
         move |_, _| {
+            #[cfg(target_os = "macos")]
+            request_quit_with_backstop(&app);
+            #[cfg(not(target_os = "macos"))]
             app.quit();
         }
     });
     app.add_action(&quit_action);
+
+    // Cmd+W → close the front window. GtkWindow's built-in `close`
+    // action fires `close-request`, which on macOS we've hooked to
+    // hide the window instead of destroying it (see `build_ui`). The
+    // window's connect_hide handler then flips the activation policy
+    // to Accessory — net effect is that Cmd+W collapses the GUI to a
+    // menu-bar-only background helper, freeing focus for whatever the
+    // user does next. Wired only on macOS so we don't override the
+    // native Ctrl+W behavior on Linux/Windows.
+    #[cfg(target_os = "macos")]
+    app.set_accels_for_action("window.close", &["<Meta>w"]);
 }
 
 // Set up a global menu
@@ -159,13 +230,23 @@ fn setup_menu(app: &adw::Application) {
     let menu = gio::Menu::new();
 
     let file_menu = gio::Menu::new();
+    file_menu.append(Some("Close Window"), Some("window.close"));
     file_menu.append(Some("Quit"), Some("app.quit"));
     menu.append_submenu(Some("_File"), &file_menu);
 
     app.set_menubar(Some(&menu))
 }
 
-fn build_ui(app: &Application) {
+fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
+    // Defense in depth: if `activate` fires a second time in the same
+    // process — the GApplication DBus single-instance hand-off does
+    // this on Linux, and `kAEReopenApplication` does this on macOS —
+    // present the existing window instead of building another one.
+    if let Some(existing) = app.windows().first() {
+        existing.present();
+        return;
+    }
+
     log::debug!("connecting to lan-mouse-socket");
     let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
         Ok(conn) => conn,
@@ -197,6 +278,19 @@ fn build_ui(app: &Application) {
             window.set_visible(false);
             glib::Propagation::Stop
         });
+        // Toggle the Dock icon based on the window's visibility:
+        // Regular while the window is open (Dock icon shown so the
+        // user has a familiar way back to the app), Accessory while
+        // the window is hidden and only the menu-bar item is around
+        // (matches the LSUIElement-style background-helper feel).
+        window.connect_show(|_| {
+            macos_status_item::set_activation_policy(macos_status_item::ACTIVATION_POLICY_REGULAR);
+        });
+        window.connect_hide(|_| {
+            macos_status_item::set_activation_policy(
+                macos_status_item::ACTIVATION_POLICY_ACCESSORY,
+            );
+        });
         macos_status_item::setup(app, &window);
         // First-launch TCC prompts. No-op when already granted.
         macos_privacy::fire_initial_prompts();
@@ -221,10 +315,27 @@ fn build_ui(app: &Application) {
             macos_privacy::AccessibilityChange::Revoked => {
                 log::warn!("Accessibility revoked — quitting to avoid wedging system input");
                 if let Some(app) = app_weak.upgrade() {
-                    app.quit();
+                    request_quit_with_backstop(&app);
                 }
             }
         });
+    }
+
+    // Wire up the GUI singleton: when a later `lan-mouse` invocation
+    // signals us, present (and on macOS also un-hide) the window. The
+    // sender lives on a dedicated std::thread spawned in `run()`.
+    if let Some(show_rx) = show_rx {
+        glib::spawn_future_local(clone!(
+            #[weak]
+            window,
+            async move {
+                while show_rx.recv().await.is_ok() {
+                    log::debug!("show signal from second instance — presenting window");
+                    window.set_visible(true);
+                    window.present();
+                }
+            }
+        ));
     }
 
     glib::spawn_future_local(clone!(
@@ -268,6 +379,12 @@ fn build_ui(app: &Application) {
                     }
                     FrontendEvent::IncomingDisconnected(addr) => {
                         window.show_toast(format!("{addr} disconnected").as_str());
+                    }
+                    FrontendEvent::ReleaseThreshold(threshold) => {
+                        window.set_release_threshold(threshold);
+                    }
+                    FrontendEvent::NaturalScroll(natural_scroll) => {
+                        window.set_natural_scroll(natural_scroll);
                     }
                 }
             }

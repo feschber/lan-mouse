@@ -9,7 +9,7 @@ use core_foundation::{
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{CGError, kCGErrorSuccess},
+    base::{CGError, CGFloat, kCGErrorSuccess},
     display::{CGDisplay, CGPoint},
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -62,7 +62,14 @@ struct InputCaptureState {
 
 #[derive(Debug)]
 enum ProducerEvent {
-    Release,
+    /// `warp_target`, when present, is a screen-space (Quartz) point
+    /// at which to warp the local cursor before showing it. Used to
+    /// preserve cross-axis continuity on release: the visible cursor
+    /// reappears at the host point matching where it visually was on
+    /// the guest, instead of snapping back to the capture-start edge.
+    Release {
+        warp_target: Option<(i32, i32)>,
+    },
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -153,8 +160,26 @@ impl InputCaptureState {
     ) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
-            ProducerEvent::Release => {
+            ProducerEvent::Release { warp_target } => {
+                log::info!(
+                    "[release-warp] handle_producer_event Release: current_pos={:?} warp_target={warp_target:?}",
+                    self.current_pos
+                );
                 if self.current_pos.is_some() {
+                    // Warp BEFORE clearing current_pos so the
+                    // event-tap callback can't see Some(pos) and
+                    // re-snap the cursor to the entry edge before we
+                    // make it visible again. Then show_cursor() reveals
+                    // it at the warped point.
+                    if let Some((x, y)) = warp_target {
+                        log::info!("[release-warp] warping local cursor to ({x}, {y})");
+                        if let Err(e) = CGDisplay::warp_mouse_cursor_position(CGPoint {
+                            x: x as CGFloat,
+                            y: y as CGFloat,
+                        }) {
+                            log::warn!("[release-warp] warp_mouse_cursor_position failed: {e:?}");
+                        }
+                    }
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -357,11 +382,41 @@ fn get_events(
             })))
         }
         CGEventType::ScrollWheel => {
+            // Emit scroll deltas in the *classic* mouse-wheel convention
+            // (the historical baseline that predates natural scrolling)
+            // regardless of the user's macOS Natural Scrolling
+            // preference. Rationale:
+            //
+            //   1. Classic was the canonical scroll convention when
+            //      the scroll wheel was invented; using it as the
+            //      wire format keeps Lan Mouse predictable for any
+            //      receiver, including non-natural-aware peers.
+            //   2. Receivers opt into natural-feel via their own
+            //      `natural_scroll` config, mirroring how libinput's
+            //      natural_scroll knob works for physical input.
+            //   3. macOS Natural Scrolling pre-flips POINT_DELTA at
+            //      the OS layer; CGEventTap at Session placement sees
+            //      events after that flip. So:
+            //        Natural ON: POINT_DELTA already flipped (away
+            //          from classic) → re-flip back to classic by
+            //          NOT flipping in our code (sign = +1).
+            //        Natural OFF: POINT_DELTA already in classic →
+            //          flip once to invert away from raw and… wait,
+            //          actually we want to land on classic regardless.
+            //          With Natural OFF the OS gives us "raw classic"
+            //          *as-the-mac-sees-it*; our peers' wl_pointer
+            //          treats positive Y as "document moves down on
+            //          screen" (natural-feel). To present classic
+            //          feel on the wire we negate (sign = -1).
+            //
+            // Net result: wire is consistently classic-feel regardless
+            // of the Mac's preference. Receivers can re-invert.
+            let sign: i64 = if natural_scrolling_enabled() { 1 } else { -1 };
             if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
-                let v =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-                let h =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
+                let v = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+                let h = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                         time: 0,
@@ -380,8 +435,10 @@ fn get_events(
                 // line based scrolling
                 const LINES_PER_STEP: i32 = 3;
                 const V120_STEPS_PER_LINE: i32 = 120 / LINES_PER_STEP;
-                let v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
-                let h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
+                let v =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+                let h =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(
                         PointerEvent::AxisDiscrete120 {
@@ -519,10 +576,17 @@ fn create_event_tap<'a>(
             // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
                 capture_position = Some(new_pos);
+                // Snapshot the cursor's screen-space position at the
+                // instant of crossing — before start_capture's
+                // reset_cursor() snaps it to the edge. The peer uses
+                // this for the visually-corresponding warp on Enter
+                // so the cursor doesn't jump to the entry-edge midpoint.
+                let cross_loc = cg_ev.location();
+                let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
                 state
                     .start_capture(cg_ev, new_pos)
                     .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
+                res_events.push(CaptureEvent::Begin { cursor });
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
                     .expect("Failed to send notification");
@@ -772,17 +836,41 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
+        log::info!("[release-warp] macOS backend release(warp_target={warp_target:?})");
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
+            let _ = notify_tx.send(ProducerEvent::Release { warp_target }).await;
         });
         Ok(())
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Mirror the InputEmulation-side implementation: the union of
+        // every active display's rectangle, in points (which match
+        // the units used by CGEvent.location() so the
+        // MotionAbsolute math stays internally consistent).
+        let displays = CGDisplay::active_displays().ok()?;
+        let mut xmin = f64::INFINITY;
+        let mut xmax = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            xmax = xmax.max(bounds.origin.x + bounds.size.width);
+            ymin = ymin.min(bounds.origin.y);
+            ymax = ymax.max(bounds.origin.y + bounds.size.height);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
     }
 }
 
@@ -839,6 +927,43 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+}
+
+/// Read `com.apple.swipescrolldirection` from the global preferences
+/// domain. Returns `true` when Natural Scrolling is enabled (the
+/// modern macOS default) — the same default macOS uses if the key
+/// is unset. Used to decide whether to invert scroll deltas before
+/// forwarding them to a peer that has its own fixed convention.
+fn natural_scrolling_enabled() -> bool {
+    unsafe {
+        let key_cstr = CString::new("com.apple.swipescrolldirection").unwrap();
+        let key = CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            key_cstr.as_ptr() as *const c_char,
+            kCFStringEncodingUTF8,
+        );
+        if key.is_null() {
+            return true;
+        }
+        let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
+        CFRelease(key as *const c_void);
+        if value.is_null() {
+            // Key absent → modern macOS default is enabled.
+            return true;
+        }
+        // The preference is stored as a CFBoolean; kCFBooleanTrue
+        // and kCFBooleanFalse are singleton instances, so a pointer
+        // compare is correct and sufficient.
+        let is_true = (value as CFBooleanRef) == kCFBooleanTrue;
+        CFRelease(value);
+        is_true
+    }
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFPreferencesCopyAppValue(key: CFStringRef, application_id: CFStringRef) -> *const c_void;
+    static kCFPreferencesAnyApplication: CFStringRef;
 }
 
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {

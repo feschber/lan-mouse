@@ -259,8 +259,16 @@ async fn read_loop(
                 .send(ListenEvent::Msg { event, addr })
                 .expect("channel closed"),
             Err(e) => {
-                log::warn!("error receiving event: {e}");
-                break;
+                // Skip the malformed/unknown datagram and keep
+                // listening. Each DTLS recv returns one full
+                // datagram, so a parse error here can't desync a
+                // stream; the next call gets a fresh, framed
+                // message. This makes the protocol forward-
+                // compatible: a peer running a newer Lan Mouse
+                // version can introduce additional event types
+                // and old peers will simply ignore them rather
+                // than dropping the connection.
+                log::debug!("ignoring undecodable event from {addr}: {e}");
             }
         }
     }

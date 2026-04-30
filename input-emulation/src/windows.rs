@@ -17,7 +17,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
-use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SetCursorPos, XBUTTON1, XBUTTON2,
+};
 
 use super::{Emulation, EmulationHandle};
 
@@ -26,11 +28,15 @@ const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 
 pub(crate) struct WindowsEmulation {
     repeat_task: Option<AbortHandle>,
+    natural_scroll: bool,
 }
 
 impl WindowsEmulation {
     pub(crate) fn new() -> Result<Self, WindowsEmulationCreationError> {
-        Ok(Self { repeat_task: None })
+        Ok(Self {
+            repeat_task: None,
+            natural_scroll: false,
+        })
     }
 }
 
@@ -51,8 +57,14 @@ impl Emulation for WindowsEmulation {
                     time: _,
                     axis,
                     value,
-                } => scroll(axis, value as i32),
-                PointerEvent::AxisDiscrete120 { axis, value } => scroll(axis, value),
+                } => {
+                    let value = if self.natural_scroll { -value } else { value };
+                    scroll(axis, value as i32);
+                }
+                PointerEvent::AxisDiscrete120 { axis, value } => {
+                    let value = if self.natural_scroll { -value } else { value };
+                    scroll(axis, value);
+                }
             },
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 KeyboardEvent::Key {
@@ -80,6 +92,31 @@ impl Emulation for WindowsEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Virtual-screen metrics cover the union of every monitor
+        // attached to the system, matching the host-side capture
+        // model that uses the union of all displays.
+        unsafe {
+            let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if w <= 0 || h <= 0 {
+                return None;
+            }
+            Some((w as u32, h as u32))
+        }
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        unsafe {
+            let _ = SetCursorPos(x, y);
+        }
+        Ok(())
+    }
+
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
+    }
 }
 
 impl WindowsEmulation {

@@ -407,6 +407,14 @@ impl Window {
         self.request(FrontendRequest::Create);
     }
 
+    pub(super) fn request_release_threshold(&self, threshold: u32) {
+        self.request(FrontendRequest::SetReleaseThreshold(threshold));
+    }
+
+    pub(super) fn request_natural_scroll(&self, natural_scroll: bool) {
+        self.request(FrontendRequest::SetNaturalScroll(natural_scroll));
+    }
+
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
         let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
@@ -461,6 +469,42 @@ impl Window {
         self.update_capture_emulation_status();
     }
 
+    pub(super) fn set_natural_scroll(&self, natural_scroll: bool) {
+        let imp = self.imp();
+        let switch = &imp.natural_scroll_switch;
+        let handler = imp.natural_scroll_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(natural_scroll);
+        switch.set_state(natural_scroll);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
+    pub(super) fn set_release_threshold(&self, threshold: u32) {
+        let imp = self.imp();
+        // Block the value-changed handler so programmatically setting
+        // the slider value (e.g. on Sync from the daemon) doesn't
+        // ricochet back as a SetReleaseThreshold request.
+        let scale = &imp.release_threshold_scale;
+        let handler_id = imp.release_threshold_handler.borrow();
+        if let Some(id) = handler_id.as_ref() {
+            scale.block_signal(id);
+        }
+        scale.set_value(threshold as f64);
+        if let Some(id) = handler_id.as_ref() {
+            scale.unblock_signal(id);
+        }
+        let label = if threshold == 0 {
+            "Disabled".to_string()
+        } else {
+            format!("{threshold} px")
+        };
+        imp.release_threshold_value.set_label(&label);
+    }
+
     #[cfg(target_os = "macos")]
     pub(super) fn refresh_capture_emulation_status(&self) {
         self.update_capture_emulation_status();
@@ -512,8 +556,8 @@ impl Window {
             set_button_content_label(button, "Relaunch");
         } else {
             // AX missing → send the user to System Settings.
-            row.set_title("input capture is disabled");
-            row.set_subtitle("grant Accessibility permission to enable");
+            row.set_title("Input capture is disabled");
+            row.set_subtitle("Grant Accessibility permission to enable");
             set_button_content_label(button, "Grant");
         }
     }

@@ -149,6 +149,13 @@ struct Window {
     surface: WlSurface,
     layer_surface: ZwlrLayerSurfaceV1,
     pos: Position,
+    /// Output's top-left corner in compositor coordinate space —
+    /// used together with `wl_pointer::Enter`'s surface-local coords
+    /// to recover the host screen-space cursor position at the moment
+    /// of crossing, so we can populate `CaptureEvent::Begin { cursor }`
+    /// for cross-axis preservation.
+    output_pos: (i32, i32),
+    output_size: (i32, i32),
 }
 
 impl Window {
@@ -157,6 +164,7 @@ impl Window {
         qh: &QueueHandle<State>,
         output: &WlOutput,
         pos: Position,
+        output_pos: (i32, i32),
         size: (i32, i32),
     ) -> Window {
         log::debug!("creating window output: {output:?}, size: {size:?}");
@@ -208,6 +216,8 @@ impl Window {
             buffer,
             surface,
             layer_surface,
+            output_pos,
+            output_size: size,
         }
     }
 }
@@ -218,6 +228,22 @@ impl Drop for Window {
         self.layer_surface.destroy();
         self.surface.destroy();
         self.buffer.destroy();
+    }
+}
+
+/// Translate `wl_pointer.enter` surface-local coords into the host's
+/// compositor coordinate space, using the layer-surface's anchor edge
+/// and the output it's attached to. Layer surfaces here are 1 px on
+/// the on-axis dimension and span the cross-axis, so the surface-local
+/// cross-axis coord is the screen offset directly.
+fn surface_to_screen(window: &Window, surface_x: f64, surface_y: f64) -> (i32, i32) {
+    let (ox, oy) = window.output_pos;
+    let (ow, oh) = window.output_size;
+    match window.pos {
+        Position::Left => (ox, oy + surface_y as i32),
+        Position::Right => (ox + ow.saturating_sub(1), oy + surface_y as i32),
+        Position::Top => (ox + surface_x as i32, oy),
+        Position::Bottom => (ox + surface_x as i32, oy + oh.saturating_sub(1)),
     }
 }
 
@@ -525,7 +551,8 @@ impl State {
         );
         outputs.iter().for_each(|o| {
             if let Some(info) = o.info.as_ref() {
-                let window = Window::new(self, &self.qh, &o.wl_output, pos, info.size);
+                let window =
+                    Window::new(self, &self.qh, &o.wl_output, pos, info.position, info.size);
                 let window = Arc::new(window);
                 self.active_windows.push(window);
             }
@@ -628,7 +655,7 @@ impl Capture for LayerShellInputCapture {
         Ok(inner.flush_events()?)
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, _warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         log::debug!("releasing pointer");
         let inner = self.0.get_mut();
         inner.state.ungrab();
@@ -637,6 +664,28 @@ impl Capture for LayerShellInputCapture {
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Union of every active output's rectangle in compositor
+        // coords. Mirrors the macOS impl so MotionAbsolute scaling
+        // stays consistent: cursor coords reported in this same
+        // space normalize cleanly against the returned dimensions.
+        let outputs = &self.0.get_ref().state.outputs;
+        let mut xmin = i32::MAX;
+        let mut ymin = i32::MAX;
+        let mut xmax = i32::MIN;
+        let mut ymax = i32::MIN;
+        for info in outputs.iter().filter_map(|o| o.info.as_ref()) {
+            xmin = xmin.min(info.position.0);
+            ymin = ymin.min(info.position.1);
+            xmax = xmax.max(info.position.0 + info.size.0);
+            ymax = ymax.max(info.position.1 + info.size.1);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
     }
 }
 
@@ -735,25 +784,26 @@ impl Dispatch<WlPointer, ()> for State {
             wl_pointer::Event::Enter {
                 serial,
                 surface,
-                surface_x: _,
-                surface_y: _,
+                surface_x,
+                surface_y,
             } => {
-                // get client corresponding to the focused surface
-                {
-                    if let Some(window) = app.active_windows.iter().find(|w| w.surface == surface) {
-                        app.focused = Some(window.clone());
-                        app.grab(&surface, pointer, serial, qh);
-                    } else {
-                        return;
-                    }
-                }
-                let pos = app
+                let Some(window) = app
                     .active_windows
                     .iter()
                     .find(|w| w.surface == surface)
-                    .map(|w| w.pos)
-                    .unwrap();
-                app.pending_events.push_back((pos, CaptureEvent::Begin));
+                    .cloned()
+                else {
+                    return;
+                };
+                app.focused = Some(window.clone());
+                app.grab(&surface, pointer, serial, qh);
+                let cursor = surface_to_screen(&window, surface_x, surface_y);
+                app.pending_events.push_back((
+                    window.pos,
+                    CaptureEvent::Begin {
+                        cursor: Some(cursor),
+                    },
+                ));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in

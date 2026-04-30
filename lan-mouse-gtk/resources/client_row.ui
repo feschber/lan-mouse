@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
 	<template class="ClientRow" parent="AdwExpanderRow">
-		<property name="title">hostname</property>
+		<property name="title">Hostname</property>
 		<!-- enabled -->
 		<child type="prefix">
 			<object class="GtkSwitch" id="enable_switch">
 				<property name="valign">center</property>
 				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">enable</property>
+				<property name="tooltip-text" translatable="yes">Enable</property>
 			</object>
 		</child>
 		<child type="suffix">
@@ -17,33 +17,35 @@
 				<property name="icon-name">network-wired-symbolic</property>
 				<property name="valign">center</property>
 				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">resolve host</property>
+				<property name="tooltip-text" translatable="yes">Resolve host</property>
 			</object>
 		</child>
 		<child type="suffix">
 			<object class="GtkSpinner" id="dns_loading_indicator">
 			</object>
 		</child>
-		<!-- host -->
+		<!-- hostname -->
 		<child>
 			<object class="AdwActionRow">
-				<property name="title">hostname</property>
-				<property name="subtitle">port</property>
-				<!-- hostname -->
+				<property name="title" translatable="yes">Hostname</property>
+				<property name="subtitle" translatable="yes">IP address or DNS hostname</property>
 				<child>
 					<object class="GtkEntry" id="hostname">
-						<!-- <property name="title" translatable="yes">hostname</property> -->
 						<property name="xalign">0.5</property>
 						<property name="valign">center</property>
-						<property name="placeholder-text">hostname</property>
+						<property name="placeholder-text">192.168.1.42</property>
 						<property name="width-chars">-1</property>
 					</object>
 				</child>
-				<!-- port -->
+			</object>
+		</child>
+		<!-- port -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Port</property>
 				<child>
 					<object class="GtkEntry" id="port">
-						<!-- <property name="title" translatable="yes">port</property> -->
-                        <property name="max-width-chars">5</property>
+						<property name="max-width-chars">5</property>
 						<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
 						<property name="xalign">0.5</property>
 						<property name="valign">center</property>
@@ -56,7 +58,7 @@
 		<!-- position -->
 		<child>
 			<object class="AdwComboRow" id="position">
-				<property name="title" translatable="yes">position</property>
+				<property name="title" translatable="yes">Position</property>
 				<property name="model">
 					<object class="GtkStringList">
 						<items>
@@ -72,7 +74,7 @@
 		<!-- delete button -->
 		<child>
 			<object class="AdwActionRow" id="delete_row">
-				<property name="title">delete this client</property>
+				<property name="title">Delete this client</property>
 				<child>
 					<object class="GtkButton" id="delete_button">
 						<signal name="activate" handler="handle_client_delete" object="delete_row" swapped="true"/>

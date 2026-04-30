@@ -178,6 +178,25 @@ impl InputEmulation {
         self.emulation.terminate().await
     }
 
+    /// Display geometry of this device (union of all active
+    /// displays), if the backend can report it. See
+    /// `Emulation::display_bounds`.
+    pub fn display_bounds(&self) -> Option<(u32, u32)> {
+        self.emulation.display_bounds()
+    }
+
+    /// Warp the local cursor to the given absolute position. See
+    /// `Emulation::warp_cursor`.
+    pub async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        self.emulation.warp_cursor(x, y).await
+    }
+
+    /// Configure whether the backend should invert scroll deltas on
+    /// injection. See `Emulation::set_natural_scroll`.
+    pub fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.emulation.set_natural_scroll(natural_scroll);
+    }
+
     pub async fn release_keys(&mut self, handle: EmulationHandle) -> Result<(), EmulationError> {
         if let Some(keys) = self.pressed_keys.get_mut(&handle) {
             let keys = keys.drain().collect::<Vec<_>>();
@@ -237,4 +256,34 @@ trait Emulation: Send {
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
     async fn terminate(&mut self);
+
+    /// Geometry (width, height) of the union of this device's
+    /// active displays in pixels. Used by the protocol-level
+    /// `Bounds` event so a capturing peer can model the guest
+    /// cursor's position. Backends that can't report geometry
+    /// should leave the default `None` and the wall-press
+    /// auto-release fallback will degrade to "no upper clamp"
+    /// behavior on the host.
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Warp the cursor to an absolute position on the receiving
+    /// device's primary display, if the backend supports absolute
+    /// positioning. Called when an `Enter` event arrives so the
+    /// guest cursor lands at the entry edge instead of staying
+    /// wherever the previous capture session left it. Backends
+    /// without absolute positioning can leave the default no-op
+    /// — the wall-press auto-release will be inaccurate but the
+    /// connection still works.
+    async fn warp_cursor(&mut self, _x: i32, _y: i32) -> Result<(), EmulationError> {
+        Ok(())
+    }
+
+    /// Configure whether the backend should sign-invert scroll
+    /// (axis / axis-discrete) values before injection. Used to
+    /// match the user's libinput natural-scroll preference for
+    /// forwarded events that bypass libinput. Default no-op so
+    /// backends that haven't been updated keep classic behavior.
+    fn set_natural_scroll(&mut self, _natural_scroll: bool) {}
 }

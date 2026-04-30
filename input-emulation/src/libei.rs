@@ -19,8 +19,8 @@ use async_trait::async_trait;
 
 use reis::{
     ei::{
-        self, Button, Keyboard, Pointer, Scroll, button::ButtonState, handshake::ContextType,
-        keyboard::KeyState,
+        self, Button, Keyboard, Pointer, PointerAbsolute, Scroll, button::ButtonState,
+        handshake::ContextType, keyboard::KeyState,
     },
     event::{self, Connection, DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
     tokio::EiConvertEventStream,
@@ -35,6 +35,7 @@ use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 #[derive(Clone, Default)]
 struct Devices {
     pointer: Arc<RwLock<Option<(ei::Device, ei::Pointer)>>>,
+    pointer_abs: Arc<RwLock<Option<(ei::Device, ei::PointerAbsolute)>>>,
     scroll: Arc<RwLock<Option<(ei::Device, ei::Scroll)>>>,
     button: Arc<RwLock<Option<(ei::Device, ei::Button)>>>,
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
@@ -49,6 +50,7 @@ pub(crate) struct LibeiEmulation {
     libei_error: Arc<AtomicBool>,
     _remote_desktop: RemoteDesktop,
     session: Session<RemoteDesktop>,
+    natural_scroll: bool,
 }
 
 /// Get the path to the RemoteDesktop token file
@@ -149,6 +151,7 @@ impl LibeiEmulation {
             libei_error,
             _remote_desktop,
             session,
+            natural_scroll: false,
         })
     }
 }
@@ -207,6 +210,7 @@ impl Emulation for LibeiEmulation {
                     axis,
                     value,
                 } => {
+                    let value = if self.natural_scroll { -value } else { value };
                     let scroll_device = self.devices.scroll.read().unwrap();
                     if let Some((d, s)) = scroll_device.as_ref() {
                         match axis {
@@ -217,6 +221,7 @@ impl Emulation for LibeiEmulation {
                     }
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
+                    let value = if self.natural_scroll { -value } else { value };
                     let scroll_device = self.devices.scroll.read().unwrap();
                     if let Some((d, s)) = scroll_device.as_ref() {
                         match axis {
@@ -260,6 +265,41 @@ impl Emulation for LibeiEmulation {
     async fn terminate(&mut self) {
         let _ = self.session.close().await;
         self.ei_task.abort();
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // TODO: derive from ei::Region events on the
+        // PointerAbsolute device, or query wl_output via a side
+        // wayland-client connection. For now we return None and
+        // the host falls back to the no-upper-clamp heuristic.
+        None
+    }
+
+    fn set_natural_scroll(&mut self, natural_scroll: bool) {
+        self.natural_scroll = natural_scroll;
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        let pointer_abs = self.devices.pointer_abs.read().unwrap();
+        if let Some((device, pointer_abs)) = pointer_abs.as_ref() {
+            pointer_abs.motion_absolute(x as f32, y as f32);
+            device.frame(self.conn.serial(), now);
+            self.context
+                .flush()
+                .map_err(|e| io::Error::new(e.kind(), e))?;
+        } else {
+            // Compositor didn't grant a PointerAbsolute device.
+            // Nothing we can do to warp the cursor; the host's
+            // wall-press model will be off by however far the
+            // user pushed forward in the prior session, but
+            // operation continues.
+            log::debug!("warp_cursor: no PointerAbsolute device available, skipping");
+        }
+        Ok(())
     }
 }
 
@@ -322,6 +362,13 @@ async fn ei_event_handler(
                         .write()
                         .unwrap()
                         .replace((device.device().clone(), pointer));
+                }
+                if let Some(pointer_abs) = e.device().interface::<PointerAbsolute>() {
+                    devices
+                        .pointer_abs
+                        .write()
+                        .unwrap()
+                        .replace((device.device().clone(), pointer_abs));
                 }
                 if let Some(keyboard) = e.device().interface::<Keyboard>() {
                     devices

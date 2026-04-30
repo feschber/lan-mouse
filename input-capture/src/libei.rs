@@ -417,7 +417,10 @@ async fn do_capture_session(
                     current_pos.replace(Some(pos));
 
                     // client entered => send event
-                    event_tx.send((pos, CaptureEvent::Begin)).await.expect("no channel");
+                    event_tx
+                        .send((pos, CaptureEvent::Begin { cursor: None }))
+                        .await
+                        .expect("no channel");
 
                     tokio::select! {
                         _ = notify_release.notified() => { /* capture release */
@@ -589,7 +592,7 @@ impl LanMouseInputCapture for LibeiInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, _warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         self.notify_release.notify_waiters();
         Ok(())
     }

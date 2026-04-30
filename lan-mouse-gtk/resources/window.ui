@@ -9,8 +9,8 @@
     </item>
   </menu>
   <template class="LanMouseWindow" parent="AdwApplicationWindow">
-    <property name="width-request">600</property>
-    <property name="height-request">700</property>
+    <property name="default-width">600</property>
+    <property name="default-height">1400</property>
     <property name="title" translatable="yes">Lan Mouse</property>
     <property name="show-menubar">True</property>
     <property name="content">
@@ -32,25 +32,32 @@
         <child>
           <object class="AdwToastOverlay" id="toast_overlay">
             <child>
-              <object class="AdwStatusPage">
-                <property name="title" translatable="yes">Lan Mouse</property>
-                <property name="description" translatable="yes">easily use your mouse and keyboard on multiple computers</property>
-                <property name="icon-name">de.feschber.LanMouse</property>
-                <property name="child">
+              <object class="GtkScrolledWindow">
+                <property name="vexpand">true</property>
+                <property name="hexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <property name="vscrollbar-policy">automatic</property>
+                <child>
+                  <object class="AdwStatusPage">
+                    <property name="title" translatable="yes">Lan Mouse</property>
+                    <property name="description" translatable="yes">Easily use your mouse and keyboard on multiple computers.</property>
+                    <property name="icon-name">de.feschber.LanMouse</property>
+                    <property name="child">
                   <object class="AdwClamp">
-                  <property name="maximum-size">600</property>
+                  <property name="maximum-size">800</property>
                   <property name="tightening-threshold">0</property>
                   <property name="child">
                     <object class="GtkBox">
                     <property name="orientation">vertical</property>
-                    <property name="spacing">12</property>
+                    <property name="spacing">24</property>
+                    <property name="margin-bottom">36</property>
                     <child>
                       <object class="AdwPreferencesGroup" id="capture_emulation_group">
                       <property name="title" translatable="yes">Capture / Emulation Status</property>
                         <child>
                           <object class="AdwActionRow" id="capture_status_row">
-                            <property name="title">input capture is disabled</property>
-                            <property name="subtitle">required for outgoing and incoming connections</property>
+                            <property name="title">Input capture is disabled</property>
+                            <property name="subtitle">Required for outgoing and incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_capture_button">
@@ -75,8 +82,8 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="emulation_status_row">
-                            <property name="title">input emulation is disabled</property>
-                            <property name="subtitle">required for incoming connections</property>
+                            <property name="title">Input emulation is disabled</property>
+                            <property name="subtitle">Required for incoming connections</property>
                             <property name="icon-name">dialog-warning-symbolic</property>
                             <child>
                               <object class="GtkButton" id="input_emulation_button">
@@ -121,7 +128,7 @@
                         -->
                         <child>
                           <object class="AdwActionRow">
-                            <property name="title">hostname &#38;amp; port</property>
+                            <property name="title">Hostname &#38;amp; Port</property>
                             <child>
                               <object class="GtkButton" id="copy-hostname-button">
                                     <!--<property name="icon-name">edit-copy-symbolic</property>-->
@@ -185,7 +192,7 @@
                         </child>
                         <child>
                           <object class="AdwActionRow" id="fingerprint_row">
-                            <property name="title">certificate fingerprint</property>
+                            <property name="title">Certificate Fingerprint</property>
                             <property name="icon-name">auth-fingerprint-symbolic</property>
                             <child>
                               <object class="GtkButton" id="copy-fingerprint-button">
@@ -200,7 +207,56 @@
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Connections</property>
+                        <property name="title" translatable="yes">Outgoing Auto-Release</property>
+                        <property name="description" translatable="yes">When this machine is capturing input for a peer, releases capture automatically once the cursor pushes past the host-adjacent edge. With the slider off, release still happens via the bind chord or a peer-side leave event. Useful when crossing one or more lock screens between machines.</property>
+                        <child>
+                          <object class="AdwActionRow" id="release_threshold_row">
+                            <property name="title" translatable="yes">Release Threshold</property>
+                            <property name="subtitle" translatable="yes">Pixels of wall-press past the entry edge before auto-release fires</property>
+                            <child type="suffix">
+                              <object class="GtkLabel" id="release_threshold_value">
+                                <property name="label">Disabled</property>
+                                <property name="valign">center</property>
+                                <property name="width-chars">8</property>
+                                <property name="xalign">1.0</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                  <class name="numeric"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkScale" id="release_threshold_scale">
+                            <property name="orientation">horizontal</property>
+                            <property name="hexpand">true</property>
+                            <property name="draw-value">false</property>
+                            <property name="round-digits">0</property>
+                            <property name="margin-top">12</property>
+                            <property name="adjustment">
+                              <object class="GtkAdjustment" id="release_threshold_adjustment">
+                                <property name="lower">0</property>
+                                <property name="upper">500</property>
+                                <property name="step-increment">10</property>
+                                <property name="page-increment">50</property>
+                                <property name="value">0</property>
+                              </object>
+                            </property>
+                            <marks>
+                              <mark value="0" position="bottom">off</mark>
+                              <mark value="50" position="bottom">50</mark>
+                              <mark value="100" position="bottom">100</mark>
+                              <mark value="200" position="bottom">200</mark>
+                              <mark value="500" position="bottom">500</mark>
+                            </marks>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Outgoing Connections</property>
                         <property name="header-suffix">
                           <object class="GtkButton">
                             <signal name="clicked" handler="handle_add_client_pressed" swapped="true"/>
@@ -221,7 +277,7 @@
                             <child type="placeholder">
                               <object class="AdwActionRow" id="client_placeholder">
                                 <property name="title">No connections!</property>
-                                <property name="subtitle">add a new client via the + button</property>
+                                <property name="subtitle">Add a new client via the + button</property>
                               </object>
                             </child>
                             <style>
@@ -253,8 +309,8 @@
                             <property name="selection-mode">none</property>
                             <child type="placeholder">
                               <object class="AdwActionRow" id="authorized_placeholder">
-                                <property name="title">no devices registered!</property>
-                                <property name="subtitle">authorize a new device via the "Authorize" button</property>
+                                <property name="title">No devices registered</property>
+                                <property name="subtitle">Authorize a new device via the "Authorize" button</property>
                               </object>
                             </child>
                             <style>
@@ -264,10 +320,29 @@
                         </child>
                       </object>
                     </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Scroll Direction</property>
+                        <property name="description" translatable="yes">Forwarded scroll events bypass OS-level preferences. Choose a scroll direction below.</property>
+                        <child>
+                          <object class="AdwActionRow" id="natural_scroll_row">
+                            <property name="title" translatable="yes">Natural scrolling</property>
+                            <property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events</property>
+                            <child type="suffix">
+                              <object class="GtkSwitch" id="natural_scroll_switch">
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                     </object>
                   </property>
                   </object>
                 </property>
+              </object>
+                </child>
               </object>
             </child>
           </object>
