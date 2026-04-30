@@ -4,8 +4,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Button, CompositeTemplate, Entry,
-    glib::{self, subclass::Signal},
+    Button, CompositeTemplate, Entry, EventControllerKey, gdk,
+    glib::{self, Propagation, subclass::Signal},
     template_callbacks,
 };
 
@@ -86,6 +86,21 @@ impl ObjectImpl for FingerprintWindow {
         self.refresh_confirm_sensitivity();
 
         let obj = self.obj();
+
+        // Close on Escape.
+        let key = EventControllerKey::new();
+        let weak_close = obj.downgrade();
+        key.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gdk::Key::Escape {
+                if let Some(w) = weak_close.upgrade() {
+                    w.close();
+                }
+                Propagation::Stop
+            } else {
+                Propagation::Proceed
+            }
+        });
+        obj.add_controller(key);
         let weak_desc = obj.downgrade();
         self.description.connect_changed(move |_| {
             if let Some(o) = weak_desc.upgrade() {
