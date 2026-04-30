@@ -462,19 +462,32 @@ impl InputCapture {
         if peer_w == 0 || peer_h == 0 || host_w == 0 || host_h == 0 {
             return None;
         }
+        let (origin_x, origin_y) = self.display_origin();
         let nx = (gx / peer_w as f64).clamp(0.0, 1.0);
         let ny = (gy / peer_h as f64).clamp(0.0, 1.0);
         let host_w_i = host_w as i32;
         let host_h_i = host_h as i32;
+        // Add the union origin back so the result is in pointer-event
+        // coordinate space (which is what `CGDisplay::warp_mouse_cursor_position`
+        // and friends consume), not "0..host_w" of the union rectangle.
+        // Matters on macOS hosts whose primary isn't anchored at (0, 0)
+        // — `display_bounds` returns just the size of the union, so the
+        // origin needs to be reapplied to recover absolute coords.
         Some(match pos {
             // Peer to our Left → cursor returns through host's left edge
-            Position::Left => (0, (ny * host_h as f64) as i32),
+            Position::Left => (origin_x, origin_y + (ny * host_h as f64) as i32),
             // Peer to our Right → cursor returns through host's right edge
-            Position::Right => (host_w_i.saturating_sub(1), (ny * host_h as f64) as i32),
+            Position::Right => (
+                origin_x + host_w_i.saturating_sub(1),
+                origin_y + (ny * host_h as f64) as i32,
+            ),
             // Peer above → cursor returns through host's top edge
-            Position::Top => ((nx * host_w as f64) as i32, 0),
+            Position::Top => (origin_x + (nx * host_w as f64) as i32, origin_y),
             // Peer below → cursor returns through host's bottom edge
-            Position::Bottom => ((nx * host_w as f64) as i32, host_h_i.saturating_sub(1)),
+            Position::Bottom => (
+                origin_x + (nx * host_w as f64) as i32,
+                origin_y + host_h_i.saturating_sub(1),
+            ),
         })
     }
 
