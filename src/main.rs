@@ -67,6 +67,17 @@ fn run() -> Result<(), LanMouseError> {
                     r => r?,
                 }
             }
+            #[cfg(target_os = "macos")]
+            Command::AxProbe => {
+                // Fresh-process probe of TCC Accessibility state. Spawned
+                // by the daemon's TCC.db watcher (see lan_mouse::tcc_watch
+                // on macOS) to bypass cached-trust state in already-running
+                // processes — particularly important for the "remove from
+                // list" case where AXIsProcessTrusted in the parent keeps
+                // reporting cached-true. Exit 0 = granted, 1 = revoked.
+                let granted = lan_mouse::macos_tcc_probe::is_accessibility_granted();
+                process::exit(if granted { 0 } else { 1 });
+            }
         },
         None => {
             //  otherwise start the service as a child process and
@@ -181,6 +192,15 @@ async fn run_service(config: Config) -> Result<(), ServiceError> {
     let mut service = Service::new(config).await?;
     log::info!("using config: {config_path:?}");
     log::info!("Press {release_bind:?} to release the mouse");
+
+    // macOS-only: detect AX-permission "remove from list" by polling
+    // TCC.db's mtime and confirming via a fresh subprocess. The
+    // existing in-process AXIsProcessTrusted polling in the GUI only
+    // catches the toggle-off case; the remove case leaves the cached
+    // trust state stuck at true forever. See `macos_tcc_watch`.
+    #[cfg(target_os = "macos")]
+    lan_mouse::macos_tcc_watch::spawn();
+
     service.run().await?;
     log::info!("service exited!");
     Ok(())

@@ -123,6 +123,14 @@ pub enum Command {
     Cli(CliArgs),
     /// run in daemon mode
     Daemon,
+    /// macOS-only: probe Accessibility permission in a fresh process
+    /// (which bypasses the cached TCC trust state in already-running
+    /// processes). Exits with status 0 if granted, 1 if not. Used by
+    /// the daemon's TCC.db watcher to detect "remove from list" cases
+    /// where AXIsProcessTrusted in the parent process keeps reporting
+    /// cached-true even after the entry is removed.
+    #[cfg(target_os = "macos")]
+    AxProbe,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
