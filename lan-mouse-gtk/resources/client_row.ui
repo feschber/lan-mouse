@@ -24,26 +24,28 @@
 			<object class="GtkSpinner" id="dns_loading_indicator">
 			</object>
 		</child>
-		<!-- host -->
+		<!-- hostname -->
 		<child>
 			<object class="AdwActionRow">
-				<property name="title">Hostname</property>
-				<property name="subtitle">Port</property>
-				<!-- hostname -->
+				<property name="title" translatable="yes">Hostname</property>
+				<property name="subtitle" translatable="yes">IP address or DNS hostname</property>
 				<child>
 					<object class="GtkEntry" id="hostname">
-						<!-- <property name="title" translatable="yes">hostname</property> -->
 						<property name="xalign">0.5</property>
 						<property name="valign">center</property>
-						<property name="placeholder-text">Hostname</property>
+						<property name="placeholder-text">192.168.1.42</property>
 						<property name="width-chars">-1</property>
 					</object>
 				</child>
-				<!-- port -->
+			</object>
+		</child>
+		<!-- port -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Port</property>
 				<child>
 					<object class="GtkEntry" id="port">
-						<!-- <property name="title" translatable="yes">port</property> -->
-                        <property name="max-width-chars">5</property>
+						<property name="max-width-chars">5</property>
 						<property name="input_purpose">GTK_INPUT_PURPOSE_NUMBER</property>
 						<property name="xalign">0.5</property>
 						<property name="valign">center</property>
