@@ -307,10 +307,20 @@ impl CaptureTask {
                             log::info!("client {handle} acknowledged the connection!");
                             self.state = State::Sending;
                         }
-                        // client disconnected
+                        // Peer sent Leave — either they just released
+                        // their own outbound capture, or they're
+                        // taking over and want us to stop sending to
+                        // them. The "taking over" case is the common
+                        // one (CaptureBegin on the peer triggers a
+                        // send_leave_event to every incoming address)
+                        // and is followed by Enter+CursorPos from the
+                        // peer. Use the handover release so the local
+                        // host warp doesn't race against the peer's
+                        // upcoming proportional CursorPos warp on our
+                        // shared cursor.
                         ProtoEvent::Leave(_) => {
                             log::info!("releasing capture: left remote client device region");
-                            self.release_capture(capture).await?;
+                            self.release_capture_handover(capture).await?;
                         },
                         // Peer reported its display geometry — cache it
                         // so the wall-press model has a real upper
