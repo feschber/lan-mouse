@@ -16,6 +16,10 @@ use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{Axis, AxisSource, ButtonState};
 use wayland_client::protocol::wl_seat::WlSeat;
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
+};
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
     zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1 as VpManager,
     zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1 as Vp,
@@ -47,7 +51,7 @@ struct State {
     /// All wl_outputs the compositor advertises, keyed by their
     /// proxy id. Updated via Geometry/Mode events. We keep the
     /// `WlOutput` proxy alive in the value so events keep flowing.
-    outputs: HashMap<u32, (WlOutput, OutputInfo)>,
+    outputs: HashMap<u32, (WlOutput, OutputInfo, Option<ZxdgOutputV1>)>,
     /// Dedicated virtual pointer used only for absolute-position
     /// warps on `Enter`. Separate from per-handle pointers so warp
     /// works regardless of which client is active.
@@ -57,12 +61,25 @@ struct State {
 #[derive(Default, Clone, Copy)]
 struct OutputInfo {
     /// Position in the compositor's global coordinate space, from
-    /// wl_output::Event::Geometry.
+    /// wl_output::Event::Geometry. Raw-pixel coordinates.
     x: i32,
     y: i32,
     /// Pixel dimensions of the active mode, from wl_output::Event::Mode.
     width: i32,
     height: i32,
+    /// Logical position in the compositor's coordinate space, from
+    /// zxdg_output_v1::Event::LogicalPosition. Reflects software
+    /// scaling (e.g. fractional or HiDPI). Falls back to (x, y) when
+    /// xdg-output isn't available.
+    logical_x: Option<i32>,
+    logical_y: Option<i32>,
+    /// Logical dimensions, from zxdg_output_v1::Event::LogicalSize.
+    /// This is the coordinate space the compositor uses for cursor
+    /// positions and the same one the capture side uses, so we
+    /// prefer it for `display_bounds()` to keep both sides in sync.
+    /// Falls back to (width, height) when xdg-output isn't available.
+    logical_width: Option<i32>,
+    logical_height: Option<i32>,
 }
 
 // App State, implements Dispatch event handlers
@@ -91,10 +108,20 @@ impl WlrootsEmulation {
         let vkm: VkManager = globals
             .bind(&qh, 1..=1, ())
             .map_err(|e| WaylandBindError::new(e, "virtual-keyboard-unstable-v1"))?;
+        // xdg-output gives us LogicalSize/LogicalPosition — the
+        // coordinate space the compositor actually uses (with
+        // software/fractional scaling applied). The capture side
+        // already reports bounds in this space, so emulation needs
+        // it too or warps land on different proportions than the
+        // sender computed. Optional: if the compositor doesn't
+        // advertise xdg_output_manager we fall back to wl_output's
+        // raw mode dimensions.
+        let xdg_output_manager: Option<ZxdgOutputManagerV1> = globals.bind(&qh, 1..=3, ()).ok();
 
         // Bind every advertised wl_output so we receive Geometry +
         // Mode events for each one. Used to compute display_bounds.
-        let mut outputs: HashMap<u32, (WlOutput, OutputInfo)> = HashMap::new();
+        let mut outputs: HashMap<u32, (WlOutput, OutputInfo, Option<ZxdgOutputV1>)> =
+            HashMap::new();
         for global in globals.contents().clone_list() {
             if global.interface == "wl_output" {
                 // version 2 is enough for Geometry + Mode events.
@@ -103,7 +130,10 @@ impl WlrootsEmulation {
                         .registry()
                         .bind(global.name, global.version.min(2), &qh, ());
                 let id = output.id().protocol_id();
-                outputs.insert(id, (output, OutputInfo::default()));
+                let xdg_output = xdg_output_manager
+                    .as_ref()
+                    .map(|mgr| mgr.get_xdg_output(&output, &qh, id));
+                outputs.insert(id, (output, OutputInfo::default(), xdg_output));
             }
         }
 
@@ -167,24 +197,30 @@ impl State {
         }
     }
 
-    /// Bounding rectangle of every active wl_output's logical
-    /// position + active mode. Returns None if no output has
-    /// reported both Geometry and Mode yet.
+    /// Bounding rectangle of every active wl_output in the
+    /// compositor's logical coordinate space (with software /
+    /// fractional scaling applied). Falls back per-output to raw
+    /// mode dimensions when xdg-output is unavailable. Returns
+    /// None if no output has reported usable size info yet.
     fn union_bounds(&self) -> Option<(u32, u32)> {
         let mut xmin = i32::MAX;
         let mut ymin = i32::MAX;
         let mut xmax = i32::MIN;
         let mut ymax = i32::MIN;
         let mut any = false;
-        for (_, o) in self.outputs.values() {
-            if o.width <= 0 || o.height <= 0 {
+        for (_, o, _) in self.outputs.values() {
+            let w = o.logical_width.unwrap_or(o.width);
+            let h = o.logical_height.unwrap_or(o.height);
+            if w <= 0 || h <= 0 {
                 continue;
             }
+            let ox = o.logical_x.unwrap_or(o.x);
+            let oy = o.logical_y.unwrap_or(o.y);
             any = true;
-            xmin = xmin.min(o.x);
-            ymin = ymin.min(o.y);
-            xmax = xmax.max(o.x + o.width);
-            ymax = ymax.max(o.y + o.height);
+            xmin = xmin.min(ox);
+            ymin = ymin.min(oy);
+            xmax = xmax.max(ox + w);
+            ymax = ymax.max(oy + h);
         }
         if !any {
             return None;
@@ -373,6 +409,33 @@ delegate_noop!(State: Vp);
 delegate_noop!(State: Vk);
 delegate_noop!(State: VpManager);
 delegate_noop!(State: VkManager);
+delegate_noop!(State: ZxdgOutputManagerV1);
+
+impl Dispatch<ZxdgOutputV1, u32> for State {
+    fn event(
+        state: &mut Self,
+        _: &ZxdgOutputV1,
+        event: <ZxdgOutputV1 as wayland_client::Proxy>::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some((_, info, _)) = state.outputs.get_mut(id) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                info.logical_x = Some(x);
+                info.logical_y = Some(y);
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                info.logical_width = Some(width);
+                info.logical_height = Some(height);
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
@@ -411,7 +474,7 @@ impl Dispatch<WlOutput, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         let id = output.id().protocol_id();
-        let Some((_, info)) = state.outputs.get_mut(&id) else {
+        let Some((_, info, _)) = state.outputs.get_mut(&id) else {
             return;
         };
         match event {
