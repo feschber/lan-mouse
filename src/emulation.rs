@@ -149,16 +149,27 @@ impl ListenTask {
                                     // per the forward-compat fix.
                                     if let Some((width, height)) = self.emulation_proxy.display_bounds() {
                                         self.listener.reply(addr, ProtoEvent::Bounds { width, height }).await;
-                                        // Seat the local cursor at the
-                                        // entry edge so the host's
-                                        // virtual_pos = 0 corresponds to
-                                        // the guest's actual column 0
-                                        // (or width-1, etc.) instead of
-                                        // wherever the previous capture
-                                        // session left it.
-                                        let (x, y) = entry_edge_for(pos, width, height);
-                                        self.emulation_proxy.warp_cursor(x, y);
                                     }
+                                    // No entry-edge midpoint warp here:
+                                    // the host's CursorPos (sent right
+                                    // after Enter) carries the
+                                    // proportional landing point and
+                                    // pins the on-axis dimension to the
+                                    // matching edge. Warping to the
+                                    // midpoint first would briefly
+                                    // place the cursor at center-edge
+                                    // — and a quick re-cross by the
+                                    // user would have the local
+                                    // CGEventTap (or equivalent) snap
+                                    // its `cursor=` field from the
+                                    // midpoint, masquerading as a
+                                    // mid-screen crossing on the next
+                                    // CursorPos sent back the other
+                                    // way. Trusts the host: if it
+                                    // can't compute a proportional
+                                    // point the cursor stays where it
+                                    // was, which is preferable to a
+                                    // forced midpoint.
                                     self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
                                 }
                             }
@@ -496,17 +507,6 @@ fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
 /// left, the cursor entered from my left edge", so the cursor
 /// should land at x=0. Y is centered along the entry edge for
 /// Left/Right; X is centered for Top/Bottom.
-fn entry_edge_for(pos: Position, width: u32, height: u32) -> (i32, i32) {
-    let w = width as i32;
-    let h = height as i32;
-    match pos {
-        Position::Left => (0, h / 2),
-        Position::Right => (w.saturating_sub(1), h / 2),
-        Position::Top => (w / 2, 0),
-        Position::Bottom => (w / 2, h.saturating_sub(1)),
-    }
-}
-
 async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
     loop {
         match rx.recv().await.expect("channel closed") {
