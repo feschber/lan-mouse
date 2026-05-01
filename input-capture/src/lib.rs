@@ -265,6 +265,24 @@ impl InputCapture {
         self.capture.release(warp_target).await
     }
 
+    /// Release without applying a host-side cursor warp. Used when
+    /// the remote peer is taking over (it just sent us Enter +
+    /// CursorPos): the proportional warp from CursorPos is the
+    /// authoritative final position for our shared cursor, and the
+    /// stale `virtual_cursor`-derived warp would race against it
+    /// and frequently win — clobbering the proportional landing
+    /// with whatever position Linux *thought* the peer's cursor was
+    /// at before the user moved it.
+    pub async fn release_no_host_warp(&mut self) -> Result<(), CaptureError> {
+        log::info!(
+            "[release-warp] handover release: capture_pos={:?} — skipping host warp, peer's CursorPos is authoritative",
+            self.capture_pos,
+        );
+        self.pressed_keys.clear();
+        self.reset_wall_press_state();
+        self.capture.release(None).await
+    }
+
     /// Configure the wall-press auto-release pixel threshold.
     /// 0 disables. Effective immediately for the next motion event;
     /// no need to recreate the backend.
