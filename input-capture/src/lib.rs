@@ -298,10 +298,8 @@ impl InputCapture {
                 let (mx, my) = self.pending_motion;
                 let peer_w = width as f64;
                 let peer_h = height as f64;
-                self.virtual_cursor = Some((
-                    (sx + mx).clamp(0.0, peer_w),
-                    (sy + my).clamp(0.0, peer_h),
-                ));
+                self.virtual_cursor =
+                    Some(((sx + mx).clamp(0.0, peer_w), (sy + my).clamp(0.0, peer_h)));
                 self.pending_motion = (0.0, 0.0);
                 log::info!(
                     "[bootstrap] seeded virtual_cursor={:?} after late peer_bounds at {pos} (drained pending_motion=({mx:.1}, {my:.1}))",
