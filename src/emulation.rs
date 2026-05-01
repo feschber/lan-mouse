@@ -205,7 +205,14 @@ impl ListenTask {
                                         Position::Top => (cx, 0),
                                         Position::Bottom => (cx, phi.saturating_sub(1)),
                                     };
+                                    log::info!(
+                                        "[cursor-pos] recv pos={pos:?} nx={nx:.3} ny={ny:.3} display_bounds=({w},{h}) → warp=({tx},{ty})"
+                                    );
                                     self.emulation_proxy.warp_cursor(tx, ty);
+                                } else {
+                                    log::info!(
+                                        "[cursor-pos] recv pos={pos:?} nx={nx:.3} ny={ny:.3} but display_bounds=None — skipping warp"
+                                    );
                                 }
                             }
                             _ => {}

@@ -443,6 +443,7 @@ impl CaptureTask {
         // screen — overrides the entry-edge-midpoint warp the
         // receiver otherwise applies on Enter.
         if let Some((pos, nx, ny)) = cursor_pos {
+            log::info!("[cursor-pos] send pos={pos:?} nx={nx:.3} ny={ny:.3}");
             if let Err(e) = self
                 .conn
                 .send(ProtoEvent::CursorPos { pos, nx, ny }, handle)
@@ -450,6 +451,10 @@ impl CaptureTask {
             {
                 log::warn!("CursorPos send failed: {e}");
             }
+        } else if matches!(event, CaptureEvent::Begin { .. }) {
+            log::info!(
+                "[cursor-pos] send skipped — Begin had no cursor or host_normalized_cursor returned None"
+            );
         }
         Ok(())
     }
