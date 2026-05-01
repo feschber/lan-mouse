@@ -329,7 +329,7 @@ impl Service {
                 self.emulation_status = Status::Enabled;
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
             }
-            EmulationEvent::ReleaseNotify => self.capture.release(),
+            EmulationEvent::ReleaseNotify => self.capture.release_for_handover(),
             EmulationEvent::Connected { addr, fingerprint } => {
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }

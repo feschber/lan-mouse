@@ -51,8 +51,11 @@ pub(crate) enum CaptureType {
 
 #[derive(Clone, Debug)]
 enum CaptureRequest {
-    /// capture must release the mouse
-    Release,
+    /// release because the remote peer is taking over (they sent
+    /// Enter+CursorPos). Skips the host-side warp so the peer's
+    /// proportional CursorPos warp doesn't get clobbered by a
+    /// racing local warp computed from stale virtual_cursor state.
+    ReleaseForHandover,
     /// add a capture client
     Create(CaptureHandle, Position, CaptureType),
     /// destory a capture client
@@ -128,9 +131,9 @@ impl Capture {
             .expect("channel closed");
     }
 
-    pub(crate) fn release(&self) {
+    pub(crate) fn release_for_handover(&self) {
         self.request_tx
-            .send(CaptureRequest::Release)
+            .send(CaptureRequest::ReleaseForHandover)
             .expect("channel closed");
     }
 
@@ -221,7 +224,7 @@ impl CaptureTask {
                         CaptureRequest::Reenable => break,
                         CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
-                        CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::ReleaseForHandover => { /* nothing to do */ }
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
@@ -321,7 +324,7 @@ impl CaptureTask {
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
                     CaptureRequest::Reenable => { /* already active */ },
-                    CaptureRequest::Release => self.release_capture(capture).await?,
+                    CaptureRequest::ReleaseForHandover => self.release_capture_handover(capture).await?,
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
                         capture.create(h, p).await?;
@@ -460,6 +463,24 @@ impl CaptureTask {
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
+        self.notify_peer_of_leave(capture).await;
+        capture.release().await
+    }
+
+    /// Release path used when the peer is taking over (they sent
+    /// Enter+CursorPos). Same teardown — synthesize key-ups, reset
+    /// mods, send Leave — but skip the host-side cursor warp so it
+    /// doesn't race against the peer's authoritative CursorPos
+    /// warp on our shared cursor.
+    async fn release_capture_handover(
+        &mut self,
+        capture: &mut InputCapture,
+    ) -> Result<(), CaptureError> {
+        self.notify_peer_of_leave(capture).await;
+        capture.release_no_host_warp().await
+    }
+
+    async fn notify_peer_of_leave(&mut self, capture: &mut InputCapture) {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
             // Synthesize key-up events for every key still held in the
@@ -502,7 +523,6 @@ impl CaptureTask {
                 log::warn!("failed to send Leave to client {handle}: {e}");
             }
         }
-        capture.release().await
     }
 }
 
