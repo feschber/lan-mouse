@@ -418,12 +418,12 @@ impl Window {
         self.request(FrontendRequest::SetReleaseThreshold(threshold));
     }
 
-    pub(super) fn request_mdns_discovery(&self, enabled: bool) {
-        self.request(FrontendRequest::SetMdnsDiscovery(enabled));
-    }
-
     pub(super) fn request_natural_scroll(&self, natural_scroll: bool) {
         self.request(FrontendRequest::SetNaturalScroll(natural_scroll));
+    }
+
+    pub(super) fn request_mdns_discovery(&self, enabled: bool) {
+        self.request(FrontendRequest::SetMdnsDiscovery(enabled));
     }
 
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
@@ -490,20 +490,6 @@ impl Window {
         self.update_capture_emulation_status();
     }
 
-    pub(super) fn set_mdns_discovery(&self, enabled: bool) {
-        let imp = self.imp();
-        let switch = &imp.mdns_discovery_switch;
-        let handler = imp.mdns_discovery_handler.borrow();
-        if let Some(id) = handler.as_ref() {
-            switch.block_signal(id);
-        }
-        switch.set_active(enabled);
-        switch.set_state(enabled);
-        if let Some(id) = handler.as_ref() {
-            switch.unblock_signal(id);
-        }
-    }
-
     pub(super) fn set_natural_scroll(&self, natural_scroll: bool) {
         let imp = self.imp();
         let switch = &imp.natural_scroll_switch;
@@ -513,6 +499,20 @@ impl Window {
         }
         switch.set_active(natural_scroll);
         switch.set_state(natural_scroll);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
+    pub(super) fn set_mdns_discovery(&self, enabled: bool) {
+        let imp = self.imp();
+        let switch = &imp.mdns_discovery_switch;
+        let handler = imp.mdns_discovery_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(enabled);
+        switch.set_state(enabled);
         if let Some(id) = handler.as_ref() {
             switch.unblock_signal(id);
         }

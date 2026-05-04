@@ -31,7 +31,7 @@ use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
 };
 
 use wayland_client::{
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop,
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_registry, wl_seat},
 };
@@ -355,26 +355,14 @@ impl VirtualInput {
                         // local `now` timestamp because the upstream
                         // CGEventTap path passes time=0 and some
                         // compositors filter zero-time events.
-                        let axis_n: u8 = axis;
                         let axis: Axis = (axis as u32).try_into()?;
-                        let injected = scroll_sign * value;
-                        log::info!(
-                            "[SCROLL-DEBUG emit Axis] axis={} wire_value={:.3} scroll_sign={:.1} injected={:.3}",
-                            axis_n, value, scroll_sign, injected,
-                        );
-                        self.pointer.axis(now, axis, injected);
+                        self.pointer.axis(now, axis, scroll_sign * value);
                         self.pointer.axis_source(AxisSource::Finger);
                         self.pointer.frame();
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
-                        let axis_n: u8 = axis;
-                        let wire_value = value;
                         let axis: Axis = (axis as u32).try_into()?;
                         let value = (scroll_sign as i32) * value;
-                        log::info!(
-                            "[SCROLL-DEBUG emit AxisDiscrete120] axis={} wire_value={} scroll_sign={:.1} after_sign={} cont_f64={:.3} discrete_i32={}",
-                            axis_n, wire_value, scroll_sign, value, value as f64 / 8., value / 120,
-                        );
                         self.pointer
                             .axis_discrete(now, axis, value as f64 / 8., value / 120);
                         self.pointer.axis_source(AxisSource::Wheel);
