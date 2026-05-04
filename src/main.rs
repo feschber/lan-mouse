@@ -108,7 +108,7 @@ fn run() -> Result<(), LanMouseError> {
                 };
 
                 let mut service = start_service()?;
-                let res = lan_mouse_gtk::run(gui_lock);
+                let res = lan_mouse_gtk::run(gui_lock, config::local_commit());
 
                 // Bound the daemon-child cleanup so a wedged daemon
                 // (CGEventTap stuck on macOS, hung syscall, etc.)

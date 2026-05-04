@@ -88,6 +88,15 @@ pub enum ProtoEvent {
     /// MotionAbsolute couldn't be sent on the first crossing
     /// because the host had no cached peer geometry.
     CursorPos { pos: Position, nx: f32, ny: f32 },
+    /// Build identification for the sending peer. Sent by the
+    /// connect side once after the connection authenticates, and
+    /// echoed back by the listen side in reply, so each end can
+    /// display the peer's build hash and warn (soft) on mismatch.
+    /// `commit` is the 8-byte ASCII short commit hash from
+    /// `shadow_rs`'s `SHORT_COMMIT`. Old peers that don't
+    /// recognize the event type silently skip it per the
+    /// forward-compat handling in the receive loop.
+    Hello { commit: [u8; 8] },
 }
 
 impl Display for ProtoEvent {
@@ -110,6 +119,10 @@ impl Display for ProtoEvent {
             ProtoEvent::CursorPos { pos, nx, ny } => {
                 write!(f, "CursorPos({pos}, {nx:.4}, {ny:.4})")
             }
+            ProtoEvent::Hello { commit } => {
+                let s = std::str::from_utf8(commit).unwrap_or("????????");
+                write!(f, "Hello({s})")
+            }
         }
     }
 }
@@ -131,6 +144,7 @@ pub enum EventType {
     Bounds,
     MotionAbsolute,
     CursorPos,
+    Hello,
 }
 
 impl ProtoEvent {
@@ -156,6 +170,7 @@ impl ProtoEvent {
             ProtoEvent::Bounds { .. } => EventType::Bounds,
             ProtoEvent::MotionAbsolute { .. } => EventType::MotionAbsolute,
             ProtoEvent::CursorPos { .. } => EventType::CursorPos,
+            ProtoEvent::Hello { .. } => EventType::Hello,
         }
     }
 }
@@ -223,6 +238,13 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
                 nx: decode_f32(&mut buf)?,
                 ny: decode_f32(&mut buf)?,
             }),
+            EventType::Hello => {
+                let mut commit = [0u8; 8];
+                for b in commit.iter_mut() {
+                    *b = decode_u8(&mut buf)?;
+                }
+                Ok(Self::Hello { commit })
+            }
         }
     }
 }
@@ -299,6 +321,11 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                     encode_u8(buf, len, pos as u8);
                     encode_f32(buf, len, nx);
                     encode_f32(buf, len, ny);
+                }
+                ProtoEvent::Hello { commit } => {
+                    for b in commit.iter() {
+                        encode_u8(buf, len, *b);
+                    }
                 }
             }
         }

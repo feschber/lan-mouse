@@ -1,3 +1,4 @@
+use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
 use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
@@ -189,6 +190,16 @@ impl ListenTask {
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
+                            // Mirror the peer's version handshake. The
+                            // outgoing connect side initiated this with
+                            // its own Hello; we echo ours back so the
+                            // peer's connect-side receive_loop can
+                            // populate `peer_commit`. We don't store
+                            // the peer's commit on the listen side —
+                            // the user-visible state lives on outgoing
+                            // connections, where the same peer is also
+                            // configured as a `[[clients]]` entry.
+                            ProtoEvent::Hello { .. } => self.listener.reply(addr, ProtoEvent::Hello { commit: local_commit() }).await,
                             // Capturing peer told us where on its own
                             // screen the user's cursor was, as a
                             // normalized fraction (nx, ny) ∈ [0, 1]
