@@ -63,6 +63,15 @@ pub enum ProtoEvent {
     Ping,
     /// Response to [`ProtoEvent::Ping`], true if emulation is enabled / available
     Pong(bool),
+    /// Build identification for the sending peer. Sent by the
+    /// connect side once after the connection authenticates, and
+    /// echoed back by the listen side in reply, so each end can
+    /// display the peer's build hash and warn (soft) on mismatch.
+    /// `commit` is the 8-byte ASCII short commit hash from
+    /// `shadow_rs`'s `SHORT_COMMIT`. Old peers that don't
+    /// recognize the event type silently skip it per the
+    /// forward-compat handling in the receive loop.
+    Hello { commit: [u8; 8] },
 }
 
 impl Display for ProtoEvent {
@@ -79,6 +88,10 @@ impl Display for ProtoEvent {
                     "pong: {}",
                     if *alive { "alive" } else { "not available" }
                 )
+            }
+            ProtoEvent::Hello { commit } => {
+                let s = std::str::from_utf8(commit).unwrap_or("????????");
+                write!(f, "Hello({s})")
             }
         }
     }
@@ -98,6 +111,7 @@ pub enum EventType {
     Enter,
     Leave,
     Ack,
+    Hello,
 }
 
 impl ProtoEvent {
@@ -120,6 +134,7 @@ impl ProtoEvent {
             ProtoEvent::Enter(_) => EventType::Enter,
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
+            ProtoEvent::Hello { .. } => EventType::Hello,
         }
     }
 }
@@ -174,6 +189,13 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
             EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
+            EventType::Hello => {
+                let mut commit = [0u8; 8];
+                for b in commit.iter_mut() {
+                    *b = decode_u8(&mut buf)?;
+                }
+                Ok(Self::Hello { commit })
+            }
         }
     }
 }
@@ -238,6 +260,11 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
                 ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
+                ProtoEvent::Hello { commit } => {
+                    for b in commit.iter() {
+                        encode_u8(buf, len, *b);
+                    }
+                }
             }
         }
         (buf, len)

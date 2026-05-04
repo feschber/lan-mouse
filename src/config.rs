@@ -28,6 +28,18 @@ use shadow_rs::shadow;
 
 shadow!(build);
 
+/// Local build's 8-byte ASCII short commit hash, suitable for use
+/// in [`lan_mouse_proto::ProtoEvent::Hello`]. Pads with `'?'` if
+/// shadow_rs returns an unexpected length so the field is always
+/// well-formed on the wire.
+pub fn local_commit() -> [u8; 8] {
+    let bytes = build::SHORT_COMMIT.as_bytes();
+    let mut out = [b'?'; 8];
+    let n = bytes.len().min(8);
+    out[..n].copy_from_slice(&bytes[..n]);
+    out
+}
+
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CERT_FILE_NAME: &str = "lan-mouse.pem";
 
