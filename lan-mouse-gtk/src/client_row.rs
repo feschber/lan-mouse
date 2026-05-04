@@ -199,13 +199,13 @@ impl ClientRow {
         let local = crate::local_commit_str();
         let markup = match peer.as_deref() {
             None => format!(
-                r##"<span foreground="#ffaa33">peer version: unknown · ours: {local}</span>"##
+                r##"<span foreground="#ffaa33">Peer version: unknown · Ours: {local}</span>"##
             ),
             Some(p) if p == local.as_str() => format!(
-                r##"<span foreground="#33cc66">peer version: {p} · matched</span>"##
+                r##"<span foreground="#33cc66">Peer version: {p} · matched</span>"##
             ),
             Some(p) => format!(
-                r##"<span foreground="#ffaa33">peer version: {p} · ours: {local}</span>"##
+                r##"<span foreground="#ffaa33">Peer version: {p} · Ours: {local}</span>"##
             ),
         };
         self.set_subtitle(&markup);
