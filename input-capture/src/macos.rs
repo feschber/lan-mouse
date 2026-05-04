@@ -430,15 +430,6 @@ fn get_events(
             //
             // Net result: wire is consistently classic-feel regardless
             // of the Mac's preference. Receivers can re-invert.
-            log::info!(
-                "[SCROLL-DEBUG capture] continuous={} natural={} delta=({},{}) point_delta=({},{})",
-                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS),
-                natural_scrolling_enabled(),
-                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
-                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
-                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
-                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2),
-            );
             let sign: i64 = if natural_scrolling_enabled() { 1 } else { -1 };
             if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
                 let v = sign
