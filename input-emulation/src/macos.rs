@@ -48,6 +48,9 @@ pub(crate) struct MacOSEmulation {
     modifier_state: Rc<Cell<XMods>>,
     /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
+    /// invert scroll deltas before injection (matches the libinput
+    /// natural_scroll concept)
+    natural_scroll: bool,
     /// IOPMAssertionID returned by the most recent
     /// `IOPMAssertionDeclareUserActivity` call, kept for re-use within
     /// the system's 5-second coalesce window. Without this, a CGEvent
@@ -59,9 +62,6 @@ pub(crate) struct MacOSEmulation {
     /// the idle timer. Initialized to 0; the first call returns a
     /// real ID, subsequent calls within 5s return the same ID.
     user_activity_assertion: Cell<u32>,
-    /// invert scroll deltas before injection (matches the libinput
-    /// natural_scroll concept)
-    natural_scroll: bool,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -91,8 +91,8 @@ impl MacOSEmulation {
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
-            user_activity_assertion: Cell::new(0),
             natural_scroll: false,
+            user_activity_assertion: Cell::new(0),
         })
     }
 

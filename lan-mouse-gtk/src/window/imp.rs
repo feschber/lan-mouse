@@ -77,9 +77,7 @@ pub struct Window {
     /// state-set signal, blocked while the daemon is pushing the
     /// initial value via Sync.
     pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
-    /// Connected handler for the mDNS-discovery switch's state-set
-    /// signal, blocked while the daemon is pushing the initial value
-    /// via Sync.
+    /// Same pattern for the mDNS-discovery switch.
     pub mdns_discovery_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
@@ -308,7 +306,7 @@ impl ObjectImpl for Window {
         ));
         self.natural_scroll_handler.replace(Some(switch_handler));
 
-        // mDNS-discovery switch — same pattern.
+        // mDNS-discovery switch — identical pattern.
         let mdns_switch = self.mdns_discovery_switch.clone();
         let mdns_handler = mdns_switch.connect_state_set(clone!(
             #[weak(rename_to = window)]
