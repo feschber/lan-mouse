@@ -176,6 +176,12 @@ pub struct ClientState {
     pub has_pressed_keys: bool,
     /// dns resolving in progress
     pub resolving: bool,
+    /// Peer's build short commit hash from the [`Hello`] proto
+    /// event. `None` means we haven't received a Hello yet — either
+    /// the connection is fresh, or the peer is on an older build
+    /// that predates the Hello event. The frontend uses this to
+    /// soft-warn on version mismatch.
+    pub peer_commit: Option<[u8; 8]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

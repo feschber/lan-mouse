@@ -365,6 +365,13 @@ impl Window {
             .map(|ip| ip.to_string())
             .collect::<Vec<_>>();
         client_object.set_ips(ips);
+
+        /* peer build version (drives the version-match indicator) */
+        client_object.set_property(
+            "peer-commit",
+            crate::client_object::peer_commit_to_string(state.peer_commit),
+        );
+        row.refresh_version_status();
     }
 
     fn client_object_for_handle(&self, handle: ClientHandle) -> Option<ClientObject> {
