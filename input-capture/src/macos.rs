@@ -430,6 +430,15 @@ fn get_events(
             //
             // Net result: wire is consistently classic-feel regardless
             // of the Mac's preference. Receivers can re-invert.
+            log::info!(
+                "[SCROLL-DEBUG capture] continuous={} natural={} delta=({},{}) point_delta=({},{})",
+                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS),
+                natural_scrolling_enabled(),
+                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1),
+                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2),
+                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1),
+                ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2),
+            );
             let sign: i64 = if natural_scrolling_enabled() { 1 } else { -1 };
             if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
                 let v = sign
@@ -452,7 +461,18 @@ fn get_events(
                 }
             } else {
                 // line based scrolling
-                const LINES_PER_STEP: i32 = 3;
+                //
+                // macOS already amplifies SCROLL_WHEEL_EVENT_DELTA based
+                // on wheel velocity — a slow notch on a notched wheel
+                // (e.g. MX Master 4) reports DELTA=1, a fast flick
+                // reports DELTA=10+ per event. The wl_pointer v120
+                // protocol expects one physical wheel click = 120
+                // units, so map one macOS DELTA line to one full v120
+                // tick. (The previous 3-lines-per-step ratio caused
+                // single notches to truncate to discrete=0 on the
+                // receiver, leaving Slack/Alacritty unscrollable until
+                // 3+ notches accumulated.)
+                const LINES_PER_STEP: i32 = 1;
                 const V120_STEPS_PER_LINE: i32 = 120 / LINES_PER_STEP;
                 let v =
                     sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
