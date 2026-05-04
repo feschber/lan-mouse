@@ -10,9 +10,26 @@ mod macos_privacy;
 mod macos_status_item;
 mod window;
 
-use std::{env, process, str};
+use std::{env, process, str, sync::OnceLock};
 
 use window::Window;
+
+/// Local build's commit hash, set once by [`run`] before the GTK
+/// main loop starts. Read by per-row UI to compare against each
+/// peer's [`lan_mouse_ipc::ClientState::peer_commit`] for the
+/// soft-warn version-mismatch indicator.
+pub(crate) static LOCAL_COMMIT: OnceLock<[u8; 8]> = OnceLock::new();
+
+/// Convenience: returns the local commit as an 8-char ASCII string,
+/// or a placeholder if unset (which would indicate a programmer
+/// error since [`run`] always sets it).
+pub(crate) fn local_commit_str() -> String {
+    LOCAL_COMMIT
+        .get()
+        .and_then(|c| std::str::from_utf8(c).ok())
+        .unwrap_or("????????")
+        .to_string()
+}
 
 use lan_mouse_ipc::FrontendEvent;
 
@@ -31,8 +48,13 @@ pub enum GtkError {
     NonZeroExitCode(i32),
 }
 
-pub fn run() -> Result<(), GtkError> {
+pub fn run(local_commit: [u8; 8]) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
+    LOCAL_COMMIT
+        .set(local_commit)
+        .expect("local_commit set once");
+
+
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
