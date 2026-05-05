@@ -6,7 +6,7 @@ use glib::subclass::InitializingObject;
 use gtk::glib::clone;
 use gtk::{
     Button, CompositeTemplate, Entry, EventControllerScroll, EventControllerScrollFlags, Image,
-    Label, ListBox, PropagationPhase, Scale, ScrolledWindow, gdk, gio, glib,
+    Label, ListBox, PropagationPhase, Scale, ScrolledWindow, Switch, gdk, gio, glib,
 };
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
@@ -54,6 +54,10 @@ pub struct Window {
     pub release_threshold_scale: TemplateChild<Scale>,
     #[template_child]
     pub release_threshold_value: TemplateChild<Label>,
+    #[template_child]
+    pub mdns_discovery_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub mdns_discovery_switch: TemplateChild<Switch>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -65,6 +69,10 @@ pub struct Window {
     /// value-changed signal, so we can block it when programmatically
     /// updating the slider in response to a Sync event.
     pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Connected handler for the mDNS-discovery switch's state-set
+    /// signal, blocked while the daemon is pushing the initial value
+    /// via Sync.
+    pub mdns_discovery_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -276,6 +284,21 @@ impl ObjectImpl for Window {
             }
         ));
         self.release_threshold_scale.add_controller(scroll_forward);
+
+        // mDNS-discovery switch — connect state-set, stash the handler
+        // so the daemon's Sync push doesn't ricochet back.
+        let mdns_switch = self.mdns_discovery_switch.clone();
+        let mdns_handler = mdns_switch.connect_state_set(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                window.request_mdns_discovery(state);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.mdns_discovery_handler.replace(Some(mdns_handler));
     }
 }
 

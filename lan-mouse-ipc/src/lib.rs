@@ -226,6 +226,13 @@ pub enum FrontendEvent {
     /// pixel threshold for the wall-press auto-release fallback.
     /// 0 means disabled.
     ReleaseThreshold(u32),
+    /// whether mDNS-SD discovery is on. When true, lan-mouse
+    /// advertises a `_lan-mouse._udp.local.` Bonjour service whose
+    /// TXT record's `primary=` field hints at the OS-preferred
+    /// interface (Mac service order / Linux default route), so
+    /// peers can bias their connection attempts toward the right
+    /// interface on multi-homed hosts.
+    MdnsDiscovery(bool),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -266,6 +273,8 @@ pub enum FrontendRequest {
     SaveConfiguration,
     /// set the wall-press auto-release pixel threshold (0 = disabled)
     SetReleaseThreshold(u32),
+    /// turn mDNS-SD discovery on or off
+    SetMdnsDiscovery(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 use crate::client::ClientManager;
 use crate::config::local_commit;
+use crate::discovery::PrimaryCache;
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
 use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -71,12 +72,43 @@ async fn connect(
     }
 }
 
+/// Time the preferred address gets to handshake alone before the
+/// rest of the candidate list joins the race. Modeled on RFC 8305
+/// "happy eyeballs" v6→v4 fallback delay; long enough that a healthy
+/// preferred address virtually always wins, short enough that a
+/// broken preferred path only slightly delays connect.
+const PREFERRED_ADDR_HEAD_START: Duration = Duration::from_millis(200);
+
 async fn connect_any(
     addrs: &[SocketAddr],
+    preferred: Option<SocketAddr>,
     cert: Certificate,
 ) -> Result<(Arc<dyn Conn + Send + Sync>, SocketAddr), LanMouseConnectionError> {
     let mut joinset = JoinSet::new();
+    if let Some(p) = preferred {
+        // Dial the peer's mDNS-advertised primary first. If it
+        // handshakes within `PREFERRED_ADDR_HEAD_START` we're done
+        // before the others even start — the dialer biases toward
+        // the OS-preferred interface (Mac service order, Linux
+        // default route) without relying on RTT racing alone.
+        joinset.spawn_local(connect(p, cert.clone()));
+        let head_start = tokio::time::sleep(PREFERRED_ADDR_HEAD_START);
+        tokio::pin!(head_start);
+        loop {
+            tokio::select! {
+                _ = &mut head_start => break,
+                Some(r) = joinset.join_next() => match r.expect("join error") {
+                    Ok(conn) => return Ok(conn),
+                    Err((a, e)) => log::warn!("failed to connect to {a}: `{e}`"),
+                },
+            }
+        }
+    }
     for &addr in addrs {
+        if Some(addr) == preferred {
+            // already racing; don't dial the same socket twice
+            continue;
+        }
         joinset.spawn_local(connect(addr, cert.clone()));
     }
     loop {
@@ -100,10 +132,19 @@ pub(crate) struct LanMouseConnection {
     recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
     recv_tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
+    /// Map of `peer_hostname -> primary_ipv4` populated by the
+    /// `Discovery` mDNS browse task. Read on every `connect_to_handle`
+    /// to bias which address gets the handshake head-start. Empty
+    /// when discovery is disabled or no peer hint has arrived yet.
+    primary_hints: PrimaryCache,
 }
 
 impl LanMouseConnection {
-    pub(crate) fn new(cert: Certificate, client_manager: ClientManager) -> Self {
+    pub(crate) fn new(
+        cert: Certificate,
+        client_manager: ClientManager,
+        primary_hints: PrimaryCache,
+    ) -> Self {
         let (recv_tx, recv_rx) = channel();
         Self {
             cert,
@@ -113,6 +154,7 @@ impl LanMouseConnection {
             recv_rx,
             recv_tx,
             ping_response: Default::default(),
+            primary_hints,
         }
     }
 
@@ -161,6 +203,7 @@ impl LanMouseConnection {
                 self.connecting.clone(),
                 self.recv_tx.clone(),
                 self.ping_response.clone(),
+                self.primary_hints.clone(),
             ));
         }
         Err(LanMouseConnectionError::NotConnected)
@@ -175,6 +218,7 @@ async fn connect_to_handle(
     connecting: Rc<Mutex<HashSet<ClientHandle>>>,
     tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
+    primary_hints: PrimaryCache,
 ) -> Result<(), LanMouseConnectionError> {
     log::info!("client {handle} connecting ...");
     // sending did not work, figure out active conn.
@@ -184,8 +228,22 @@ async fn connect_to_handle(
             .into_iter()
             .map(|a| SocketAddr::new(a, port))
             .collect::<Vec<_>>();
-        log::info!("client ({handle}) connecting ... (ips: {addrs:?})");
-        let res = connect_any(&addrs, cert).await;
+        // mDNS-advertised primary IP for this peer, if known. Used
+        // by `connect_any` as a head-start address: the dialer races
+        // it alone for ~200ms before joining the rest of the list,
+        // so a healthy primary almost always wins regardless of
+        // raw RTT ordering.
+        let preferred = client_manager
+            .get_hostname(handle)
+            .and_then(|h| {
+                let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
+                primary_hints.borrow().get(&key).copied()
+            })
+            .map(|ip| SocketAddr::new(ip, port));
+        log::info!(
+            "client ({handle}) connecting ... (ips: {addrs:?}, preferred: {preferred:?})"
+        );
+        let res = connect_any(&addrs, preferred, cert).await;
         let (conn, addr) = match res {
             Ok(c) => c,
             Err(e) => {
