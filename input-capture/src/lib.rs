@@ -5,7 +5,7 @@ use std::{
     mem::swap,
     pin::Pin,
     task::{Poll, ready},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -196,16 +196,17 @@ pub struct InputCapture {
     /// pushing past the guest's actual far edge doesn't make the
     /// model run away. Only the entry-axis dimension is consulted.
     peer_bounds: HashMap<Position, (u32, u32)>,
-    /// Set when wall_pressure first crosses `release_threshold_px`,
-    /// cleared when the peer's handover Leave arrives (which routes
-    /// through `release_no_host_warp` → `reset_wall_press_state`) or
-    /// when the cursor moves back into the interior. The wall-press
-    /// auto-release fires only after `wall_press_deadline` elapses
-    /// without being cleared — turning the historically race-y
-    /// "wall-press vs peer-Leave" into an explicit fallback that
-    /// only kicks in when the peer can't deliver a Leave (lock
-    /// screen, restricted DE, dead peer).
-    wall_press_pending_at: Option<Instant>,
+    /// True when wall_pressure has crossed `release_threshold_px` and
+    /// `wall_press_timer` has been armed but not yet either elapsed
+    /// or been cancelled. Cleared when the peer's handover Leave
+    /// arrives (which routes through `release_no_host_warp` →
+    /// `reset_wall_press_state`) or when the cursor moves back into
+    /// the interior. The wall-press auto-release fires only after
+    /// `wall_press_deadline` elapses without this being cleared —
+    /// turning the historically race-y "wall-press vs peer-Leave"
+    /// into an explicit fallback that only kicks in when the peer
+    /// can't deliver a Leave (lock screen, restricted DE, dead peer).
+    wall_press_pending: bool,
     /// Window after the threshold is crossed during which a peer
     /// Leave can cancel the deferred AutoRelease. Sized so a
     /// healthy LAN round-trip beats it comfortably.
@@ -460,7 +461,7 @@ impl InputCapture {
         self.pending_motion = (0.0, 0.0);
         // Cancel any deferred AutoRelease — release() / handover have
         // taken responsibility for the transition.
-        self.wall_press_pending_at = None;
+        self.wall_press_pending = false;
     }
 
     /// Initial guest-space cursor position for a freshly-started
@@ -534,11 +535,10 @@ impl InputCapture {
     }
 
     /// Update the wall-press accumulator from one event coming up
-    /// from the backend. Sets `wall_press_pending_at` (and arms the
+    /// from the backend. Sets `wall_press_pending` (and arms the
     /// timer) when the threshold is first crossed; the actual
     /// `AutoRelease` synthesis happens in `poll_next` once the
-    /// deadline elapses without a peer Leave clearing the pending
-    /// flag.
+    /// deadline elapses without a peer Leave clearing the flag.
     fn track_wall_press(&mut self, pos: Position, event: &CaptureEvent) {
         match event {
             CaptureEvent::Begin { cursor } => {
@@ -630,7 +630,7 @@ impl InputCapture {
                     // by motion deeper into the guest doesn't combine
                     // with a later wall-press to fire spuriously.
                     self.wall_pressure = 0.0;
-                    if self.wall_press_pending_at.take().is_some() {
+                    if std::mem::take(&mut self.wall_press_pending) {
                         log::info!(
                             "wall-press deferred AutoRelease cancelled (cursor moved away from entry edge)"
                         );
@@ -638,15 +638,12 @@ impl InputCapture {
                 }
 
                 if self.wall_pressure >= f64::from(self.release_threshold_px)
-                    && self.wall_press_pending_at.is_none()
+                    && !self.wall_press_pending
                 {
-                    let now = Instant::now();
-                    self.wall_press_pending_at = Some(now);
+                    self.wall_press_pending = true;
                     self.wall_press_timer
                         .as_mut()
-                        .reset(tokio::time::Instant::from_std(
-                            now + self.wall_press_deadline,
-                        ));
+                        .reset(tokio::time::Instant::now() + self.wall_press_deadline);
                     log::info!(
                         "wall-press threshold reached ({:.0}px past entry edge, {}px threshold) — \
                          deferring AutoRelease for {}ms pending peer Leave",
@@ -699,7 +696,7 @@ impl InputCapture {
             pending_begin_cursor: None,
             pending_motion: (0.0, 0.0),
             peer_bounds: HashMap::new(),
-            wall_press_pending_at: None,
+            wall_press_pending: false,
             wall_press_deadline: Duration::from_millis(150),
             wall_press_timer: Box::pin(tokio::time::sleep(Duration::from_secs(0))),
         })
@@ -734,16 +731,14 @@ impl Stream for InputCapture {
 
         // Deferred wall-press fallback. If the threshold was crossed
         // and the deadline elapsed without a peer Leave clearing
-        // `wall_press_pending_at` (release_no_host_warp →
+        // `wall_press_pending` (release_no_host_warp →
         // reset_wall_press_state), synthesize AutoRelease for every
         // capture handle at the active position. Polled before the
         // backend so a fire still happens when the user pinned the
         // cursor against the wall and stopped moving (no further
         // backend events, but the deadline still has to elapse).
-        if self.wall_press_pending_at.is_some()
-            && self.wall_press_timer.as_mut().poll(cx).is_ready()
-        {
-            self.wall_press_pending_at = None;
+        if self.wall_press_pending && self.wall_press_timer.as_mut().poll(cx).is_ready() {
+            self.wall_press_pending = false;
             log::info!(
                 "wall-press deadline elapsed ({}ms) — firing AutoRelease (no peer Leave; \
                  assuming peer-side capture is unavailable, e.g. lock screen)",

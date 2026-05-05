@@ -167,8 +167,10 @@ impl Service {
         // interface (default route) changes — e.g. user switches
         // off Wi-Fi and Mac falls back to Ethernet. Cheap: at most
         // one re-publish every 30s, and a no-op when the primary
-        // hasn't moved.
+        // hasn't moved. `Skip` so a long suspend doesn't backlog-
+        // burst on resume.
         let mut discovery_refresh_tick = tokio::time::interval(Duration::from_secs(30));
+        discovery_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // skip the immediate-fire of the first tick — Discovery
         // already published once at startup
         discovery_refresh_tick.tick().await;

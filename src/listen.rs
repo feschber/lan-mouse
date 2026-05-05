@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
+use tokio::time::MissedTickBehavior;
 use tokio::{
     sync::Mutex as AsyncMutex,
     task::{JoinHandle, spawn_local},
@@ -397,7 +398,10 @@ fn spawn_supervisor_task(
         // leaving stale slots bound to vanished IPs that no traffic
         // can reach. Polling every 30s catches whatever if-watch
         // misses — both adds (covers missed Up events too) and drops.
+        // `Skip` so a long suspend (laptop closed for hours) doesn't
+        // burst-fire backlog ticks at resume.
         let mut reconcile_tick = tokio::time::interval(Duration::from_secs(30));
+        reconcile_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // Skip the immediate-first tick — we just enumerated at startup
         // and don't want to thrash listeners on the first iteration.
         reconcile_tick.tick().await;
@@ -412,12 +416,14 @@ fn spawn_supervisor_task(
                         .copied()
                         .collect();
                     for ip in to_drop {
-                        if listeners.remove(&ip).is_some() {
-                            log::info!(
-                                "reconcile: dropping stale listener on {ip}:{port} \
-                                 (IP no longer present on any interface)"
-                            );
-                        }
+                        // `to_drop` was just collected from
+                        // `listeners.keys()` and we run single-
+                        // threaded, so the remove always returns Some.
+                        listeners.remove(&ip);
+                        log::info!(
+                            "reconcile: dropping stale listener on {ip}:{port} \
+                             (IP no longer present on any interface)"
+                        );
                     }
                     // `try_bind_listener` is async and may fail, so the
                     // typical `entry().or_insert_with(...)` rewrite the
