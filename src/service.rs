@@ -9,7 +9,6 @@ use crate::{
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
-use hickory_resolver::ResolveError;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
     IpcListenerCreationError, Position, Status,
@@ -26,8 +25,6 @@ use tokio::{process::Command, signal, sync::Notify};
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
-    #[error(transparent)]
-    Dns(#[from] ResolveError),
     #[error(transparent)]
     IpcListen(#[from] IpcListenerCreationError),
     #[error(transparent)]
