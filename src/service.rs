@@ -342,6 +342,17 @@ impl Service {
             EmulationEvent::Connected { addr, fingerprint } => {
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }
+            EmulationEvent::PeerHello { addr, commit } => {
+                // Map the peer's source addr back to its client handle
+                // and stamp the commit. Skip if we don't have an
+                // outgoing client configured for this peer (incoming-
+                // only setup) — there's nowhere to display the version
+                // in that case anyway.
+                if let Some(handle) = self.client_manager.get_client(addr) {
+                    self.client_manager.set_peer_commit(handle, Some(commit));
+                    self.broadcast_client(handle);
+                }
+            }
         }
     }
 
