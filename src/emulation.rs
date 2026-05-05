@@ -53,6 +53,17 @@ pub(crate) enum EmulationEvent {
     EmulationEnabled,
     /// capture should be released
     ReleaseNotify,
+    /// peer sent us a Hello with its build commit hash. Used to
+    /// populate `client_manager.peer_commit` from the listen side
+    /// too — without this, peer-version visibility silently fails
+    /// whenever the outgoing connection in the *other* direction is
+    /// broken (one-way setups, asymmetric NAT, peer's TCP listener
+    /// down). The connect-side path stays as the primary source;
+    /// this is the defensive fallback.
+    PeerHello {
+        addr: SocketAddr,
+        commit: [u8; 8],
+    },
 }
 
 enum EmulationRequest {
@@ -180,16 +191,21 @@ impl ListenTask {
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
-                            // Mirror the peer's version handshake. The
-                            // outgoing connect side initiated this with
-                            // its own Hello; we echo ours back so the
-                            // peer's connect-side receive_loop can
-                            // populate `peer_commit`. We don't store
-                            // the peer's commit on the listen side —
-                            // the user-visible state lives on outgoing
-                            // connections, where the same peer is also
-                            // configured as a `[[clients]]` entry.
-                            ProtoEvent::Hello { .. } => self.listener.reply(addr, ProtoEvent::Hello { commit: local_commit() }).await,
+                            // Peer's version handshake. Echo our own
+                            // commit back so the peer's connect-side
+                            // receive_loop populates its `peer_commit`,
+                            // AND publish a PeerHello upward so our
+                            // service can populate ours from the listen
+                            // side too — the connect side is the primary
+                            // path, but if the outbound direction is
+                            // broken (one-way setup, NAT, peer's TCP
+                            // listener down) the version display would
+                            // otherwise silently say "unknown" while
+                            // the peer is in fact happily talking to us.
+                            ProtoEvent::Hello { commit } => {
+                                self.listener.reply(addr, ProtoEvent::Hello { commit: local_commit() }).await;
+                                self.event_tx.send(EmulationEvent::PeerHello { addr, commit }).expect("channel closed");
+                            }
                             // Capturing peer told us where on its own
                             // screen the user's cursor was, as a
                             // normalized fraction (nx, ny) ∈ [0, 1]
