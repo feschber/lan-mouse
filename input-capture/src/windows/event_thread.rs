@@ -14,6 +14,9 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayDevicesW, EnumDisplaySettingsW,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::RemoteDesktop::{
+    NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
+};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::core::{PCWSTR, w};
 
@@ -23,7 +26,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
     WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
     WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_WTSSESSION_CHANGE, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WNDCLASSW, WNDPROC, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
 
 use input_event::{
@@ -122,6 +126,14 @@ thread_local! {
     static PREV_POS: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
     /// displays and generation counter
     static DISPLAYS: RefCell<(Vec<RECT>, i32)> = const { RefCell::new((Vec::new(), 0)) };
+    /// True while the host's session is locked. Set/cleared from the
+    /// `WM_WTSSESSION_CHANGE` window message. While true, barrier
+    /// crossings are suppressed and any active capture is released —
+    /// matches macOS's lock-screen suppression and what Wayland does
+    /// for free on locked Linux. Without this, low-level mouse hooks
+    /// would happily forward motion to the peer while the lock screen
+    /// consumes keyboard events, leaving a half-broken state.
+    static HOST_LOCKED: Cell<bool> = const { Cell::new(false) };
 }
 
 fn get_msg() -> Option<MSG> {
@@ -202,8 +214,10 @@ fn start_routine(
         }
     }
 
-    /* window is used ro receive WM_DISPLAYCHANGE messages */
-    unsafe {
+    /* window is used to receive WM_DISPLAYCHANGE and
+     * WM_WTSSESSION_CHANGE messages. Keep the HWND so we can register
+     * for session notifications and unregister on exit. */
+    let msg_window = unsafe {
         CreateWindowExW(
             Default::default(),
             w!("lan-mouse-message-window-class"),
@@ -218,7 +232,17 @@ fn start_routine(
             Some(instance),
             None,
         )
-        .expect("CreateWindowExW");
+        .expect("CreateWindowExW")
+    };
+
+    /* register for WM_WTSSESSION_CHANGE notifications so we can
+     * detect lock/unlock and suppress crossings while locked. Failure
+     * is logged but non-fatal — the rest of the capture still works,
+     * we just lose the lock-screen suppression. */
+    unsafe {
+        if let Err(e) = WTSRegisterSessionNotification(msg_window, NOTIFY_FOR_THIS_SESSION) {
+            log::warn!("WTSRegisterSessionNotification failed: {e:?} — host-lock suppression disabled");
+        }
     }
 
     /* run message loop. mouse / keybrd procs don't actually return
@@ -256,6 +280,11 @@ fn start_routine(
             }
         }
     }
+
+    /* unregister session-notification before the window goes away. */
+    unsafe {
+        let _ = WTSUnRegisterSessionNotification(msg_window);
+    }
 }
 
 fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
@@ -272,6 +301,14 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* client already active, no need to check */
     if ACTIVE_CLIENT.get().is_some() {
+        return ret;
+    }
+
+    /* host session locked — don't let the cursor leave the lock
+     * screen. The lock screen consumes keyboard before our hook sees
+     * it; allowing a cross would put the mouse on the peer with no
+     * keyboard, a confusing half-broken state. */
+    if HOST_LOCKED.get() {
         return ret;
     }
 
@@ -354,12 +391,29 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
 unsafe extern "system" fn window_proc(
     _hwnd: HWND,
     uint: u32,
-    _wparam: WPARAM,
+    wparam: WPARAM,
     _lparam: LPARAM,
 ) -> LRESULT {
     if uint == WM_DISPLAYCHANGE {
         log::debug!("display resolution changed");
         DISPLAY_RESOLUTION_GENERATION.fetch_add(1, Ordering::Release);
+    } else if uint == WM_WTSSESSION_CHANGE {
+        match wparam.0 as u32 {
+            WTS_SESSION_LOCK => {
+                HOST_LOCKED.set(true);
+                if let Some(pos) = ACTIVE_CLIENT.take() {
+                    log::info!("host session locked mid-capture; releasing");
+                    let _ = try_send_event(pos, CaptureEvent::AutoRelease);
+                } else {
+                    log::info!("host session locked");
+                }
+            }
+            WTS_SESSION_UNLOCK => {
+                HOST_LOCKED.set(false);
+                log::info!("host session unlocked");
+            }
+            _ => {}
+        }
     }
     LRESULT(1)
 }
