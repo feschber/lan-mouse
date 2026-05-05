@@ -58,13 +58,21 @@ struct InputCaptureState {
     bounds: Bounds,
     /// current state of modifier keys
     modifier_state: XMods,
-    /// True while the host's screen is locked (set by the
-    /// `com.apple.screenIsLocked` distributed notification, cleared by
-    /// `com.apple.screenIsUnlocked`). Crossings into capture surfaces
-    /// are suppressed while this is true: macOS's lock screen
-    /// consumes keyboard events before any CGEventTap sees them, so
-    /// allowing the mouse to leave the host produces a half-broken
-    /// state (cursor on peer, no keyboard). Mirrors what Wayland's
+    /// True while the host's screen is locked. Refreshed on each
+    /// `MouseMoved` event in the tap callback by querying
+    /// `CGSessionCopyCurrentDictionary["CGSSessionScreenIsLocked"]`
+    /// — direct polling, no observer / run-loop dependency. (We tried
+    /// `CFNotificationCenterGetDistributedCenter` for
+    /// `com.apple.screenIsLocked` and `notify_register_check`
+    /// against notify(3); neither delivers reliably from a non-Cocoa
+    /// daemon: distributed notifications attach the distnoted port
+    /// to the main thread's CFRunLoop, but lan-mouse's main thread
+    /// runs the GLib main loop instead of a CFRunLoop, so the port
+    /// is never serviced.) Crossings into capture surfaces are
+    /// suppressed while this is true: macOS's lock screen consumes
+    /// keyboard events before any CGEventTap sees them, so allowing
+    /// the mouse to leave the host produces a half-broken state
+    /// (cursor on peer, no keyboard). Mirrors what Wayland's
     /// compositor enforces for free on locked Linux.
     host_locked: bool,
 }
@@ -478,6 +486,30 @@ fn create_event_tap<'a>(
         let mut capture_position = None;
         let mut res_events = vec![];
 
+        // Refresh `host_locked` on MouseMoved by polling CGSession.
+        // Only on MouseMoved because that's the only event type whose
+        // forwarding decision depends on it (cross-detect gate, plus
+        // mid-capture abort). On a transition into locked, synthesize
+        // an AutoRelease so the wrapper sends Leave to the peer and
+        // brings the cursor back to the host.
+        if matches!(event_type, CGEventType::MouseMoved) {
+            let now_locked = is_screen_locked();
+            if now_locked != state.host_locked {
+                state.host_locked = now_locked;
+                if now_locked {
+                    if let Some(pos) = state.current_pos.take() {
+                        let _ = CGDisplay::show_cursor(&CGDisplay::main());
+                        log::info!("host screen locked mid-capture; releasing");
+                        let _ = event_tx.blocking_send((pos, CaptureEvent::AutoRelease));
+                    } else {
+                        log::info!("host screen locked");
+                    }
+                } else {
+                    log::info!("host screen unlocked");
+                }
+            }
+        }
+
         if matches!(event_type, CGEventType::TapDisabledByTimeout) {
             // The kernel disables the tap when our callback runs
             // longer than ~1s on a single event — typical causes
@@ -624,11 +656,8 @@ fn event_tap_thread(
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
 ) {
-    // Clone now: create_event_tap consumes notify_tx and event_tx
-    // into its closure.
+    // Clone now: create_event_tap consumes notify_tx into its closure.
     let display_notify_tx = notify_tx.clone();
-    let lock_event_tx = event_tx.clone();
-    let lock_state = client_state.clone();
 
     let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
         Err(e) => {
@@ -656,74 +685,11 @@ fn event_tap_thread(
         );
     }
 
-    // Register CoreFoundation distributed-notification observers for
-    // host screen lock / unlock. The callbacks flip
-    // `state.host_locked` so the event tap suppresses crossings while
-    // the lock screen is up — matches what Wayland's compositor
-    // enforces for free on locked Linux. Box-leak the shared
-    // `LockObserverData` once and use the same pointer as the
-    // observer key for both notification names; reclaim on exit.
-    let lock_observer_data = Box::into_raw(Box::new(LockObserverData {
-        state: lock_state,
-        event_tx: lock_event_tx,
-    })) as *mut c_void;
-    let locked_name = unsafe {
-        let cstr = CString::new("com.apple.screenIsLocked").unwrap();
-        CFStringCreateWithCString(
-            kCFAllocatorDefault,
-            cstr.as_ptr() as *const c_char,
-            kCFStringEncodingUTF8,
-        )
-    };
-    let unlocked_name = unsafe {
-        let cstr = CString::new("com.apple.screenIsUnlocked").unwrap();
-        CFStringCreateWithCString(
-            kCFAllocatorDefault,
-            cstr.as_ptr() as *const c_char,
-            kCFStringEncodingUTF8,
-        )
-    };
-    unsafe {
-        let center = CFNotificationCenterGetDistributedCenter();
-        CFNotificationCenterAddObserver(
-            center,
-            lock_observer_data,
-            screen_locked_callback,
-            locked_name,
-            std::ptr::null(),
-            CF_NOTIFICATION_SUSPENSION_BEHAVIOR_DELIVER_IMMEDIATELY,
-        );
-        CFNotificationCenterAddObserver(
-            center,
-            lock_observer_data,
-            screen_unlocked_callback,
-            unlocked_name,
-            std::ptr::null(),
-            CF_NOTIFICATION_SUSPENSION_BEHAVIOR_DELIVER_IMMEDIATELY,
-        );
-    }
-
     log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
     log::debug!("event tap thread exiting!...");
 
     unsafe {
-        let center = CFNotificationCenterGetDistributedCenter();
-        CFNotificationCenterRemoveObserver(
-            center,
-            lock_observer_data,
-            locked_name,
-            std::ptr::null(),
-        );
-        CFNotificationCenterRemoveObserver(
-            center,
-            lock_observer_data,
-            unlocked_name,
-            std::ptr::null(),
-        );
-        CFRelease(locked_name as *const c_void);
-        CFRelease(unlocked_name as *const c_void);
-        drop(Box::from_raw(lock_observer_data as *mut LockObserverData));
 
         CGDisplayRemoveReconfigurationCallback(display_reconfiguration_callback, display_user_info);
         // Reclaim the leaked sender Box so we don't leak a tokio
@@ -736,57 +702,35 @@ fn event_tap_thread(
     let _ = exit.send(());
 }
 
-/// CoreFoundation distributed-notification callback for
-/// `com.apple.screenIsLocked`. Flips the capture state's `host_locked`
-/// flag, clears any in-flight capture, and synthesizes an
-/// `AutoRelease` upward so the wrapper tears down (sends Leave to the
-/// peer, flushes held keys, etc.). Runs on the CFRunLoop thread, NOT
-/// the tokio runtime — uses `blocking_lock` / `blocking_send`
-/// accordingly.
-extern "C" fn screen_locked_callback(
-    _center: CFNotificationCenterRef,
-    observer: *mut c_void,
-    _name: CFStringRef,
-    _object: *const c_void,
-    _user_info: *const c_void,
-) {
-    if observer.is_null() {
-        return;
+/// Query whether the host's screen is locked. Asks the WindowServer
+/// for the current login session dictionary and looks up the
+/// `CGSSessionScreenIsLocked` key. The key is `kCFBooleanTrue` when
+/// locked; on Sequoia 15+ it's typically absent when unlocked rather
+/// than `kCFBooleanFalse`, so missing-or-nil is treated as unlocked.
+/// Costs ~10–50µs per call (an XPC round-trip to WindowServer);
+/// called from the event tap callback only on `MouseMoved`, so the
+/// amortized cost is negligible (<2% CPU at typical mouse rates).
+fn is_screen_locked() -> bool {
+    let key = unsafe {
+        let cstr = CString::new("CGSSessionScreenIsLocked").unwrap();
+        CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            cstr.as_ptr() as *const c_char,
+            kCFStringEncodingUTF8,
+        )
+    };
+    let dict = unsafe { CGSessionCopyCurrentDictionary() };
+    if dict.is_null() {
+        unsafe { CFRelease(key as *const c_void) };
+        return false;
     }
-    // SAFETY: `observer` is the LockObserverData pointer we registered
-    // in `event_tap_thread`. It lives until the thread exits and we
-    // remove the observer registration, so the box is live here.
-    let data = unsafe { &*(observer as *const LockObserverData) };
-    let mut state = data.state.blocking_lock();
-    state.host_locked = true;
-    if let Some(pos) = state.current_pos.take() {
-        let _ = CGDisplay::show_cursor(&CGDisplay::main());
-        log::info!("host screen locked mid-capture; releasing");
-        let _ = data
-            .event_tx
-            .blocking_send((pos, CaptureEvent::AutoRelease));
-    } else {
-        log::info!("host screen locked");
+    let value = unsafe { CFDictionaryGetValue(dict, key as *const c_void) };
+    let locked = !value.is_null() && unsafe { CFBooleanGetValue(value as CFBooleanRef) };
+    unsafe {
+        CFRelease(dict as *const c_void);
+        CFRelease(key as *const c_void);
     }
-}
-
-/// CoreFoundation distributed-notification callback for
-/// `com.apple.screenIsUnlocked`. Just clears the `host_locked` flag —
-/// no state to teardown.
-extern "C" fn screen_unlocked_callback(
-    _center: CFNotificationCenterRef,
-    observer: *mut c_void,
-    _name: CFStringRef,
-    _object: *const c_void,
-    _user_info: *const c_void,
-) {
-    if observer.is_null() {
-        return;
-    }
-    let data = unsafe { &*(observer as *const LockObserverData) };
-    let mut state = data.state.blocking_lock();
-    state.host_locked = false;
-    log::info!("host screen unlocked");
+    locked
 }
 
 /// Quartz display-reconfiguration callback. Fires twice per change:
@@ -1024,46 +968,18 @@ extern "C" {
     fn _CGSDefaultConnection() -> CGSConnectionID;
 }
 
-/// State the screen-lock notification callbacks need: shared capture
-/// state (so they can flip `host_locked` and clear `current_pos`) plus
-/// the event-tx clone (so they can synthesize an `AutoRelease` event
-/// upward when the screen locks mid-capture). Box-leaked once into the
-/// `event_tap_thread`'s lifetime; reclaimed on thread exit.
-struct LockObserverData {
-    state: Arc<Mutex<InputCaptureState>>,
-    event_tx: Sender<(Position, CaptureEvent)>,
-}
+type CFDictionaryRef = *mut c_void;
 
-type CFNotificationCenterRef = *mut c_void;
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+}
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
-    fn CFNotificationCenterGetDistributedCenter() -> CFNotificationCenterRef;
-    fn CFNotificationCenterAddObserver(
-        center: CFNotificationCenterRef,
-        observer: *const c_void,
-        callback: extern "C" fn(
-            CFNotificationCenterRef,
-            *mut c_void,
-            CFStringRef,
-            *const c_void,
-            *const c_void,
-        ),
-        name: CFStringRef,
-        object: *const c_void,
-        suspension_behavior: u32,
-    );
-    fn CFNotificationCenterRemoveObserver(
-        center: CFNotificationCenterRef,
-        observer: *const c_void,
-        name: CFStringRef,
-        object: *const c_void,
-    );
+    fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> *const c_void;
+    fn CFBooleanGetValue(boolean: CFBooleanRef) -> bool;
 }
-
-/// CFNotificationSuspensionBehavior — deliver while suspended (we're a
-/// background daemon and may not have foreground app standing).
-const CF_NOTIFICATION_SUSPENSION_BEHAVIOR_DELIVER_IMMEDIATELY: u32 = 4;
 
 extern "C" {
     fn CGEventSourceSetLocalEventsSuppressionInterval(
