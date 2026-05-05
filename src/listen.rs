@@ -3,7 +3,7 @@ use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use rustls::pki_types::CertificateDer;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     net::{IpAddr, SocketAddr},
     rc::Rc,
     sync::{Arc, Mutex, RwLock},
@@ -390,8 +390,58 @@ fn spawn_supervisor_task(
                 None
             }
         };
+        // Periodic reconciliation: enumerate live IPs and diff against
+        // `listeners`. Network.framework on macOS doesn't reliably fire
+        // `IfEvent::Down` when an interface is administratively
+        // disabled (e.g. user toggles Wi-Fi off in System Settings),
+        // leaving stale slots bound to vanished IPs that no traffic
+        // can reach. Polling every 30s catches whatever if-watch
+        // misses — both adds (covers missed Up events too) and drops.
+        let mut reconcile_tick = tokio::time::interval(Duration::from_secs(30));
+        // Skip the immediate-first tick — we just enumerated at startup
+        // and don't want to thrash listeners on the first iteration.
+        reconcile_tick.tick().await;
         loop {
             tokio::select! {
+                _ = reconcile_tick.tick() => {
+                    let current_ips: HashSet<IpAddr> =
+                        enumerate_listenable_ipv4().into_iter().collect();
+                    let to_drop: Vec<IpAddr> = listeners
+                        .keys()
+                        .filter(|ip| !current_ips.contains(*ip))
+                        .copied()
+                        .collect();
+                    for ip in to_drop {
+                        if listeners.remove(&ip).is_some() {
+                            log::info!(
+                                "reconcile: dropping stale listener on {ip}:{port} \
+                                 (IP no longer present on any interface)"
+                            );
+                        }
+                    }
+                    for ip in current_ips {
+                        if !listeners.contains_key(&ip) {
+                            match try_bind_listener(ip, port, &cfg).await {
+                                Ok(l) => {
+                                    let task = spawn_accept_task(
+                                        l,
+                                        listen_tx.clone(),
+                                        conns.clone(),
+                                        connection_attempts.clone(),
+                                    );
+                                    listeners.insert(ip, ListenerSlot { accept_task: task });
+                                    log::info!(
+                                        "reconcile: now listening on {ip}:{port} \
+                                         (IP appeared without an Up event)"
+                                    );
+                                }
+                                Err(e) => log::warn!(
+                                    "reconcile: failed to bind on {ip}:{port}: {e}"
+                                ),
+                            }
+                        }
+                    }
+                }
                 ev = async {
                     match watcher.as_mut() {
                         Some(w) => w.select_next_some().await,
