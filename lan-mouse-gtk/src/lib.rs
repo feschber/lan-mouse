@@ -293,6 +293,9 @@ fn build_ui(app: &Application) {
                     FrontendEvent::ReleaseThreshold(threshold) => {
                         window.set_release_threshold(threshold);
                     }
+                    FrontendEvent::MdnsDiscovery(enabled) => {
+                        window.set_mdns_discovery(enabled);
+                    }
                 }
             }
         }

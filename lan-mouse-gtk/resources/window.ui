@@ -323,6 +323,23 @@
                         </child>
                       </object>
                     </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Network Discovery</property>
+                        <property name="description" translatable="yes">Advertise (and consume) Bonjour records so peers can pick the OS-preferred interface on multi-homed hosts. Turn off on networks where mDNS multicast is firewalled.</property>
+                        <child>
+                          <object class="AdwActionRow" id="mdns_discovery_row">
+                            <property name="title" translatable="yes">mDNS Discovery</property>
+                            <property name="subtitle" translatable="yes">Use _lan-mouse._udp.local. for service order hints.</property>
+                            <child type="suffix">
+                              <object class="GtkSwitch" id="mdns_discovery_switch">
+                                <property name="valign">center</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                     </object>
                   </property>
                   </object>
