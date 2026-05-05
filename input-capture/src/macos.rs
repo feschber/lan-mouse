@@ -58,23 +58,6 @@ struct InputCaptureState {
     bounds: Bounds,
     /// current state of modifier keys
     modifier_state: XMods,
-    /// True while the host's screen is locked. Refreshed on each
-    /// `MouseMoved` event in the tap callback by querying
-    /// `CGSessionCopyCurrentDictionary["CGSSessionScreenIsLocked"]`
-    /// — direct polling, no observer / run-loop dependency. (We tried
-    /// `CFNotificationCenterGetDistributedCenter` for
-    /// `com.apple.screenIsLocked` and `notify_register_check`
-    /// against notify(3); neither delivers reliably from a non-Cocoa
-    /// daemon: distributed notifications attach the distnoted port
-    /// to the main thread's CFRunLoop, but lan-mouse's main thread
-    /// runs the GLib main loop instead of a CFRunLoop, so the port
-    /// is never serviced.) Crossings into capture surfaces are
-    /// suppressed while this is true: macOS's lock screen consumes
-    /// keyboard events before any CGEventTap sees them, so allowing
-    /// the mouse to leave the host produces a half-broken state
-    /// (cursor on peer, no keyboard). Mirrors what Wayland's
-    /// compositor enforces for free on locked Linux.
-    host_locked: bool,
 }
 
 #[derive(Debug)]
@@ -102,7 +85,6 @@ impl InputCaptureState {
             enter_position: None,
             bounds: Bounds::default(),
             modifier_state: Default::default(),
-            host_locked: false,
         };
         res.update_bounds()?;
         Ok(res)
@@ -486,30 +468,6 @@ fn create_event_tap<'a>(
         let mut capture_position = None;
         let mut res_events = vec![];
 
-        // Refresh `host_locked` on MouseMoved by polling CGSession.
-        // Only on MouseMoved because that's the only event type whose
-        // forwarding decision depends on it (cross-detect gate, plus
-        // mid-capture abort). On a transition into locked, synthesize
-        // an AutoRelease so the wrapper sends Leave to the peer and
-        // brings the cursor back to the host.
-        if matches!(event_type, CGEventType::MouseMoved) {
-            let now_locked = is_screen_locked();
-            if now_locked != state.host_locked {
-                state.host_locked = now_locked;
-                if now_locked {
-                    if let Some(pos) = state.current_pos.take() {
-                        let _ = CGDisplay::show_cursor(&CGDisplay::main());
-                        log::info!("host screen locked mid-capture; releasing");
-                        let _ = event_tx.blocking_send((pos, CaptureEvent::AutoRelease));
-                    } else {
-                        log::info!("host screen locked");
-                    }
-                } else {
-                    log::info!("host screen unlocked");
-                }
-            }
-        }
-
         if matches!(event_type, CGEventType::TapDisabledByTimeout) {
             // The kernel disables the tap when our callback runs
             // longer than ~1s on a single event — typical causes
@@ -582,27 +540,37 @@ fn create_event_tap<'a>(
             ) {
                 state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
             }
-        } else if matches!(event_type, CGEventType::MouseMoved) && !state.host_locked {
-            // Did we cross a barrier? Skip when the host is locked —
-            // the lock screen consumes keyboard before our tap sees
-            // it, so allowing the cursor to cross produces a
-            // mouse-only-on-peer half-broken state.
+        } else if matches!(event_type, CGEventType::MouseMoved) {
+            // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
-                capture_position = Some(new_pos);
-                // Snapshot the cursor's screen-space position at the
-                // instant of crossing — before start_capture's
-                // reset_cursor() snaps it to the edge. The peer uses
-                // this for the visually-corresponding warp on Enter
-                // so the cursor doesn't jump to the entry-edge midpoint.
-                let cross_loc = cg_ev.location();
-                let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
-                state
-                    .start_capture(cg_ev, new_pos)
-                    .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin { cursor });
-                notify_tx
-                    .blocking_send(ProducerEvent::Grab(new_pos))
-                    .expect("Failed to send notification");
+                // About to commit the cross — final gate: skip if the
+                // host is locked, since the lock screen consumes
+                // keyboard before our tap sees it and allowing the
+                // cursor to leave would produce a mouse-only-on-peer
+                // half-broken state. Polling CGSession only at this
+                // commit point (rather than every MouseMoved) keeps
+                // the per-event cost zero — `is_screen_locked()` is
+                // an XPC to WindowServer (~10–50µs); a typical user
+                // crosses a wall a few times per minute.
+                if is_screen_locked() {
+                    log::info!("host screen locked; suppressing cross to {new_pos:?}");
+                } else {
+                    capture_position = Some(new_pos);
+                    // Snapshot the cursor's screen-space position at the
+                    // instant of crossing — before start_capture's
+                    // reset_cursor() snaps it to the edge. The peer uses
+                    // this for the visually-corresponding warp on Enter
+                    // so the cursor doesn't jump to the entry-edge midpoint.
+                    let cross_loc = cg_ev.location();
+                    let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
+                    state
+                        .start_capture(cg_ev, new_pos)
+                        .unwrap_or_else(|e| log::warn!("{e}"));
+                    res_events.push(CaptureEvent::Begin { cursor });
+                    notify_tx
+                        .blocking_send(ProducerEvent::Grab(new_pos))
+                        .expect("Failed to send notification");
+                }
             }
         }
 
