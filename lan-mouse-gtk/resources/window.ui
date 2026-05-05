@@ -208,7 +208,7 @@
                     <child>
                       <object class="AdwPreferencesGroup">
                         <property name="title" translatable="yes">Outgoing Auto-Release</property>
-                        <property name="description" translatable="yes">When this machine is capturing input for a peer, releases capture automatically once the cursor pushes past the host-adjacent edge. With the slider off, release still happens via the bind chord or a peer-side leave event. Useful when crossing one or more lock screens between machines.</property>
+                        <property name="description" translatable="yes">Fallback release when the peer can't tell us the cursor reached its edge — typically because the peer's screen is locked. No effect on peers that release themselves; the cursor-release keybind still works either way.</property>
                         <child>
                           <object class="AdwActionRow" id="release_threshold_row">
                             <property name="title" translatable="yes">Release Threshold</property>
