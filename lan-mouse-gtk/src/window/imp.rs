@@ -6,7 +6,7 @@ use glib::subclass::InitializingObject;
 use gtk::glib::clone;
 use gtk::{
     Button, CompositeTemplate, Entry, EventControllerScroll, EventControllerScrollFlags, Image,
-    Label, ListBox, PropagationPhase, Scale, gdk, gio, glib,
+    Label, ListBox, PropagationPhase, Scale, ScrolledWindow, gdk, gio, glib,
 };
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
@@ -234,20 +234,48 @@ impl ObjectImpl for Window {
         ));
         self.release_threshold_handler.replace(Some(handler_id));
 
-        // Eat scroll-wheel events on the threshold slider. By default
-        // GtkScale treats vertical scroll as increment / decrement,
-        // which makes the threshold drift any time the user scrolls
-        // the window and the cursor passes over the slider. We
-        // intercept in the capture phase and return Stop so the scale's
-        // own controller never sees the event. Side effect: scrolling
-        // doesn't pass through to the parent ScrolledWindow while the
-        // cursor is on the slider — to scroll, move the cursor off it.
-        let scroll_block = EventControllerScroll::new(
+        // Pass scroll-wheel events on the threshold slider through to
+        // the ancestor ScrolledWindow instead of letting GtkScale's
+        // default handler treat them as increment / decrement (which
+        // would drift the threshold any time the user scrolls past
+        // the slider). Returning `Stop` from a capture-phase handler
+        // suppresses the scale's own scroll-to-adjust handler, but
+        // also stops propagation to the parent — so we additionally
+        // bump the parent ScrolledWindow's vadjustment by hand to
+        // mimic native scroll-passthrough.
+        let scroll_forward = EventControllerScroll::new(
             EventControllerScrollFlags::VERTICAL | EventControllerScrollFlags::HORIZONTAL,
         );
-        scroll_block.set_propagation_phase(PropagationPhase::Capture);
-        scroll_block.connect_scroll(|_, _, _| glib::Propagation::Stop);
-        self.release_threshold_scale.add_controller(scroll_block);
+        scroll_forward.set_propagation_phase(PropagationPhase::Capture);
+        scroll_forward.connect_scroll(clone!(
+            #[weak(rename_to = scale)]
+            self.release_threshold_scale,
+            #[upgrade_or]
+            glib::Propagation::Stop,
+            move |_, _dx, dy| {
+                let mut walker = scale.parent();
+                while let Some(w) = walker {
+                    if let Some(scrolled) = w.downcast_ref::<ScrolledWindow>() {
+                        let vadj = scrolled.vadjustment();
+                        // step_increment is the "wheel tick" unit; if
+                        // unset (rare), fall back to a sensible
+                        // pixel default so a single tick still moves.
+                        let step = if vadj.step_increment() > 0.0 {
+                            vadj.step_increment()
+                        } else {
+                            40.0
+                        };
+                        let target = (vadj.value() + dy * step)
+                            .clamp(vadj.lower(), vadj.upper() - vadj.page_size());
+                        vadj.set_value(target);
+                        break;
+                    }
+                    walker = w.parent();
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        self.release_threshold_scale.add_controller(scroll_forward);
     }
 }
 
