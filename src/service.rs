@@ -4,6 +4,7 @@ use crate::{
     config::{Config, ConfigClient},
     connect::LanMouseConnection,
     crypto,
+    discovery::{Discovery, PrimaryCache},
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
@@ -19,6 +20,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
+    time::Duration,
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
@@ -67,6 +69,11 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    /// mDNS-SD service registration + browse. Advertises our primary
+    /// interface IP for peer dialers to bias toward; populates
+    /// shared `PrimaryCache` (read by `LanMouseConnection`) from
+    /// peer announcements.
+    discovery: Discovery,
 }
 
 #[derive(Debug)]
@@ -91,10 +98,18 @@ impl Service {
         let frontend_listener = AsyncFrontendListener::new().await?;
 
         let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints()));
-        // listener + connection
+        // listener + connection. The primary-IP cache is owned by
+        // the dialer side so its references survive Discovery
+        // toggles; Discovery writes peer hints into it as browse
+        // events arrive.
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
-        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let primary_cache: PrimaryCache = Default::default();
+        let conn = LanMouseConnection::new(
+            cert.clone(),
+            client_manager.clone(),
+            primary_cache.clone(),
+        );
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
@@ -114,6 +129,7 @@ impl Service {
         let resolver = DnsResolver::new()?;
 
         let port = config.port();
+        let discovery = Discovery::new(port, config.mdns_discovery(), primary_cache);
         let service = Self {
             config,
             capture,
@@ -131,6 +147,7 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            discovery,
         };
         Ok(service)
     }
@@ -148,6 +165,18 @@ impl Service {
             self.activate_client(handle);
         }
 
+        // Periodic refresh of the Discovery service registration so
+        // its TXT record stays accurate when the OS-preferred
+        // interface (default route) changes — e.g. user switches
+        // off Wi-Fi and Mac falls back to Ethernet. Cheap: at most
+        // one re-publish every 30s, and a no-op when the primary
+        // hasn't moved.
+        let mut discovery_refresh_tick =
+            tokio::time::interval(Duration::from_secs(30));
+        // skip the immediate-fire of the first tick — Discovery
+        // already published once at startup
+        discovery_refresh_tick.tick().await;
+
         loop {
             tokio::select! {
                 request = self.frontend_listener.next() => self.handle_frontend_request(request),
@@ -156,6 +185,7 @@ impl Service {
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
                 _ = self.config.changed() => self.handle_config_change(),
+                _ = discovery_refresh_tick.tick() => self.discovery.refresh(),
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
         }
@@ -233,6 +263,12 @@ impl Service {
                 self.config.set_natural_scroll(natural_scroll);
                 self.emulation.set_natural_scroll(natural_scroll);
                 self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
+                self.save_config();
+            }
+            FrontendRequest::SetMdnsDiscovery(enabled) => {
+                self.config.set_mdns_discovery(enabled);
+                self.discovery.set_enabled(enabled);
+                self.notify_frontend(FrontendEvent::MdnsDiscovery(enabled));
                 self.save_config();
             }
         }
@@ -325,6 +361,7 @@ impl Service {
             EmulationEvent::PortChanged(port) => match port {
                 Ok(port) => {
                     self.port = port;
+                    self.discovery.set_port(port);
                     self.notify_frontend(FrontendEvent::PortChanged(port, None));
                 }
                 Err(e) => self
@@ -417,6 +454,7 @@ impl Service {
             self.config.release_threshold_px(),
         ));
         self.notify_frontend(FrontendEvent::NaturalScroll(self.config.natural_scroll()));
+        self.notify_frontend(FrontendEvent::MdnsDiscovery(self.config.mdns_discovery()));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }

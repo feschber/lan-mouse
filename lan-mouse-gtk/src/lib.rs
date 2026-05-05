@@ -424,6 +424,9 @@ fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
                     FrontendEvent::NaturalScroll(natural_scroll) => {
                         window.set_natural_scroll(natural_scroll);
                     }
+                    FrontendEvent::MdnsDiscovery(enabled) => {
+                        window.set_mdns_discovery(enabled);
+                    }
                 }
             }
         }

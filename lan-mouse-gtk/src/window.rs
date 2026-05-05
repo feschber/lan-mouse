@@ -422,6 +422,10 @@ impl Window {
         self.request(FrontendRequest::SetNaturalScroll(natural_scroll));
     }
 
+    pub(super) fn request_mdns_discovery(&self, enabled: bool) {
+        self.request(FrontendRequest::SetMdnsDiscovery(enabled));
+    }
+
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
         let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
@@ -495,6 +499,20 @@ impl Window {
         }
         switch.set_active(natural_scroll);
         switch.set_state(natural_scroll);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
+    pub(super) fn set_mdns_discovery(&self, enabled: bool) {
+        let imp = self.imp();
+        let switch = &imp.mdns_discovery_switch;
+        let handler = imp.mdns_discovery_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(enabled);
+        switch.set_state(enabled);
         if let Some(id) = handler.as_ref() {
             switch.unblock_signal(id);
         }

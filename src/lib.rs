@@ -4,6 +4,7 @@ pub mod client;
 pub mod config;
 mod connect;
 mod crypto;
+mod discovery;
 mod dns;
 mod emulation;
 pub mod emulation_test;

@@ -233,6 +233,13 @@ pub enum FrontendEvent {
     /// libinput natural-scroll preference for forwarded events,
     /// since virtual-pointer events bypass libinput entirely.
     NaturalScroll(bool),
+    /// whether mDNS-SD discovery is on. When true, lan-mouse
+    /// advertises a `_lan-mouse._udp.local.` Bonjour service whose
+    /// TXT record's `primary=` field hints at the OS-preferred
+    /// interface (Mac service order / Linux default route), so
+    /// peers can bias their connection attempts toward the right
+    /// interface on multi-homed hosts.
+    MdnsDiscovery(bool),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -277,6 +284,8 @@ pub enum FrontendRequest {
     /// injection (matches the libinput natural-scroll concept for
     /// virtual-pointer-injected events that bypass libinput)
     SetNaturalScroll(bool),
+    /// turn mDNS-SD discovery on or off
+    SetMdnsDiscovery(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

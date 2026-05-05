@@ -58,6 +58,10 @@ pub struct Window {
     pub natural_scroll_row: TemplateChild<ActionRow>,
     #[template_child]
     pub natural_scroll_switch: TemplateChild<Switch>,
+    #[template_child]
+    pub mdns_discovery_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub mdns_discovery_switch: TemplateChild<Switch>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -73,6 +77,8 @@ pub struct Window {
     /// state-set signal, blocked while the daemon is pushing the
     /// initial value via Sync.
     pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Same pattern for the mDNS-discovery switch.
+    pub mdns_discovery_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -271,6 +277,20 @@ impl ObjectImpl for Window {
             }
         ));
         self.natural_scroll_handler.replace(Some(switch_handler));
+
+        // mDNS-discovery switch — identical pattern.
+        let mdns_switch = self.mdns_discovery_switch.clone();
+        let mdns_handler = mdns_switch.connect_state_set(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                window.request_mdns_discovery(state);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.mdns_discovery_handler.replace(Some(mdns_handler));
     }
 }
 

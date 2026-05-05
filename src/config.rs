@@ -74,6 +74,14 @@ struct ConfigToml {
     /// preference, but applied to forwarded events that bypass
     /// libinput entirely on Wayland virtual-pointer paths.
     natural_scroll: Option<bool>,
+    /// Advertise (and consume) `_lan-mouse._udp.local.` Bonjour
+    /// service records. The TXT record's `primary=` field tells the
+    /// dialer which interface IP the OS prefers (macOS service order
+    /// / Linux default route), so when a peer is multi-homed the
+    /// dialer biases toward the right interface instead of racing
+    /// blindly. Default true; turn off on networks where mDNS
+    /// multicast (224.0.0.251) is firewalled.
+    mdns_discovery: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -541,6 +549,22 @@ impl Config {
             self.config_toml = Some(Default::default());
         }
         self.config_toml.as_mut().expect("config").natural_scroll = Some(natural_scroll);
+    }
+
+    /// Whether mDNS-SD discovery is enabled. Defaults to true when
+    /// the key is absent.
+    pub fn mdns_discovery(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.mdns_discovery)
+            .unwrap_or(true)
+    }
+
+    pub fn set_mdns_discovery(&mut self, enabled: bool) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml.as_mut().expect("config").mdns_discovery = Some(enabled);
     }
 
     /// set configured clients
