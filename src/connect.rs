@@ -210,6 +210,7 @@ impl LanMouseConnection {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn connect_to_handle(
     client_manager: ClientManager,
     cert: Certificate,
@@ -240,9 +241,7 @@ async fn connect_to_handle(
                 primary_hints.borrow().get(&key).copied()
             })
             .map(|ip| SocketAddr::new(ip, port));
-        log::info!(
-            "client ({handle}) connecting ... (ips: {addrs:?}, preferred: {preferred:?})"
-        );
+        log::info!("client ({handle}) connecting ... (ips: {addrs:?}, preferred: {preferred:?})");
         let res = connect_any(&addrs, preferred, cert).await;
         let (conn, addr) = match res {
             Ok(c) => c,
@@ -261,7 +260,10 @@ async fn connect_to_handle(
         // mirrors a Hello back so the receive loop can populate
         // `peer_commit`. Old peers will silently skip this event
         // per the forward-compat handler in [`receive_loop`].
-        let (buf, len) = ProtoEvent::Hello { commit: local_commit() }.into();
+        let (buf, len) = ProtoEvent::Hello {
+            commit: local_commit(),
+        }
+        .into();
         if let Err(e) = conn.send(&buf[..len]).await {
             log::debug!("hello send to {addr} failed: {e}");
         }

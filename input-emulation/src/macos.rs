@@ -1,6 +1,8 @@
 use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
+use core_foundation::base::{CFRelease, kCFAllocatorDefault};
+use core_foundation::string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8};
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
@@ -15,8 +17,6 @@ use input_event::{
     scancode,
 };
 use keycode::{KeyMap, KeyMapping};
-use core_foundation::base::{CFRelease, kCFAllocatorDefault};
-use core_foundation::string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::ffi::{CString, c_char, c_int, c_void};
@@ -119,9 +119,8 @@ impl MacOSEmulation {
             return;
         }
         let mut id = self.user_activity_assertion.get();
-        let _ret = unsafe {
-            IOPMAssertionDeclareUserActivity(reason, K_IOPM_USER_ACTIVE_LOCAL, &mut id)
-        };
+        let _ret =
+            unsafe { IOPMAssertionDeclareUserActivity(reason, K_IOPM_USER_ACTIVE_LOCAL, &mut id) };
         self.user_activity_assertion.set(id);
         unsafe { CFRelease(reason as *const c_void) };
     }

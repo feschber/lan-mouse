@@ -105,11 +105,8 @@ impl Service {
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let primary_cache: PrimaryCache = Default::default();
-        let conn = LanMouseConnection::new(
-            cert.clone(),
-            client_manager.clone(),
-            primary_cache.clone(),
-        );
+        let conn =
+            LanMouseConnection::new(cert.clone(), client_manager.clone(), primary_cache.clone());
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
@@ -171,8 +168,7 @@ impl Service {
         // off Wi-Fi and Mac falls back to Ethernet. Cheap: at most
         // one re-publish every 30s, and a no-op when the primary
         // hasn't moved.
-        let mut discovery_refresh_tick =
-            tokio::time::interval(Duration::from_secs(30));
+        let mut discovery_refresh_tick = tokio::time::interval(Duration::from_secs(30));
         // skip the immediate-fire of the first tick — Discovery
         // already published once at startup
         discovery_refresh_tick.tick().await;

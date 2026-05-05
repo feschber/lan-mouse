@@ -419,6 +419,11 @@ fn spawn_supervisor_task(
                             );
                         }
                     }
+                    // `try_bind_listener` is async and may fail, so the
+                    // typical `entry().or_insert_with(...)` rewrite the
+                    // map_entry lint suggests doesn't fit — we only want
+                    // to insert on bind success.
+                    #[allow(clippy::map_entry)]
                     for ip in current_ips {
                         if !listeners.contains_key(&ip) {
                             match try_bind_listener(ip, port, &cfg).await {

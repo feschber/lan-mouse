@@ -252,9 +252,7 @@ impl Discovery {
     /// need to take the same Rc reference.
     #[allow(dead_code)]
     pub(crate) fn peer_primary_ip(&self, hostname: &str) -> Option<IpAddr> {
-        if self.daemon.is_none() {
-            return None;
-        }
+        self.daemon.as_ref()?;
         let key = strip_trailing_dot(hostname).to_ascii_lowercase();
         self.primary_cache.borrow().get(&key).copied()
     }
@@ -284,8 +282,7 @@ fn start_browse(
         while let Ok(event) = receiver.recv_async().await {
             match event {
                 ServiceEvent::ServiceResolved(resolved) => {
-                    let Some(primary_str) = resolved.get_property_val_str(TXT_PRIMARY_KEY)
-                    else {
+                    let Some(primary_str) = resolved.get_property_val_str(TXT_PRIMARY_KEY) else {
                         continue;
                     };
                     let Ok(ip) = primary_str.parse::<IpAddr>() else {
