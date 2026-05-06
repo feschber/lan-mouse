@@ -61,6 +61,8 @@ unsafe impl Send for MacOSEmulation {}
 
 impl MacOSEmulation {
     pub(crate) fn new() -> Result<Self, MacOSEmulationCreationError> {
+        request_macos_emulation_permissions()?;
+
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
             .map_err(|_| MacOSEmulationCreationError::EventSourceCreation)?;
         Ok(Self {
@@ -117,6 +119,42 @@ impl MacOSEmulation {
             let _ = task.await;
         }
     }
+}
+
+fn request_macos_emulation_permissions() -> Result<(), MacOSEmulationCreationError> {
+    // Request both permissions up front so the user sees both TCC prompts
+    // on the first launch. See the matching comment in input-capture/src/
+    // macos.rs::request_macos_capture_permissions for the rationale.
+    let accessibility = request_accessibility_permission();
+    let input_control = request_input_control_permission();
+
+    if !accessibility {
+        return Err(MacOSEmulationCreationError::AccessibilityPermission);
+    }
+    if !input_control {
+        return Err(MacOSEmulationCreationError::InputControlPermission);
+    }
+    Ok(())
+}
+
+fn request_accessibility_permission() -> bool {
+    // Silent check. The GUI owns the one-time user-visible prompt at
+    // startup (see lan_mouse_gtk::macos_privacy).
+    unsafe { AXIsProcessTrusted() }
+}
+
+fn request_input_control_permission() -> bool {
+    unsafe { CGPreflightPostEventAccess() }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightPostEventAccess() -> bool;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
 }
 
 fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {

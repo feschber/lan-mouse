@@ -22,6 +22,17 @@ use crate::{
 
 use super::{client_object::ClientObject, client_row::ClientRow};
 
+#[cfg(target_os = "macos")]
+fn set_button_content_label(button: &gtk::Button, label: &str) {
+    // The Reenable/Grant/Relaunch button wraps its icon+label in an
+    // AdwButtonContent (see window.ui). Walk into it and swap the label
+    // rather than GtkButton::set_label, which would replace the content
+    // widget and drop the icon.
+    if let Some(content) = button.child().and_downcast::<adw::ButtonContent>() {
+        content.set_label(label);
+    }
+}
+
 glib::wrapper! {
     pub struct Window(ObjectSubclass<imp::Window>)
         @extends adw::ApplicationWindow, gtk::Window, gtk::Widget,
@@ -432,6 +443,10 @@ impl Window {
 
     pub(super) fn show_toast(&self, msg: &str) {
         let toast = adw::Toast::new(msg);
+        self.add_toast(toast);
+    }
+
+    pub(super) fn add_toast(&self, toast: adw::Toast) {
         let toast_overlay = &self.imp().toast_overlay;
         toast_overlay.add_toast(toast);
     }
@@ -446,14 +461,61 @@ impl Window {
         self.update_capture_emulation_status();
     }
 
+    #[cfg(target_os = "macos")]
+    pub(super) fn refresh_capture_emulation_status(&self) {
+        self.update_capture_emulation_status();
+    }
+
     fn update_capture_emulation_status(&self) {
         let capture = self.imp().capture_active.get();
         let emulation = self.imp().emulation_active.get();
-        self.imp().capture_status_row.set_visible(!capture);
-        self.imp().emulation_status_row.set_visible(!emulation);
-        self.imp()
-            .capture_emulation_group
-            .set_visible(!capture || !emulation);
+
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS, capture and emulation share the same TCC gate
+            // (Accessibility). Collapse to a single warning row —
+            // emulation_status_row stays hidden and capture_status_row
+            // doubles as the shared status indicator. Its text and
+            // button mutate based on whether we're waiting for AX or
+            // waiting for the user to relaunch the app.
+            let anything_off = !capture || !emulation;
+            self.imp().emulation_status_row.set_visible(false);
+            self.imp().capture_status_row.set_visible(anything_off);
+            self.imp().capture_emulation_group.set_visible(anything_off);
+
+            if anything_off {
+                self.update_macos_warning_row_text();
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.imp().capture_status_row.set_visible(!capture);
+            self.imp().emulation_status_row.set_visible(!emulation);
+            self.imp()
+                .capture_emulation_group
+                .set_visible(!capture || !emulation);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn update_macos_warning_row_text(&self) {
+        let row = &self.imp().capture_status_row;
+        let button = &self.imp().input_capture_button;
+
+        if crate::macos_privacy::accessibility_granted() {
+            // AX granted but capture/emulation still off → the daemon
+            // subprocess bailed at startup and needs a fresh process to
+            // re-initialize with the new grant in place.
+            row.set_title("relaunch required");
+            row.set_subtitle("Accessibility granted — restart to activate capture and emulation");
+            set_button_content_label(button, "Relaunch");
+        } else {
+            // AX missing → send the user to System Settings.
+            row.set_title("input capture is disabled");
+            row.set_subtitle("grant Accessibility permission to enable");
+            set_button_content_label(button, "Grant");
+        }
     }
 
     pub(super) fn set_authorized_keys(&self, fingerprints: HashMap<String, String>) {

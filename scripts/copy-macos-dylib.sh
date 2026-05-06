@@ -43,6 +43,9 @@ bundle_path=$(dirname "$(dirname "$(dirname "$exec_path")")")
 # Path to the Frameworks directory
 fwks_path="$bundle_path/Contents/Frameworks"
 mkdir -p "$fwks_path"
+# Path to bundled GTK/GSettings data
+resources_path="$bundle_path/Contents/Resources"
+share_path="$resources_path/share"
 
 # Copy and fix references for a binary (executable or dylib)
 #
@@ -58,6 +61,10 @@ fix_references() {
   libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
 
   echo "$libs" | while IFS= read -r old_path; do
+    if [ -z "$old_path" ]; then
+      continue
+    fi
+
     local base_name="$(basename "$old_path")"
     local dest="$fwks_path/$base_name"
 
@@ -80,6 +87,42 @@ fix_references() {
 }
 
 fix_references "$exec_path"
+
+copy_runtime_data() {
+  mkdir -p "$share_path"
+
+  if [ -d "$homebrew_path/share/glib-2.0/schemas" ]; then
+    mkdir -p "$share_path/glib-2.0"
+    rm -rf "$share_path/glib-2.0/schemas"
+    cp -RL "$homebrew_path/share/glib-2.0/schemas" "$share_path/glib-2.0/schemas"
+    if command -v glib-compile-schemas >/dev/null 2>&1; then
+      glib-compile-schemas "$share_path/glib-2.0/schemas"
+    elif [ -x "$homebrew_path/bin/glib-compile-schemas" ]; then
+      "$homebrew_path/bin/glib-compile-schemas" "$share_path/glib-2.0/schemas"
+    fi
+  fi
+
+  if [ -d "$homebrew_path/share/gtk-4.0" ]; then
+    rm -rf "$share_path/gtk-4.0"
+    cp -RL "$homebrew_path/share/gtk-4.0" "$share_path/gtk-4.0"
+  fi
+
+  if [ -d "$homebrew_path/share/icons/Adwaita" ]; then
+    mkdir -p "$share_path/icons"
+    rm -rf "$share_path/icons/Adwaita"
+    cp -RL "$homebrew_path/share/icons/Adwaita" "$share_path/icons/Adwaita"
+  fi
+}
+
+copy_runtime_data
+
+# cargo-bundle preserves the source path under Contents/Resources (so
+# `target/menubar-template.png` lands at `Resources/target/...`). Flatten it
+# so NSBundle pathForResource: finds the file at the Resources root.
+if [ -f "$resources_path/target/menubar-template.png" ]; then
+  mv "$resources_path/target/menubar-template.png" "$resources_path/menubar-template.png"
+  rmdir "$resources_path/target" 2>/dev/null || true
+fi
 
 # Ensure the main executable has our Frameworks path in its RPATH
 if ! otool -l "$exec_path" | grep -q "@executable_path/../Frameworks"; then

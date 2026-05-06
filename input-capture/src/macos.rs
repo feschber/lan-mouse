@@ -2,7 +2,7 @@ use super::{Capture, CaptureError, CaptureEvent, Position, error::MacosCaptureCr
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_foundation::{
-    base::{CFRelease, kCFAllocatorDefault},
+    base::{CFRelease, TCFType, kCFAllocatorDefault},
     date::CFTimeInterval,
     number::{CFBooleanRef, kCFBooleanTrue},
     runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
@@ -28,7 +28,7 @@ use std::{
     collections::HashSet,
     ffi::{CString, c_char},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     task::{Context, Poll, ready},
     thread::{self},
 };
@@ -67,6 +67,7 @@ enum ProducerEvent {
     Destroy(Position),
     Grab(Position),
     EventTapDisabled,
+    DisplayReconfigured,
 }
 
 impl InputCaptureState {
@@ -176,7 +177,31 @@ impl InputCaptureState {
                 }
                 self.active_clients.remove(&p);
             }
-            ProducerEvent::EventTapDisabled => return Err(CaptureError::EventTapDisabled),
+            ProducerEvent::EventTapDisabled => {
+                // Tap death can happen mid-capture (TCC Accessibility
+                // revoked, tap-timeout, etc). Release state so we
+                // don't leave the cursor hidden even if the outer
+                // task only logs this error rather than propagating.
+                if self.current_pos.is_some() {
+                    self.show_cursor()?;
+                    self.current_pos = None;
+                }
+                return Err(CaptureError::EventTapDisabled);
+            }
+            ProducerEvent::DisplayReconfigured => {
+                // The macOS display configuration changed — a monitor
+                // was plugged in/out, the resolution changed, the
+                // arrangement was rearranged, etc. Re-fetch the
+                // active-display bounds so barrier crossings and the
+                // cursor-warp on capture-start use the current
+                // geometry instead of whatever was true at process
+                // start.
+                if let Err(e) = self.update_bounds() {
+                    log::warn!("failed to refresh display bounds: {e}");
+                } else {
+                    log::info!("display reconfigured: {:?}", self.bounds);
+                }
+            }
         };
         Ok(())
     }
@@ -385,6 +410,14 @@ fn create_event_tap<'a>(
     notify_tx: Sender<ProducerEvent>,
     event_tx: Sender<(Position, CaptureEvent)>,
 ) -> Result<CGEventTap<'a>, MacosCaptureCreationError> {
+    // Shared slot for the tap's mach port pointer. Stored as `usize`
+    // because raw pointers aren't `Send`, but the integer
+    // representation is — and CGEventTapEnable is documented as
+    // thread-safe. Set immediately after CGEventTap::new returns;
+    // read by the callback to recover from a TapDisabledByTimeout.
+    let tap_mach_port: Arc<OnceLock<usize>> = Arc::new(OnceLock::new());
+    let tap_mach_port_cb = Arc::clone(&tap_mach_port);
+
     let cg_events_of_interest: Vec<CGEventType> = vec![
         CGEventType::LeftMouseDown,
         CGEventType::LeftMouseUp,
@@ -402,76 +435,114 @@ fn create_event_tap<'a>(
         CGEventType::FlagsChanged,
     ];
 
-    let event_tap_callback =
-        move |_proxy: CGEventTapProxy, event_type: CGEventType, cg_ev: &CGEvent| {
-            log::trace!("Got event from tap: {event_type:?}");
-            let mut state = client_state.blocking_lock();
-            let mut capture_position = None;
-            let mut res_events = vec![];
+    let event_tap_callback = move |_proxy: CGEventTapProxy,
+                                   event_type: CGEventType,
+                                   cg_ev: &CGEvent| {
+        log::trace!("Got event from tap: {event_type:?}");
+        let mut state = client_state.blocking_lock();
+        let mut capture_position = None;
+        let mut res_events = vec![];
 
+        if matches!(event_type, CGEventType::TapDisabledByTimeout) {
+            // The kernel disables the tap when our callback runs
+            // longer than ~1s on a single event — typical causes
+            // are heavy load, scheduler contention, or this
+            // process being briefly suspended (e.g. App Nap on a
+            // long idle). It is NOT a fatal condition: Apple's
+            // documented recovery is to call CGEventTapEnable
+            // and resume processing. Re-enable in place and KEEP
+            // existing capture state so the user doesn't see the
+            // cursor pop back to the local screen mid-session.
+            if let Some(&port) = tap_mach_port_cb.get() {
+                log::warn!("CGEventTap disabled by timeout — re-enabling");
+                unsafe {
+                    CGEventTapEnable(port as *mut c_void, true);
+                }
+            } else {
+                log::error!(
+                    "CGEventTap disabled by timeout, but mach port not yet stored — cannot re-enable"
+                );
+            }
+            return CallbackResult::Keep;
+        }
+
+        if matches!(event_type, CGEventType::TapDisabledByUserInput) {
+            // Deliberate kill — secure-input mode (e.g. password
+            // field), TCC Accessibility revoked mid-session, or
+            // the user disabling event-monitoring. We can't
+            // recover from this; drop captured state synchronously
+            // and return Keep on this event. Otherwise the
+            // `current_pos.is_some()` branch below would drop this
+            // event (and any racing callback still in flight) back
+            // into `CallbackResult::Drop`, silently eating the
+            // user's clicks and keypresses while the tap winds
+            // down. Clear state + show the cursor here, then
+            // notify the producer loop so the service can tear
+            // down cleanly.
+            log::error!("CGEventTap disabled by user input, releasing capture state");
+            if state.current_pos.is_some() {
+                let _ = CGDisplay::show_cursor(&CGDisplay::main());
+                state.current_pos = None;
+            }
+            notify_tx
+                .blocking_send(ProducerEvent::EventTapDisabled)
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to send notification: {e}");
+                });
+            return CallbackResult::Keep;
+        }
+
+        // Are we in a client?
+        if let Some(current_pos) = state.current_pos {
+            capture_position = Some(current_pos);
+            get_events(
+                &event_type,
+                cg_ev,
+                &mut res_events,
+                &mut state.modifier_state,
+            )
+            .unwrap_or_else(|e| {
+                log::error!("Failed to get events: {e}");
+            });
+
+            // Keep (hidden) cursor at the edge of the screen
             if matches!(
                 event_type,
-                CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+                CGEventType::MouseMoved
+                    | CGEventType::LeftMouseDragged
+                    | CGEventType::RightMouseDragged
+                    | CGEventType::OtherMouseDragged
             ) {
-                log::error!("CGEventTap disabled");
+                state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
+            }
+        } else if matches!(event_type, CGEventType::MouseMoved) {
+            // Did we cross a barrier?
+            if let Some(new_pos) = state.crossed(cg_ev) {
+                capture_position = Some(new_pos);
+                state
+                    .start_capture(cg_ev, new_pos)
+                    .unwrap_or_else(|e| log::warn!("{e}"));
+                res_events.push(CaptureEvent::Begin);
                 notify_tx
-                    .blocking_send(ProducerEvent::EventTapDisabled)
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to send notification: {e}");
-                    });
+                    .blocking_send(ProducerEvent::Grab(new_pos))
+                    .expect("Failed to send notification");
             }
+        }
 
-            // Are we in a client?
-            if let Some(current_pos) = state.current_pos {
-                capture_position = Some(current_pos);
-                get_events(
-                    &event_type,
-                    cg_ev,
-                    &mut res_events,
-                    &mut state.modifier_state,
-                )
-                .unwrap_or_else(|e| {
-                    log::error!("Failed to get events: {e}");
-                });
-
-                // Keep (hidden) cursor at the edge of the screen
-                if matches!(
-                    event_type,
-                    CGEventType::MouseMoved
-                        | CGEventType::LeftMouseDragged
-                        | CGEventType::RightMouseDragged
-                        | CGEventType::OtherMouseDragged
-                ) {
-                    state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
-                }
-            } else if matches!(event_type, CGEventType::MouseMoved) {
-                // Did we cross a barrier?
-                if let Some(new_pos) = state.crossed(cg_ev) {
-                    capture_position = Some(new_pos);
-                    state
-                        .start_capture(cg_ev, new_pos)
-                        .unwrap_or_else(|e| log::warn!("{e}"));
-                    res_events.push(CaptureEvent::Begin);
-                    notify_tx
-                        .blocking_send(ProducerEvent::Grab(new_pos))
-                        .expect("Failed to send notification");
-                }
-            }
-
-            if let Some(pos) = capture_position {
-                res_events.iter().for_each(|e| {
-                    // error must be ignored, since the event channel
-                    // may already be closed when the InputCapture instance is dropped.
-                    let _ = event_tx.blocking_send((pos, *e));
-                });
-                // Returning Drop should stop the event from being processed
-                // but core fundation still returns the event
-                cg_ev.set_type(CGEventType::Null);
-                CallbackResult::Drop
-            } else {
-                CallbackResult::Keep
-            }
-        };
+        if let Some(pos) = capture_position {
+            res_events.iter().for_each(|e| {
+                // error must be ignored, since the event channel
+                // may already be closed when the InputCapture instance is dropped.
+                let _ = event_tx.blocking_send((pos, *e));
+            });
+            // Returning Drop should stop the event from being processed
+            // but core fundation still returns the event
+            cg_ev.set_type(CGEventType::Null);
+            CallbackResult::Drop
+        } else {
+            CallbackResult::Keep
+        }
+    };
 
     let tap = CGEventTap::new(
         CGEventTapLocation::Session,
@@ -481,6 +552,13 @@ fn create_event_tap<'a>(
         event_tap_callback,
     )
     .map_err(|_| MacosCaptureCreationError::EventTapCreation)?;
+
+    // Hand the mach port pointer to the callback so it can re-enable
+    // the tap on TapDisabledByTimeout. The pointer is valid for the
+    // lifetime of `tap` (which lives on the event-tap thread until
+    // the run loop exits).
+    let port_ptr = tap.mach_port().as_concrete_TypeRef() as usize;
+    let _ = tap_mach_port.set(port_ptr);
 
     let tap_source: CFRunLoopSource = tap
         .mach_port()
@@ -501,6 +579,9 @@ fn event_tap_thread(
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
 ) {
+    // Clone now: create_event_tap consumes notify_tx into its closure.
+    let display_notify_tx = notify_tx.clone();
+
     let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
         Err(e) => {
             ready.send(Err(e)).expect("channel closed");
@@ -512,11 +593,60 @@ fn event_tap_thread(
             tap
         }
     };
+
+    // Register a Quartz display-reconfiguration callback so the
+    // capture state's bounds get refreshed when the user plugs in a
+    // monitor, changes resolution, or rearranges displays. The
+    // callback runs on this thread's CFRunLoop. Box-leak the sender
+    // so the C side has a stable user_info pointer; reclaim it after
+    // the run loop exits.
+    let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
+    unsafe {
+        CGDisplayRegisterReconfigurationCallback(
+            display_reconfiguration_callback,
+            display_user_info,
+        );
+    }
+
     log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
     log::debug!("event tap thread exiting!...");
 
+    unsafe {
+        CGDisplayRemoveReconfigurationCallback(display_reconfiguration_callback, display_user_info);
+        // Reclaim the leaked sender Box so we don't leak a tokio
+        // channel sender on every capture create/destroy cycle.
+        drop(Box::from_raw(
+            display_user_info as *mut Sender<ProducerEvent>,
+        ));
+    }
+
     let _ = exit.send(());
+}
+
+/// Quartz display-reconfiguration callback. Fires twice per change:
+/// once with `kCGDisplayBeginConfigurationFlag` set (BEFORE the
+/// change is applied — the bounds are still stale at this point),
+/// then again afterwards with the actual change flags (Add, Remove,
+/// Mode, DesktopShapeChanged, etc.). Skip the begin phase; on the
+/// real notification, kick the producer task to refresh bounds.
+extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_info: *mut c_void) {
+    const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
+    if flags & K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG != 0 {
+        return;
+    }
+    if user_info.is_null() {
+        return;
+    }
+    // SAFETY: user_info is a Box::into_raw of Sender<ProducerEvent>
+    // owned by `event_tap_thread`. It's valid for the lifetime of
+    // that thread; the registration is removed before the box is
+    // freed. The callback only fires while the run loop is running
+    // on that thread, so we know the box is live here.
+    let sender = unsafe { &*(user_info as *const Sender<ProducerEvent>) };
+    if let Err(e) = sender.blocking_send(ProducerEvent::DisplayReconfigured) {
+        log::warn!("failed to notify display reconfiguration: {e}");
+    }
 }
 
 pub struct MacOSInputCapture {
@@ -527,6 +657,8 @@ pub struct MacOSInputCapture {
 
 impl MacOSInputCapture {
     pub async fn new() -> Result<Self, MacosCaptureCreationError> {
+        request_macos_capture_permissions()?;
+
         let state = Arc::new(Mutex::new(InputCaptureState::new()?));
         let (event_tx, event_rx) = mpsc::channel(32);
         let (notify_tx, mut notify_rx) = mpsc::channel(32);
@@ -578,6 +710,38 @@ impl MacOSInputCapture {
             run_loop,
         })
     }
+}
+
+fn request_macos_capture_permissions() -> Result<(), MacosCaptureCreationError> {
+    // Call both request functions unconditionally so macOS surfaces both
+    // TCC prompts on the very first launch. TCC always returns `false` the
+    // first time a permission is requested (the grant only becomes visible
+    // on the next process launch), so returning early on the first failure
+    // would skip the second prompt and force the user through an extra
+    // relaunch just to see it.
+    let accessibility = request_accessibility_permission();
+    let input_monitoring = request_input_monitoring_permission();
+
+    if !accessibility {
+        return Err(MacosCaptureCreationError::AccessibilityPermission);
+    }
+    if !input_monitoring {
+        return Err(MacosCaptureCreationError::InputMonitoringPermission);
+    }
+    Ok(())
+}
+
+fn request_accessibility_permission() -> bool {
+    // Silent check. The GUI owns the one-time user-visible prompt at
+    // startup (see lan_mouse_gtk::macos_privacy) so retries triggered by
+    // clicking the "Reenable" button don't pop a fresh Accessibility
+    // alert every time.
+    unsafe { AXIsProcessTrusted() }
+}
+
+fn request_input_monitoring_permission() -> bool {
+    // Silent check, same reasoning as above.
+    unsafe { CGPreflightListenEventAccess() }
 }
 
 impl Drop for MacOSInputCapture {
@@ -651,6 +815,30 @@ extern "C" {
         event_source: CGEventSource,
         seconds: CFTimeInterval,
     );
+    fn CGPreflightListenEventAccess() -> bool;
+    /// Re-enable an event tap that was disabled by a
+    /// `kCGEventTapDisabledByTimeout` event. The Apple-documented
+    /// recovery path: see Quartz Event Services Reference. The `tap`
+    /// argument is a `CFMachPortRef`; we pass the raw pointer so we
+    /// can store it as `usize` for cross-thread sharing.
+    fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+
+    /// Register a callback invoked when the display configuration
+    /// changes (monitor add/remove, resolution change, mirror,
+    /// rearrange, etc). See Quartz Display Services Reference.
+    fn CGDisplayRegisterReconfigurationCallback(
+        callback: extern "C" fn(u32, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> CGError;
+    fn CGDisplayRemoveReconfigurationCallback(
+        callback: extern "C" fn(u32, u32, *mut c_void),
+        user_info: *mut c_void,
+    ) -> CGError;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
 }
 
 unsafe fn configure_cf_settings() -> Result<(), MacosCaptureCreationError> {

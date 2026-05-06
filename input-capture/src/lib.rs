@@ -171,6 +171,19 @@ impl InputCapture {
         self.capture.release().await
     }
 
+    /// Drain and return every key the capture has forwarded as
+    /// down-but-not-up. The caller is expected to synthesize key-up
+    /// events to the remote peer for each — otherwise the peer
+    /// retains phantom-held keys after capture is released. The
+    /// canonical case is the release-bind chord
+    /// (Ctrl+Shift+Alt+Meta): the down events were sent while
+    /// capture was active, but the matching up events arrive after
+    /// the local tap has flipped to passthrough and never reach
+    /// the peer.
+    pub fn take_pressed_keys(&mut self) -> HashSet<scancode::Linux> {
+        std::mem::take(&mut self.pressed_keys)
+    }
+
     /// destroy the input capture
     pub async fn terminate(&mut self) -> Result<(), CaptureError> {
         self.capture.terminate().await

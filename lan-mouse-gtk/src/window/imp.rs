@@ -142,11 +142,32 @@ impl Window {
 
     #[template_callback]
     fn handle_emulation(&self) {
+        // On macOS the emulation_status_row is hidden — capture_status_row
+        // acts as the shared warning (see update_capture_emulation_status).
+        // This handler still fires for the non-macOS platforms where the
+        // emulation row is distinct.
         self.obj().request_emulation();
     }
 
     #[template_callback]
     fn handle_capture(&self) {
+        #[cfg(target_os = "macos")]
+        {
+            use crate::macos_privacy;
+            if macos_privacy::accessibility_granted() {
+                // AX granted but the row is still visible => the daemon
+                // subprocess bailed before AX was in place and needs a
+                // fresh process. Quit + relaunch via Launch Services.
+                log::info!("capture row clicked in relaunch-required state");
+                macos_privacy::relaunch_bundle();
+                if let Some(app) = self.obj().application() {
+                    app.quit();
+                }
+                return;
+            }
+            log::info!("capture row clicked in AX-missing state, opening pane");
+            macos_privacy::open_accessibility_settings();
+        }
         self.obj().request_capture();
     }
 

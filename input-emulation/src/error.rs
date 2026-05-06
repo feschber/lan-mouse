@@ -154,6 +154,10 @@ pub enum X11EmulationCreationError {
 pub enum MacOSEmulationCreationError {
     #[error("could not create event source")]
     EventSourceCreation,
+    #[error("accessibility permission is required")]
+    AccessibilityPermission,
+    #[error("input control permission is required")]
+    InputControlPermission,
 }
 
 #[cfg(windows)]

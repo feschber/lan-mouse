@@ -67,6 +67,7 @@ rustls = { version = "0.23.12", default-features = false, features = [
 ] }
 rcgen = "0.13.1"
 sha2 = "0.10.8"
+notify = "8.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
@@ -95,3 +96,5 @@ rdp_emulation = ["input-emulation/remote_desktop_portal"]
 name = "Lan Mouse"
 icon = ["target/icon.icns"]
 identifier = "de.feschber.LanMouse"
+osx_info_plist_exts = ["build-aux/macos-lsui-element.plist"]
+resources = ["target/menubar-template.png"]

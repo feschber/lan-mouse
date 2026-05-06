@@ -1,4 +1,9 @@
 # Lan Mouse
+
+[![CI](https://github.com/feschber/lan-mouse/actions/workflows/rust.yml/badge.svg)](https://github.com/feschber/lan-mouse/actions/workflows/rust.yml) [![Cachix](https://github.com/feschber/lan-mouse/actions/workflows/cachix.yml/badge.svg)](https://github.com/feschber/lan-mouse/actions/workflows/cachix.yml) [![Release](https://github.com/feschber/lan-mouse/actions/workflows/release.yml/badge.svg)](https://github.com/feschber/lan-mouse/actions/workflows/release.yml)
+
+[![crates.io](https://img.shields.io/crates/v/lan-mouse.svg)](https://crates.io/crates/lan-mouse)  [![license](https://img.shields.io/crates/l/lan-mouse.svg)](https://github.com/feschber/lan-mouse/blob/main/Cargo.toml)
+
 Lan Mouse is a *cross-platform* mouse and keyboard sharing software similar to universal-control on Apple devices.
 It allows for using multiple PCs via a single set of mouse and keyboard.
 This is also known as a Software KVM switch.
@@ -100,6 +105,7 @@ dnf install lan-mouse
 - Unzip it
 - Remove the quarantine with `xattr -rd com.apple.quarantine "Lan Mouse.app"`
 - Launch the app
+- Use the menu bar item to open the settings window or quit Lan Mouse. Bundled macOS builds run as a menu bar app and do not keep a Dock icon visible.
 - Grant accessibility permissions in System Preferences
 
 </details>
@@ -177,8 +183,27 @@ For a detailed list of available features, checkout the [Cargo.toml](./Cargo.tom
 
 
 
+## Development
 
-## Installing Dependencies for Development / Compiling from Source
+### Git pre-commit hook
+
+This repository includes a local git hooks directory `.githooks/` with a `pre-commit` script that enforces formatting, lints, and tests before allowing a commit.  It is optional to enable it, but it will prevent you from committing code with failing unit tests or that needs clippy/fmt fixes. To enable the hook locally:
+
+1. Make the hook executable:
+
+```sh
+chmod +x .githooks/pre-commit
+```
+
+2. Point git to the hooks directory (one-time per clone):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The `pre-commit` script runs `cargo fmt --all` (and fails if files were modified), `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-features`.
+
+### Dependencies & Compiling from Source
 <details>
     <summary>MacOS</summary>
 

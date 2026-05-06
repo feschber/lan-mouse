@@ -9,5 +9,23 @@
   </gresource>
   <gresource prefix="/de/feschber/LanMouse/icons">
     <file compressed="true" preprocess="xml-stripblanks">de.feschber.LanMouse.svg</file>
+    <!--
+      Bundled Adwaita symbolic icons so the GTK frontend has a complete icon set
+      on platforms (notably macOS) where the Adwaita icon theme is not installed.
+      Registered via IconTheme::add_resource_path("/de/feschber/LanMouse/icons").
+    -->
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/edit-copy-symbolic.svg">icons/scalable/actions/edit-copy-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/edit-delete-symbolic.svg">icons/scalable/actions/edit-delete-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/emblem-ok-symbolic.svg">icons/scalable/actions/emblem-ok-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/list-add-symbolic.svg">icons/scalable/actions/list-add-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/object-rotate-right-symbolic.svg">icons/scalable/actions/object-rotate-right-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/object-select-symbolic.svg">icons/scalable/actions/object-select-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/open-menu-symbolic.svg">icons/scalable/actions/open-menu-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/actions/process-stop-symbolic.svg">icons/scalable/actions/process-stop-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/devices/auth-fingerprint-symbolic.svg">icons/scalable/devices/auth-fingerprint-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/devices/network-wired-symbolic.svg">icons/scalable/devices/network-wired-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/places/user-trash-symbolic.svg">icons/scalable/places/user-trash-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/status/dialog-warning-symbolic.svg">icons/scalable/status/dialog-warning-symbolic.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="scalable/status/network-wired-disconnected-symbolic.svg">icons/scalable/status/network-wired-disconnected-symbolic.svg</file>
   </gresource>
 </gresources>

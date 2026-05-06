@@ -8,7 +8,7 @@ use futures::StreamExt;
 use input_capture::{
     CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
 };
-use input_event::scancode;
+use input_event::{Event, KeyboardEvent, scancode};
 use lan_mouse_proto::ProtoEvent;
 use local_channel::mpsc::{Receiver, Sender, channel};
 use tokio::task::{JoinHandle, spawn_local};
@@ -49,7 +49,7 @@ pub(crate) enum CaptureType {
     EnterOnly,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum CaptureRequest {
     /// capture must release the mouse
     Release,
@@ -59,6 +59,8 @@ enum CaptureRequest {
     Destroy(CaptureHandle),
     /// reenable input capture
     Reenable,
+    /// set release bind
+    SetReleaseBind(Vec<scancode::Linux>),
 }
 
 impl Capture {
@@ -130,6 +132,10 @@ impl Capture {
 
     pub(crate) async fn event(&mut self) -> ICaptureEvent {
         self.event_rx.recv().await.expect("channel closed")
+    }
+
+    pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
+        let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
 }
 
@@ -205,6 +211,9 @@ impl CaptureTask {
                         CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
                         CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::SetReleaseBind(bind) => {
+                            self.release_bind.borrow_mut().clone_from(&bind);
+                        }
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -295,6 +304,9 @@ impl CaptureTask {
                         self.remove_capture(h);
                         capture.destroy(h).await?;
                     }
+                    CaptureRequest::SetReleaseBind(bind) => {
+                        self.release_bind.borrow_mut().clone_from(&bind);
+                    }
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }
@@ -364,6 +376,41 @@ impl CaptureTask {
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
+            // Synthesize key-up events for every key still held in the
+            // capture's pressed_keys set BEFORE sending Leave. Without
+            // this, pressing the release-bind chord (typically all four
+            // modifiers) leaves the peer with phantom held modifiers:
+            // the down events were forwarded while capture was active,
+            // but the matching up events arrive after the local tap
+            // flips to passthrough and never reach the peer. The peer
+            // then runs every subsequent keystroke through those held
+            // mods until its watchdog times out (1+ s) or our Leave
+            // arrives — and Leave can be lost over UDP/DTLS.
+            for key in capture.take_pressed_keys() {
+                let key_up = ProtoEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key: key as u32,
+                    state: 0,
+                }));
+                if let Err(e) = self.conn.send(key_up, handle).await {
+                    log::warn!("failed to send key-up to client {handle}: {e}");
+                }
+            }
+            // Reset the modifier mask too. The peer's input-emulation
+            // layer keeps a separate XKB-style modifier state that's
+            // updated by KeyboardEvent::Modifiers, distinct from the
+            // pressed_keys set drained above. Without this, an
+            // already-locked CapsLock would survive the release.
+            let mods_zero = ProtoEvent::Input(Event::Keyboard(KeyboardEvent::Modifiers {
+                depressed: 0,
+                latched: 0,
+                locked: 0,
+                group: 0,
+            }));
+            if let Err(e) = self.conn.send(mods_zero, handle).await {
+                log::warn!("failed to reset modifiers on client {handle}: {e}");
+            }
+
             log::info!("sending Leave event to client {handle}");
             if let Err(e) = self.conn.send(ProtoEvent::Leave(0), handle).await {
                 log::warn!("failed to send Leave to client {handle}: {e}");
