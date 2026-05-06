@@ -7,11 +7,12 @@ use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::{
@@ -43,6 +44,58 @@ pub(crate) enum LanMouseConnectionError {
 }
 
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Initial backoff between connect attempts that find no usable address
+/// (no static IPs, no DNS-resolved IPs, no mDNS primary hint). Doubles
+/// on each subsequent failure up to [`MAX_RETRY_BACKOFF`]. The backoff
+/// is bypassed entirely when the input set changes (e.g. mDNS browse
+/// resolves a primary, DNS lookup returns IPs) so a peer that comes
+/// back online reconnects on the next mouse event without waiting.
+const INITIAL_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_RETRY_BACKOFF: Duration = Duration::from_secs(30);
+
+/// Per-handle gate that throttles repeat connect attempts when nothing
+/// new is available to dial. `signature` hashes the candidate set we
+/// last attempted; if the current set differs we skip the gate and
+/// retry immediately. Otherwise `next_attempt_at` enforces exponential
+/// backoff capped at [`MAX_RETRY_BACKOFF`].
+struct RetryState {
+    next_attempt_at: Instant,
+    backoff: Duration,
+    signature: u64,
+}
+
+fn signature_of(ips: &HashSet<IpAddr>, primary: Option<IpAddr>) -> u64 {
+    let mut sorted: Vec<IpAddr> = ips.iter().copied().collect();
+    sorted.sort();
+    let mut hasher = DefaultHasher::new();
+    sorted.hash(&mut hasher);
+    primary.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Update `retry_state[handle]` after a failed connect attempt: doubles
+/// the backoff (capped at [`MAX_RETRY_BACKOFF`]) and stamps the
+/// candidate-set signature so a later signature change can short-
+/// circuit the gate.
+fn record_retry_failure(
+    retry_state: &Rc<RefCell<HashMap<ClientHandle, RetryState>>>,
+    handle: ClientHandle,
+    ips: &HashSet<IpAddr>,
+    primary: Option<IpAddr>,
+) {
+    let sig = signature_of(ips, primary);
+    let mut map = retry_state.borrow_mut();
+    let entry = map.entry(handle).or_insert(RetryState {
+        next_attempt_at: Instant::now(),
+        backoff: INITIAL_RETRY_BACKOFF,
+        signature: sig,
+    });
+    entry.signature = sig;
+    let next = entry.backoff;
+    entry.next_attempt_at = Instant::now() + next;
+    entry.backoff = (next * 2).min(MAX_RETRY_BACKOFF);
+}
 
 async fn connect(
     addr: SocketAddr,
@@ -137,6 +190,13 @@ pub(crate) struct LanMouseConnection {
     /// to bias which address gets the handshake head-start. Empty
     /// when discovery is disabled or no peer hint has arrived yet.
     primary_hints: PrimaryCache,
+    /// Per-handle retry gate. Suppresses connect spawns when the
+    /// previous attempt failed and nothing new is available to dial,
+    /// so an offline peer doesn't trigger a fresh `connect_to_handle`
+    /// (and the associated DNS / mDNS lookup churn) on every mouse
+    /// event. Cleared on successful connect; bypassed automatically
+    /// when the candidate-set signature changes.
+    retry_state: Rc<RefCell<HashMap<ClientHandle, RetryState>>>,
 }
 
 impl LanMouseConnection {
@@ -155,6 +215,7 @@ impl LanMouseConnection {
             recv_tx,
             ping_response: Default::default(),
             primary_hints,
+            retry_state: Default::default(),
         }
     }
 
@@ -192,7 +253,7 @@ impl LanMouseConnection {
 
         // check if we are already trying to connect
         let mut connecting = self.connecting.lock().await;
-        if !connecting.contains(&handle) {
+        if !connecting.contains(&handle) && self.should_attempt(handle) {
             connecting.insert(handle);
             // connect in the background
             spawn_local(connect_to_handle(
@@ -204,9 +265,38 @@ impl LanMouseConnection {
                 self.recv_tx.clone(),
                 self.ping_response.clone(),
                 self.primary_hints.clone(),
+                self.retry_state.clone(),
             ));
         }
         Err(LanMouseConnectionError::NotConnected)
+    }
+
+    /// Decide whether to spawn another `connect_to_handle` for `handle`.
+    /// Returns true (and refreshes the recorded signature) when:
+    ///   - we have no prior attempt for this handle, or
+    ///   - the candidate-set signature has changed since the last
+    ///     attempt (new IP from DNS, or new mDNS primary), or
+    ///   - the recorded backoff has elapsed.
+    /// Otherwise returns false; the caller treats this as "still in
+    /// cooldown, keep returning NotConnected silently."
+    fn should_attempt(&self, handle: ClientHandle) -> bool {
+        let ips = self.client_manager.get_ips(handle).unwrap_or_default();
+        let primary = self.client_manager.get_hostname(handle).and_then(|h| {
+            let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
+            self.primary_hints.borrow().get(&key).copied()
+        });
+        let sig = signature_of(&ips, primary);
+        let mut state = self.retry_state.borrow_mut();
+        match state.get_mut(&handle) {
+            None => true,
+            Some(s) if s.signature != sig => {
+                s.signature = sig;
+                s.next_attempt_at = Instant::now();
+                s.backoff = INITIAL_RETRY_BACKOFF;
+                true
+            }
+            Some(s) => Instant::now() >= s.next_attempt_at,
+        }
     }
 }
 
@@ -220,13 +310,15 @@ async fn connect_to_handle(
     tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
     primary_hints: PrimaryCache,
+    retry_state: Rc<RefCell<HashMap<ClientHandle, RetryState>>>,
 ) -> Result<(), LanMouseConnectionError> {
     log::info!("client {handle} connecting ...");
     // sending did not work, figure out active conn.
-    if let Some(addrs) = client_manager.get_ips(handle) {
+    if let Some(ips_set) = client_manager.get_ips(handle) {
         let port = client_manager.get_port(handle).unwrap_or(DEFAULT_PORT);
-        let addrs = addrs
-            .into_iter()
+        let addrs = ips_set
+            .iter()
+            .copied()
             .map(|a| SocketAddr::new(a, port))
             .collect::<Vec<_>>();
         // mDNS-advertised primary IP for this peer, if known. Used
@@ -234,18 +326,26 @@ async fn connect_to_handle(
         // it alone for ~200ms before joining the rest of the list,
         // so a healthy primary almost always wins regardless of
         // raw RTT ordering.
-        let preferred = client_manager
-            .get_hostname(handle)
-            .and_then(|h| {
-                let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
-                primary_hints.borrow().get(&key).copied()
-            })
-            .map(|ip| SocketAddr::new(ip, port));
+        let primary_ip = client_manager.get_hostname(handle).and_then(|h| {
+            let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
+            primary_hints.borrow().get(&key).copied()
+        });
+        let preferred = primary_ip.map(|ip| SocketAddr::new(ip, port));
         log::info!("client ({handle}) connecting ... (ips: {addrs:?}, preferred: {preferred:?})");
+        if addrs.is_empty() && preferred.is_none() {
+            // Nothing to dial. Bump backoff and bail without spawning
+            // DTLS work or spamming logs on every subsequent mouse
+            // event — `should_attempt` will keep gating until either
+            // the backoff elapses or new info arrives.
+            record_retry_failure(&retry_state, handle, &ips_set, primary_ip);
+            connecting.lock().await.remove(&handle);
+            return Err(LanMouseConnectionError::NotConnected);
+        }
         let res = connect_any(&addrs, preferred, cert).await;
         let (conn, addr) = match res {
             Ok(c) => c,
             Err(e) => {
+                record_retry_failure(&retry_state, handle, &ips_set, primary_ip);
                 connecting.lock().await.remove(&handle);
                 return Err(e);
             }
@@ -254,6 +354,7 @@ async fn connect_to_handle(
         client_manager.set_active_addr(handle, Some(addr));
         conns.lock().await.insert(addr, conn.clone());
         connecting.lock().await.remove(&handle);
+        retry_state.borrow_mut().remove(&handle);
 
         // Best-effort version handshake. Send our commit hash once
         // immediately after the DTLS handshake; the listen side
