@@ -1,6 +1,6 @@
 use crate::client::ClientManager;
 use crate::config::local_commit;
-use crate::discovery::PrimaryCache;
+use crate::discovery::{PrimaryCache, normalize_mdns_name};
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
 use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -282,7 +282,7 @@ impl LanMouseConnection {
     fn should_attempt(&self, handle: ClientHandle) -> bool {
         let ips = self.client_manager.get_ips(handle).unwrap_or_default();
         let primary = self.client_manager.get_hostname(handle).and_then(|h| {
-            let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
+            let key = normalize_mdns_name(&h);
             self.primary_hints.borrow().get(&key).copied()
         });
         let sig = signature_of(&ips, primary);
@@ -326,7 +326,7 @@ async fn connect_to_handle(
         // so a healthy primary almost always wins regardless of
         // raw RTT ordering.
         let primary_ip = client_manager.get_hostname(handle).and_then(|h| {
-            let key = h.strip_suffix('.').unwrap_or(&h).to_ascii_lowercase();
+            let key = normalize_mdns_name(&h);
             primary_hints.borrow().get(&key).copied()
         });
         let preferred = primary_ip.map(|ip| SocketAddr::new(ip, port));
