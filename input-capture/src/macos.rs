@@ -658,7 +658,6 @@ fn event_tap_thread(
     log::debug!("event tap thread exiting!...");
 
     unsafe {
-
         CGDisplayRemoveReconfigurationCallback(display_reconfiguration_callback, display_user_info);
         // Reclaim the leaked sender Box so we don't leak a tokio
         // channel sender on every capture create/destroy cycle.
