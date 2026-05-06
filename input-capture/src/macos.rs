@@ -5,7 +5,7 @@ use core_foundation::{
     base::{CFRelease, TCFType, kCFAllocatorDefault},
     date::CFTimeInterval,
     number::{CFBooleanRef, kCFBooleanTrue},
-    runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
+    runloop::{CFRunLoop, CFRunLoopSource, CFRunLoopSourceRef, kCFRunLoopCommonModes},
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
@@ -664,13 +664,46 @@ fn event_tap_thread(
     // callback runs on this thread's CFRunLoop. Box-leak the sender
     // so the C side has a stable user_info pointer; reclaim it after
     // the run loop exits.
-    let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
+    let display_user_info = Box::into_raw(Box::new(display_notify_tx.clone())) as *mut c_void;
     unsafe {
         CGDisplayRegisterReconfigurationCallback(
             display_reconfiguration_callback,
             display_user_info,
         );
     }
+
+    // Also subscribe to system-power events so we recover from
+    // sleep/wake, where the Quartz reconfigure callback may not
+    // fire (or fires before our run loop is processing again, e.g.
+    // clamshell-disconnect → lid-open). On wake we send the same
+    // DisplayReconfigured event the existing handler consumes, so
+    // bounds get refreshed for free.
+    let mut power_notifier_object: u32 = 0;
+    let mut power_notification_port: *mut c_void = std::ptr::null_mut();
+    let power_ctx = Box::into_raw(Box::new(PowerCtx {
+        sender: display_notify_tx,
+        root_port: 0,
+    }));
+    let power_root_port = unsafe {
+        let port = IORegisterForSystemPower(
+            power_ctx as *mut c_void,
+            &mut power_notification_port,
+            power_callback,
+            &mut power_notifier_object,
+        );
+        // Stash the root port for the callback's IOAllowPowerChange
+        // ack — we couldn't know it at Box-construction time because
+        // it's the registration's return value.
+        (*power_ctx).root_port = port;
+        if !power_notification_port.is_null() {
+            let src_ref = IONotificationPortGetRunLoopSource(power_notification_port);
+            if !src_ref.is_null() {
+                let src = CFRunLoopSource::wrap_under_get_rule(src_ref);
+                CFRunLoop::get_current().add_source(&src, kCFRunLoopCommonModes);
+            }
+        }
+        port
+    };
 
     log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
@@ -683,6 +716,15 @@ fn event_tap_thread(
         drop(Box::from_raw(
             display_user_info as *mut Sender<ProducerEvent>,
         ));
+
+        if power_notifier_object != 0 {
+            let _ = IODeregisterForSystemPower(&mut power_notifier_object);
+        }
+        if !power_notification_port.is_null() {
+            IONotificationPortDestroy(power_notification_port);
+        }
+        let _ = power_root_port;
+        drop(Box::from_raw(power_ctx));
     }
 
     let _ = exit.send(());
@@ -717,6 +759,65 @@ fn is_screen_locked() -> bool {
         CFRelease(key as *const c_void);
     }
     locked
+}
+
+/// Refcon for the IOKit system-power callback. Bundles the channel
+/// sender (so the callback can post `DisplayReconfigured` on wake)
+/// and the `io_connect_t` root port (so the callback can ack
+/// sleep-related messages with `IOAllowPowerChange`). Built on the
+/// event-tap thread, used only by the callback on the same thread —
+/// never crosses thread boundaries, so no Send/Sync needed.
+struct PowerCtx {
+    sender: Sender<ProducerEvent>,
+    root_port: u32,
+}
+
+/// IOKit system-power callback. Fires for every power-management
+/// transition (CanSleep, WillSleep, WillPowerOn, HasPoweredOn).
+/// We only care about `kIOMessageSystemHasPoweredOn` (post-wake);
+/// for the sleep-pending messages we just ack so the kernel doesn't
+/// hold the system in its "waiting for clients" state for the full
+/// 30-second timeout.
+extern "C" fn power_callback(
+    refcon: *mut c_void,
+    _service: u32,
+    msg_type: u32,
+    msg_arg: *mut c_void,
+) {
+    const K_IO_MESSAGE_CAN_SYSTEM_SLEEP: u32 = 0xE000_0270;
+    const K_IO_MESSAGE_SYSTEM_WILL_SLEEP: u32 = 0xE000_0280;
+    const K_IO_MESSAGE_SYSTEM_HAS_POWERED_ON: u32 = 0xE000_0300;
+
+    if refcon.is_null() {
+        return;
+    }
+    // SAFETY: `refcon` is `Box::into_raw(Box::new(PowerCtx))` owned by
+    // `event_tap_thread`; valid until the run loop exits and the box
+    // is reclaimed. The callback only fires while the run loop runs
+    // on that thread, so the box is live here.
+    let ctx = unsafe { &*(refcon as *const PowerCtx) };
+    match msg_type {
+        K_IO_MESSAGE_CAN_SYSTEM_SLEEP | K_IO_MESSAGE_SYSTEM_WILL_SLEEP => {
+            // Ack so the OS doesn't stall on its 30s default timeout.
+            // `msg_arg` carries the notification ID (an `intptr_t`);
+            // pass it through verbatim.
+            unsafe {
+                IOAllowPowerChange(ctx.root_port, msg_arg as isize);
+            }
+        }
+        K_IO_MESSAGE_SYSTEM_HAS_POWERED_ON => {
+            // Bounce a DisplayReconfigured into the producer so
+            // `update_bounds()` runs. Covers the case where Quartz's
+            // own reconfigure callback didn't fire (or fired during
+            // the sleep window) — e.g. clamshell-disconnect →
+            // lid-open transitions.
+            log::info!("system woke from sleep; refreshing display bounds");
+            if let Err(e) = ctx.sender.blocking_send(ProducerEvent::DisplayReconfigured) {
+                log::warn!("failed to post wake → DisplayReconfigured: {e}");
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Quartz display-reconfiguration callback. Fires twice per change:
@@ -991,6 +1092,31 @@ extern "C" {
         callback: extern "C" fn(u32, u32, *mut c_void),
         user_info: *mut c_void,
     ) -> CGError;
+}
+
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    /// Register the calling process for system-power notifications.
+    /// Returns the `io_connect_t` root power port (used later in
+    /// `IOAllowPowerChange` to ack sleep-related messages) and writes
+    /// the notification port + an `io_object_t` notifier through the
+    /// out-pointers. The returned notification port carries a
+    /// CFRunLoopSource we attach to this thread's run loop so the
+    /// callback fires inline with the existing event-tap loop.
+    fn IORegisterForSystemPower(
+        refcon: *mut c_void,
+        port_ref: *mut *mut c_void,
+        callback: extern "C" fn(*mut c_void, u32, u32, *mut c_void),
+        notifier: *mut u32,
+    ) -> u32;
+    fn IODeregisterForSystemPower(notifier: *mut u32) -> i32;
+    fn IONotificationPortGetRunLoopSource(notify: *mut c_void) -> CFRunLoopSourceRef;
+    fn IONotificationPortDestroy(notify: *mut c_void);
+    /// Ack a kIOMessageCanSystemSleep / kIOMessageSystemWillSleep so
+    /// the OS doesn't stall on its 30s default timeout waiting for us.
+    /// Required even when we have no objection — silence is treated as
+    /// "still thinking" by the kernel.
+    fn IOAllowPowerChange(kernel_port: u32, notification_id: isize) -> i32;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
