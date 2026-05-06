@@ -54,7 +54,6 @@ pub fn run(local_commit: [u8; 8]) -> Result<(), GtkError> {
         .set(local_commit)
         .expect("local_commit set once");
 
-
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
