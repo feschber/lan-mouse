@@ -422,7 +422,6 @@ impl Window {
         self.request(FrontendRequest::SetMdnsDiscovery(enabled));
     }
 
-
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
         let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
@@ -490,7 +489,6 @@ impl Window {
             switch.unblock_signal(id);
         }
     }
-
 
     pub(super) fn set_release_threshold(&self, threshold: u32) {
         let imp = self.imp();

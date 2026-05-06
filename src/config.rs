@@ -538,7 +538,6 @@ impl Config {
         self.config_toml.as_mut().expect("config").mdns_discovery = Some(enabled);
     }
 
-
     /// set configured clients
     pub fn set_clients(&mut self, clients: Vec<ConfigClient>) {
         if clients.is_empty() {
