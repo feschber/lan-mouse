@@ -301,8 +301,7 @@ fn start_browse(
                         );
                         continue;
                     };
-                    let instance =
-                        instance_from_fullname(resolved.get_fullname(), SERVICE_TYPE);
+                    let instance = instance_from_fullname(resolved.get_fullname(), SERVICE_TYPE);
                     let key = normalize_mdns_name(instance);
                     let target = strip_trailing_dot(resolved.get_hostname());
                     log::info!(
