@@ -65,6 +65,22 @@ fn strip_trailing_dot(s: &str) -> &str {
     s.strip_suffix('.').unwrap_or(s)
 }
 
+/// Pull the service-instance label off a Bonjour fullname.
+///
+/// `mdns-sd` returns fullnames as `"<instance>.<service-type>"` where
+/// `<service-type>` is e.g. `"_lan-mouse._udp.local."`. The instance
+/// label is the user-visible identifier the announcer chose for itself
+/// — typically the system hostname, and the same string the user puts
+/// in their lan-mouse config's `hostname = "..."`. We key
+/// [`PrimaryCache`] on this instead of the SRV target so the dialer
+/// matches the config hostname even when the announcer's SRV target
+/// has macOS-style suffixes (`Foo.local` vs `Foo-2.local`) or other
+/// drift.
+fn instance_from_fullname<'a>(fullname: &'a str, service_type: &str) -> &'a str {
+    let suffix = format!(".{service_type}");
+    fullname.strip_suffix(&suffix).unwrap_or(fullname)
+}
+
 /// Shared `peer_hostname -> primary_ipv4` map, populated by Discovery
 /// and read by the dialer (`connect_to_handle`). Owned by the dialer
 /// path so its references survive across discovery enable/disable
@@ -291,16 +307,20 @@ fn start_browse(
                     let Ok(ip) = primary_str.parse::<IpAddr>() else {
                         log::debug!(
                             "mdns: peer {} advertised malformed primary={primary_str:?}",
-                            resolved.get_hostname()
+                            resolved.get_fullname()
                         );
                         continue;
                     };
-                    let host = strip_trailing_dot(resolved.get_hostname()).to_ascii_lowercase();
+                    let instance =
+                        instance_from_fullname(resolved.get_fullname(), SERVICE_TYPE);
+                    let key = strip_trailing_dot(instance).to_ascii_lowercase();
+                    let target = strip_trailing_dot(resolved.get_hostname());
                     log::info!(
-                        "mdns: peer {host} announces primary={ip} (port={})",
-                        resolved.get_port()
+                        "mdns: peer instance={key} (target={target}) announces primary={ip} \
+                         (port={port})",
+                        port = resolved.get_port(),
                     );
-                    primary_cache.borrow_mut().insert(host, ip);
+                    primary_cache.borrow_mut().insert(key, ip);
                 }
                 ServiceEvent::ServiceRemoved(_, fullname) => {
                     // Best-effort: the fullname is "<instance>._lan-
