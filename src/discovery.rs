@@ -217,9 +217,10 @@ impl Discovery {
         }
     }
 
-    /// Re-register with the current primary IP. Call from the
-    /// `if-watch` supervisor when interfaces come/go so the TXT
-    /// record stays accurate.
+    /// Re-register with the current primary IP. Called periodically
+    /// by the service's main loop so the TXT record reflects the
+    /// active default-route interface even when interface changes
+    /// don't arrive through if-watch.
     pub(crate) fn refresh(&mut self) {
         if self.daemon.is_some() {
             self.register();
@@ -263,26 +264,6 @@ impl Discovery {
         // Don't clear primary_cache: the dialer may still benefit
         // from the last-known hints, and a re-enable would otherwise
         // lose them until each peer's next announcement.
-    }
-
-    /// Look up a peer's advertised primary IP by configured hostname
-    /// (e.g. "JKMBP-M4-Max.local"). Returns `None` if discovery is
-    /// disabled, the peer isn't advertising, or the peer's
-    /// advertisement hasn't been resolved yet (mDNS browse is
-    /// asynchronous; the cache populates as ServiceResolved events
-    /// arrive). Callers should treat None as "no hint, fall through
-    /// to whatever the dialer would have done anyway."
-    ///
-    /// Currently unused by the in-tree dialer (which reads
-    /// `primary_cache` directly via the shared Rc<RefCell> for
-    /// inline use in `connect_to_handle`); kept as the canonical
-    /// lookup entry point so callers outside `connect.rs` don't
-    /// need to take the same Rc reference.
-    #[allow(dead_code)]
-    pub(crate) fn peer_primary_ip(&self, hostname: &str) -> Option<IpAddr> {
-        self.daemon.as_ref()?;
-        let key = normalize_mdns_name(hostname);
-        self.primary_cache.borrow().get(&key).copied()
     }
 }
 
