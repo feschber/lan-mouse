@@ -419,8 +419,16 @@ fn spawn_supervisor_task(
                             );
                         }
                     }
+                    // `try_bind_listener` is async and may fail, so
+                    // `entry().or_insert_with(...)` doesn't fit — we
+                    // only want to insert on bind success. Match the
+                    // `Entry::Vacant` slot up front so the same hash
+                    // lookup covers both the existence check and the
+                    // later insert, satisfying clippy::map_entry.
                     for ip in current_ips {
-                        if !listeners.contains_key(&ip) {
+                        if let std::collections::hash_map::Entry::Vacant(slot) =
+                            listeners.entry(ip)
+                        {
                             match try_bind_listener(ip, port, &cfg).await {
                                 Ok(l) => {
                                     let task = spawn_accept_task(
@@ -429,7 +437,7 @@ fn spawn_supervisor_task(
                                         conns.clone(),
                                         connection_attempts.clone(),
                                     );
-                                    listeners.insert(ip, ListenerSlot { accept_task: task });
+                                    slot.insert(ListenerSlot { accept_task: task });
                                     log::info!(
                                         "reconcile: now listening on {ip}:{port} \
                                          (IP appeared without an Up event)"
