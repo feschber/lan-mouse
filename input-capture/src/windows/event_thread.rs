@@ -241,7 +241,9 @@ fn start_routine(
      * we just lose the lock-screen suppression. */
     unsafe {
         if let Err(e) = WTSRegisterSessionNotification(msg_window, NOTIFY_FOR_THIS_SESSION) {
-            log::warn!("WTSRegisterSessionNotification failed: {e:?} — host-lock suppression disabled");
+            log::warn!(
+                "WTSRegisterSessionNotification failed: {e:?} — host-lock suppression disabled"
+            );
         }
     }
 
