@@ -277,6 +277,7 @@ impl LanMouseConnection {
     ///   - the candidate-set signature has changed since the last
     ///     attempt (new IP from DNS, or new mDNS primary), or
     ///   - the recorded backoff has elapsed.
+    ///
     /// Otherwise returns false; the caller treats this as "still in
     /// cooldown, keep returning NotConnected silently."
     fn should_attempt(&self, handle: ClientHandle) -> bool {
@@ -300,6 +301,7 @@ impl LanMouseConnection {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn connect_to_handle(
     client_manager: ClientManager,
     cert: Certificate,
