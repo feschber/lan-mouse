@@ -81,6 +81,18 @@ fn instance_from_fullname<'a>(fullname: &'a str, service_type: &str) -> &'a str 
     fullname.strip_suffix(&suffix).unwrap_or(fullname)
 }
 
+/// Canonicalize a Bonjour/mDNS-SD name for cache lookup. Lower-cases,
+/// drops a trailing FQDN dot, and drops the `.local` link-local
+/// suffix. The `.local` domain is implied for everything mDNS-SD
+/// touches, so callers shouldn't have to remember whether to include
+/// it — config that says `Foo.local`, an announcer's instance label
+/// `Foo`, and an SRV target `foo.local.` all collapse to `foo`.
+pub(crate) fn normalize_mdns_name(s: &str) -> String {
+    let s = strip_trailing_dot(s);
+    let s = s.strip_suffix(".local").unwrap_or(s);
+    s.to_ascii_lowercase()
+}
+
 /// Shared `peer_hostname -> primary_ipv4` map, populated by Discovery
 /// and read by the dialer (`connect_to_handle`). Owned by the dialer
 /// path so its references survive across discovery enable/disable
@@ -313,7 +325,7 @@ fn start_browse(
                     };
                     let instance =
                         instance_from_fullname(resolved.get_fullname(), SERVICE_TYPE);
-                    let key = strip_trailing_dot(instance).to_ascii_lowercase();
+                    let key = normalize_mdns_name(instance);
                     let target = strip_trailing_dot(resolved.get_hostname());
                     log::info!(
                         "mdns: peer instance={key} (target={target}) announces primary={ip} \
