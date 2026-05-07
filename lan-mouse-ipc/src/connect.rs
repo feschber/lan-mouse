@@ -47,13 +47,52 @@ impl FrontendRequestWriter {
 
 pub fn connect() -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
     let rx = wait_for_service()?;
+    make_connection(rx)
+}
+
+/// One-shot connect with no retry. Use when the caller has already
+/// probed the IPC socket via [`crate::is_service_running`] and is
+/// prepared to take a recovery path on failure (e.g. spawn a fresh
+/// daemon and then call [`connect`]).
+#[cfg(unix)]
+pub fn try_connect() -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
+    let socket_path = crate::default_socket_path()?;
+    let rx = UnixStream::connect(&socket_path)?;
+    make_connection(rx)
+}
+
+#[cfg(windows)]
+pub fn try_connect() -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
+    let rx = TcpStream::connect("127.0.0.1:5252")?;
+    make_connection(rx)
+}
+
+#[cfg(unix)]
+fn make_connection(
+    rx: UnixStream,
+) -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
     let tx = rx.try_clone()?;
     let buf_reader = BufReader::new(rx);
     let lines = buf_reader.lines();
     let line_writer = LineWriter::new(tx);
-    let reader = FrontendEventReader { lines };
-    let writer = FrontendRequestWriter { line_writer };
-    Ok((reader, writer))
+    Ok((
+        FrontendEventReader { lines },
+        FrontendRequestWriter { line_writer },
+    ))
+}
+
+#[cfg(windows)]
+fn make_connection(
+    rx: TcpStream,
+) -> Result<(FrontendEventReader, FrontendRequestWriter), ConnectionError> {
+    let tx = rx.try_clone()?;
+    let buf_reader = BufReader::new(rx);
+    let lines = buf_reader.lines();
+    let line_writer = LineWriter::new(tx);
+    Ok((
+        FrontendEventReader { lines },
+        FrontendRequestWriter { line_writer },
+    ))
 }
 
 /// wait for the lan-mouse socket to come online

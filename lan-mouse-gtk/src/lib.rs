@@ -84,7 +84,11 @@ pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
     app.quit();
 }
 
-pub fn run(gui_lock: Option<GuiLock>, local_commit: [u8; 8]) -> Result<(), GtkError> {
+pub fn run(
+    gui_lock: Option<GuiLock>,
+    local_commit: [u8; 8],
+    external_daemon: bool,
+) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
     LOCAL_COMMIT
         .set(local_commit)
@@ -114,12 +118,12 @@ pub fn run(gui_lock: Option<GuiLock>, local_commit: [u8; 8]) -> Result<(), GtkEr
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
         .name("gtk".into())
-        .spawn(move || gtk_main(show_rx))
+        .spawn(move || gtk_main(show_rx, external_daemon))
         .unwrap()
         .join()
         .unwrap();
     #[cfg(not(windows))]
-    let ret = gtk_main(show_rx);
+    let ret = gtk_main(show_rx, external_daemon);
 
     match ret {
         glib::ExitCode::SUCCESS => Ok(()),
@@ -127,7 +131,10 @@ pub fn run(gui_lock: Option<GuiLock>, local_commit: [u8; 8]) -> Result<(), GtkEr
     }
 }
 
-fn gtk_main(show_rx: Option<async_channel::Receiver<()>>) -> glib::ExitCode {
+fn gtk_main(
+    show_rx: Option<async_channel::Receiver<()>>,
+    external_daemon: bool,
+) -> glib::ExitCode {
     #[cfg(target_os = "macos")]
     {
         configure_macos_bundle_environment();
@@ -145,7 +152,7 @@ fn gtk_main(show_rx: Option<async_channel::Receiver<()>>) -> glib::ExitCode {
         setup_actions(app);
         setup_menu(app);
     });
-    app.connect_activate(move |app| build_ui(app, show_rx.clone()));
+    app.connect_activate(move |app| build_ui(app, show_rx.clone(), external_daemon));
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
@@ -257,7 +264,11 @@ fn setup_menu(app: &adw::Application) {
     app.set_menubar(Some(&menu))
 }
 
-fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
+fn build_ui(
+    app: &Application,
+    show_rx: Option<async_channel::Receiver<()>>,
+    external_daemon: bool,
+) {
     // Defense in depth: if `activate` fires a second time in the same
     // process — the GApplication DBus single-instance hand-off does
     // this on Linux, and `kAEReopenApplication` does this on macOS —
@@ -268,7 +279,44 @@ fn build_ui(app: &Application, show_rx: Option<async_channel::Receiver<()>>) {
     }
 
     log::debug!("connecting to lan-mouse-socket");
-    let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
+    // Two paths into the IPC socket:
+    //
+    // - main.rs spawned a daemon child (external_daemon == false):
+    //   use the retrying connect(), which handles the racy startup
+    //   window where the daemon hasn't bound yet.
+    //
+    // - main.rs detected an existing daemon and skipped spawning
+    //   (external_daemon == true): probe with try_connect; if it
+    //   fails (the daemon died between is_service_running and now)
+    //   spawn a fresh one ourselves and fall back to the retrying
+    //   connect(). The respawned daemon is fire-and-forget — the
+    //   GUI no longer manages its lifecycle, matching the
+    //   externally-managed-daemon semantics that put us on this
+    //   branch in the first place.
+    let conn_result = if external_daemon {
+        match lan_mouse_ipc::try_connect() {
+            Ok(conn) => Ok(conn),
+            Err(probe_err) => {
+                log::warn!(
+                    "could not attach to existing daemon ({probe_err}) — spawning a new one"
+                );
+                if let Err(spawn_err) = process::Command::new(
+                    env::current_exe().expect("could not determine executable path"),
+                )
+                .args(env::args().skip(1))
+                .arg("daemon")
+                .spawn()
+                {
+                    log::error!("failed to spawn replacement daemon: {spawn_err}");
+                    process::exit(1);
+                }
+                lan_mouse_ipc::connect()
+            }
+        }
+    } else {
+        lan_mouse_ipc::connect()
+    };
+    let (mut frontend_rx, frontend_tx) = match conn_result {
         Ok(conn) => conn,
         Err(e) => {
             log::error!("{e}");
