@@ -330,3 +330,19 @@ pub fn default_socket_path() -> Result<PathBuf, SocketPathError> {
         .join("Caches")
         .join(LAN_MOUSE_SOCKET_NAME))
 }
+
+/// One-shot probe: is a daemon already listening on the IPC socket?
+/// A stale socket file with no listener returns `false` (the daemon's
+/// own listener bind path will clean it up).
+#[cfg(unix)]
+pub fn is_service_running() -> bool {
+    let Ok(socket_path) = default_socket_path() else {
+        return false;
+    };
+    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+}
+
+#[cfg(windows)]
+pub fn is_service_running() -> bool {
+    std::net::TcpStream::connect("127.0.0.1:5252").is_ok()
+}
