@@ -613,7 +613,20 @@ impl EmulationTask {
                         if let Some(handle) = self.handles.remove(&addr) {
                             emulation.destroy(handle).await;
                         }
-                        self.post_processing.remove(&addr);
+                        // Intentionally keep `post_processing[addr]`
+                        // alive across handle removal. `Remove` fires
+                        // on every `ProtoEvent::Leave` (cross-back to
+                        // the peer's screen) and on the 1-second
+                        // heartbeat timeout, neither of which means
+                        // the DTLS session is gone for good. The same
+                        // SocketAddr keeps delivering Input events on
+                        // the next cross; we want the user's per-pair
+                        // settings to follow the addr, not the
+                        // ephemeral handle that gets minted fresh on
+                        // each cross. A real DTLS disconnect followed
+                        // by a reconnect arrives with a new
+                        // SocketAddr (new ephemeral port), so a stale
+                        // entry doesn't shadow a fresh one.
                     }
                     ProxyRequest::Warp(x, y) => {
                         if let Err(e) = emulation.warp_cursor(x, y).await {
