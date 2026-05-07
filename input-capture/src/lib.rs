@@ -19,6 +19,7 @@ pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
 pub mod clipboard;
 pub mod error;
+pub mod frontmost_app;
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 mod libei;

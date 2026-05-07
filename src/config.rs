@@ -16,7 +16,7 @@ use toml;
 use toml_edit::{self, DocumentMut};
 
 use lan_mouse_cli::CliArgs;
-use lan_mouse_ipc::{DEFAULT_PORT, IncomingPeerConfig, Position};
+use lan_mouse_ipc::{AppIdent, DEFAULT_PORT, IncomingPeerConfig, Position};
 
 use input_event::scancode::{
     self,
@@ -80,6 +80,14 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, IncomingPeerConfig>>,
+    /// Apps whose clipboard contents must never be broadcast to
+    /// peers (password managers, sensitive editors, etc.). The
+    /// daemon consults this list on every clipboard change via
+    /// [`input_capture::frontmost_app::frontmost_app`]. `None` /
+    /// empty means no suppression — the user-maintained list is
+    /// purely additive on top of platform-specific automatic
+    /// detection (e.g. macOS `org.nspasteboard.ConcealedType`).
+    clipboard_suppress_apps: Option<Vec<AppIdent>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -584,6 +592,27 @@ impl Config {
             .as_mut()
             .expect("config")
             .authorized_fingerprints = Some(fingerprints);
+    }
+
+    /// Persisted clipboard-suppression list.
+    pub fn clipboard_suppressed_apps(&self) -> Vec<AppIdent> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.clipboard_suppress_apps.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace the persisted clipboard-suppression list. `None` is
+    /// written when the list is empty so an upgrade from a config
+    /// without the field doesn't gain a new key on every save.
+    pub fn set_clipboard_suppressed_apps(&mut self, apps: Vec<AppIdent>) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .clipboard_suppress_apps = if apps.is_empty() { None } else { Some(apps) };
     }
 
     pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {

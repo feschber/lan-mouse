@@ -58,6 +58,53 @@ pub enum IpcError {
 
 pub const DEFAULT_PORT: u16 = 4242;
 
+/// Cross-platform identifier for an application whose clipboard
+/// should not be shared with peers. The variant captures the
+/// platform-specific string the OS surfaces for "this is app X":
+/// macOS bundle ID, Windows executable basename, X11 `WM_CLASS`,
+/// Wayland `xdg-toplevel.app_id`. Comparison is case-insensitive
+/// within the same variant; cross-variant comparisons are always
+/// `false` so a `LinuxX11("Chromium")` entry does not unexpectedly
+/// suppress a Mac peer's `MacBundle("org.chromium.Chromium")`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum AppIdent {
+    /// macOS bundle identifier, e.g. `com.1password.1password7`.
+    MacBundle(String),
+    /// Windows executable basename (lowercased), e.g.
+    /// `1password.exe`.
+    WindowsExe(String),
+    /// X11 `WM_CLASS` instance/name (lowercased), e.g. `firefox`.
+    LinuxX11(String),
+    /// Wayland `xdg-toplevel.app_id` (lowercased), e.g.
+    /// `org.mozilla.firefox`.
+    LinuxWayland(String),
+}
+
+impl AppIdent {
+    /// Case-insensitive equality within the same variant.
+    pub fn matches(&self, other: &AppIdent) -> bool {
+        match (self, other) {
+            (AppIdent::MacBundle(a), AppIdent::MacBundle(b))
+            | (AppIdent::WindowsExe(a), AppIdent::WindowsExe(b))
+            | (AppIdent::LinuxX11(a), AppIdent::LinuxX11(b))
+            | (AppIdent::LinuxWayland(a), AppIdent::LinuxWayland(b)) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        }
+    }
+
+    /// Human-readable rendering: `value (kind)` so the GUI can show
+    /// `1password.exe (Windows)` rather than the raw enum.
+    pub fn label(&self) -> String {
+        match self {
+            AppIdent::MacBundle(v) => format!("{v} (macOS bundle)"),
+            AppIdent::WindowsExe(v) => format!("{v} (Windows)"),
+            AppIdent::LinuxX11(v) => format!("{v} (X11)"),
+            AppIdent::LinuxWayland(v) => format!("{v} (Wayland)"),
+        }
+    }
+}
+
 #[derive(Debug, Default, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Position {
@@ -350,6 +397,14 @@ pub enum FrontendEvent {
     /// peers can bias their connection attempts toward the right
     /// interface on multi-homed hosts.
     MdnsDiscovery(bool),
+    /// Snapshot of the clipboard-suppression list. Pushed on Sync
+    /// and after every Add/Remove so the GUI never has to query.
+    SuppressedAppsUpdated(Vec<AppIdent>),
+    /// Reply to [`FrontendRequest::ListRunningApps`]: best-effort
+    /// list of apps currently running on this device. Empty on
+    /// platforms where enumeration isn't implemented yet (e.g.
+    /// macOS without an objc2 bridge).
+    RunningApps(Vec<AppIdent>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +462,18 @@ pub enum FrontendRequest {
     /// is applied to this device's clipboard. Per-pair receive-side
     /// gate, keyed on the peer's TLS certificate fingerprint.
     SetIncomingPeerClipboardReceive(String, bool),
+    /// Add an application to the clipboard suppression list — its
+    /// clipboard contents will never be broadcast to any peer.
+    /// Idempotent; adding an already-present entry is a no-op.
+    AddSuppressedApp(AppIdent),
+    /// Remove an application from the clipboard suppression list.
+    /// Idempotent.
+    RemoveSuppressedApp(AppIdent),
+    /// Ask the daemon to enumerate currently-running apps so the
+    /// "From running apps" tab in the suppression-list modal can be
+    /// populated. The daemon replies with a
+    /// [`FrontendEvent::RunningApps`].
+    ListRunningApps,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
