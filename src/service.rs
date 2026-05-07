@@ -50,6 +50,11 @@ pub struct Service {
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
     authorized_keys: Arc<RwLock<HashMap<String, IncomingPeerConfig>>>,
+    /// Shared mDNS browse cache. Used at DTLS-accept time to
+    /// reverse-lookup the connecting peer's IP back to the system
+    /// hostname they advertise via Bonjour, so the GUI can show a
+    /// human-readable identity in the Incoming Connections list.
+    primary_cache: PrimaryCache,
     /// (outgoing) client information
     client_manager: ClientManager,
     /// current port
@@ -127,7 +132,7 @@ impl Service {
         let resolver = DnsResolver::new()?;
 
         let port = config.port();
-        let discovery = Discovery::new(port, config.mdns_discovery(), primary_cache);
+        let discovery = Discovery::new(port, config.mdns_discovery(), primary_cache.clone());
         let service = Self {
             config,
             capture,
@@ -135,6 +140,7 @@ impl Service {
             frontend_listener,
             resolver,
             authorized_keys,
+            primary_cache,
             public_key_fingerprint,
             client_manager,
             frontend_event_pending: Default::default(),
@@ -275,6 +281,49 @@ impl Service {
         }
     }
 
+    /// Refresh `last_addr` / `last_hostname` for the authorized-peer
+    /// entry matching `fingerprint` whenever a DTLS connect lands.
+    /// Hostname comes from a reverse-lookup against the mDNS
+    /// `hostname → primary_ip` cache; falls through to addr-only
+    /// if discovery isn't running on either end or the peer's
+    /// announced primary differs from the IP it actually connected
+    /// from. Persists the update so the GUI keeps a useful
+    /// identification across restarts.
+    fn update_incoming_peer_address(&mut self, addr: SocketAddr, fingerprint: &str) {
+        let ip = addr.ip().to_string();
+        let hostname = self.lookup_hostname_for_ip(addr.ip());
+        let mut keys = self.authorized_keys.write().expect("lock");
+        let Some(peer) = keys.get_mut(fingerprint) else {
+            return; // unauthorized peer; nothing to update
+        };
+        let mut changed = peer.last_addr.as_deref() != Some(&ip);
+        if changed {
+            peer.last_addr = Some(ip);
+        }
+        if let Some(h) = hostname {
+            if peer.last_hostname.as_deref() != Some(h.as_str()) {
+                peer.last_hostname = Some(h);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        let snapshot = keys.clone();
+        drop(keys);
+        // No need to push to InputEmulation — last_addr/last_hostname
+        // are display-only; per-pair scroll/sensitivity is unaffected.
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(snapshot));
+        self.save_config();
+    }
+
+    fn lookup_hostname_for_ip(&self, target: std::net::IpAddr) -> Option<String> {
+        self.primary_cache
+            .borrow()
+            .iter()
+            .find_map(|(host, ip)| (*ip == target).then(|| host.clone()))
+    }
+
     fn set_incoming_peer_natural_scroll(&mut self, fingerprint: String, natural_scroll: bool) {
         if let Some(peer) = self
             .authorized_keys
@@ -404,6 +453,7 @@ impl Service {
             }
             EmulationEvent::ReleaseNotify => self.capture.release_for_handover(),
             EmulationEvent::Connected { addr, fingerprint } => {
+                self.update_incoming_peer_address(addr, &fingerprint);
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }
             EmulationEvent::PeerHello { addr, commit } => {

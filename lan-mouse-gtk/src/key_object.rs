@@ -2,18 +2,21 @@ mod imp;
 
 use adw::subclass::prelude::*;
 use gtk::glib::{self, Object};
+use lan_mouse_ipc::IncomingPeerConfig;
 
 glib::wrapper! {
     pub struct KeyObject(ObjectSubclass<imp::KeyObject>);
 }
 
 impl KeyObject {
-    pub fn new(desc: String, fp: String, natural_scroll: bool, mouse_sensitivity: f64) -> Self {
+    pub fn new(fingerprint: String, peer: IncomingPeerConfig) -> Self {
         Object::builder()
-            .property("description", desc)
-            .property("fingerprint", fp)
-            .property("natural-scroll", natural_scroll)
-            .property("mouse-sensitivity", mouse_sensitivity)
+            .property("description", peer.description)
+            .property("fingerprint", fingerprint)
+            .property("natural-scroll", peer.natural_scroll)
+            .property("mouse-sensitivity", peer.mouse_sensitivity)
+            .property("last-addr", peer.last_addr.unwrap_or_default())
+            .property("last-hostname", peer.last_hostname.unwrap_or_default())
             .build()
     }
 

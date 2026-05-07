@@ -1,15 +1,43 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
 	<template class="KeyRow" parent="AdwExpanderRow">
+		<!-- compact summary of non-default settings, shown in the
+		     title-row suffix area so the user can scan a collapsed
+		     row and see what's been customized for this peer.
+		     Visibility flips on at runtime when either setting
+		     differs from its default. -->
 		<child type="suffix">
-			<object class="GtkButton" id="delete_button">
+			<object class="GtkLabel" id="settings_summary">
 				<property name="valign">center</property>
-				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">Revoke authorization</property>
-				<property name="icon-name">edit-delete-symbolic</property>
+				<property name="visible">false</property>
 				<style>
-					<class name="flat"/>
+					<class name="dim-label"/>
+					<class name="caption"/>
 				</style>
+			</object>
+		</child>
+		<!-- TLS fingerprint as the first row inside the expansion.
+		     Subtitle holds the actual hash so it stays selectable
+		     even though the row itself isn't activatable. The copy
+		     button writes the fingerprint to the clipboard. -->
+		<child>
+			<object class="AdwActionRow" id="fingerprint_row">
+				<property name="title" translatable="yes">Fingerprint</property>
+				<property name="activatable">false</property>
+				<property name="subtitle-selectable">true</property>
+				<style>
+					<class name="property"/>
+				</style>
+				<child type="suffix">
+					<object class="GtkButton" id="copy_fingerprint_button">
+						<property name="valign">center</property>
+						<property name="icon-name">edit-copy-symbolic</property>
+						<property name="tooltip-text" translatable="yes">Copy fingerprint to clipboard</property>
+						<style>
+							<class name="flat"/>
+						</style>
+					</object>
+				</child>
 			</object>
 		</child>
 		<!-- natural-scroll toggle -->
@@ -48,6 +76,26 @@
 								<property name="value">1.0</property>
 							</object>
 						</property>
+					</object>
+				</child>
+			</object>
+		</child>
+		<!-- revoke authorization (mirrors ClientRow's delete row at
+		     the bottom of its expansion body — destructive action,
+		     hidden behind the expander to avoid fat-finger reaches) -->
+		<child>
+			<object class="AdwActionRow" id="delete_row">
+				<property name="title" translatable="yes">Revoke Authorization</property>
+				<property name="activatable">false</property>
+				<child>
+					<object class="GtkButton" id="delete_button">
+						<property name="icon-name">user-trash-symbolic</property>
+						<property name="valign">center</property>
+						<property name="halign">center</property>
+						<property name="tooltip-text" translatable="yes">Revoke authorization</property>
+						<style>
+							<class name="error"/>
+						</style>
 					</object>
 				</child>
 			</object>
