@@ -1,6 +1,8 @@
 use futures::{Stream, StreamExt};
 use lan_mouse_ipc::IncomingPeerConfig;
-use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
+use lan_mouse_proto::{
+    MAX_CLIPBOARD_SIZE, MAX_EVENT_SIZE, ProtoEvent, decode_clipboard_event,
+};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use rustls::pki_types::CertificateDer;
 use std::{
@@ -536,14 +538,20 @@ async fn read_loop(
     conn: ArcConn,
     dtls_tx: Sender<ListenEvent>,
 ) -> Result<(), Error> {
-    let mut b = [0u8; MAX_EVENT_SIZE];
+    // Buffer sized for the largest legal clipboard frame; mouse /
+    // keyboard datagrams use only the first MAX_EVENT_SIZE bytes.
+    let mut b = [0u8; MAX_CLIPBOARD_SIZE];
 
-    while conn.recv(&mut b).await.is_ok() {
-        match b.try_into() {
-            Ok(event) => dtls_tx
+    while let Ok(n) = conn.recv(&mut b).await {
+        if n == 0 {
+            continue;
+        }
+        let datagram = &b[..n];
+        match decode_listen_datagram(datagram) {
+            Some(event) => dtls_tx
                 .send(ListenEvent::Msg { event, addr })
                 .expect("channel closed"),
-            Err(e) => {
+            None => {
                 // Skip the malformed/unknown datagram and keep
                 // listening. Each DTLS recv returns one full
                 // datagram, so a parse error here can't desync a
@@ -553,7 +561,7 @@ async fn read_loop(
                 // version can introduce additional event types
                 // and old peers will simply ignore them rather
                 // than dropping the connection.
-                log::debug!("ignoring undecodable event from {addr}: {e}");
+                log::debug!("ignoring undecodable {n}-byte event from {addr}");
             }
         }
     }
@@ -565,4 +573,20 @@ async fn read_loop(
         .expect("connection not found");
     conns.remove(index);
     Ok(())
+}
+
+/// Classify a DTLS datagram by its first-byte event-type tag and
+/// route through the variable-length clipboard codec or the fixed-
+/// buffer `try_into` path. Mirrors `decode_proto_datagram` on the
+/// connect side so both directions accept the same wire formats.
+fn decode_listen_datagram(bytes: &[u8]) -> Option<ProtoEvent> {
+    use lan_mouse_proto::EventType;
+    let tag = *bytes.first()?;
+    if tag == EventType::Clipboard as u8 {
+        return decode_clipboard_event(bytes).ok();
+    }
+    let mut fixed = [0u8; MAX_EVENT_SIZE];
+    let copy_len = bytes.len().min(MAX_EVENT_SIZE);
+    fixed[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    fixed.try_into().ok()
 }

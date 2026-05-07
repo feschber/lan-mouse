@@ -2,7 +2,9 @@ use crate::client::ClientManager;
 use crate::config::local_commit;
 use crate::discovery::{PrimaryCache, normalize_mdns_name};
 use lan_mouse_ipc::{ClientHandle, DEFAULT_PORT};
-use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
+use lan_mouse_proto::{
+    MAX_CLIPBOARD_SIZE, MAX_EVENT_SIZE, ProtoEvent, decode_clipboard_event, encode_clipboard_event,
+};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::RefCell,
@@ -223,14 +225,55 @@ impl LanMouseConnection {
         self.recv_rx.recv().await.expect("channel closed")
     }
 
+    /// Cheap send-only handle that shares all the dialer state with
+    /// `self`. The clone's `recv_rx` is a dead stub — only the
+    /// original [`LanMouseConnection`] (held by Capture) drains the
+    /// live receiver. Used by Service to fan clipboard frames out
+    /// without routing through the capture session loop.
+    pub(crate) fn sender_clone(&self) -> Self {
+        let (_, dead_rx) = channel();
+        Self {
+            cert: self.cert.clone(),
+            client_manager: self.client_manager.clone(),
+            conns: self.conns.clone(),
+            connecting: self.connecting.clone(),
+            recv_rx: dead_rx,
+            recv_tx: self.recv_tx.clone(),
+            ping_response: self.ping_response.clone(),
+            primary_hints: self.primary_hints.clone(),
+            retry_state: self.retry_state.clone(),
+        }
+    }
+
     pub(crate) async fn send(
         &self,
         event: ProtoEvent,
         handle: ClientHandle,
     ) -> Result<(), LanMouseConnectionError> {
         let event_display = format!("{event}");
-        let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
-        let buf = &buf[..len];
+        // Clipboard frames are variable-length and can't ride the
+        // fixed-size codec; route them through the dedicated helper.
+        // For all other events the existing 21-byte path is faster.
+        let bytes_owned: Option<Vec<u8>> = match &event {
+            ProtoEvent::Clipboard { .. } => match encode_clipboard_event(&event) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    log::warn!("dropping oversize clipboard event for client {handle}: {e}");
+                    return Ok(());
+                }
+            },
+            _ => None,
+        };
+        let bytes_fixed: ([u8; MAX_EVENT_SIZE], usize) = if bytes_owned.is_some() {
+            ([0u8; MAX_EVENT_SIZE], 0)
+        } else {
+            event.into()
+        };
+        let buf: &[u8] = if let Some(v) = bytes_owned.as_deref() {
+            v
+        } else {
+            &bytes_fixed.0[..bytes_fixed.1]
+        };
         if let Some(addr) = self.client_manager.active_addr(handle) {
             let conn = {
                 let conns = self.conns.lock().await;
@@ -427,41 +470,67 @@ async fn receive_loop(
     tx: Sender<(ClientHandle, ProtoEvent)>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
 ) {
-    let mut buf = [0u8; MAX_EVENT_SIZE];
-    while conn.recv(&mut buf).await.is_ok() {
-        match buf.try_into() {
-            Ok(event) => {
-                log::trace!("{addr} <==<==<== {event}");
-                match event {
-                    ProtoEvent::Pong(b) => {
-                        client_manager.set_active_addr(handle, Some(addr));
-                        client_manager.set_alive(handle, b);
-                        ping_response.borrow_mut().insert(addr);
-                    }
-                    ProtoEvent::Hello { commit } => {
-                        client_manager.set_peer_commit(handle, Some(commit));
-                        // Forward to capture.rs so Service can
-                        // broadcast — without this the GUI's
-                        // version-status indicator only updates when
-                        // the listen-side `PeerHello` happens to
-                        // match `get_client(addr)`, which fails when
-                        // Mac dials in before Linux's outbound dial
-                        // has populated `active_addr`.
-                        tx.send((handle, ProtoEvent::Hello { commit }))
-                            .expect("channel closed");
-                    }
-                    event => tx.send((handle, event)).expect("channel closed"),
-                }
-            }
+    // Buffer sized for the largest legal clipboard frame so a single
+    // DTLS recv never gets truncated. Non-clipboard events use only
+    // the first MAX_EVENT_SIZE bytes; the rest of the buffer is
+    // unused for those datagrams.
+    let mut buf = [0u8; MAX_CLIPBOARD_SIZE];
+    while let Ok(n) = conn.recv(&mut buf).await {
+        if n == 0 {
+            continue;
+        }
+        let datagram = &buf[..n];
+        let event = match decode_proto_datagram(datagram) {
+            Some(event) => event,
             // Skip undecodable datagrams without dropping the
             // connection. Each DTLS recv is one framed message, so
             // skipping is safe and keeps us forward-compatible with
             // peers that send event types we don't yet know about.
-            Err(e) => log::debug!("ignoring undecodable event from {addr}: {e}"),
+            None => {
+                log::debug!("ignoring undecodable {n}-byte event from {addr}");
+                continue;
+            }
+        };
+        log::trace!("{addr} <==<==<== {event}");
+        match event {
+            ProtoEvent::Pong(b) => {
+                client_manager.set_active_addr(handle, Some(addr));
+                client_manager.set_alive(handle, b);
+                ping_response.borrow_mut().insert(addr);
+            }
+            ProtoEvent::Hello { commit } => {
+                client_manager.set_peer_commit(handle, Some(commit));
+                // Forward to capture.rs so Service can
+                // broadcast — without this the GUI's
+                // version-status indicator only updates when
+                // the listen-side `PeerHello` happens to
+                // match `get_client(addr)`, which fails when
+                // Mac dials in before Linux's outbound dial
+                // has populated `active_addr`.
+                tx.send((handle, ProtoEvent::Hello { commit }))
+                    .expect("channel closed");
+            }
+            event => tx.send((handle, event)).expect("channel closed"),
         }
     }
     log::warn!("recv error");
     disconnect(&client_manager, handle, addr, &conns).await;
+}
+
+/// Classify the first byte of a DTLS datagram and dispatch through
+/// either the variable-length clipboard codec or the fixed-buffer
+/// `try_into` path. Returns `None` on any decode failure (bad tag,
+/// truncated payload, oversize frame).
+fn decode_proto_datagram(bytes: &[u8]) -> Option<ProtoEvent> {
+    use lan_mouse_proto::EventType;
+    let tag = *bytes.first()?;
+    if tag == EventType::Clipboard as u8 {
+        return decode_clipboard_event(bytes).ok();
+    }
+    let mut fixed = [0u8; MAX_EVENT_SIZE];
+    let copy_len = bytes.len().min(MAX_EVENT_SIZE);
+    fixed[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    fixed.try_into().ok()
 }
 
 async fn disconnect(

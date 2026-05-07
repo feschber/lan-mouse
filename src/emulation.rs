@@ -4,7 +4,7 @@ use futures::StreamExt;
 use input_emulation::{
     EmulationHandle, InputEmulation, InputEmulationError, ReceivePostProcessing,
 };
-use input_event::Event;
+use input_event::{ClipboardEvent, Event};
 use lan_mouse_ipc::IncomingPeerConfig;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -73,6 +73,22 @@ pub(crate) enum EmulationEvent {
     PeerHello {
         addr: SocketAddr,
         commit: [u8; 8],
+    },
+    /// Authorized peer at `addr` delivered a clipboard frame whose
+    /// receive-side gate evaluated true. The local clipboard has
+    /// already been updated by [`ListenTask`]; Service consumes
+    /// this event to refresh the `ClipboardMonitor`'s
+    /// last-known-content (so the next poll doesn't re-emit it as a
+    /// fresh local change) and to fan the payload out to other
+    /// authorized peers whose `clipboard_send` is true.
+    /// `from_fingerprint` is the *originator*'s certificate
+    /// fingerprint stamped on the wire — distinct from the
+    /// fingerprint of the peer at `addr` when the message has
+    /// been forwarded through an intermediate hop.
+    ClipboardReceived {
+        addr: SocketAddr,
+        from_fingerprint: String,
+        content: String,
     },
 }
 
@@ -242,6 +258,40 @@ impl ListenTask {
                                 self.listener.reply(addr, ProtoEvent::Ack(0)).await;
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
+                            ProtoEvent::Clipboard { from_fingerprint, content } => {
+                                let receive_ok = self.addr_to_fingerprint
+                                    .get(&addr)
+                                    .and_then(|fp| self.incoming_peers.get(fp))
+                                    .map(|peer| peer.clipboard_receive)
+                                    .unwrap_or(false);
+                                if !receive_ok {
+                                    log::debug!(
+                                        "dropping clipboard frame from {addr}: clipboard_receive disabled or unauthorized peer"
+                                    );
+                                } else {
+                                    // Inject locally via the same
+                                    // pipeline that handles input
+                                    // events. InputEmulation::consume
+                                    // short-circuits Clipboard events
+                                    // to its ClipboardEmulation sink.
+                                    self.emulation_proxy.consume(
+                                        Event::Clipboard(ClipboardEvent::Text(content.clone())),
+                                        addr,
+                                    );
+                                    // Hand off to Service so it can
+                                    // (a) suppress an immediate self-
+                                    // emit from the local
+                                    // ClipboardMonitor poll, and (b)
+                                    // forward to other peers honoring
+                                    // the (originator, content)
+                                    // recent-forwarded gate.
+                                    self.event_tx.send(EmulationEvent::ClipboardReceived {
+                                        addr,
+                                        from_fingerprint,
+                                        content,
+                                    }).expect("channel closed");
+                                }
+                            }
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
                             // Peer's version handshake. Echo our own
                             // commit back so the peer's connect-side

@@ -33,6 +33,7 @@ impl ClientManager {
             port: config_client.port,
             pos: config_client.pos,
             cmd: config_client.enter_hook,
+            clipboard_send: config_client.clipboard_send,
         };
         let state = ClientState {
             active: config_client.active,
@@ -329,5 +330,31 @@ impl ClientManager {
             .borrow()
             .get(handle as usize)
             .map(|(_, s)| s.ips.clone())
+    }
+
+    /// Update the per-pair clipboard-send gate for the given client.
+    /// Returns `true` when the value changed (so callers can avoid
+    /// no-op config writes / frontend broadcasts).
+    pub(crate) fn set_clipboard_send(&self, handle: ClientHandle, enabled: bool) -> bool {
+        match self.clients.borrow_mut().get_mut(handle as usize) {
+            Some((c, _)) if c.clipboard_send != enabled => {
+                c.clipboard_send = enabled;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Snapshot of every client whose `clipboard_send` is true and
+    /// whose state is `active`. Used by Service to fan-out a local
+    /// clipboard change without holding the manager's borrow across
+    /// async sends.
+    pub(crate) fn clipboard_send_targets(&self) -> Vec<ClientHandle> {
+        self.clients
+            .borrow()
+            .iter()
+            .filter(|(_, (c, s))| c.clipboard_send && s.active)
+            .map(|(k, _)| k as ClientHandle)
+            .collect()
     }
 }

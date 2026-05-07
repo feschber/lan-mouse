@@ -10,17 +10,21 @@ use crate::{
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
+use input_capture::clipboard::ClipboardMonitor;
+use input_event::{ClipboardEvent, Event as InputEvent};
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IncomingPeerConfig,
     IpcError, IpcListenerCreationError, Position, Status,
 };
+use lan_mouse_proto::ProtoEvent;
 use log;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
     io,
     net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
@@ -79,6 +83,32 @@ pub struct Service {
     /// shared `PrimaryCache` (read by `LanMouseConnection`) from
     /// peer announcements.
     discovery: Discovery,
+    /// Outgoing connection handle to fan clipboard frames out from
+    /// the capture / forwarding paths. Same handle Capture owns;
+    /// cloned in `Service::new` so Service can call `send` directly
+    /// without routing through the capture session loop.
+    conn: LanMouseConnection,
+    /// Cross-platform clipboard poller. `None` when the platform
+    /// clipboard couldn't be opened (headless CI, Wayland session
+    /// without compositor support). Service drains it in the main
+    /// loop and fans the resulting events out to peers whose
+    /// `clipboard_send` is true.
+    clipboard_monitor: Option<ClipboardMonitor>,
+    /// Recent forwards keyed on `(originator_fingerprint, hash)`.
+    /// Used to break N-peer rebroadcast cycles: when this device
+    /// receives a forwarded clipboard frame and would re-fan to
+    /// other peers, the entry under (origin, content_hash) blocks
+    /// the duplicate. Pruned lazily — entries older than
+    /// `RECENT_FORWARD_TTL` are dropped on each clipboard event.
+    recent_forwarded: HashMap<(String, u64), Instant>,
+}
+
+const RECENT_FORWARD_TTL: Duration = Duration::from_secs(1);
+
+fn clipboard_hash(content: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug)]
@@ -115,6 +145,7 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
+        let conn_for_service = conn.sender_clone();
         let capture = Capture::new(
             capture_backend,
             conn,
@@ -133,6 +164,18 @@ impl Service {
 
         let port = config.port();
         let discovery = Discovery::new(port, config.mdns_discovery(), primary_cache.clone());
+        // ClipboardMonitor is best-effort: a headless CI environment
+        // or a Wayland session without compositor support yields a
+        // permanent error here. We log and proceed without clipboard
+        // sync rather than tying daemon startup to clipboard
+        // availability.
+        let clipboard_monitor = match ClipboardMonitor::new() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                log::warn!("clipboard monitor unavailable: {e}; clipboard sync disabled");
+                None
+            }
+        };
         let service = Self {
             config,
             capture,
@@ -152,6 +195,9 @@ impl Service {
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
             discovery,
+            conn: conn_for_service,
+            clipboard_monitor,
+            recent_forwarded: HashMap::new(),
         };
         Ok(service)
     }
@@ -186,11 +232,14 @@ impl Service {
             tokio::select! {
                 request = self.frontend_listener.next() => self.handle_frontend_request(request),
                 _ = self.frontend_event_pending.notified() => self.handle_frontend_pending().await,
-                event = self.emulation.event() => self.handle_emulation_event(event),
+                event = self.emulation.event() => self.handle_emulation_event(event).await,
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
                 _ = self.config.changed() => self.handle_config_change(),
                 _ = discovery_refresh_tick.tick() => self.discovery.refresh(),
+                event = recv_clipboard(&mut self.clipboard_monitor) => {
+                    self.handle_local_clipboard_event(event).await;
+                }
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
         }
@@ -278,6 +327,16 @@ impl Service {
                 self.notify_frontend(FrontendEvent::MdnsDiscovery(enabled));
                 self.save_config();
             }
+            FrontendRequest::SetClientClipboardSend(handle, enabled) => {
+                if self.client_manager.set_clipboard_send(handle, enabled) {
+                    self.broadcast_client(handle);
+                    self.save_config();
+                }
+            }
+            FrontendRequest::SetIncomingPeerClipboardReceive(fp, enabled) => {
+                self.set_incoming_peer_clipboard_receive(fp, enabled);
+                self.save_config();
+            }
         }
     }
 
@@ -352,6 +411,22 @@ impl Service {
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
+    fn set_incoming_peer_clipboard_receive(&mut self, fingerprint: String, clipboard_receive: bool) {
+        if let Some(peer) = self
+            .authorized_keys
+            .write()
+            .expect("lock")
+            .get_mut(&fingerprint)
+        {
+            peer.clipboard_receive = clipboard_receive;
+        }
+        let keys = self.authorized_keys.read().expect("lock").clone();
+        // Emulation needs to know so the receive-side gate matches
+        // the new value immediately, not after a config-change cycle.
+        self.emulation.set_incoming_peers(keys.clone());
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
+    }
+
     fn save_config(&mut self) {
         let clients = self.client_manager.clients();
         let clients = clients
@@ -363,6 +438,7 @@ impl Service {
                 pos: c.pos,
                 active: s.active,
                 enter_hook: c.cmd,
+                clipboard_send: c.clipboard_send,
             })
             .collect();
         self.config.set_clients(clients);
@@ -407,7 +483,7 @@ impl Service {
         }
     }
 
-    fn handle_emulation_event(&mut self, event: EmulationEvent) {
+    async fn handle_emulation_event(&mut self, event: EmulationEvent) {
         match event {
             EmulationEvent::ConnectionAttempt { fingerprint } => {
                 self.notify_frontend(FrontendEvent::ConnectionAttempt { fingerprint });
@@ -467,7 +543,133 @@ impl Service {
                     self.broadcast_client(handle);
                 }
             }
+            EmulationEvent::ClipboardReceived {
+                addr,
+                from_fingerprint,
+                content,
+            } => {
+                self.handle_clipboard_received(addr, from_fingerprint, content)
+                    .await;
+            }
         }
+    }
+
+    /// Local clipboard change picked up by the polling
+    /// [`ClipboardMonitor`]. Stamp the originator fingerprint on the
+    /// wire frame and fan out to every active outgoing client whose
+    /// `clipboard_send` is true. Records `(self_fp, hash)` in
+    /// `recent_forwarded` so a later forwarded copy of the same
+    /// content (re-arriving via another peer in an N-peer ring)
+    /// won't be redundantly re-broadcast.
+    async fn handle_local_clipboard_event(
+        &mut self,
+        event: Option<input_capture::CaptureEvent>,
+    ) {
+        let Some(event) = event else {
+            return;
+        };
+        let input_capture::CaptureEvent::Input(InputEvent::Clipboard(ClipboardEvent::Text(
+            content,
+        ))) = event
+        else {
+            return;
+        };
+        let targets = self.client_manager.clipboard_send_targets();
+        if targets.is_empty() {
+            log::trace!(
+                "clipboard captured locally ({} bytes) but no peer has clipboard_send=true; skipping fan-out",
+                content.len()
+            );
+            return;
+        }
+        let from_fingerprint = self.public_key_fingerprint.clone();
+        let hash = clipboard_hash(&content);
+        self.prune_recent_forwarded();
+        self.recent_forwarded
+            .insert((from_fingerprint.clone(), hash), Instant::now());
+        log::info!(
+            "broadcasting local clipboard ({} bytes) to {} peer(s)",
+            content.len(),
+            targets.len()
+        );
+        for handle in targets {
+            let event = ProtoEvent::Clipboard {
+                from_fingerprint: from_fingerprint.clone(),
+                content: content.clone(),
+            };
+            if let Err(e) = self.conn.send(event, handle).await {
+                log::debug!("clipboard send to client {handle} failed: {e}");
+            }
+        }
+    }
+
+    /// Forwarded clipboard frame just landed via the listen side
+    /// (the local clipboard has already been updated by
+    /// `emulation::ListenTask`). Refresh the
+    /// [`ClipboardMonitor`]'s last-known content so the next 500ms
+    /// poll doesn't see this as a fresh local change and bounce it
+    /// back, then forward to other peers honoring the recent-
+    /// forwarded gate.
+    async fn handle_clipboard_received(
+        &mut self,
+        from_addr: SocketAddr,
+        from_fingerprint: String,
+        content: String,
+    ) {
+        if let Some(monitor) = self.clipboard_monitor.as_ref() {
+            monitor.update_last_content(content.clone());
+        }
+        let hash = clipboard_hash(&content);
+        self.prune_recent_forwarded();
+        let key = (from_fingerprint.clone(), hash);
+        if self.recent_forwarded.contains_key(&key) {
+            log::debug!(
+                "skipping clipboard re-fan-out: already forwarded ({}, {} bytes) within {}ms",
+                &from_fingerprint[..from_fingerprint.len().min(8)],
+                content.len(),
+                RECENT_FORWARD_TTL.as_millis()
+            );
+            return;
+        }
+        let targets = self.client_manager.clipboard_send_targets();
+        let forward_targets: Vec<ClientHandle> = targets
+            .into_iter()
+            .filter(|h| {
+                // Skip the client we just received from. Identified
+                // by IP rather than full SocketAddr so a peer's
+                // ephemeral source port (which differs between its
+                // outgoing and our cached active_addr) doesn't
+                // accidentally include them.
+                self.client_manager
+                    .active_addr(*h)
+                    .map(|a| a.ip() != from_addr.ip())
+                    .unwrap_or(true)
+            })
+            .collect();
+        if forward_targets.is_empty() {
+            return;
+        }
+        self.recent_forwarded.insert(key, Instant::now());
+        log::info!(
+            "forwarding clipboard ({} bytes, originator {}) to {} peer(s)",
+            content.len(),
+            &from_fingerprint[..from_fingerprint.len().min(8)],
+            forward_targets.len()
+        );
+        for handle in forward_targets {
+            let event = ProtoEvent::Clipboard {
+                from_fingerprint: from_fingerprint.clone(),
+                content: content.clone(),
+            };
+            if let Err(e) = self.conn.send(event, handle).await {
+                log::debug!("clipboard forward to client {handle} failed: {e}");
+            }
+        }
+    }
+
+    fn prune_recent_forwarded(&mut self) {
+        self.recent_forwarded
+            .retain(|_, ts| ts.elapsed() < RECENT_FORWARD_TTL);
     }
 
     fn handle_capture_event(&mut self, event: ICaptureEvent) {
@@ -765,5 +967,19 @@ impl Service {
                 Err(e) => log::warn!("{cmd}: {e}"),
             }
         });
+    }
+}
+
+/// `tokio::select!` arm helper for the optional [`ClipboardMonitor`].
+/// Resolves to `Some(event)` when the monitor surfaces a change and
+/// to a never-completing future when no monitor is alive — keeping
+/// the surrounding `select!` from busy-spinning when clipboard sync
+/// is unavailable on the host.
+async fn recv_clipboard(
+    monitor: &mut Option<ClipboardMonitor>,
+) -> Option<input_capture::CaptureEvent> {
+    match monitor.as_mut() {
+        Some(m) => m.recv().await,
+        None => std::future::pending().await,
     }
 }

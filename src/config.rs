@@ -91,6 +91,10 @@ struct TomlClient {
     position: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
+    /// Per-pair clipboard send gate. Absent in legacy configs;
+    /// defaults to `false` so existing pairs don't start
+    /// transmitting clipboard text on upgrade.
+    clipboard_send: Option<bool>,
 }
 
 impl ConfigToml {
@@ -294,6 +298,7 @@ pub struct ConfigClient {
     pub pos: Position,
     pub active: bool,
     pub enter_hook: Option<String>,
+    pub clipboard_send: bool,
 }
 
 impl From<TomlClient> for ConfigClient {
@@ -304,6 +309,7 @@ impl From<TomlClient> for ConfigClient {
         let ips = HashSet::from_iter(toml.ips.into_iter().flatten());
         let port = toml.port.unwrap_or(DEFAULT_PORT);
         let pos = toml.position.unwrap_or_default();
+        let clipboard_send = toml.clipboard_send.unwrap_or(false);
         Self {
             ips,
             hostname,
@@ -311,6 +317,7 @@ impl From<TomlClient> for ConfigClient {
             pos,
             active,
             enter_hook,
+            clipboard_send,
         }
     }
 }
@@ -330,6 +337,14 @@ impl From<ConfigClient> for TomlClient {
         let position = Some(client.pos);
         let activate_on_startup = if client.active { Some(true) } else { None };
         let enter_hook = client.enter_hook;
+        // Persist `clipboard_send = true` only when the user has
+        // opted in. Default-false stays implicit so configs upgraded
+        // from older builds don't gain a new field on every save.
+        let clipboard_send = if client.clipboard_send {
+            Some(true)
+        } else {
+            None
+        };
         Self {
             hostname,
             host_name,
@@ -338,6 +353,7 @@ impl From<ConfigClient> for TomlClient {
             position,
             activate_on_startup,
             enter_hook,
+            clipboard_send,
         }
     }
 }

@@ -140,6 +140,14 @@ pub struct ClientConfig {
     pub pos: Position,
     /// enter hook
     pub cmd: Option<String>,
+    /// Whether changes to this device's clipboard should be
+    /// propagated to this peer. Per-pair gate on the *send* side;
+    /// the receiving peer's `IncomingPeerConfig::clipboard_receive`
+    /// is the matching gate on the receive side. Both must be true
+    /// for clipboard text to flow. Defaults to `false` — clipboard
+    /// is a meaningfully different trust scope than mouse/keyboard.
+    #[serde(default)]
+    pub clipboard_send: bool,
 }
 
 impl Default for ClientConfig {
@@ -150,6 +158,7 @@ impl Default for ClientConfig {
             fix_ips: Default::default(),
             pos: Default::default(),
             cmd: None,
+            clipboard_send: false,
         }
     }
 }
@@ -191,6 +200,13 @@ pub struct IncomingPeerConfig {
     /// on either side or the peer's mDNS record didn't match the
     /// IP it connected from.
     pub last_hostname: Option<String>,
+    /// Whether clipboard text propagated by this peer should be
+    /// applied to the local clipboard. Per-pair gate on the
+    /// *receive* side; the sending peer's
+    /// `ClientConfig::clipboard_send` is the matching gate on the
+    /// send side. Both must be true for clipboard text to flow.
+    /// Defaults to `false`.
+    pub clipboard_receive: bool,
 }
 
 impl Default for IncomingPeerConfig {
@@ -201,6 +217,7 @@ impl Default for IncomingPeerConfig {
             mouse_sensitivity: 1.0,
             last_addr: None,
             last_hostname: None,
+            clipboard_receive: false,
         }
     }
 }
@@ -223,6 +240,8 @@ impl<'de> Deserialize<'de> for IncomingPeerConfig {
                 last_addr: Option<String>,
                 #[serde(default)]
                 last_hostname: Option<String>,
+                #[serde(default)]
+                clipboard_receive: bool,
             },
         }
         fn default_sensitivity() -> f64 {
@@ -239,12 +258,14 @@ impl<'de> Deserialize<'de> for IncomingPeerConfig {
                 mouse_sensitivity,
                 last_addr,
                 last_hostname,
+                clipboard_receive,
             } => Self {
                 description,
                 natural_scroll,
                 mouse_sensitivity,
                 last_addr,
                 last_hostname,
+                clipboard_receive,
             },
         })
     }
@@ -379,6 +400,13 @@ pub enum FrontendRequest {
     SetIncomingPeerSensitivity(String, f64),
     /// turn mDNS-SD discovery on or off
     SetMdnsDiscovery(bool),
+    /// Toggle whether clipboard changes on this device propagate to
+    /// the given outgoing client. Per-pair send-side gate.
+    SetClientClipboardSend(ClientHandle, bool),
+    /// Toggle whether clipboard text from the given authorized peer
+    /// is applied to this device's clipboard. Per-pair receive-side
+    /// gate, keyed on the peer's TLS certificate fingerprint.
+    SetIncomingPeerClipboardReceive(String, bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
