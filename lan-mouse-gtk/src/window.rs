@@ -452,10 +452,6 @@ impl Window {
         self.request(FrontendRequest::SetReleaseThreshold(threshold));
     }
 
-    pub(super) fn request_natural_scroll(&self, natural_scroll: bool) {
-        self.request(FrontendRequest::SetNaturalScroll(natural_scroll));
-    }
-
     pub(super) fn request_mdns_discovery(&self, enabled: bool) {
         self.request(FrontendRequest::SetMdnsDiscovery(enabled));
     }
@@ -522,20 +518,6 @@ impl Window {
     pub(super) fn set_emulation(&self, active: bool) {
         self.imp().emulation_active.replace(active);
         self.update_capture_emulation_status();
-    }
-
-    pub(super) fn set_natural_scroll(&self, natural_scroll: bool) {
-        let imp = self.imp();
-        let switch = &imp.natural_scroll_switch;
-        let handler = imp.natural_scroll_handler.borrow();
-        if let Some(id) = handler.as_ref() {
-            switch.block_signal(id);
-        }
-        switch.set_active(natural_scroll);
-        switch.set_state(natural_scroll);
-        if let Some(id) = handler.as_ref() {
-            switch.unblock_signal(id);
-        }
     }
 
     pub(super) fn set_mdns_discovery(&self, enabled: bool) {

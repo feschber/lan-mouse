@@ -70,16 +70,14 @@ impl ObjectImpl for KeyRow {
         self.natural_scroll_handler
             .replace(Some(natural_scroll_handler));
 
-        let sensitivity_handler =
-            self.sensitivity_spin
-                .connect_value_changed(clone!(
-                    #[weak(rename_to = row)]
-                    self,
-                    move |spin| {
-                        row.obj()
-                            .emit_by_name::<()>("request-sensitivity-change", &[&spin.value()]);
-                    }
-                ));
+        let sensitivity_handler = self.sensitivity_spin.connect_value_changed(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |spin| {
+                row.obj()
+                    .emit_by_name::<()>("request-sensitivity-change", &[&spin.value()]);
+            }
+        ));
         self.sensitivity_handler.replace(Some(sensitivity_handler));
     }
 

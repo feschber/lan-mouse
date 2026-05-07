@@ -69,11 +69,6 @@ struct ConfigToml {
     /// 0 (or absent) disables it; the cursor only releases on the
     /// release-bind chord or a peer-side `Leave`.
     release_threshold_px: Option<u32>,
-    /// invert the sign of scroll events received from peers before
-    /// emulation. Equivalent to the libinput `natural_scroll`
-    /// preference, but applied to forwarded events that bypass
-    /// libinput entirely on Wayland virtual-pointer paths.
-    natural_scroll: Option<bool>,
     /// Advertise (and consume) `_lan-mouse._udp.local.` Bonjour
     /// service records. The TXT record's `primary=` field tells the
     /// dialer which interface IP the OS prefers (macOS service order
@@ -534,22 +529,6 @@ impl Config {
             .as_mut()
             .expect("config")
             .release_threshold_px = Some(threshold);
-    }
-
-    /// Whether forwarded scroll events should be sign-inverted on
-    /// injection. Default false.
-    pub fn natural_scroll(&self) -> bool {
-        self.config_toml
-            .as_ref()
-            .and_then(|c| c.natural_scroll)
-            .unwrap_or(false)
-    }
-
-    pub fn set_natural_scroll(&mut self, natural_scroll: bool) {
-        if self.config_toml.is_none() {
-            self.config_toml = Some(Default::default());
-        }
-        self.config_toml.as_mut().expect("config").natural_scroll = Some(natural_scroll);
     }
 
     /// Whether mDNS-SD discovery is enabled. Defaults to true when

@@ -302,11 +302,6 @@ pub enum FrontendEvent {
     /// pixel threshold for the wall-press auto-release fallback.
     /// 0 means disabled.
     ReleaseThreshold(u32),
-    /// whether scroll events received from peers should be inverted
-    /// before being injected on this device. Mirrors the user's
-    /// libinput natural-scroll preference for forwarded events,
-    /// since virtual-pointer events bypass libinput entirely.
-    NaturalScroll(bool),
     /// whether mDNS-SD discovery is on. When true, lan-mouse
     /// advertises a `_lan-mouse._udp.local.` Bonjour service whose
     /// TXT record's `primary=` field hints at the OS-preferred
@@ -354,14 +349,6 @@ pub enum FrontendRequest {
     SaveConfiguration,
     /// set the wall-press auto-release pixel threshold (0 = disabled)
     SetReleaseThreshold(u32),
-    /// set whether forwarded scroll events should be inverted on
-    /// injection (matches the libinput natural-scroll concept for
-    /// virtual-pointer-injected events that bypass libinput).
-    ///
-    /// Deprecated by `SetIncomingPeerNaturalScroll` and removed in
-    /// the same series; kept here only to avoid breaking the GTK
-    /// global toggle until that surface is removed.
-    SetNaturalScroll(bool),
     /// set whether forwarded scroll events from a specific
     /// authorized peer should be sign-inverted on injection.
     /// Keyed on the peer's TLS certificate fingerprint.

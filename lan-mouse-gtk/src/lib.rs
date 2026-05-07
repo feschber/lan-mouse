@@ -466,9 +466,6 @@ fn build_ui(
                     FrontendEvent::ReleaseThreshold(threshold) => {
                         window.set_release_threshold(threshold);
                     }
-                    FrontendEvent::NaturalScroll(natural_scroll) => {
-                        window.set_natural_scroll(natural_scroll);
-                    }
                     FrontendEvent::MdnsDiscovery(enabled) => {
                         window.set_mdns_discovery(enabled);
                     }
