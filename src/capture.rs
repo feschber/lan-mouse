@@ -37,6 +37,19 @@ pub(crate) enum ICaptureEvent {
     /// either the remote client leaving its device region,
     /// a new device entering the screen or the release bind.
     ClientEntered(u64),
+    /// The connect-side received the peer's `Hello` echo and
+    /// updated `client_manager.peer_commit` for `handle`. Forwarded
+    /// upward so Service can broadcast `FrontendEvent::State` and
+    /// the GUI's per-row version-status indicator picks up the new
+    /// value. The listen-side path independently emits
+    /// [`crate::emulation::EmulationEvent::PeerHello`], but it
+    /// races with `active_addr` population — when an incoming
+    /// `Hello` arrives before our outbound dial completes, the
+    /// listen path's `get_client(addr)` returns `None` and the
+    /// commit silently goes unsurfaced. The connect-side path
+    /// fires later but reliably, so it carries the broadcast as a
+    /// belt-and-suspenders fallback.
+    PeerCommitUpdated(CaptureHandle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,6 +373,16 @@ impl CaptureTask {
                         ProtoEvent::ReceiverSensitivity { mouse_sensitivity } => {
                             let pos = self.get_pos(handle);
                             capture.set_peer_sensitivity(pos, mouse_sensitivity);
+                        }
+                        // Peer's commit hash arrived on the outgoing
+                        // DTLS connection. The connect-side
+                        // receive_loop already wrote it to
+                        // `client_manager`; bubble up to Service so
+                        // the GUI's version-status row refreshes.
+                        ProtoEvent::Hello { .. } => {
+                            self.event_tx
+                                .send(ICaptureEvent::PeerCommitUpdated(handle))
+                                .expect("channel closed");
                         }
                         _ => {}
                     }
