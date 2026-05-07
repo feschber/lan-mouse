@@ -53,6 +53,10 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    /// pixel threshold for the wall-press auto-release fallback.
+    /// 0 (or absent) disables it; the cursor only releases on the
+    /// release-bind chord or a peer-side `Leave`.
+    release_threshold_px: Option<u32>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -477,6 +481,25 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// Pixel threshold for the wall-press auto-release fallback.
+    /// 0 disables it.
+    pub fn release_threshold_px(&self) -> u32 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.release_threshold_px)
+            .unwrap_or(0)
+    }
+
+    pub fn set_release_threshold_px(&mut self, threshold: u32) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .release_threshold_px = Some(threshold);
     }
 
     /// set configured clients

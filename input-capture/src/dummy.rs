@@ -42,7 +42,7 @@ impl Capture for DummyInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, _warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
         Ok(())
     }
 
@@ -62,7 +62,7 @@ impl Stream for DummyInputCapture {
         let event = match self.start {
             None => {
                 self.start.replace(current);
-                CaptureEvent::Begin
+                CaptureEvent::Begin { cursor: None }
             }
             Some(start) => {
                 let elapsed = start.elapsed();

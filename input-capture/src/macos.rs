@@ -9,7 +9,7 @@ use core_foundation::{
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{CGError, kCGErrorSuccess},
+    base::{CGError, CGFloat, kCGErrorSuccess},
     display::{CGDisplay, CGPoint},
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -62,7 +62,14 @@ struct InputCaptureState {
 
 #[derive(Debug)]
 enum ProducerEvent {
-    Release,
+    /// `warp_target`, when present, is a screen-space (Quartz) point
+    /// at which to warp the local cursor before showing it. Used to
+    /// preserve cross-axis continuity on release: the visible cursor
+    /// reappears at the host point matching where it visually was on
+    /// the guest, instead of snapping back to the capture-start edge.
+    Release {
+        warp_target: Option<(i32, i32)>,
+    },
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -153,8 +160,26 @@ impl InputCaptureState {
     ) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
-            ProducerEvent::Release => {
+            ProducerEvent::Release { warp_target } => {
+                log::info!(
+                    "[release-warp] handle_producer_event Release: current_pos={:?} warp_target={warp_target:?}",
+                    self.current_pos
+                );
                 if self.current_pos.is_some() {
+                    // Warp BEFORE clearing current_pos so the
+                    // event-tap callback can't see Some(pos) and
+                    // re-snap the cursor to the entry edge before we
+                    // make it visible again. Then show_cursor() reveals
+                    // it at the warped point.
+                    if let Some((x, y)) = warp_target {
+                        log::info!("[release-warp] warping local cursor to ({x}, {y})");
+                        if let Err(e) = CGDisplay::warp_mouse_cursor_position(CGPoint {
+                            x: x as CGFloat,
+                            y: y as CGFloat,
+                        }) {
+                            log::warn!("[release-warp] warp_mouse_cursor_position failed: {e:?}");
+                        }
+                    }
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -519,10 +544,17 @@ fn create_event_tap<'a>(
             // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
                 capture_position = Some(new_pos);
+                // Snapshot the cursor's screen-space position at the
+                // instant of crossing — before start_capture's
+                // reset_cursor() snaps it to the edge. The peer uses
+                // this for the visually-corresponding warp on Enter
+                // so the cursor doesn't jump to the entry-edge midpoint.
+                let cross_loc = cg_ev.location();
+                let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
                 state
                     .start_capture(cg_ev, new_pos)
                     .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
+                res_events.push(CaptureEvent::Begin { cursor });
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
                     .expect("Failed to send notification");
@@ -772,17 +804,66 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
+        log::info!("[release-warp] macOS backend release(warp_target={warp_target:?})");
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
+            let _ = notify_tx.send(ProducerEvent::Release { warp_target }).await;
         });
         Ok(())
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Mirror the InputEmulation-side implementation: the union of
+        // every active display's rectangle, in points (which match
+        // the units used by CGEvent.location() so the
+        // MotionAbsolute math stays internally consistent).
+        let displays = CGDisplay::active_displays().ok()?;
+        let mut xmin = f64::INFINITY;
+        let mut xmax = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            xmax = xmax.max(bounds.origin.x + bounds.size.width);
+            ymin = ymin.min(bounds.origin.y);
+            ymax = ymax.max(bounds.origin.y + bounds.size.height);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
+    }
+
+    fn display_origin(&self) -> (i32, i32) {
+        // Top-left of the union of all active displays. Matters when
+        // a secondary monitor is positioned LEFT of (or ABOVE) the
+        // primary — the global pointer-coordinate system is anchored
+        // at the primary's top-left, so a left-attached external
+        // gives cursor x ∈ [-w, 0). Without this offset,
+        // host_normalized_cursor / peer_warp_target's clamp(0, 1)
+        // silently maps every point on the external to "left edge"
+        // and the receiver warps to the wrong column.
+        let Ok(displays) = CGDisplay::active_displays() else {
+            return (0, 0);
+        };
+        let mut xmin = f64::INFINITY;
+        let mut ymin = f64::INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            ymin = ymin.min(bounds.origin.y);
+        }
+        if xmin.is_infinite() || ymin.is_infinite() {
+            return (0, 0);
+        }
+        (xmin as i32, ymin as i32)
     }
 }
 
