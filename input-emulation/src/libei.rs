@@ -248,6 +248,10 @@ impl Emulation for LibeiEmulation {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
+            Event::Clipboard(_) => {
+                // Clipboard injection is handled by the cross-
+                // platform `ClipboardEmulation` sink, not libei.
+            }
         }
         self.context
             .flush()

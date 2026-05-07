@@ -545,6 +545,11 @@ impl Emulation for MacOSEmulation {
                     modifier_event(self.event_source.clone(), self.modifier_state.get());
                 }
             },
+            Event::Clipboard(_) => {
+                // Clipboard injection is handled by the cross-
+                // platform `ClipboardEmulation` sink, not the macOS
+                // emulation backend.
+            }
         }
         // FIXME
         Ok(())

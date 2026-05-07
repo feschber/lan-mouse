@@ -72,6 +72,10 @@ impl Emulation for WindowsEmulation {
                 }
                 KeyboardEvent::Modifiers { .. } => {}
             },
+            Event::Clipboard(_) => {
+                // Clipboard injection is handled by the cross-
+                // platform `ClipboardEmulation` sink.
+            }
         }
         // FIXME
         Ok(())

@@ -228,6 +228,7 @@ impl LanMouseConnection {
         event: ProtoEvent,
         handle: ClientHandle,
     ) -> Result<(), LanMouseConnectionError> {
+        let event_display = format!("{event}");
         let (buf, len): ([u8; MAX_EVENT_SIZE], usize) = event.into();
         let buf = &buf[..len];
         if let Some(addr) = self.client_manager.active_addr(handle) {
@@ -246,7 +247,7 @@ impl LanMouseConnection {
                         disconnect(&self.client_manager, handle, addr, &self.conns).await;
                     }
                 }
-                log::trace!("{event} >->->->->- {addr}");
+                log::trace!("{event_display} >->->->->- {addr}");
                 return Ok(());
             }
         }

@@ -46,7 +46,7 @@ impl Iterator for EventIterator {
         let res = if self.pos >= self.events.len() {
             None
         } else {
-            self.events[self.pos]
+            self.events[self.pos].clone()
         };
         self.pos += 1;
         res

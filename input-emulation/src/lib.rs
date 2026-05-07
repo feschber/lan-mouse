@@ -4,7 +4,9 @@ use std::{
     fmt::Display,
 };
 
-use input_event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{ClipboardEvent, Event, KeyboardEvent, PointerEvent};
+
+use crate::clipboard::ClipboardEmulation;
 
 pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
@@ -26,6 +28,7 @@ mod libei;
 #[cfg(target_os = "macos")]
 mod macos;
 
+pub mod clipboard;
 /// fallback input emulation (logs events)
 mod dummy;
 mod error;
@@ -101,6 +104,11 @@ pub struct InputEmulation {
     /// upper layer before each event is consumed; missing entries
     /// resolve to `ReceivePostProcessing::default()` (passthrough).
     post_processing: HashMap<EmulationHandle, ReceivePostProcessing>,
+    /// Cross-platform clipboard sink. Populated lazily on first
+    /// access; backends don't need to know clipboards exist.
+    /// `None` when the platform clipboard couldn't be opened (e.g.
+    /// headless CI, Wayland session without compositor support).
+    clipboard: Option<ClipboardEmulation>,
 }
 
 impl InputEmulation {
@@ -120,11 +128,19 @@ impl InputEmulation {
             Backend::MacOs => Box::new(macos::MacOSEmulation::new()?),
             Backend::Dummy => Box::new(dummy::DummyEmulation::new()),
         };
+        let clipboard = match ClipboardEmulation::new() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("clipboard emulation unavailable: {e}");
+                None
+            }
+        };
         Ok(Self {
             emulation,
             handles: HashSet::new(),
             pressed_keys: HashMap::new(),
             post_processing: HashMap::new(),
+            clipboard,
         })
     }
 
@@ -170,6 +186,19 @@ impl InputEmulation {
         event: Event,
         handle: EmulationHandle,
     ) -> Result<(), EmulationError> {
+        // Clipboard events route through the cross-platform
+        // `ClipboardEmulation` sink, not the per-backend pointer /
+        // keyboard pipeline. Per-backend `consume` impls treat
+        // `Event::Clipboard` as a no-op, so handling it here keeps
+        // the dispatch in one place.
+        if let Event::Clipboard(ClipboardEvent::Text(text)) = &event {
+            if let Some(clipboard) = self.clipboard.as_ref() {
+                if let Err(e) = clipboard.set(ClipboardEvent::Text(text.clone())).await {
+                    log::warn!("failed to set clipboard: {e}");
+                }
+            }
+            return Ok(());
+        }
         // Apply per-handle receive-side post-processing in a single
         // place rather than per-backend. Backends stay
         // platform-mechanics-only and are spared duplicate sign-flip
