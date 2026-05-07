@@ -158,6 +158,78 @@ impl Default for ClientConfig {
 
 pub type ClientHandle = u64;
 
+/// Per-incoming-peer settings, keyed on the peer's TLS certificate
+/// fingerprint in `Config::authorized_fingerprints`. Holds the
+/// human-readable description plus receive-side post-processing
+/// preferences applied to events forwarded from this peer.
+///
+/// Wire format is forward-compatible: legacy configs that store a
+/// bare string per fingerprint deserialize as
+/// `IncomingPeerConfig { description: <string>, .. defaults }`. The
+/// custom `Deserialize` impl handles both shapes so users upgrading
+/// from older versions don't lose their authorizations.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IncomingPeerConfig {
+    pub description: String,
+    /// Sign-flip scroll deltas before injection. Mirrors the
+    /// libinput natural-scroll concept, but applies only to
+    /// virtual-pointer events forwarded from this specific peer
+    /// (which bypass libinput entirely on Wayland).
+    pub natural_scroll: bool,
+    /// Linear multiplier applied to motion deltas before injection.
+    /// 1.0 = passthrough. Useful when senders capture motion at
+    /// different scales (e.g. a Mac trackpad's small floating-point
+    /// deltas vs a Windows high-DPI mouse's count deltas).
+    pub mouse_sensitivity: f64,
+}
+
+impl Default for IncomingPeerConfig {
+    fn default() -> Self {
+        Self {
+            description: String::new(),
+            natural_scroll: false,
+            mouse_sensitivity: 1.0,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for IncomingPeerConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        // Legacy: a bare string is just the description.
+        // Current: a struct with description + post-processing fields.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(String),
+            Full {
+                description: String,
+                #[serde(default)]
+                natural_scroll: bool,
+                #[serde(default = "default_sensitivity")]
+                mouse_sensitivity: f64,
+            },
+        }
+        fn default_sensitivity() -> f64 {
+            1.0
+        }
+        Ok(match Repr::deserialize(de)? {
+            Repr::Legacy(description) => Self {
+                description,
+                ..Self::default()
+            },
+            Repr::Full {
+                description,
+                natural_scroll,
+                mouse_sensitivity,
+            } => Self {
+                description,
+                natural_scroll,
+                mouse_sensitivity,
+            },
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientState {
     /// events should be sent to and received from the client
@@ -206,8 +278,10 @@ pub enum FrontendEvent {
     CaptureStatus(Status),
     /// emulation status
     EmulationStatus(Status),
-    /// authorized public key fingerprints have been updated
-    AuthorizedUpdated(HashMap<String, String>),
+    /// authorized public key fingerprints have been updated.
+    /// The map's value carries each peer's per-pair receive-side
+    /// post-processing preferences alongside its description.
+    AuthorizedUpdated(HashMap<String, IncomingPeerConfig>),
     /// public key fingerprint of this device
     PublicKeyFingerprint(String),
     /// new device connected
@@ -242,7 +316,7 @@ pub enum FrontendEvent {
     MdnsDiscovery(bool),
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
     /// activate/deactivate client
     Activate(ClientHandle, bool),
@@ -282,8 +356,20 @@ pub enum FrontendRequest {
     SetReleaseThreshold(u32),
     /// set whether forwarded scroll events should be inverted on
     /// injection (matches the libinput natural-scroll concept for
-    /// virtual-pointer-injected events that bypass libinput)
+    /// virtual-pointer-injected events that bypass libinput).
+    ///
+    /// Deprecated by `SetIncomingPeerNaturalScroll` and removed in
+    /// the same series; kept here only to avoid breaking the GTK
+    /// global toggle until that surface is removed.
     SetNaturalScroll(bool),
+    /// set whether forwarded scroll events from a specific
+    /// authorized peer should be sign-inverted on injection.
+    /// Keyed on the peer's TLS certificate fingerprint.
+    SetIncomingPeerNaturalScroll(String, bool),
+    /// set the linear motion-sensitivity multiplier for events
+    /// forwarded from a specific authorized peer. 1.0 = passthrough.
+    /// Keyed on the peer's TLS certificate fingerprint.
+    SetIncomingPeerSensitivity(String, f64),
     /// turn mDNS-SD discovery on or off
     SetMdnsDiscovery(bool),
 }

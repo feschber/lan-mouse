@@ -8,10 +8,12 @@ glib::wrapper! {
 }
 
 impl KeyObject {
-    pub fn new(desc: String, fp: String) -> Self {
+    pub fn new(desc: String, fp: String, natural_scroll: bool, mouse_sensitivity: f64) -> Self {
         Object::builder()
             .property("description", desc)
             .property("fingerprint", fp)
+            .property("natural-scroll", natural_scroll)
+            .property("mouse-sensitivity", mouse_sensitivity)
             .build()
     }
 

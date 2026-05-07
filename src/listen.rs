@@ -1,4 +1,5 @@
 use futures::{Stream, StreamExt};
+use lan_mouse_ipc::IncomingPeerConfig;
 use lan_mouse_proto::{MAX_EVENT_SIZE, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use rustls::pki_types::CertificateDer;
@@ -88,7 +89,7 @@ impl LanMouseListener {
     pub(crate) async fn new(
         port: u16,
         cert: Certificate,
-        authorized_keys: Arc<RwLock<HashMap<String, String>>>,
+        authorized_keys: Arc<RwLock<HashMap<String, IncomingPeerConfig>>>,
     ) -> Result<Self, ListenerCreationError> {
         let (listen_tx, listen_rx) = channel();
         let (request_port_change, request_port_change_rx) = channel();

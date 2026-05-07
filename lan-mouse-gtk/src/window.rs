@@ -597,13 +597,21 @@ impl Window {
         }
     }
 
-    pub(super) fn set_authorized_keys(&self, fingerprints: HashMap<String, String>) {
+    pub(super) fn set_authorized_keys(
+        &self,
+        fingerprints: HashMap<String, lan_mouse_ipc::IncomingPeerConfig>,
+    ) {
         let authorized = self.authorized();
         // clear list
         authorized.remove_all();
         // insert fingerprints
-        for (fingerprint, description) in fingerprints {
-            let key_obj = KeyObject::new(description, fingerprint);
+        for (fingerprint, peer) in fingerprints {
+            let key_obj = KeyObject::new(
+                peer.description,
+                fingerprint,
+                peer.natural_scroll,
+                peer.mouse_sensitivity,
+            );
             authorized.append(&key_obj);
         }
         self.update_auth_placeholder_visibility();
