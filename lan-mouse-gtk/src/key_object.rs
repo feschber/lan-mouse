@@ -17,6 +17,7 @@ impl KeyObject {
             .property("mouse-sensitivity", peer.mouse_sensitivity)
             .property("last-addr", peer.last_addr.unwrap_or_default())
             .property("last-hostname", peer.last_hostname.unwrap_or_default())
+            .property("clipboard-receive", peer.clipboard_receive)
             .build()
     }
 

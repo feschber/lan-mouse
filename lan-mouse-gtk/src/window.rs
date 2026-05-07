@@ -144,6 +144,25 @@ impl Window {
                             }
                         ),
                     );
+                    row.connect_closure(
+                        "request-clipboard-receive-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: KeyRow, clipboard_receive: bool| {
+                                if let Some(key_obj) = window.authorized_by_idx(row.index() as u32)
+                                {
+                                    window.request(
+                                        FrontendRequest::SetIncomingPeerClipboardReceive(
+                                            key_obj.get_fingerprint(),
+                                            clipboard_receive,
+                                        ),
+                                    );
+                                }
+                            }
+                        ),
+                    );
                     row.upcast()
                 }
             ),
@@ -272,6 +291,22 @@ impl Window {
                             }
                         ),
                     );
+                    row.connect_closure(
+                        "request-clipboard-send-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: ClientRow, clipboard_send: bool| {
+                                if let Some(client) = window.client_by_idx(row.index() as u32) {
+                                    window.request(FrontendRequest::SetClientClipboardSend(
+                                        client.handle(),
+                                        clipboard_send,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
                     row.upcast()
                 }
             ),
@@ -374,6 +409,7 @@ impl Window {
         row.set_hostname(client.hostname);
         row.set_port(client.port);
         row.set_position(client.pos);
+        row.set_clipboard_send(client.clipboard_send);
     }
 
     pub(super) fn update_client_state(&self, handle: ClientHandle, state: ClientState) {
@@ -642,6 +678,7 @@ impl Window {
                 key_obj.set_mouse_sensitivity(peer.mouse_sensitivity);
                 key_obj.set_last_addr(peer.last_addr.unwrap_or_default());
                 key_obj.set_last_hostname(peer.last_hostname.unwrap_or_default());
+                key_obj.set_clipboard_receive(peer.clipboard_receive);
             } else {
                 authorized.remove(idx);
             }

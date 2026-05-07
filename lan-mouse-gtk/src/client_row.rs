@@ -135,6 +135,24 @@ impl ClientRow {
             .sync_create()
             .build();
 
+        // bind clipboard-send to switch state
+        let clipboard_send_state_binding = client_object
+            .bind_property(
+                "clipboard-send",
+                &self.imp().clipboard_send_switch.get(),
+                "state",
+            )
+            .sync_create()
+            .build();
+        let clipboard_send_active_binding = client_object
+            .bind_property(
+                "clipboard-send",
+                &self.imp().clipboard_send_switch.get(),
+                "active",
+            )
+            .sync_create()
+            .build();
+
         bindings.push(active_binding);
         bindings.push(switch_position_binding);
         bindings.push(hostname_binding);
@@ -142,6 +160,8 @@ impl ClientRow {
         bindings.push(position_binding);
         bindings.push(resolve_binding);
         bindings.push(ip_binding);
+        bindings.push(clipboard_send_state_binding);
+        bindings.push(clipboard_send_active_binding);
 
         // Render the initial collapsed subtitle from whatever
         // peer_commit the ClientObject was created with. Subsequent
@@ -179,6 +199,10 @@ impl ClientRow {
 
     pub fn set_dns_state(&self, resolved: bool) {
         self.imp().set_dns_state(resolved);
+    }
+
+    pub fn set_clipboard_send(&self, value: bool) {
+        self.imp().set_clipboard_send(value);
     }
 
     /// Recompute the collapsed subtitle (Pango markup) based on the

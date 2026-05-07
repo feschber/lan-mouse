@@ -26,6 +26,11 @@ pub struct KeyObject {
     /// = no hostname resolution available.
     #[property(name = "last-hostname", get, set, type = String)]
     pub last_hostname: RefCell<String>,
+    /// Whether this peer's clipboard text should be applied to
+    /// the local clipboard. Mirrors
+    /// [`lan_mouse_ipc::IncomingPeerConfig::clipboard_receive`].
+    #[property(name = "clipboard-receive", get, set, type = bool)]
+    pub clipboard_receive: Cell<bool>,
 }
 
 impl Default for KeyObject {
@@ -37,6 +42,7 @@ impl Default for KeyObject {
             mouse_sensitivity: Cell::new(1.0),
             last_addr: RefCell::new(String::new()),
             last_hostname: RefCell::new(String::new()),
+            clipboard_receive: Cell::new(false),
         }
     }
 }

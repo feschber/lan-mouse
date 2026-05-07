@@ -47,7 +47,12 @@ impl KeyRow {
         // user-change signals (no ping-pong on bind).
         self.refresh_natural_scroll_widget(key_object.natural_scroll());
         self.refresh_sensitivity_widget(key_object.mouse_sensitivity());
-        self.refresh_summary(key_object.natural_scroll(), key_object.mouse_sensitivity());
+        self.refresh_clipboard_receive_widget(key_object.clipboard_receive());
+        self.refresh_summary(
+            key_object.natural_scroll(),
+            key_object.mouse_sensitivity(),
+            key_object.clipboard_receive(),
+        );
         self.refresh_identity_subtitle(&key_object.last_hostname(), &key_object.last_addr());
 
         // Wire the copy-to-clipboard button. The handler reads the
@@ -75,7 +80,11 @@ impl KeyRow {
             self,
             move |obj| {
                 row.refresh_natural_scroll_widget(obj.natural_scroll());
-                row.refresh_summary(obj.natural_scroll(), obj.mouse_sensitivity());
+                row.refresh_summary(
+                    obj.natural_scroll(),
+                    obj.mouse_sensitivity(),
+                    obj.clipboard_receive(),
+                );
             }
         ));
         handlers.push((key_object.clone(), h));
@@ -85,7 +94,25 @@ impl KeyRow {
             self,
             move |obj| {
                 row.refresh_sensitivity_widget(obj.mouse_sensitivity());
-                row.refresh_summary(obj.natural_scroll(), obj.mouse_sensitivity());
+                row.refresh_summary(
+                    obj.natural_scroll(),
+                    obj.mouse_sensitivity(),
+                    obj.clipboard_receive(),
+                );
+            }
+        ));
+        handlers.push((key_object.clone(), h));
+
+        let h = key_object.connect_clipboard_receive_notify(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |obj| {
+                row.refresh_clipboard_receive_widget(obj.clipboard_receive());
+                row.refresh_summary(
+                    obj.natural_scroll(),
+                    obj.mouse_sensitivity(),
+                    obj.clipboard_receive(),
+                );
             }
         ));
         handlers.push((key_object.clone(), h));
@@ -145,6 +172,20 @@ impl KeyRow {
         }
     }
 
+    fn refresh_clipboard_receive_widget(&self, value: bool) {
+        let imp = self.imp();
+        let switch = &imp.clipboard_receive_switch;
+        let handler = imp.clipboard_receive_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(value);
+        switch.set_state(value);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
     /// Compute the title-row subtitle from the peer's most recent
     /// connection identity. mDNS gives us a hostname most of the
     /// time, falling back to a bare IP, falling back to a "never
@@ -165,11 +206,11 @@ impl KeyRow {
     }
 
     /// Update the title-row summary label so a collapsed row hints
-    /// at non-default settings. Hidden when both fields are at
-    /// defaults so a freshly-authorized peer's row is uncluttered.
-    fn refresh_summary(&self, natural_scroll: bool, sensitivity: f64) {
+    /// at non-default settings. Hidden when every field is at
+    /// default so a freshly-authorized peer's row is uncluttered.
+    fn refresh_summary(&self, natural_scroll: bool, sensitivity: f64, clipboard_receive: bool) {
         let label = &self.imp().settings_summary;
-        let parts = format_summary_parts(natural_scroll, sensitivity);
+        let parts = format_summary_parts(natural_scroll, sensitivity, clipboard_receive);
         if parts.is_empty() {
             label.set_visible(false);
             label.set_text("");
@@ -181,14 +222,22 @@ impl KeyRow {
 }
 
 /// Render the non-default settings as short tokens (e.g. `Natural`,
-/// `1.5×`). Returns an empty Vec when both are at default.
-fn format_summary_parts(natural_scroll: bool, sensitivity: f64) -> Vec<String> {
+/// `1.5×`, `Clipboard`). Returns an empty Vec when every field is
+/// at default.
+fn format_summary_parts(
+    natural_scroll: bool,
+    sensitivity: f64,
+    clipboard_receive: bool,
+) -> Vec<String> {
     let mut parts = Vec::new();
     if natural_scroll {
         parts.push("Natural".to_owned());
     }
     if (sensitivity - 1.0).abs() > 1e-6 {
         parts.push(format_sensitivity(sensitivity));
+    }
+    if clipboard_receive {
+        parts.push("Clipboard".to_owned());
     }
     parts
 }

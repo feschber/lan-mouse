@@ -72,6 +72,22 @@
 				</property>
 			</object>
 		</child>
+		<!-- clipboard send toggle -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Share Clipboard With This Peer</property>
+				<property name="subtitle" translatable="yes">When you copy text on this device, send it to this peer.</property>
+				<!-- non-activatable so a click on the row doesn't
+				     collapse the surrounding AdwExpanderRow; the inner
+				     GtkSwitch handles its own clicks. -->
+				<property name="activatable">false</property>
+				<child type="suffix">
+					<object class="GtkSwitch" id="clipboard_send_switch">
+						<property name="valign">center</property>
+					</object>
+				</child>
+			</object>
+		</child>
 		<!-- delete button -->
 		<child>
 			<object class="AdwActionRow" id="delete_row">

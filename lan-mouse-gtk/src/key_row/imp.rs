@@ -21,6 +21,8 @@ pub struct KeyRow {
     #[template_child]
     pub sensitivity_spin: TemplateChild<SpinButton>,
     #[template_child]
+    pub clipboard_receive_switch: TemplateChild<Switch>,
+    #[template_child]
     pub settings_summary: TemplateChild<Label>,
     #[template_child]
     pub fingerprint_row: TemplateChild<ActionRow>,
@@ -33,6 +35,7 @@ pub struct KeyRow {
     /// back as a fresh user request.
     pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
     pub sensitivity_handler: RefCell<Option<glib::SignalHandlerId>>,
+    pub clipboard_receive_handler: RefCell<Option<glib::SignalHandlerId>>,
     /// Property-notify handlers we connect on the bound KeyObject
     /// so per-row widget state tracks in-place mutations from
     /// `Window::set_authorized_keys`. Disconnected in `unbind` to
@@ -93,6 +96,20 @@ impl ObjectImpl for KeyRow {
             }
         ));
         self.sensitivity_handler.replace(Some(sensitivity_handler));
+
+        let clipboard_receive_handler = self.clipboard_receive_switch.connect_state_set(clone!(
+            #[weak(rename_to = row)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                row.obj()
+                    .emit_by_name::<()>("request-clipboard-receive-change", &[&state]);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.clipboard_receive_handler
+            .replace(Some(clipboard_receive_handler));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
@@ -105,6 +122,9 @@ impl ObjectImpl for KeyRow {
                     .build(),
                 Signal::builder("request-sensitivity-change")
                     .param_types([f64::static_type()])
+                    .build(),
+                Signal::builder("request-clipboard-receive-change")
+                    .param_types([bool::static_type()])
                     .build(),
             ]
         })

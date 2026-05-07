@@ -20,6 +20,7 @@ pub struct ClientObject {
     #[property(name = "resolving", get, set, type = bool, member = resolving)]
     #[property(name = "ips", get, set, type = Vec<String>, member = ips)]
     #[property(name = "peer-commit", get, set, type = Option<String>, member = peer_commit)]
+    #[property(name = "clipboard-send", get, set, type = bool, member = clipboard_send)]
     pub data: RefCell<ClientData>,
 }
 

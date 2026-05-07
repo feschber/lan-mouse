@@ -17,6 +17,8 @@ pub struct ClientRow {
     #[template_child]
     pub enable_switch: TemplateChild<gtk::Switch>,
     #[template_child]
+    pub clipboard_send_switch: TemplateChild<gtk::Switch>,
+    #[template_child]
     pub dns_button: TemplateChild<gtk::Button>,
     #[template_child]
     pub hostname: TemplateChild<gtk::Entry>,
@@ -36,6 +38,7 @@ pub struct ClientRow {
     port_change_handler: RefCell<Option<SignalHandlerId>>,
     position_change_handler: RefCell<Option<SignalHandlerId>>,
     set_state_handler: RefCell<Option<SignalHandlerId>>,
+    pub clipboard_send_handler: RefCell<Option<SignalHandlerId>>,
     pub client_object: RefCell<Option<ClientObject>>,
 }
 
@@ -103,6 +106,18 @@ impl ObjectImpl for ClientRow {
             }
         ));
         self.set_state_handler.replace(Some(handler));
+        let handler = self.clipboard_send_switch.connect_state_set(clone!(
+            #[weak(rename_to = row)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                row.obj()
+                    .emit_by_name::<()>("request-clipboard-send-change", &[&state]);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.clipboard_send_handler.replace(Some(handler));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
@@ -122,6 +137,9 @@ impl ObjectImpl for ClientRow {
                     .build(),
                 Signal::builder("request-position-change")
                     .param_types([u32::static_type()])
+                    .build(),
+                Signal::builder("request-clipboard-send-change")
+                    .param_types([bool::static_type()])
                     .build(),
             ]
         })
@@ -221,6 +239,22 @@ impl ClientRow {
         } else {
             self.dns_button.set_css_classes(&["warning"])
         }
+    }
+
+    /// Push a server-originated `clipboard-send` value into the
+    /// switch without retriggering the user-change signal — same
+    /// block/unblock pattern as `set_active` for the activate
+    /// switch.
+    pub(super) fn set_clipboard_send(&self, value: bool) {
+        let handler = self.clipboard_send_handler.borrow();
+        let handler = handler.as_ref().expect("signal handler");
+        self.clipboard_send_switch.block_signal(handler);
+        self.client_object
+            .borrow_mut()
+            .as_mut()
+            .expect("client object")
+            .set_clipboard_send(value);
+        self.clipboard_send_switch.unblock_signal(handler);
     }
 }
 

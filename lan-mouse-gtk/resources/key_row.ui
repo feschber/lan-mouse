@@ -80,6 +80,19 @@
 				</child>
 			</object>
 		</child>
+		<!-- clipboard receive toggle -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Accept Clipboard From This Peer</property>
+				<property name="subtitle" translatable="yes">Apply text this peer copies to your clipboard.</property>
+				<property name="activatable">false</property>
+				<child type="suffix">
+					<object class="GtkSwitch" id="clipboard_receive_switch">
+						<property name="valign">center</property>
+					</object>
+				</child>
+			</object>
+		</child>
 		<!-- revoke authorization (mirrors ClientRow's delete row at
 		     the bottom of its expansion body — destructive action,
 		     hidden behind the expander to avoid fat-finger reaches) -->

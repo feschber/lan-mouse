@@ -27,6 +27,7 @@ impl ClientObject {
             )
             .property("resolving", state.resolving)
             .property("peer-commit", peer_commit_to_string(state.peer_commit))
+            .property("clipboard-send", client.clipboard_send)
             .build()
     }
 
@@ -53,4 +54,5 @@ pub struct ClientData {
     pub resolving: bool,
     pub ips: Vec<String>,
     pub peer_commit: Option<String>,
+    pub clipboard_send: bool,
 }
