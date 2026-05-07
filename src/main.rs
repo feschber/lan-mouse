@@ -107,15 +107,28 @@ fn run() -> Result<(), LanMouseError> {
                     }
                 };
 
-                let mut service = start_service()?;
+                // Skip the transient daemon child if a daemon is
+                // already listening on the IPC socket — covers both
+                // an externally-started `lan-mouse daemon` and the
+                // case where a previous GUI's daemon outlived its
+                // parent. The GUI then attaches to the existing
+                // daemon and leaves it running on exit.
+                let mut service = if lan_mouse_ipc::is_service_running() {
+                    log::info!("daemon already running; attaching to existing instance");
+                    None
+                } else {
+                    Some(start_service()?)
+                };
                 let res = lan_mouse_gtk::run(gui_lock, config::local_commit());
 
                 // Bound the daemon-child cleanup so a wedged daemon
                 // (CGEventTap stuck on macOS, hung syscall, etc.)
                 // can't freeze the GUI on quit. SIGINT first, give it
-                // a few seconds to exit cleanly, then SIGKILL.
+                // a few seconds to exit cleanly, then SIGKILL. Only
+                // runs when *we* spawned the daemon — an externally
+                // managed daemon outlives the GUI.
                 #[cfg(unix)]
-                {
+                if let Some(service) = service.as_mut() {
                     let pid = service.id() as libc::pid_t;
                     unsafe {
                         libc::kill(pid, libc::SIGINT);
@@ -141,7 +154,7 @@ fn run() -> Result<(), LanMouseError> {
                     }
                 }
                 #[cfg(not(unix))]
-                {
+                if let Some(service) = service.as_mut() {
                     let _ = service.kill();
                     let _ = service.wait();
                 }
