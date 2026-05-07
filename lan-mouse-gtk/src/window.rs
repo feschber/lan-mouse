@@ -615,19 +615,40 @@ impl Window {
 
     pub(super) fn set_authorized_keys(
         &self,
-        fingerprints: HashMap<String, lan_mouse_ipc::IncomingPeerConfig>,
+        mut fingerprints: HashMap<String, lan_mouse_ipc::IncomingPeerConfig>,
     ) {
         let authorized = self.authorized();
-        // clear list
-        authorized.remove_all();
-        // insert fingerprints
+        // In-place diff: a full `remove_all` + rebuild would collapse
+        // every expanded row whenever any setting changes (each
+        // setting toggle round-trips back as `AuthorizedUpdated`).
+        // Instead, walk the existing rows backward (so removals don't
+        // shift indices), update matching KeyObjects in place, drop
+        // entries no longer in the new map, and append anything
+        // unmatched at the end. KeyRow tracks property-notify on the
+        // KeyObject so the per-row widgets reflect the updates.
+        let mut idx = authorized.n_items();
+        while idx > 0 {
+            idx -= 1;
+            let Some(obj) = authorized.item(idx) else {
+                continue;
+            };
+            let Ok(key_obj) = obj.downcast::<KeyObject>() else {
+                continue;
+            };
+            let fp = key_obj.get_fingerprint();
+            if let Some(peer) = fingerprints.remove(&fp) {
+                key_obj.set_description(peer.description);
+                key_obj.set_natural_scroll(peer.natural_scroll);
+                key_obj.set_mouse_sensitivity(peer.mouse_sensitivity);
+                key_obj.set_last_addr(peer.last_addr.unwrap_or_default());
+                key_obj.set_last_hostname(peer.last_hostname.unwrap_or_default());
+            } else {
+                authorized.remove(idx);
+            }
+        }
+        // Anything still in `fingerprints` is newly authorized.
         for (fingerprint, peer) in fingerprints {
-            let key_obj = KeyObject::new(
-                peer.description,
-                fingerprint,
-                peer.natural_scroll,
-                peer.mouse_sensitivity,
-            );
+            let key_obj = KeyObject::new(fingerprint, peer);
             authorized.append(&key_obj);
         }
         self.update_auth_placeholder_visibility();

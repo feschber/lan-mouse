@@ -1,12 +1,15 @@
 use std::cell::RefCell;
 
+use adw::ActionRow;
 use adw::subclass::prelude::*;
 use adw::{ExpanderRow, prelude::*};
 use glib::{Binding, subclass::InitializingObject};
 use gtk::glib::clone;
 use gtk::glib::subclass::Signal;
-use gtk::{Button, CompositeTemplate, SpinButton, Switch, glib};
+use gtk::{Button, CompositeTemplate, Label, SpinButton, Switch, glib};
 use std::sync::OnceLock;
+
+use super::super::KeyObject;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/key_row.ui")]
@@ -17,6 +20,12 @@ pub struct KeyRow {
     pub natural_scroll_switch: TemplateChild<Switch>,
     #[template_child]
     pub sensitivity_spin: TemplateChild<SpinButton>,
+    #[template_child]
+    pub settings_summary: TemplateChild<Label>,
+    #[template_child]
+    pub fingerprint_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub copy_fingerprint_button: TemplateChild<Button>,
     pub bindings: RefCell<Vec<Binding>>,
     /// Signal-handler IDs for the per-row controls. Used to
     /// `block_signal` while pushing daemon-driven state into the
@@ -24,6 +33,11 @@ pub struct KeyRow {
     /// back as a fresh user request.
     pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
     pub sensitivity_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Property-notify handlers we connect on the bound KeyObject
+    /// so per-row widget state tracks in-place mutations from
+    /// `Window::set_authorized_keys`. Disconnected in `unbind` to
+    /// avoid leaking handlers when a peer is revoked.
+    pub key_object_handlers: RefCell<Vec<(KeyObject, glib::SignalHandlerId)>>,
 }
 
 #[glib::object_subclass]

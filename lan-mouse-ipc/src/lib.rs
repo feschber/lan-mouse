@@ -179,6 +179,18 @@ pub struct IncomingPeerConfig {
     /// different scales (e.g. a Mac trackpad's small floating-point
     /// deltas vs a Windows high-DPI mouse's count deltas).
     pub mouse_sensitivity: f64,
+    /// Most recent IP this peer connected from. Stored as a plain
+    /// string (no port) so reconnects from the same machine on a
+    /// new ephemeral port don't churn the value. Persists across
+    /// daemon restarts so the GUI has something to show even when
+    /// the peer is currently offline.
+    pub last_addr: Option<String>,
+    /// mDNS-resolved hostname for `last_addr` at the time of last
+    /// connect, recovered from the discovery layer's
+    /// `hostname → ip` cache. `None` if discovery wasn't running
+    /// on either side or the peer's mDNS record didn't match the
+    /// IP it connected from.
+    pub last_hostname: Option<String>,
 }
 
 impl Default for IncomingPeerConfig {
@@ -187,6 +199,8 @@ impl Default for IncomingPeerConfig {
             description: String::new(),
             natural_scroll: false,
             mouse_sensitivity: 1.0,
+            last_addr: None,
+            last_hostname: None,
         }
     }
 }
@@ -205,6 +219,10 @@ impl<'de> Deserialize<'de> for IncomingPeerConfig {
                 natural_scroll: bool,
                 #[serde(default = "default_sensitivity")]
                 mouse_sensitivity: f64,
+                #[serde(default)]
+                last_addr: Option<String>,
+                #[serde(default)]
+                last_hostname: Option<String>,
             },
         }
         fn default_sensitivity() -> f64 {
@@ -219,10 +237,14 @@ impl<'de> Deserialize<'de> for IncomingPeerConfig {
                 description,
                 natural_scroll,
                 mouse_sensitivity,
+                last_addr,
+                last_hostname,
             } => Self {
                 description,
                 natural_scroll,
                 mouse_sensitivity,
+                last_addr,
+                last_hostname,
             },
         })
     }

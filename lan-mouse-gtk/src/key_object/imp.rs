@@ -16,6 +16,16 @@ pub struct KeyObject {
     pub natural_scroll: Cell<bool>,
     #[property(name = "mouse-sensitivity", get, set, type = f64)]
     pub mouse_sensitivity: Cell<f64>,
+    /// Most recent IP this peer connected from (or empty when
+    /// they've never connected). Empty string is the GObject-
+    /// idiomatic stand-in for `Option::None` since the property
+    /// macro doesn't support `Option`.
+    #[property(name = "last-addr", get, set, type = String)]
+    pub last_addr: RefCell<String>,
+    /// mDNS-discovered hostname for `last_addr`, if known. Empty
+    /// = no hostname resolution available.
+    #[property(name = "last-hostname", get, set, type = String)]
+    pub last_hostname: RefCell<String>,
 }
 
 impl Default for KeyObject {
@@ -25,6 +35,8 @@ impl Default for KeyObject {
             fingerprint: RefCell::new(String::new()),
             natural_scroll: Cell::new(false),
             mouse_sensitivity: Cell::new(1.0),
+            last_addr: RefCell::new(String::new()),
+            last_hostname: RefCell::new(String::new()),
         }
     }
 }
