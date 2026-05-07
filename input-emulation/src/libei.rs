@@ -50,7 +50,6 @@ pub(crate) struct LibeiEmulation {
     libei_error: Arc<AtomicBool>,
     _remote_desktop: RemoteDesktop,
     session: Session<RemoteDesktop>,
-    natural_scroll: bool,
 }
 
 /// Get the path to the RemoteDesktop token file
@@ -151,7 +150,6 @@ impl LibeiEmulation {
             libei_error,
             _remote_desktop,
             session,
-            natural_scroll: false,
         })
     }
 }
@@ -210,7 +208,6 @@ impl Emulation for LibeiEmulation {
                     axis,
                     value,
                 } => {
-                    let value = if self.natural_scroll { -value } else { value };
                     let scroll_device = self.devices.scroll.read().unwrap();
                     if let Some((d, s)) = scroll_device.as_ref() {
                         match axis {
@@ -221,7 +218,6 @@ impl Emulation for LibeiEmulation {
                     }
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
-                    let value = if self.natural_scroll { -value } else { value };
                     let scroll_device = self.devices.scroll.read().unwrap();
                     if let Some((d, s)) = scroll_device.as_ref() {
                         match axis {
@@ -273,10 +269,6 @@ impl Emulation for LibeiEmulation {
         // wayland-client connection. For now we return None and
         // the host falls back to the no-upper-clamp heuristic.
         None
-    }
-
-    fn set_natural_scroll(&mut self, natural_scroll: bool) {
-        self.natural_scroll = natural_scroll;
     }
 
     async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {

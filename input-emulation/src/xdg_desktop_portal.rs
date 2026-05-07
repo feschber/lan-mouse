@@ -23,7 +23,6 @@ use super::{Emulation, EmulationHandle, error::XdpEmulationCreationError};
 pub(crate) struct DesktopPortalEmulation {
     proxy: RemoteDesktop,
     session: Session<RemoteDesktop>,
-    natural_scroll: bool,
 }
 
 impl DesktopPortalEmulation {
@@ -53,7 +52,6 @@ impl DesktopPortalEmulation {
         Ok(Self {
             proxy,
             session,
-            natural_scroll: false,
         })
     }
 }
@@ -91,7 +89,6 @@ impl Emulation for DesktopPortalEmulation {
                         .await?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
-                    let value = if self.natural_scroll { -value } else { value };
                     let axis = match axis {
                         0 => Axis::Vertical,
                         _ => Axis::Horizontal,
@@ -110,7 +107,6 @@ impl Emulation for DesktopPortalEmulation {
                     axis,
                     value,
                 } => {
-                    let value = if self.natural_scroll { -value } else { value };
                     let axis = match axis {
                         0 => Axis::Vertical,
                         _ => Axis::Horizontal,
@@ -160,10 +156,6 @@ impl Emulation for DesktopPortalEmulation {
 
     async fn create(&mut self, _client: EmulationHandle) {}
     async fn destroy(&mut self, _client: EmulationHandle) {}
-
-    fn set_natural_scroll(&mut self, natural_scroll: bool) {
-        self.natural_scroll = natural_scroll;
-    }
 
     async fn terminate(&mut self) {
         if let Err(e) = self.session.close().await {

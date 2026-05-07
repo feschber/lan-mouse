@@ -118,9 +118,10 @@ impl Service {
         );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
-        // Apply persisted natural-scroll preference at startup so
-        // the freshly-spawned emulation backend picks it up.
-        emulation.set_natural_scroll(config.natural_scroll());
+        // Push the persisted authorized-peers table into the receive
+        // pipeline so per-peer post-processing is applied from the
+        // first incoming packet.
+        emulation.set_incoming_peers(authorized_keys.read().expect("lock").clone());
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -258,8 +259,13 @@ impl Service {
                 self.save_config();
             }
             FrontendRequest::SetNaturalScroll(natural_scroll) => {
+                // Vestigial global toggle. The receive-side
+                // post-processing is now keyed per-peer in
+                // `authorized_fingerprints`; this request only
+                // persists+echoes the global value so the existing
+                // GUI switch keeps round-tripping until the cleanup
+                // commit removes it.
                 self.config.set_natural_scroll(natural_scroll);
-                self.emulation.set_natural_scroll(natural_scroll);
                 self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
                 self.save_config();
             }
@@ -289,10 +295,8 @@ impl Service {
         {
             peer.natural_scroll = natural_scroll;
         }
-        // Receive-side application against currently-active handles
-        // is wired up in a follow-up commit; this commit only persists
-        // the preference and notifies the frontend.
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
@@ -306,6 +310,7 @@ impl Service {
             peer.mouse_sensitivity = sensitivity;
         }
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
@@ -349,14 +354,16 @@ impl Service {
         let release_threshold = self.config.release_threshold_px();
         self.capture.set_release_threshold(release_threshold);
         self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
+        // Vestigial: the global toggle is wired up to no real
+        // emulation effect; cleanup commit removes it.
         let natural_scroll = self.config.natural_scroll();
-        self.emulation.set_natural_scroll(natural_scroll);
         self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
             .unwrap()
             .clone_from(&authorized_keys);
+        self.emulation.set_incoming_peers(authorized_keys);
         self.sync_frontend();
     }
 
@@ -570,12 +577,14 @@ impl Service {
             .expect("lock")
             .insert(fp, entry);
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
     fn remove_authorized_key(&mut self, fp: String) {
         self.authorized_keys.write().expect("lock").remove(&fp);
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
