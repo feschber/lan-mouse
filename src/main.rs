@@ -113,13 +113,14 @@ fn run() -> Result<(), LanMouseError> {
                 // case where a previous GUI's daemon outlived its
                 // parent. The GUI then attaches to the existing
                 // daemon and leaves it running on exit.
-                let mut service = if lan_mouse_ipc::is_service_running() {
+                let external_daemon = lan_mouse_ipc::is_service_running();
+                let mut service = if external_daemon {
                     log::info!("daemon already running; attaching to existing instance");
                     None
                 } else {
                     Some(start_service()?)
                 };
-                let res = lan_mouse_gtk::run(gui_lock, config::local_commit());
+                let res = lan_mouse_gtk::run(gui_lock, config::local_commit(), external_daemon);
 
                 // Bound the daemon-child cleanup so a wedged daemon
                 // (CGEventTap stuck on macOS, hung syscall, etc.)

@@ -21,7 +21,7 @@ mod connect_async;
 mod gui_lock;
 mod listen;
 
-pub use connect::{FrontendEventReader, FrontendRequestWriter, connect};
+pub use connect::{FrontendEventReader, FrontendRequestWriter, connect, try_connect};
 pub use connect_async::{AsyncFrontendEventReader, AsyncFrontendRequestWriter, connect_async};
 pub use gui_lock::{GuiLock, GuiLockError};
 pub use listen::AsyncFrontendListener;
