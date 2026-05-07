@@ -131,10 +131,7 @@ pub fn run(
     }
 }
 
-fn gtk_main(
-    show_rx: Option<async_channel::Receiver<()>>,
-    external_daemon: bool,
-) -> glib::ExitCode {
+fn gtk_main(show_rx: Option<async_channel::Receiver<()>>, external_daemon: bool) -> glib::ExitCode {
     #[cfg(target_os = "macos")]
     {
         configure_macos_bundle_environment();
