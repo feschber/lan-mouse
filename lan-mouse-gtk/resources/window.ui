@@ -351,7 +351,6 @@
                                 <property name="label" translatable="yes">Manage</property>
                                 <property name="valign">center</property>
                                 <style>
-                                  <class name="pill"/>
                                   <class name="flat"/>
                                 </style>
                               </object>
