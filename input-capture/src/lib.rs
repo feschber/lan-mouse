@@ -196,6 +196,18 @@ pub struct InputCapture {
     /// pushing past the guest's actual far edge doesn't make the
     /// model run away. Only the entry-axis dimension is consulted.
     peer_bounds: HashMap<Position, (u32, u32)>,
+    /// Per-position cached sensitivity multiplier the receiver
+    /// applies to forwarded motion deltas before injection. Sent
+    /// by the receiving peer via [`ProtoEvent::ReceiverSensitivity`]
+    /// after Ack-on-Enter. The host's wall-press auto-release model
+    /// scales each delta by this value so its model of "where the
+    /// receiver's cursor would be" stays in sync with the receiver's
+    /// actual cursor — without it, a sub-1.0 multiplier would let
+    /// `wall_pressure` accumulate faster than reality and trigger
+    /// AutoRelease before the receiver hit the wall. Default is
+    /// 1.0; old peers that don't send this event leave the entry
+    /// unset, matching the previous behavior.
+    peer_sensitivity: HashMap<Position, f64>,
     /// True when wall_pressure has crossed `release_threshold_px` and
     /// `wall_press_timer` has been armed but not yet either elapsed
     /// or been cancelled. Cleared when the peer's handover Leave
@@ -356,6 +368,31 @@ impl InputCapture {
     /// peer later (potentially with new geometry) starts fresh.
     pub fn clear_peer_bounds(&mut self, pos: Position) {
         self.peer_bounds.remove(&pos);
+    }
+
+    /// Cache the receiver's per-pair motion-sensitivity multiplier
+    /// for the given position. Used to scale the wall-press
+    /// auto-release model's accumulator so it tracks the receiver's
+    /// actual cursor advance instead of the raw deltas the host
+    /// emits. Out-of-range / non-finite values are ignored to keep
+    /// the model from diverging on a rogue peer.
+    pub fn set_peer_sensitivity(&mut self, pos: Position, mouse_sensitivity: f64) {
+        if !mouse_sensitivity.is_finite() || mouse_sensitivity <= 0.0 {
+            log::warn!(
+                "ignoring non-finite/non-positive peer sensitivity {mouse_sensitivity} for {pos}"
+            );
+            return;
+        }
+        log::debug!("peer at {pos} reports sensitivity {mouse_sensitivity:.3}");
+        self.peer_sensitivity.insert(pos, mouse_sensitivity);
+    }
+
+    /// Drop the cached receiver sensitivity for a position. Mirrors
+    /// `clear_peer_bounds` — called on capture destroy so a re-add
+    /// starts at the 1.0 default until a fresh
+    /// [`ProtoEvent::ReceiverSensitivity`] arrives.
+    pub fn clear_peer_sensitivity(&mut self, pos: Position) {
+        self.peer_sensitivity.remove(&pos);
     }
 
     /// Host's own display geometry — width and height in pixels of
@@ -605,7 +642,19 @@ impl InputCapture {
                     return;
                 }
 
-                let delta = entry_axis_delta(active_pos, *dx, *dy);
+                // Scale the entry-axis delta by the receiver's
+                // sensitivity for this position so the model tracks
+                // the receiver's actual cursor advance, not the raw
+                // delta the host wire-emits. Defaults to 1.0 when
+                // the peer hasn't sent a `ReceiverSensitivity` yet
+                // (older builds, pre-Ack window).
+                let raw_delta = entry_axis_delta(active_pos, *dx, *dy);
+                let sensitivity = self
+                    .peer_sensitivity
+                    .get(&active_pos)
+                    .copied()
+                    .unwrap_or(1.0);
+                let delta = raw_delta * sensitivity;
                 let proposed = self.virtual_pos + delta;
                 let upper = self.peer_extent(active_pos);
                 // Clamp at 0 from below (host-adjacent edge — wall
@@ -696,6 +745,7 @@ impl InputCapture {
             pending_begin_cursor: None,
             pending_motion: (0.0, 0.0),
             peer_bounds: HashMap::new(),
+            peer_sensitivity: HashMap::new(),
             wall_press_pending: false,
             wall_press_deadline: Duration::from_millis(150),
             wall_press_timer: Box::pin(tokio::time::sleep(Duration::from_secs(0))),

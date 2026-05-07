@@ -205,6 +205,15 @@ impl ListenTask {
                                     if let Some((width, height)) = self.emulation_proxy.display_bounds() {
                                         self.listener.reply(addr, ProtoEvent::Bounds { width, height }).await;
                                     }
+                                    // Tell the capturing peer what
+                                    // sensitivity multiplier we'll
+                                    // apply to their motion deltas so
+                                    // their wall-press auto-release
+                                    // model can scale to match.
+                                    let pp = self.post_processing_for_addr(addr);
+                                    self.listener.reply(addr, ProtoEvent::ReceiverSensitivity {
+                                        mouse_sensitivity: pp.mouse_sensitivity,
+                                    }).await;
                                     // No entry-edge midpoint warp here:
                                     // the host's CursorPos (sent right
                                     // after Enter) carries the
@@ -328,6 +337,14 @@ impl ListenTask {
                         for addr in known_addrs {
                             let pp = self.post_processing_for_addr(addr);
                             self.emulation_proxy.set_post_processing(addr, pp);
+                            // Push the updated sensitivity to the
+                            // capturing peer over the wire so their
+                            // wall-press auto-release model matches
+                            // immediately, without waiting for the
+                            // next cross-back-then-cross-forward.
+                            self.listener.reply(addr, ProtoEvent::ReceiverSensitivity {
+                                mouse_sensitivity: pp.mouse_sensitivity,
+                            }).await;
                         }
                     }
                     EmulationRequest::Terminate => break,
