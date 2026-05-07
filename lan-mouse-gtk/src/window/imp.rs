@@ -4,7 +4,10 @@ use adw::subclass::prelude::*;
 use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, gdk, gio, glib};
+use gtk::{
+    Button, CompositeTemplate, Entry, EventControllerScroll, EventControllerScrollFlags, Image,
+    Label, ListBox, PropagationPhase, Scale, ScrolledWindow, gdk, gio, glib,
+};
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
@@ -45,6 +48,12 @@ pub struct Window {
     pub input_capture_button: TemplateChild<Button>,
     #[template_child]
     pub authorized_list: TemplateChild<ListBox>,
+    #[template_child]
+    pub release_threshold_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub release_threshold_scale: TemplateChild<Scale>,
+    #[template_child]
+    pub release_threshold_value: TemplateChild<Label>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -52,6 +61,10 @@ pub struct Window {
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,
     pub authorization_window: RefCell<Option<AuthorizationWindow>>,
+    /// Connected handler for the auto-release-threshold scale's
+    /// value-changed signal, so we can block it when programmatically
+    /// updating the slider in response to a Sync event.
+    pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
 }
 
 #[glib::object_subclass]
@@ -200,6 +213,69 @@ impl ObjectImpl for Window {
         obj.setup_icon();
         obj.setup_clients();
         obj.setup_authorized();
+
+        // Connect the auto-release threshold slider. Stash the handler
+        // id so set_release_threshold() can block the signal when the
+        // daemon-driven Sync sets the value programmatically.
+        let scale = self.release_threshold_scale.clone();
+        let handler_id = scale.connect_value_changed(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            move |scale| {
+                let value = scale.value().round() as u32;
+                let label = if value == 0 {
+                    "disabled".to_string()
+                } else {
+                    format!("{value} px")
+                };
+                window.imp().release_threshold_value.set_label(&label);
+                window.request_release_threshold(value);
+            }
+        ));
+        self.release_threshold_handler.replace(Some(handler_id));
+
+        // Pass scroll-wheel events on the threshold slider through to
+        // the ancestor ScrolledWindow instead of letting GtkScale's
+        // default handler treat them as increment / decrement (which
+        // would drift the threshold any time the user scrolls past
+        // the slider). Returning `Stop` from a capture-phase handler
+        // suppresses the scale's own scroll-to-adjust handler, but
+        // also stops propagation to the parent — so we additionally
+        // bump the parent ScrolledWindow's vadjustment by hand to
+        // mimic native scroll-passthrough.
+        let scroll_forward = EventControllerScroll::new(
+            EventControllerScrollFlags::VERTICAL | EventControllerScrollFlags::HORIZONTAL,
+        );
+        scroll_forward.set_propagation_phase(PropagationPhase::Capture);
+        scroll_forward.connect_scroll(clone!(
+            #[weak(rename_to = scale)]
+            self.release_threshold_scale,
+            #[upgrade_or]
+            glib::Propagation::Stop,
+            move |_, _dx, dy| {
+                let mut walker = scale.parent();
+                while let Some(w) = walker {
+                    if let Some(scrolled) = w.downcast_ref::<ScrolledWindow>() {
+                        let vadj = scrolled.vadjustment();
+                        // step_increment is the "wheel tick" unit; if
+                        // unset (rare), fall back to a sensible
+                        // pixel default so a single tick still moves.
+                        let step = if vadj.step_increment() > 0.0 {
+                            vadj.step_increment()
+                        } else {
+                            40.0
+                        };
+                        let target = (vadj.value() + dy * step)
+                            .clamp(vadj.lower(), vadj.upper() - vadj.page_size());
+                        vadj.set_value(target);
+                        break;
+                    }
+                    walker = w.parent();
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        self.release_threshold_scale.add_controller(scroll_forward);
     }
 }
 

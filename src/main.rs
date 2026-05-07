@@ -74,7 +74,7 @@ fn run() -> Result<(), LanMouseError> {
             #[cfg(feature = "gtk")]
             {
                 let mut service = start_service()?;
-                let res = lan_mouse_gtk::run();
+                let res = lan_mouse_gtk::run(config::local_commit());
                 #[cfg(unix)]
                 {
                     // on unix we give the service a chance to terminate gracefully

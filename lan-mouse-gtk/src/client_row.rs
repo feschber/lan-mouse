@@ -123,6 +123,12 @@ impl ClientRow {
         bindings.push(position_binding);
         bindings.push(resolve_binding);
         bindings.push(ip_binding);
+
+        // Render the initial collapsed subtitle from whatever
+        // peer_commit the ClientObject was created with. Subsequent
+        // changes are pushed by `Window::update_client_state` calling
+        // `refresh_version_status` after writing the new property.
+        self.refresh_version_status();
     }
 
     pub fn unbind(&self) {
@@ -149,5 +155,35 @@ impl ClientRow {
 
     pub fn set_dns_state(&self, resolved: bool) {
         self.imp().set_dns_state(resolved);
+    }
+
+    /// Recompute the collapsed subtitle (Pango markup) based on the
+    /// current `peer-commit` property and the local build's commit.
+    /// Soft-warn semantics: a missing or mismatched peer commit
+    /// surfaces as orange text but never blocks traffic. Called by
+    /// the window after `update_client_state` writes the new
+    /// `peer-commit`. The dns-status icon is left to its existing
+    /// `set_dns_state` handler so the two indicators don't fight
+    /// for the same CSS class.
+    pub fn refresh_version_status(&self) {
+        let peer: Option<String> = self
+            .imp()
+            .client_object
+            .borrow()
+            .as_ref()
+            .and_then(|co| co.property::<Option<String>>("peer-commit"));
+        let local = crate::local_commit_str();
+        let markup = match peer.as_deref() {
+            None => format!(
+                r##"<span foreground="#ffaa33">Peer version: unknown · Ours: {local}</span>"##
+            ),
+            Some(p) if p == local.as_str() => {
+                format!(r##"<span foreground="#33cc66">Peer version: {p} · matched</span>"##)
+            }
+            Some(p) => {
+                format!(r##"<span foreground="#ffaa33">Peer version: {p} · Ours: {local}</span>"##)
+            }
+        };
+        self.set_subtitle(&markup);
     }
 }

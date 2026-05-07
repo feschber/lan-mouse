@@ -36,7 +36,6 @@ lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.2.0" }
 lan-mouse-proto = { path = "lan-mouse-proto", version = "0.2.0" }
 shadow-rs = { version = "1.2.0", features = ["metadata"] }
 
-hickory-resolver = "0.25.2"
 toml = "0.8"
 toml_edit = { version = "0.22", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -68,6 +67,8 @@ rustls = { version = "0.23.12", default-features = false, features = [
 rcgen = "0.13.1"
 sha2 = "0.10.8"
 notify = "8.2.0"
+if-addrs = "0.13"
+if-watch = { version = "3.2", features = ["tokio"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
