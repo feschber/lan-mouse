@@ -10,9 +10,9 @@ use gio::ListStore;
 use glib::object::Cast;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Box as GtkBox, Button, CompositeTemplate, EventControllerKey, Image, Label, ListBox, ListItem,
-    Orientation, SignalListItemFactory, gdk, gio,
-    glib::{self, Propagation, subclass::Signal},
+    Box as GtkBox, Button, CompositeTemplate, Image, Label, ListBox, ListItem, Orientation,
+    SignalListItemFactory, gdk, gio,
+    glib::{self, subclass::Signal},
     template_callbacks,
 };
 use lan_mouse_ipc::{HostKind, RunningApp};
@@ -176,21 +176,10 @@ impl ObjectImpl for ClipboardPrivacyWindow {
         self.app_picker.set_sensitive(false);
         self.add_button.set_sensitive(false);
 
-        // Close on Escape.
+        // Esc + Cmd/Ctrl+W close the modal. Bubble phase lets the
+        // picker's popover swallow Esc first if it's open.
         let obj = self.obj();
-        let key = EventControllerKey::new();
-        let weak_close = obj.downgrade();
-        key.connect_key_pressed(move |_, keyval, _, _| {
-            if keyval == gdk::Key::Escape {
-                if let Some(w) = weak_close.upgrade() {
-                    w.close();
-                }
-                Propagation::Stop
-            } else {
-                Propagation::Proceed
-            }
-        });
-        obj.add_controller(key);
+        crate::modal_keys::wire_close_shortcuts(&*obj);
 
         let weak_self = obj.downgrade();
         self.add_button.connect_clicked(move |_| {

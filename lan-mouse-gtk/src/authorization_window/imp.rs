@@ -4,8 +4,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Button, CompositeTemplate, Entry, EventControllerKey, gdk,
-    glib::{self, Propagation, subclass::Signal},
+    Button, CompositeTemplate, Entry,
+    glib::{self, subclass::Signal},
     template_callbacks,
 };
 
@@ -72,21 +72,9 @@ impl ObjectImpl for AuthorizationWindow {
     fn constructed(&self) {
         self.parent_constructed();
 
-        // Close on Escape — same affordance as the fingerprint dialog.
+        // Esc + Cmd/Ctrl+W close the modal.
         let obj = self.obj();
-        let key = EventControllerKey::new();
-        let weak_close = obj.downgrade();
-        key.connect_key_pressed(move |_, keyval, _, _| {
-            if keyval == gdk::Key::Escape {
-                if let Some(w) = weak_close.upgrade() {
-                    w.close();
-                }
-                Propagation::Stop
-            } else {
-                Propagation::Proceed
-            }
-        });
-        obj.add_controller(key);
+        crate::modal_keys::wire_close_shortcuts(&*obj);
     }
 }
 

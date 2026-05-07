@@ -4,6 +4,7 @@
   <requires lib="libadwaita" version="1.0"/>
   <template class="ClipboardPrivacyWindow" parent="AdwWindow">
     <property name="modal">True</property>
+    <property name="hide-on-close">True</property>
     <property name="default-width">560</property>
     <property name="default-height">600</property>
     <property name="title" translatable="yes">Clipboard Privacy</property>
