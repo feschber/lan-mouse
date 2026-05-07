@@ -518,3 +518,155 @@ pub fn default_socket_path() -> Result<PathBuf, SocketPathError> {
         .join("Caches")
         .join(LAN_MOUSE_SOCKET_NAME))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_ident_matches_within_variant_case_insensitive() {
+        let entry = AppIdent::WindowsExe("1Password.exe".into());
+        let detected = AppIdent::WindowsExe("1password.exe".into());
+        assert!(entry.matches(&detected));
+        assert!(detected.matches(&entry));
+    }
+
+    #[test]
+    fn app_ident_matches_rejects_value_mismatch() {
+        let a = AppIdent::LinuxX11("firefox".into());
+        let b = AppIdent::LinuxX11("chromium".into());
+        assert!(!a.matches(&b));
+    }
+
+    #[test]
+    fn app_ident_matches_rejects_cross_variant() {
+        // A Mac entry for `org.mozilla.firefox` must NOT suppress a
+        // Linux peer that reports `firefox` as its WM_CLASS — same
+        // semantic app, different platform identifiers, and the
+        // suppression list lives on the device that captures the
+        // clipboard, not the device that displays the window.
+        let mac = AppIdent::MacBundle("org.mozilla.firefox".into());
+        let linux = AppIdent::LinuxX11("firefox".into());
+        assert!(!mac.matches(&linux));
+    }
+
+    #[test]
+    fn app_ident_serde_round_trip_json() {
+        let cases = [
+            AppIdent::MacBundle("com.1password.1password7".into()),
+            AppIdent::WindowsExe("1password.exe".into()),
+            AppIdent::LinuxX11("firefox".into()),
+            AppIdent::LinuxWayland("org.mozilla.firefox".into()),
+        ];
+        for original in cases {
+            let s = serde_json::to_string(&original).expect("encode");
+            let decoded: AppIdent = serde_json::from_str(&s).expect("decode");
+            assert_eq!(original, decoded, "round-trip mismatch: {s}");
+        }
+    }
+
+    #[test]
+    fn app_ident_serde_kind_tag_is_snake_case() {
+        // Pin the tag rendering — config.toml + IPC consumers depend
+        // on these strings, so an accidental rename in a serde
+        // attribute would silently break legacy configs.
+        let mac = AppIdent::MacBundle("x".into());
+        assert_eq!(
+            serde_json::to_string(&mac).unwrap(),
+            r#"{"kind":"mac_bundle","value":"x"}"#
+        );
+        let exe = AppIdent::WindowsExe("y".into());
+        assert_eq!(
+            serde_json::to_string(&exe).unwrap(),
+            r#"{"kind":"windows_exe","value":"y"}"#
+        );
+        let x11 = AppIdent::LinuxX11("z".into());
+        assert_eq!(
+            serde_json::to_string(&x11).unwrap(),
+            r#"{"kind":"linux_x11","value":"z"}"#
+        );
+        let wl = AppIdent::LinuxWayland("w".into());
+        assert_eq!(
+            serde_json::to_string(&wl).unwrap(),
+            r#"{"kind":"linux_wayland","value":"w"}"#
+        );
+    }
+
+    #[test]
+    fn app_ident_label_includes_platform() {
+        assert!(AppIdent::MacBundle("com.x.y".into())
+            .label()
+            .contains("macOS bundle"));
+        assert!(AppIdent::WindowsExe("z.exe".into())
+            .label()
+            .contains("Windows"));
+        assert!(AppIdent::LinuxX11("z".into()).label().contains("X11"));
+        assert!(AppIdent::LinuxWayland("z".into())
+            .label()
+            .contains("Wayland"));
+    }
+
+    #[test]
+    fn incoming_peer_legacy_string_deserializes() {
+        // Configs from before the per-pair scroll/sensitivity work
+        // store each authorized peer as a bare description string.
+        // Custom Deserialize must accept that shape so upgrading
+        // doesn't silently drop authorizations.
+        let json = r#""my laptop""#;
+        let peer: IncomingPeerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(peer.description, "my laptop");
+        assert!(!peer.natural_scroll);
+        assert!(!peer.clipboard_receive);
+        assert_eq!(peer.mouse_sensitivity, 1.0);
+    }
+
+    #[test]
+    fn incoming_peer_full_with_clipboard_receive_round_trips() {
+        let original = IncomingPeerConfig {
+            description: "laptop".into(),
+            natural_scroll: true,
+            mouse_sensitivity: 1.5,
+            last_addr: Some("10.0.0.1".into()),
+            last_hostname: Some("foo.local".into()),
+            clipboard_receive: true,
+        };
+        let s = serde_json::to_string(&original).unwrap();
+        let decoded: IncomingPeerConfig = serde_json::from_str(&s).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn incoming_peer_legacy_full_without_clipboard_receive_defaults_false() {
+        // A v0 "Full" entry (struct shape but no clipboard_receive
+        // field) must default the new field to false rather than
+        // refusing to decode.
+        let json = r#"{
+            "description": "laptop",
+            "natural_scroll": true,
+            "mouse_sensitivity": 1.5,
+            "last_addr": "10.0.0.1",
+            "last_hostname": "foo.local"
+        }"#;
+        let peer: IncomingPeerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(peer.description, "laptop");
+        assert!(peer.natural_scroll);
+        assert_eq!(peer.mouse_sensitivity, 1.5);
+        assert!(!peer.clipboard_receive);
+    }
+
+    #[test]
+    fn client_config_clipboard_send_defaults_false() {
+        // ClientConfig uses derive(Deserialize) with
+        // #[serde(default)] on clipboard_send — a JSON object that
+        // omits the field should still decode and produce false.
+        let json = r#"{
+            "hostname": null,
+            "fix_ips": [],
+            "port": 4242,
+            "pos": "left",
+            "cmd": null
+        }"#;
+        let cfg: ClientConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.clipboard_send);
+    }
+}

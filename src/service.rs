@@ -1037,3 +1037,38 @@ async fn recv_clipboard(
         None => std::future::pending().await,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_hash_is_deterministic_within_run() {
+        let h1 = clipboard_hash("hello, world");
+        let h2 = clipboard_hash("hello, world");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn clipboard_hash_distinguishes_different_inputs() {
+        assert_ne!(clipboard_hash("foo"), clipboard_hash("bar"));
+        assert_ne!(clipboard_hash(""), clipboard_hash("\0"));
+    }
+
+    #[test]
+    fn recent_forwarded_prune_evicts_expired_entries() {
+        // Mirrors `Service::prune_recent_forwarded` so the eviction
+        // contract is documented as code rather than implicit in
+        // `HashMap::retain`.
+        let mut map: HashMap<(String, u64), Instant> = HashMap::new();
+        let now = Instant::now();
+        let stale = now
+            .checked_sub(Duration::from_secs(2))
+            .expect("clock far enough from epoch for the test to subtract 2s");
+        map.insert(("fp_a".into(), 1), stale);
+        map.insert(("fp_b".into(), 2), now);
+        map.retain(|_, ts| ts.elapsed() < RECENT_FORWARD_TTL);
+        assert!(!map.contains_key(&("fp_a".to_string(), 1)));
+        assert!(map.contains_key(&("fp_b".to_string(), 2)));
+    }
+}
