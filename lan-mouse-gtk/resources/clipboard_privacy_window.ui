@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.0"/>
+  <template class="ClipboardPrivacyWindow" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="default-width">560</property>
+    <property name="default-height">600</property>
+    <property name="title" translatable="yes">Clipboard Privacy</property>
+    <property name="content">
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <property name="content">
+          <object class="GtkScrolledWindow">
+            <property name="vexpand">true</property>
+            <property name="hscrollbar-policy">never</property>
+            <child>
+              <object class="AdwClamp">
+                <property name="maximum-size">800</property>
+                <property name="tightening-threshold">0</property>
+                <property name="child">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">18</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">12</property>
+                    <property name="margin-bottom">12</property>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Suppressed Apps</property>
+                        <property name="description" translatable="yes">When the frontmost app on this device matches an entry below, its clipboard contents will not be broadcast to peers.</property>
+                        <child>
+                          <object class="GtkListBox" id="entries_list">
+                            <property name="selection-mode">none</property>
+                            <style>
+                              <class name="boxed-list"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="empty_placeholder">
+                            <property name="label" translatable="yes">No apps suppressed yet — add one below.</property>
+                            <property name="visible">false</property>
+                            <property name="margin-top">12</property>
+                            <property name="margin-bottom">12</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Add an App</property>
+                        <property name="description" translatable="yes">Pick the platform identifier shape, enter the value, and confirm. Use lowercase identifiers — match is case-insensitive within a kind.</property>
+                        <child>
+                          <object class="AdwComboRow" id="kind_row">
+                            <property name="title" translatable="yes">Identifier Kind</property>
+                            <property name="model">
+                              <object class="GtkStringList">
+                                <items>
+                                  <item>macOS bundle (com.example.app)</item>
+                                  <item>Windows exe (example.exe)</item>
+                                  <item>X11 WM_CLASS (example)</item>
+                                  <item>Wayland app_id (org.example.App)</item>
+                                </items>
+                              </object>
+                            </property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Identifier</property>
+                            <child type="suffix">
+                              <object class="GtkEntry" id="value_entry">
+                                <property name="valign">center</property>
+                                <property name="hexpand">true</property>
+                                <property name="placeholder-text" translatable="yes">e.g. com.1password.1password7</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <child type="suffix">
+                              <object class="GtkButton" id="add_button">
+                                <property name="label" translatable="yes">Add to Suppression List</property>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+              </object>
+            </child>
+          </object>
+        </property>
+      </object>
+    </property>
+  </template>
+</interface>

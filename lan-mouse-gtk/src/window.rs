@@ -11,13 +11,16 @@ use gtk::{
 };
 
 use lan_mouse_ipc::{
-    ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest, FrontendRequestWriter,
-    Position,
+    AppIdent, ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest,
+    FrontendRequestWriter, Position,
 };
 
 use crate::{
-    authorization_window::AuthorizationWindow, fingerprint_window::FingerprintWindow,
-    key_object::KeyObject, key_row::KeyRow,
+    authorization_window::AuthorizationWindow,
+    clipboard_privacy_window::{ClipboardPrivacyWindow, pair_to_app_ident},
+    fingerprint_window::FingerprintWindow,
+    key_object::KeyObject,
+    key_row::KeyRow,
 };
 
 use super::{client_object::ClientObject, client_row::ClientRow};
@@ -490,6 +493,77 @@ impl Window {
 
     pub(super) fn request_mdns_discovery(&self, enabled: bool) {
         self.request(FrontendRequest::SetMdnsDiscovery(enabled));
+    }
+
+    /// Replace the cached suppression list and update both the
+    /// main-window subtitle and the modal (if open).
+    pub(super) fn set_suppressed_apps(&self, apps: Vec<AppIdent>) {
+        let imp = self.imp();
+        imp.suppressed_apps.replace(apps.clone());
+        let count = apps.len();
+        let subtitle = match count {
+            0 => "0 apps".to_owned(),
+            1 => "1 app".to_owned(),
+            n => format!("{n} apps"),
+        };
+        imp.clipboard_privacy_row.set_subtitle(&subtitle);
+        if let Some(window) = imp.clipboard_privacy_window.borrow().as_ref() {
+            window.set_apps(apps);
+        }
+    }
+
+    /// Show (or re-present) the clipboard-privacy modal, populating
+    /// it with the current suppression list. The modal is created
+    /// on first open and reused thereafter so the user's in-progress
+    /// edits aren't blown away by the every-toggle
+    /// SuppressedAppsUpdated round-trip.
+    pub(super) fn open_clipboard_privacy_window(&self) {
+        let imp = self.imp();
+        if imp.clipboard_privacy_window.borrow().is_none() {
+            let window = ClipboardPrivacyWindow::new();
+            window.set_transient_for(Some(self));
+            // Match the parent-relative sizing the other dialogs use.
+            let parent_w = self.width();
+            if parent_w > 0 {
+                let popup_w = (parent_w - 40).clamp(280, 700);
+                window.set_default_width(popup_w);
+            }
+            window.connect_closure(
+                "request-add",
+                false,
+                closure_local!(
+                    #[strong(rename_to = parent)]
+                    self,
+                    move |_w: ClipboardPrivacyWindow, kind: u32, value: String| {
+                        parent.request(FrontendRequest::AddSuppressedApp(pair_to_app_ident(
+                            kind, value,
+                        )));
+                    }
+                ),
+            );
+            window.connect_closure(
+                "request-remove",
+                false,
+                closure_local!(
+                    #[strong(rename_to = parent)]
+                    self,
+                    move |_w: ClipboardPrivacyWindow, kind: u32, value: String| {
+                        parent.request(FrontendRequest::RemoveSuppressedApp(
+                            pair_to_app_ident(kind, value),
+                        ));
+                    }
+                ),
+            );
+            window.set_apps(imp.suppressed_apps.borrow().clone());
+            imp.clipboard_privacy_window.replace(Some(window));
+        } else if let Some(window) = imp.clipboard_privacy_window.borrow().as_ref() {
+            // Refresh the list in case it changed while the modal
+            // was hidden.
+            window.set_apps(imp.suppressed_apps.borrow().clone());
+        }
+        if let Some(window) = imp.clipboard_privacy_window.borrow().as_ref() {
+            window.present();
+        }
     }
 
     fn open_fingerprint_dialog(&self, fp: Option<String>) {

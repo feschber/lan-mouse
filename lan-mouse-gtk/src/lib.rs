@@ -1,6 +1,7 @@
 mod authorization_window;
 mod client_object;
 mod client_row;
+mod clipboard_privacy_window;
 mod fingerprint_window;
 mod key_object;
 mod key_row;
@@ -360,16 +361,15 @@ fn build_ui(app: &Application) {
                     FrontendEvent::MdnsDiscovery(enabled) => {
                         window.set_mdns_discovery(enabled);
                     }
-                    FrontendEvent::SuppressedAppsUpdated(_apps) => {
-                        // Phase 5 will route this to the
-                        // ClipboardPrivacyWindow once the modal is
-                        // built. For now the daemon's persisted
-                        // state is authoritative — the GUI just
-                        // doesn't visualize the list yet.
+                    FrontendEvent::SuppressedAppsUpdated(apps) => {
+                        window.set_suppressed_apps(apps);
                     }
                     FrontendEvent::RunningApps(_apps) => {
-                        // Same — Phase 5 wires this into the
-                        // "From running apps" tab.
+                        // Phase 5's minimal modal doesn't surface a
+                        // "from running apps" picker yet. Reserved
+                        // for a follow-up that adds an
+                        // AdwViewStack with running-apps + manual
+                        // tabs.
                     }
                 }
             }

@@ -338,6 +338,28 @@
                         </child>
                       </object>
                     </child>
+                    <child>
+                      <object class="AdwPreferencesGroup">
+                        <property name="title" translatable="yes">Clipboard Privacy</property>
+                        <property name="description" translatable="yes">Apps in this list never share their clipboard with peers — useful for password managers and other tools whose clipboard you don't want syncing.</property>
+                        <child>
+                          <object class="AdwActionRow" id="clipboard_privacy_row">
+                            <property name="title" translatable="yes">Suppressed Apps</property>
+                            <property name="subtitle" translatable="yes">0 apps</property>
+                            <child type="suffix">
+                              <object class="GtkButton" id="clipboard_privacy_button">
+                                <property name="label" translatable="yes">Manage</property>
+                                <property name="valign">center</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="flat"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                     </object>
                   </property>
                   </object>

@@ -12,6 +12,7 @@ use gtk::{
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
 use crate::authorization_window::AuthorizationWindow;
+use crate::clipboard_privacy_window::ClipboardPrivacyWindow;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
@@ -58,6 +59,10 @@ pub struct Window {
     pub mdns_discovery_row: TemplateChild<ActionRow>,
     #[template_child]
     pub mdns_discovery_switch: TemplateChild<Switch>,
+    #[template_child]
+    pub clipboard_privacy_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub clipboard_privacy_button: TemplateChild<Button>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -71,6 +76,14 @@ pub struct Window {
     pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
     /// Same pattern for the mDNS-discovery switch.
     pub mdns_discovery_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Long-lived clipboard-privacy modal. Kept alive (rather than
+    /// rebuilt on every open) so its `set_apps` calls can run from
+    /// the SuppressedAppsUpdated event handler regardless of
+    /// whether the window is currently presented.
+    pub clipboard_privacy_window: RefCell<Option<ClipboardPrivacyWindow>>,
+    /// Latest server-confirmed suppression list. Cached so the
+    /// main-window subtitle stays in sync without re-querying.
+    pub suppressed_apps: RefCell<Vec<lan_mouse_ipc::AppIdent>>,
 }
 
 #[glib::object_subclass]
@@ -296,6 +309,15 @@ impl ObjectImpl for Window {
             }
         ));
         self.mdns_discovery_handler.replace(Some(mdns_handler));
+
+        // Clipboard-privacy "Manage" button → open the modal.
+        self.clipboard_privacy_button.connect_clicked(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            move |_| {
+                window.open_clipboard_privacy_window();
+            }
+        ));
     }
 }
 
