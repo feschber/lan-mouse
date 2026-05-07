@@ -16,7 +16,7 @@ use toml;
 use toml_edit::{self, DocumentMut};
 
 use lan_mouse_cli::CliArgs;
-use lan_mouse_ipc::{DEFAULT_PORT, Position};
+use lan_mouse_ipc::{DEFAULT_PORT, IncomingPeerConfig, Position};
 
 use input_event::scancode::{
     self,
@@ -84,7 +84,7 @@ struct ConfigToml {
     mdns_discovery: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
-    authorized_fingerprints: Option<HashMap<String, String>>,
+    authorized_fingerprints: Option<HashMap<String, IncomingPeerConfig>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -461,8 +461,9 @@ impl Config {
         &self.config_path
     }
 
-    /// public key fingerprints authorized for connection
-    pub fn authorized_fingerprints(&self) -> HashMap<String, String> {
+    /// public key fingerprints authorized for connection, with each
+    /// peer's per-pair receive-side post-processing preferences.
+    pub fn authorized_fingerprints(&self) -> HashMap<String, IncomingPeerConfig> {
         self.config_toml
             .as_ref()
             .and_then(|c| c.authorized_fingerprints.clone())
@@ -580,7 +581,7 @@ impl Config {
     }
 
     /// set authorized keys
-    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, String>) {
+    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, IncomingPeerConfig>) {
         if self.config_toml.is_none() {
             self.config_toml = Some(Default::default());
         }

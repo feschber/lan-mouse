@@ -11,8 +11,8 @@ use crate::{
 };
 use futures::StreamExt;
 use lan_mouse_ipc::{
-    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
-    IpcListenerCreationError, Position, Status,
+    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IncomingPeerConfig,
+    IpcError, IpcListenerCreationError, Position, Status,
 };
 use log;
 use std::{
@@ -49,7 +49,7 @@ pub struct Service {
     /// frontend listener
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
-    authorized_keys: Arc<RwLock<HashMap<String, String>>>,
+    authorized_keys: Arc<RwLock<HashMap<String, IncomingPeerConfig>>>,
     /// (outgoing) client information
     client_manager: ClientManager,
     /// current port
@@ -263,6 +263,14 @@ impl Service {
                 self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
                 self.save_config();
             }
+            FrontendRequest::SetIncomingPeerNaturalScroll(fp, natural_scroll) => {
+                self.set_incoming_peer_natural_scroll(fp, natural_scroll);
+                self.save_config();
+            }
+            FrontendRequest::SetIncomingPeerSensitivity(fp, sensitivity) => {
+                self.set_incoming_peer_sensitivity(fp, sensitivity);
+                self.save_config();
+            }
             FrontendRequest::SetMdnsDiscovery(enabled) => {
                 self.config.set_mdns_discovery(enabled);
                 self.discovery.set_enabled(enabled);
@@ -270,6 +278,35 @@ impl Service {
                 self.save_config();
             }
         }
+    }
+
+    fn set_incoming_peer_natural_scroll(&mut self, fingerprint: String, natural_scroll: bool) {
+        if let Some(peer) = self
+            .authorized_keys
+            .write()
+            .expect("lock")
+            .get_mut(&fingerprint)
+        {
+            peer.natural_scroll = natural_scroll;
+        }
+        // Receive-side application against currently-active handles
+        // is wired up in a follow-up commit; this commit only persists
+        // the preference and notifies the frontend.
+        let keys = self.authorized_keys.read().expect("lock").clone();
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
+    }
+
+    fn set_incoming_peer_sensitivity(&mut self, fingerprint: String, sensitivity: f64) {
+        if let Some(peer) = self
+            .authorized_keys
+            .write()
+            .expect("lock")
+            .get_mut(&fingerprint)
+        {
+            peer.mouse_sensitivity = sensitivity;
+        }
+        let keys = self.authorized_keys.read().expect("lock").clone();
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
     fn save_config(&mut self) {
@@ -521,7 +558,17 @@ impl Service {
     }
 
     fn add_authorized_key(&mut self, desc: String, fp: String) {
-        self.authorized_keys.write().expect("lock").insert(fp, desc);
+        // New authorizations land with default post-processing; the
+        // user can tune natural-scroll / sensitivity from the
+        // expanded row in the Incoming Connections list.
+        let entry = IncomingPeerConfig {
+            description: desc,
+            ..IncomingPeerConfig::default()
+        };
+        self.authorized_keys
+            .write()
+            .expect("lock")
+            .insert(fp, entry);
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
