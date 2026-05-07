@@ -42,17 +42,54 @@ pub struct DesktopAppMetadata {
     pub icon_name: Option<String>,
 }
 
-/// Scan every standard `.desktop` location and return a lowercase
-/// identifier → metadata map. Identifiers that show up under
-/// multiple keys (filename stem, `StartupWMClass`) get one entry
-/// per key — the lookup later picks whichever matches the runtime
-/// `class` / `app_id`.
+/// Result of [`discover_apps`]: two indices over the same set of
+/// installed `.desktop` entries.
 ///
-/// `NoDisplay=true` and `Hidden=true` entries are dropped so the
-/// picker doesn't fill up with `xdg-open`-style helper apps the
-/// user can't actually focus.
-pub fn discover_apps() -> HashMap<String, DesktopAppMetadata> {
-    let mut out: HashMap<String, DesktopAppMetadata> = HashMap::new();
+/// - `by_identifier`: keyed by lowercased filename stem AND
+///   `StartupWMClass` so a runtime class / app_id resolves directly
+///   to its installed metadata (the common case).
+/// - `by_webapp_host`: keyed by lowercased hostname extracted from
+///   any `https?://…` token in the entry's `Exec=` line. Used to
+///   resolve Chrome / Chromium `--app=URL` PWAs whose runtime class
+///   is `chrome-<host>__<path>-<Profile>`. The omarchy
+///   `omarchy-launch-webapp <url>` flow falls into this bucket: the
+///   `.desktop` has Name + Icon + Exec=URL but no `StartupWMClass`,
+///   so the direct index can't see it.
+#[derive(Debug, Default)]
+pub struct AppDirectory {
+    pub by_identifier: HashMap<String, DesktopAppMetadata>,
+    pub by_webapp_host: HashMap<String, DesktopAppMetadata>,
+}
+
+impl AppDirectory {
+    /// Resolve a runtime class / app_id to its installed metadata.
+    /// Tries the direct index first, then falls back to parsing
+    /// the class as a Chrome `--app=` PWA and matching the host
+    /// against `by_webapp_host`. Returns `None` when nothing
+    /// matches; the caller renders the raw identifier as the
+    /// display name.
+    pub fn lookup(&self, identifier: &str) -> Option<DesktopAppMetadata> {
+        let lower = identifier.to_lowercase();
+        if let Some(m) = self.by_identifier.get(&lower) {
+            return Some(m.clone());
+        }
+        if let Some(host) = parse_chrome_pwa_host(&lower) {
+            if let Some(m) = self.by_webapp_host.get(host) {
+                return Some(m.clone());
+            }
+        }
+        None
+    }
+}
+
+/// Scan every standard `.desktop` location, returning the two-way
+/// [`AppDirectory`]. Apps with `Type != Application` /
+/// `Hidden=true` / `NoDisplay=true` are dropped so the picker
+/// doesn't fill up with `xdg-open`-style helper entries the user
+/// can't actually focus.
+pub fn discover_apps() -> AppDirectory {
+    let mut by_identifier: HashMap<String, DesktopAppMetadata> = HashMap::new();
+    let mut by_webapp_host: HashMap<String, DesktopAppMetadata> = HashMap::new();
     for dir in standard_app_dirs() {
         let entries = match fs::read_dir(&dir) {
             Ok(e) => e,
@@ -83,20 +120,41 @@ pub fn discover_apps() -> HashMap<String, DesktopAppMetadata> {
             // Index by .desktop filename stem (matches the common
             // case where WM_CLASS / app_id matches the app's binary
             // name — `firefox.desktop` ↔ `firefox`).
-            out.entry(stem.to_lowercase())
+            by_identifier
+                .entry(stem.to_lowercase())
                 .or_insert_with(|| metadata.clone());
             // ALSO index by StartupWMClass when present — that's
             // the explicit hint the .desktop author published for
             // matching against window classes that disagree with
             // the filename stem (`1password.desktop` →
             // `StartupWMClass=1Password`).
-            if let Some(wmclass) = parsed.startup_wm_class.filter(|s| !s.is_empty()) {
-                out.entry(wmclass.to_lowercase())
+            if let Some(wmclass) = parsed
+                .startup_wm_class
+                .as_deref()
+                .filter(|s| !s.is_empty())
+            {
+                by_identifier
+                    .entry(wmclass.to_lowercase())
                     .or_insert_with(|| metadata.clone());
+            }
+            // Webapp index: every host that appears in an http(s)://
+            // URL token in the Exec= line. Lets Chrome `--app=URL`
+            // PWAs fall back to this entry's Name + Icon when the
+            // direct index misses (typical of .desktop files that
+            // don't bother setting `StartupWMClass`).
+            if let Some(exec) = parsed.exec.as_deref() {
+                for host in extract_hosts_from_exec(exec) {
+                    by_webapp_host
+                        .entry(host)
+                        .or_insert_with(|| metadata.clone());
+                }
             }
         }
     }
-    out
+    AppDirectory {
+        by_identifier,
+        by_webapp_host,
+    }
 }
 
 /// Resolve an icon name to PNG or SVG bytes. Prefers raster sizes
@@ -200,6 +258,7 @@ struct ParsedDesktopEntry {
     name: Option<String>,
     icon: Option<String>,
     startup_wm_class: Option<String>,
+    exec: Option<String>,
 }
 
 /// Parse the `[Desktop Entry]` section of a `.desktop` file. Stops
@@ -244,6 +303,7 @@ fn parse_desktop_entry(contents: &str) -> Option<ParsedDesktopEntry> {
             "Name" => entry.name = Some(value.to_owned()),
             "Icon" => entry.icon = Some(value.to_owned()),
             "StartupWMClass" => entry.startup_wm_class = Some(value.to_owned()),
+            "Exec" => entry.exec = Some(value.to_owned()),
             "Type" => entry_type = Some(value.to_owned()),
             "Hidden" => hidden = value.eq_ignore_ascii_case("true"),
             "NoDisplay" => no_display = value.eq_ignore_ascii_case("true"),
@@ -254,6 +314,84 @@ fn parse_desktop_entry(contents: &str) -> Option<ParsedDesktopEntry> {
         return None;
     }
     Some(entry)
+}
+
+/// Extract the host portion of every `https?://…` token in an
+/// `Exec=` line. Hosts are lowercased to match Chrome's class-
+/// derivation convention. A single Exec line can have multiple
+/// URLs (rare but legal); we capture them all so a future tab/PWA
+/// launch with any of those URLs still resolves.
+fn extract_hosts_from_exec(exec: &str) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for token in exec.split_whitespace() {
+        // Strip surrounding quotes (Exec= can have quoted args).
+        let token = token.trim_matches(|c| c == '"' || c == '\'');
+        let after = match token
+            .strip_prefix("https://")
+            .or_else(|| token.strip_prefix("http://"))
+        {
+            Some(s) => s,
+            None => continue,
+        };
+        // Host runs until the first /, ?, #, : (port), or
+        // end-of-token.
+        let host_end = after
+            .find(['/', '?', '#', ':'])
+            .unwrap_or(after.len());
+        let host = &after[..host_end];
+        if host.is_empty() || !host.contains('.') {
+            continue;
+        }
+        hosts.push(host.to_lowercase());
+    }
+    hosts
+}
+
+/// Parse a Chrome / Chromium `--app=URL` window class string and
+/// return the host portion of the URL it was derived from.
+///
+/// Chrome's class encoding for `--app=https://<host>/<path>` is
+/// `chrome-<host>__<path-with-/-replaced-by-_>-<Profile>`. The
+/// `__` always separates host from path; everything before it is
+/// the host. For URLs without a path
+/// (`--app=https://<host>/`), the class collapses to
+/// `chrome-<host>-<Profile>` so we also strip a trailing
+/// `-default` / `-profile_N` segment as a fallback.
+///
+/// Returns `None` for non-Chrome classes, classes whose host has
+/// no `.` (almost certainly an extension ID — `crx_…` /
+/// `chrome-<extension-id>-default` already get matched by the
+/// direct .desktop index, so the webapp fallback is redundant for
+/// them), or empty hosts.
+fn parse_chrome_pwa_host(class_lowercased: &str) -> Option<&str> {
+    let after = class_lowercased.strip_prefix("chrome-")?;
+    // Path-bearing form: `<host>__<path>-<profile>`. The path
+    // separator is unambiguous so we stop at the first `__`.
+    let host = if let Some(idx) = after.find("__") {
+        &after[..idx]
+    } else {
+        // Path-less form: `<host>-<profile>`. Strip a single
+        // known profile suffix; default and `profile_N` cover the
+        // standard Chrome multi-profile setup. `-default` is also
+        // what Brave / Vivaldi / Edge use.
+        let mut trimmed = after;
+        for suffix in ["-default", "-profile_1", "-profile_2", "-profile_3", "-profile_4"] {
+            if let Some(s) = trimmed.strip_suffix(suffix) {
+                trimmed = s;
+                break;
+            }
+        }
+        // If we couldn't identify a profile suffix the class is
+        // probably not a webapp — bail.
+        if trimmed == after {
+            return None;
+        }
+        trimmed
+    };
+    if host.is_empty() || !host.contains('.') {
+        return None;
+    }
+    Some(host)
 }
 
 #[cfg(test)]
@@ -333,6 +471,125 @@ mod tests {
         let _ = discover_apps();
     }
 
+    #[test]
+    fn extract_hosts_handles_simple_https_url() {
+        let hosts = extract_hosts_from_exec(
+            "omarchy-launch-webapp https://discord.com/channels/@me",
+        );
+        assert_eq!(hosts, vec!["discord.com"]);
+    }
+
+    #[test]
+    fn extract_hosts_handles_quoted_and_multiple_urls() {
+        let hosts = extract_hosts_from_exec(
+            "browser \"https://gmail.com/u/0\" https://calendar.google.com/r",
+        );
+        assert_eq!(hosts, vec!["gmail.com", "calendar.google.com"]);
+    }
+
+    #[test]
+    fn extract_hosts_skips_non_url_tokens() {
+        let hosts = extract_hosts_from_exec("firefox %U");
+        assert!(hosts.is_empty());
+    }
+
+    #[test]
+    fn extract_hosts_strips_port_and_query() {
+        let hosts = extract_hosts_from_exec(
+            "open https://example.com:8080/path?q=1#frag",
+        );
+        assert_eq!(hosts, vec!["example.com"]);
+    }
+
+    #[test]
+    fn parse_chrome_pwa_host_handles_path_form() {
+        // The omarchy --app=URL case the user reported: Hyprland
+        // class `chrome-discord.com__channels_@me-Default`.
+        // (We're matching against the lowercased form.)
+        assert_eq!(
+            parse_chrome_pwa_host("chrome-discord.com__channels_@me-default"),
+            Some("discord.com")
+        );
+    }
+
+    #[test]
+    fn parse_chrome_pwa_host_handles_pathless_form() {
+        // `--app=https://example.com/` (no path beyond root) →
+        // `chrome-example.com-default`.
+        assert_eq!(
+            parse_chrome_pwa_host("chrome-example.com-default"),
+            Some("example.com")
+        );
+    }
+
+    #[test]
+    fn parse_chrome_pwa_host_handles_alt_profiles() {
+        assert_eq!(
+            parse_chrome_pwa_host("chrome-example.com__app_-profile_2"),
+            Some("example.com")
+        );
+        assert_eq!(
+            parse_chrome_pwa_host("chrome-example.com-profile_1"),
+            Some("example.com")
+        );
+    }
+
+    #[test]
+    fn parse_chrome_pwa_host_rejects_non_chrome_classes() {
+        assert!(parse_chrome_pwa_host("firefox").is_none());
+        assert!(parse_chrome_pwa_host("chromium").is_none());
+        // `chrome-` prefix but the trailing portion has no dot, so
+        // it's almost certainly an extension ID
+        // (`chrome-<id>-default`) — the direct .desktop index
+        // already covers those, so the webapp fallback should not
+        // claim them.
+        assert!(parse_chrome_pwa_host("chrome-mjoklplbddabcmpepnokjaffbmgbkkgg-default").is_none());
+    }
+
+    #[test]
+    fn parse_chrome_pwa_host_rejects_unknown_profile_suffix() {
+        // No `__` and no recognized `-default` / `-profile_N`
+        // suffix — could be anything.
+        assert!(parse_chrome_pwa_host("chrome-example.com-something").is_none());
+    }
+
+    #[test]
+    fn app_directory_lookup_falls_back_to_webapp_host() {
+        // End-to-end: a .desktop with `Exec=… https://discord.com/…`
+        // and no StartupWMClass should still resolve the
+        // omarchy `--app=` PWA class via the host index.
+        let mut by_id: HashMap<String, DesktopAppMetadata> = HashMap::new();
+        let mut by_host: HashMap<String, DesktopAppMetadata> = HashMap::new();
+        by_id.insert(
+            "discord".to_owned(),
+            DesktopAppMetadata {
+                display_name: "Discord".into(),
+                icon_name: Some("/path/to/discord.png".into()),
+            },
+        );
+        by_host.insert(
+            "discord.com".to_owned(),
+            DesktopAppMetadata {
+                display_name: "Discord".into(),
+                icon_name: Some("/path/to/discord.png".into()),
+            },
+        );
+        let dir = AppDirectory {
+            by_identifier: by_id,
+            by_webapp_host: by_host,
+        };
+        // Direct hit by stem.
+        assert_eq!(dir.lookup("discord").map(|m| m.display_name), Some("Discord".into()));
+        // Webapp fallback for the omarchy class.
+        assert_eq!(
+            dir.lookup("chrome-discord.com__channels_@me-Default")
+                .map(|m| m.display_name),
+            Some("Discord".into())
+        );
+        // Unknown class falls through to None.
+        assert!(dir.lookup("chrome-unknown.com-default").is_none());
+    }
+
     /// Local-development convenience. Run with
     /// `cargo test -p input-capture -- --ignored --nocapture
     /// discover_apps_dump` to see what the .desktop scanner finds
@@ -341,14 +598,27 @@ mod tests {
     #[test]
     #[ignore]
     fn discover_apps_dump() {
-        let map = discover_apps();
-        println!("discovered {} application entries", map.len());
-        let mut keys: Vec<&String> = map.keys().collect();
+        let dir = discover_apps();
+        println!(
+            "discovered {} direct entries, {} webapp hosts",
+            dir.by_identifier.len(),
+            dir.by_webapp_host.len()
+        );
+        let mut keys: Vec<&String> = dir.by_identifier.keys().collect();
         keys.sort();
         for k in keys {
-            let m = &map[k];
+            let m = &dir.by_identifier[k];
             println!(
-                "  {k:32} → name={:?} icon={:?}",
+                "  id  {k:40} → name={:?} icon={:?}",
+                m.display_name, m.icon_name
+            );
+        }
+        let mut hosts: Vec<&String> = dir.by_webapp_host.keys().collect();
+        hosts.sort();
+        for h in hosts {
+            let m = &dir.by_webapp_host[h];
+            println!(
+                "  web {h:40} → name={:?} icon={:?}",
                 m.display_name, m.icon_name
             );
         }

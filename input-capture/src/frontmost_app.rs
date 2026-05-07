@@ -426,7 +426,7 @@ mod backend {
 #[cfg(all(unix, not(target_os = "macos")))]
 mod backend {
     use super::{AppIdent, RunningApp};
-    use crate::desktop_entries::{self, DesktopAppMetadata};
+    use crate::desktop_entries::{self, AppDirectory};
     use std::process::Command;
 
     /// Detect compositor flavor via env vars. Wayland sessions set
@@ -468,10 +468,10 @@ mod backend {
         // entry can be matched. Apps with no .desktop hit fall
         // through to the raw-string display path so an unknown
         // class still shows up in the picker.
-        let installed = desktop_entries::discover_apps();
+        let directory = desktop_entries::discover_apps();
         let mut out: Vec<RunningApp> = idents
             .into_iter()
-            .map(|raw| build_running_app(&installed, raw))
+            .map(|raw| build_running_app(&directory, raw))
             .collect();
         // Re-sort by display name now that .desktop enrichment may
         // have rewritten "firefox" → "Firefox", etc., so the picker
@@ -490,8 +490,8 @@ mod backend {
     /// added entry as `1Password` with its icon even when the app
     /// isn't currently running.
     pub(super) fn lookup_app_metadata(identifier: &str) -> Option<RunningApp> {
-        let installed = desktop_entries::discover_apps();
-        let app = build_running_app(&installed, identifier.to_owned());
+        let directory = desktop_entries::discover_apps();
+        let app = build_running_app(&directory, identifier.to_owned());
         // build_running_app always returns Something; only treat
         // it as "found" when the .desktop scan actually contributed
         // metadata (display name differs from the identifier, or
@@ -504,20 +504,19 @@ mod backend {
     }
 
     /// Assemble a [`RunningApp`] from a runtime identifier plus
-    /// the cached `.desktop` map. The identifier is lowercased to
-    /// match [`desktop_entries::discover_apps`]'s key shape.
-    fn build_running_app(
-        installed: &std::collections::HashMap<String, DesktopAppMetadata>,
-        raw_identifier: String,
-    ) -> RunningApp {
+    /// the [`AppDirectory`]. The identifier is lowercased so the
+    /// direct + Chrome-PWA-fallback lookups in
+    /// [`AppDirectory::lookup`] hit the same case the indexer
+    /// inserted under.
+    fn build_running_app(directory: &AppDirectory, raw_identifier: String) -> RunningApp {
         let lower = raw_identifier.to_lowercase();
-        if let Some(meta) = installed.get(&lower) {
+        if let Some(meta) = directory.lookup(&lower) {
             let icon_png = meta
                 .icon_name
                 .as_deref()
                 .and_then(desktop_entries::icon_bytes_for_name);
             return RunningApp {
-                display_name: meta.display_name.clone(),
+                display_name: meta.display_name,
                 identifier: lower,
                 icon_png,
             };
