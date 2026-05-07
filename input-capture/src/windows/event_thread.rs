@@ -221,12 +221,10 @@ fn start_routine(
         .expect("CreateWindowExW");
     }
 
-    /* run message loop */
-    loop {
-        // mouse / keybrd proc do not actually return a message
-        let Some(msg) = get_msg() else {
-            break;
-        };
+    /* run message loop. mouse / keybrd procs don't actually return
+     * a message, so `get_msg() == None` ends the loop; an Exit-typed
+     * thread message breaks out from inside the body. */
+    while let Some(msg) = get_msg() {
         if msg.hwnd.0.is_null() {
             /* messages sent via PostThreadMessage */
             match msg.wParam.0 {
