@@ -101,7 +101,12 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            config.release_threshold_px(),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
 
@@ -218,6 +223,12 @@ impl Service {
                 self.update_enter_hook(handle, enter_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::SetReleaseThreshold(threshold) => {
+                self.config.set_release_threshold_px(threshold);
+                self.capture.set_release_threshold(threshold);
+                self.notify_frontend(FrontendEvent::ReleaseThreshold(threshold));
+                self.save_config();
+            }
         }
     }
 
@@ -258,6 +269,9 @@ impl Service {
         }
         let release_bind = self.config.release_bind();
         self.capture.set_release_bind(release_bind);
+        let release_threshold = self.config.release_threshold_px();
+        self.capture.set_release_threshold(release_threshold);
+        self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
@@ -315,9 +329,20 @@ impl Service {
                 self.emulation_status = Status::Enabled;
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
             }
-            EmulationEvent::ReleaseNotify => self.capture.release(),
+            EmulationEvent::ReleaseNotify => self.capture.release_for_handover(),
             EmulationEvent::Connected { addr, fingerprint } => {
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
+            }
+            EmulationEvent::PeerHello { addr, commit } => {
+                // Map the peer's source addr back to its client handle
+                // and stamp the commit. Skip if we don't have an
+                // outgoing client configured for this peer (incoming-
+                // only setup) — there's nowhere to display the version
+                // in that case anyway.
+                if let Some(handle) = self.client_manager.get_client(addr) {
+                    self.client_manager.set_peer_commit(handle, Some(commit));
+                    self.broadcast_client(handle);
+                }
             }
         }
     }
@@ -378,6 +403,9 @@ impl Service {
         self.notify_frontend(FrontendEvent::PortChanged(self.port, None));
         self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
             self.public_key_fingerprint.clone(),
+        ));
+        self.notify_frontend(FrontendEvent::ReleaseThreshold(
+            self.config.release_threshold_px(),
         ));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));

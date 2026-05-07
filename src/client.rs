@@ -282,6 +282,12 @@ impl ClientManager {
         }
     }
 
+    pub(crate) fn set_peer_commit(&self, handle: ClientHandle, commit: Option<[u8; 8]>) {
+        if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            s.peer_commit = commit;
+        }
+    }
+
     pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
         self.clients
             .borrow()

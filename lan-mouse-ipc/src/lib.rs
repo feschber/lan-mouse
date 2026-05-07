@@ -176,6 +176,12 @@ pub struct ClientState {
     pub has_pressed_keys: bool,
     /// dns resolving in progress
     pub resolving: bool,
+    /// Peer's build short commit hash from the [`Hello`] proto
+    /// event. `None` means we haven't received a Hello yet — either
+    /// the connection is fresh, or the peer is on an older build
+    /// that predates the Hello event. The frontend uses this to
+    /// soft-warn on version mismatch.
+    pub peer_commit: Option<[u8; 8]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,6 +223,9 @@ pub enum FrontendEvent {
     IncomingDisconnected(SocketAddr),
     /// failed connection attempt (approval for fingerprint required)
     ConnectionAttempt { fingerprint: String },
+    /// pixel threshold for the wall-press auto-release fallback.
+    /// 0 means disabled.
+    ReleaseThreshold(u32),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -255,6 +264,8 @@ pub enum FrontendRequest {
     UpdateEnterHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
+    /// set the wall-press auto-release pixel threshold (0 = disabled)
+    SetReleaseThreshold(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
