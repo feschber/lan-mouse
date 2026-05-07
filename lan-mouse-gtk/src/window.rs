@@ -365,6 +365,13 @@ impl Window {
             .map(|ip| ip.to_string())
             .collect::<Vec<_>>();
         client_object.set_ips(ips);
+
+        /* peer build version (drives the version-match indicator) */
+        client_object.set_property(
+            "peer-commit",
+            crate::client_object::peer_commit_to_string(state.peer_commit),
+        );
+        row.refresh_version_status();
     }
 
     fn client_object_for_handle(&self, handle: ClientHandle) -> Option<ClientObject> {
@@ -405,6 +412,14 @@ impl Window {
 
     fn request_client_create(&self) {
         self.request(FrontendRequest::Create);
+    }
+
+    pub(super) fn request_release_threshold(&self, threshold: u32) {
+        self.request(FrontendRequest::SetReleaseThreshold(threshold));
+    }
+
+    pub(super) fn request_mdns_discovery(&self, enabled: bool) {
+        self.request(FrontendRequest::SetMdnsDiscovery(enabled));
     }
 
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
@@ -459,6 +474,42 @@ impl Window {
     pub(super) fn set_emulation(&self, active: bool) {
         self.imp().emulation_active.replace(active);
         self.update_capture_emulation_status();
+    }
+
+    pub(super) fn set_mdns_discovery(&self, enabled: bool) {
+        let imp = self.imp();
+        let switch = &imp.mdns_discovery_switch;
+        let handler = imp.mdns_discovery_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(enabled);
+        switch.set_state(enabled);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
+    pub(super) fn set_release_threshold(&self, threshold: u32) {
+        let imp = self.imp();
+        // Block the value-changed handler so programmatically setting
+        // the slider value (e.g. on Sync from the daemon) doesn't
+        // ricochet back as a SetReleaseThreshold request.
+        let scale = &imp.release_threshold_scale;
+        let handler_id = imp.release_threshold_handler.borrow();
+        if let Some(id) = handler_id.as_ref() {
+            scale.block_signal(id);
+        }
+        scale.set_value(threshold as f64);
+        if let Some(id) = handler_id.as_ref() {
+            scale.unblock_signal(id);
+        }
+        let label = if threshold == 0 {
+            "disabled".to_string()
+        } else {
+            format!("{threshold} px")
+        };
+        imp.release_threshold_value.set_label(&label);
     }
 
     #[cfg(target_os = "macos")]
