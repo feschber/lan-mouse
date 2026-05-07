@@ -397,3 +397,38 @@ the new direct deps in `input-capture/Cargo.toml` (`objc2`,
 5. After Phase 5: live-test the modal flow on macOS (password
    manager auto-suppression catches 1Password without manual config).
 6. Before opening the PR: run the full manual test plan from Phase 6.
+
+## Phase 7 — Linux .desktop scan + icons (DONE)
+
+Same picker quality as macOS for Linux suppression entries:
+
+- New `input-capture/src/desktop_entries` module walks the
+  XDG_DATA_DIRS-defined `applications` directories (system,
+  user-local, Flatpak system & user) and parses `[Desktop Entry]`
+  for `Name`, `Icon`, `StartupWMClass`. Filters out
+  `Hidden=true` / `NoDisplay=true` / `Type != Application`.
+- The Linux backend's `list_running_apps()` enriches each runtime
+  identifier (Hyprland `class`, Sway `app_id`, X11 `WM_CLASS`)
+  via the .desktop map: matching by lowercased filename stem OR
+  `StartupWMClass` so e.g. Hyprland's `1Password` class lines up
+  with `1password.desktop`'s `StartupWMClass=1Password`.
+- Icon resolution searches the freedesktop hicolor theme tree
+  (`/usr/share/icons/hicolor/{128x128,256x256,64x64,…}/apps/*.png`)
+  with a `scalable/apps/*.svg` fallback and a final
+  `/usr/share/pixmaps/*.{png,svg}` fallback. Absolute paths in
+  `Icon=` (PWA shortcuts often use these) are read directly.
+  Both PNG and SVG bytes flow through the existing `icon_png`
+  field — `gdk::Texture::from_bytes` on the GTK side handles both
+  via gdk-pixbuf + librsvg.
+- `lookup_app_metadata()` Linux now resolves a stored identifier
+  back to display name + icon, so a previously-added entry that
+  isn't currently running renders with its real name and icon
+  instead of the raw lowercased string.
+
+9 new unit tests in `desktop_entries::tests` cover entry parsing
+edge cases (missing Type, Hidden, NoDisplay, Link entries, locale
+section bleed, comments, blank lines). A `#[ignore]`-gated
+`discover_apps_dump` test prints every found entry for manual
+local verification (run with
+`cargo test -p input-capture -- --ignored --nocapture
+discover_apps_dump`).

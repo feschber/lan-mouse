@@ -426,6 +426,7 @@ mod backend {
 #[cfg(all(unix, not(target_os = "macos")))]
 mod backend {
     use super::{AppIdent, RunningApp};
+    use crate::desktop_entries::{self, DesktopAppMetadata};
     use std::process::Command;
 
     /// Detect compositor flavor via env vars. Wayland sessions set
@@ -462,24 +463,70 @@ mod backend {
         };
         idents.sort();
         idents.dedup();
-        idents
+        // Enrich each runtime identifier with its installed-app
+        // metadata (display name + icon bytes) when a .desktop
+        // entry can be matched. Apps with no .desktop hit fall
+        // through to the raw-string display path so an unknown
+        // class still shows up in the picker.
+        let installed = desktop_entries::discover_apps();
+        let mut out: Vec<RunningApp> = idents
             .into_iter()
-            .map(|s| {
-                let lower = s.to_lowercase();
-                RunningApp {
-                    display_name: s,
-                    identifier: lower,
-                    icon_png: None,
-                }
-            })
-            .collect()
+            .map(|raw| build_running_app(&installed, raw))
+            .collect();
+        // Re-sort by display name now that .desktop enrichment may
+        // have rewritten "firefox" → "Firefox", etc., so the picker
+        // shows entries in human-readable order.
+        out.sort_by(|a, b| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        });
+        out
     }
 
-    pub(super) fn lookup_app_metadata(_identifier: &str) -> Option<RunningApp> {
-        // No installed-app metadata source on Linux yet — would
-        // need to scan .desktop files. Falls back to displaying
-        // the raw app_id / WM_CLASS.
-        None
+    /// Resolve a stored host-OS identifier (a lowercased class /
+    /// app_id) back to a [`RunningApp`] using the same .desktop
+    /// scan the picker uses. Lets the GUI render a previously-
+    /// added entry as `1Password` with its icon even when the app
+    /// isn't currently running.
+    pub(super) fn lookup_app_metadata(identifier: &str) -> Option<RunningApp> {
+        let installed = desktop_entries::discover_apps();
+        let app = build_running_app(&installed, identifier.to_owned());
+        // build_running_app always returns Something; only treat
+        // it as "found" when the .desktop scan actually contributed
+        // metadata (display name differs from the identifier, or
+        // we got an icon).
+        if app.display_name.eq_ignore_ascii_case(identifier) && app.icon_png.is_none() {
+            None
+        } else {
+            Some(app)
+        }
+    }
+
+    /// Assemble a [`RunningApp`] from a runtime identifier plus
+    /// the cached `.desktop` map. The identifier is lowercased to
+    /// match [`desktop_entries::discover_apps`]'s key shape.
+    fn build_running_app(
+        installed: &std::collections::HashMap<String, DesktopAppMetadata>,
+        raw_identifier: String,
+    ) -> RunningApp {
+        let lower = raw_identifier.to_lowercase();
+        if let Some(meta) = installed.get(&lower) {
+            let icon_png = meta
+                .icon_name
+                .as_deref()
+                .and_then(desktop_entries::icon_bytes_for_name);
+            return RunningApp {
+                display_name: meta.display_name.clone(),
+                identifier: lower,
+                icon_png,
+            };
+        }
+        RunningApp {
+            display_name: raw_identifier,
+            identifier: lower,
+            icon_png: None,
+        }
     }
 
     fn run_capture(cmd: &str, args: &[&str]) -> Option<String> {

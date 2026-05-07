@@ -18,6 +18,8 @@ use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
 pub mod clipboard;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod desktop_entries;
 pub mod error;
 pub mod frontmost_app;
 
