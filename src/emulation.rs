@@ -1,8 +1,11 @@
 use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{
+    EmulationHandle, InputEmulation, InputEmulationError, ReceivePostProcessing,
+};
 use input_event::Event;
+use lan_mouse_ipc::IncomingPeerConfig;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
@@ -16,6 +19,13 @@ use tokio::{
     select,
     task::{JoinHandle, spawn_local},
 };
+
+fn to_pp(peer: &IncomingPeerConfig) -> ReceivePostProcessing {
+    ReceivePostProcessing {
+        natural_scroll: peer.natural_scroll,
+        mouse_sensitivity: peer.mouse_sensitivity,
+    }
+}
 
 /// emulation handling events received from a listener
 pub(crate) struct Emulation {
@@ -70,7 +80,11 @@ enum EmulationRequest {
     Reenable,
     Release(SocketAddr),
     ChangePort(u16),
-    SetNaturalScroll(bool),
+    /// Replace the per-fingerprint receive-side post-processing
+    /// table. Service pushes this on startup, on every authorization
+    /// change, and whenever the user adjusts a peer's natural-scroll
+    /// or sensitivity from the GUI.
+    SetIncomingPeers(HashMap<String, IncomingPeerConfig>),
     Terminate,
 }
 
@@ -87,6 +101,8 @@ impl Emulation {
             emulation_proxy,
             request_rx,
             event_tx,
+            addr_to_fingerprint: HashMap::new(),
+            incoming_peers: HashMap::new(),
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -114,12 +130,13 @@ impl Emulation {
             .expect("channel closed")
     }
 
-    /// Configure whether the active emulation backend should
-    /// sign-invert scroll deltas before injection. Persists across
-    /// backend respawns via the EmulationTask cache.
-    pub(crate) fn set_natural_scroll(&self, natural_scroll: bool) {
+    /// Push the latest authorized-peers table to the receive
+    /// pipeline. Calls fire-and-forget; ListenTask resolves
+    /// per-fingerprint settings against its addr→fingerprint cache
+    /// and pushes per-handle post-processing into InputEmulation.
+    pub(crate) fn set_incoming_peers(&self, peers: HashMap<String, IncomingPeerConfig>) {
         self.request_tx
-            .send(EmulationRequest::SetNaturalScroll(natural_scroll))
+            .send(EmulationRequest::SetIncomingPeers(peers))
             .expect("channel closed")
     }
 
@@ -144,9 +161,25 @@ struct ListenTask {
     emulation_proxy: EmulationProxy,
     request_rx: Receiver<EmulationRequest>,
     event_tx: Sender<EmulationEvent>,
+    /// addr→fingerprint cache populated from `ListenEvent::Accept`.
+    /// Lets ListenTask resolve `IncomingPeerConfig` for an incoming
+    /// peer without a per-packet round-trip into the listener.
+    addr_to_fingerprint: HashMap<SocketAddr, String>,
+    /// Latest authorized-peers map pushed by Service. Read on Accept
+    /// and on `SetIncomingPeers` to build the per-handle
+    /// `ReceivePostProcessing` snapshots that go into InputEmulation.
+    incoming_peers: HashMap<String, IncomingPeerConfig>,
 }
 
 impl ListenTask {
+    fn post_processing_for_addr(&self, addr: SocketAddr) -> ReceivePostProcessing {
+        self.addr_to_fingerprint
+            .get(&addr)
+            .and_then(|fp| self.incoming_peers.get(fp))
+            .map(to_pp)
+            .unwrap_or_default()
+    }
+
     async fn run(mut self) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_response = HashMap::new();
@@ -257,6 +290,12 @@ impl ListenTask {
                         }
                     }
                     Some(ListenEvent::Accept { addr, fingerprint }) => {
+                        self.addr_to_fingerprint.insert(addr, fingerprint.clone());
+                        // Pre-cache the per-handle post-processing so
+                        // EmulationTask can pick it up the moment the
+                        // first Input from this addr arrives.
+                        let pp = self.post_processing_for_addr(addr);
+                        self.emulation_proxy.set_post_processing(addr, pp);
                         self.event_tx.send(EmulationEvent::Connected { addr, fingerprint }).expect("channel closed");
                     }
                     Some(ListenEvent::Rejected { fingerprint }) => {
@@ -280,8 +319,16 @@ impl ListenTask {
                         let result = self.listener.port_changed().await;
                         self.event_tx.send(EmulationEvent::PortChanged(result)).expect("channel closed");
                     }
-                    EmulationRequest::SetNaturalScroll(natural_scroll) => {
-                        self.emulation_proxy.set_natural_scroll(natural_scroll);
+                    EmulationRequest::SetIncomingPeers(peers) => {
+                        self.incoming_peers = peers;
+                        // Re-resolve every known address so the live
+                        // backend picks up changes for currently-
+                        // active peers, not just future ones.
+                        let known_addrs: Vec<SocketAddr> = self.addr_to_fingerprint.keys().copied().collect();
+                        for addr in known_addrs {
+                            let pp = self.post_processing_for_addr(addr);
+                            self.emulation_proxy.set_post_processing(addr, pp);
+                        }
                     }
                     EmulationRequest::Terminate => break,
                 },
@@ -328,10 +375,12 @@ enum ProxyRequest {
     /// `Enter` to seat the cursor at the entry edge so the
     /// capturing peer's wall-press model is synchronized.
     Warp(i32, i32),
-    /// Configure whether incoming scroll events should be sign-
-    /// inverted before injection. Mirrors the libinput
-    /// natural-scroll concept for forwarded events.
-    SetNaturalScroll(bool),
+    /// Set the receive-side post-processing for events arriving
+    /// from `addr`. Resolved by ListenTask from the persistent
+    /// authorized-peers table; cached on the EmulationTask side
+    /// keyed by addr until a handle exists, then pushed into
+    /// InputEmulation by handle.
+    SetPostProcessing(SocketAddr, ReceivePostProcessing),
 }
 
 impl EmulationProxy {
@@ -345,7 +394,7 @@ impl EmulationProxy {
             backend,
             exit_requested: exit_requested.clone(),
             display_bounds: display_bounds.clone(),
-            natural_scroll: false,
+            post_processing: HashMap::new(),
             request_rx,
             event_tx,
             handles: Default::default(),
@@ -378,13 +427,18 @@ impl EmulationProxy {
         let _ = self.request_tx.send(ProxyRequest::Warp(x, y));
     }
 
-    /// Fire-and-forget natural-scroll preference update. Persists in
-    /// the EmulationTask so a freshly-created emulation backend
-    /// inherits the last-set value.
-    pub(crate) fn set_natural_scroll(&self, natural_scroll: bool) {
+    /// Fire-and-forget per-addr post-processing update. Persists in
+    /// the EmulationTask cache so settings survive backend respawns
+    /// (CGEventTap timeout, portal session restart, etc.) and so a
+    /// handle created later for this addr inherits the right values.
+    pub(crate) fn set_post_processing(
+        &self,
+        addr: SocketAddr,
+        post_processing: ReceivePostProcessing,
+    ) {
         let _ = self
             .request_tx
-            .send(ProxyRequest::SetNaturalScroll(natural_scroll));
+            .send(ProxyRequest::SetPostProcessing(addr, post_processing));
     }
 
     async fn event(&mut self) -> EmulationEvent {
@@ -434,11 +488,12 @@ struct EmulationTask {
     /// Shared cache; refreshed each time we (re)create the inner
     /// InputEmulation. Read by `EmulationProxy::display_bounds`.
     display_bounds: Rc<Cell<Option<(u32, u32)>>>,
-    /// Cached natural-scroll preference. Re-applied to every newly
-    /// created InputEmulation so a backend respawn (e.g. after
-    /// CGEventTap timeout / portal session restart) doesn't drop
-    /// the user's setting.
-    natural_scroll: bool,
+    /// Per-addr receive-side post-processing snapshots. Pushed by
+    /// ListenTask via `ProxyRequest::SetPostProcessing` whenever
+    /// the underlying authorized-peers table changes. Re-applied to
+    /// every newly created InputEmulation (handle by handle) so a
+    /// backend respawn doesn't drop the user's settings.
+    post_processing: HashMap<SocketAddr, ReceivePostProcessing>,
     request_rx: Receiver<ProxyRequest>,
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
@@ -462,10 +517,11 @@ impl EmulationTask {
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Warp(..) => { /* emulation inactive => ignore */ }
-                    ProxyRequest::SetNaturalScroll(natural_scroll) => {
-                        // No live backend yet, but cache the value so
-                        // the next created backend picks it up.
-                        self.natural_scroll = natural_scroll;
+                    ProxyRequest::SetPostProcessing(addr, pp) => {
+                        // No live backend yet, but cache the values so
+                        // the next created backend picks them up the
+                        // moment a handle is assigned for this addr.
+                        self.post_processing.insert(addr, pp);
                     }
                 }
             }
@@ -485,9 +541,15 @@ impl EmulationTask {
         // it in the ProtoEvent::Bounds reply on Enter.
         self.display_bounds.set(emulation.display_bounds());
 
-        // Re-apply the natural-scroll preference so a freshly-spawned
-        // backend inherits the user's setting.
-        emulation.set_natural_scroll(self.natural_scroll);
+        // Re-apply per-handle post-processing for any handles we
+        // already had before the backend was (re)created. New
+        // handles created from `Input` will pick up their values
+        // from the same cache.
+        for (addr, &handle) in &self.handles {
+            if let Some(&pp) = self.post_processing.get(addr) {
+                emulation.set_post_processing(handle, pp);
+            }
+        }
 
         // used to send enabled and disabled events
         let _emulation_guard = DropGuard::new(
@@ -536,6 +598,12 @@ impl EmulationTask {
                                 self.next_id += 1;
                                 emulation.create(handle).await;
                                 self.handles.insert(addr, handle);
+                                // Apply any cached post-processing
+                                // (set when the DTLS Accept arrived,
+                                // before the first Input).
+                                if let Some(&pp) = self.post_processing.get(&addr) {
+                                    emulation.set_post_processing(handle, pp);
+                                }
                                 handle
                             }
                         };
@@ -545,15 +613,18 @@ impl EmulationTask {
                         if let Some(handle) = self.handles.remove(&addr) {
                             emulation.destroy(handle).await;
                         }
+                        self.post_processing.remove(&addr);
                     }
                     ProxyRequest::Warp(x, y) => {
                         if let Err(e) = emulation.warp_cursor(x, y).await {
                             log::warn!("warp_cursor failed: {e}");
                         }
                     }
-                    ProxyRequest::SetNaturalScroll(natural_scroll) => {
-                        self.natural_scroll = natural_scroll;
-                        emulation.set_natural_scroll(natural_scroll);
+                    ProxyRequest::SetPostProcessing(addr, pp) => {
+                        self.post_processing.insert(addr, pp);
+                        if let Some(&handle) = self.handles.get(&addr) {
+                            emulation.set_post_processing(handle, pp);
+                        }
                     }
                     ProxyRequest::Terminate => break Ok(()),
                     ProxyRequest::Reenable => continue,
@@ -586,7 +657,7 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
             ProxyRequest::Input(_, _) => continue,
             ProxyRequest::Remove(_) => continue,
             ProxyRequest::Warp(_, _) => continue,
-            ProxyRequest::SetNaturalScroll(_) => continue,
+            ProxyRequest::SetPostProcessing(_, _) => continue,
             ProxyRequest::Reenable => continue,
         }
     }

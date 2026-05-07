@@ -4,7 +4,7 @@ use std::{
     fmt::Display,
 };
 
-use input_event::{Event, KeyboardEvent};
+use input_event::{Event, KeyboardEvent, PointerEvent};
 
 pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
@@ -69,10 +69,38 @@ impl Display for Backend {
     }
 }
 
+/// Per-handle receive-side post-processing applied to forwarded
+/// events before they reach the platform emulation backend.
+///
+/// `lan-mouse-ipc::IncomingPeerConfig` is the persistent form of
+/// these preferences (keyed by TLS fingerprint). The conversion
+/// happens in `src/emulation.rs`, so this crate stays decoupled
+/// from the IPC layer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReceivePostProcessing {
+    /// Sign-flip scroll deltas before injection.
+    pub natural_scroll: bool,
+    /// Linear multiplier on motion deltas. 1.0 = passthrough.
+    pub mouse_sensitivity: f64,
+}
+
+impl Default for ReceivePostProcessing {
+    fn default() -> Self {
+        Self {
+            natural_scroll: false,
+            mouse_sensitivity: 1.0,
+        }
+    }
+}
+
 pub struct InputEmulation {
     emulation: Box<dyn Emulation>,
     handles: HashSet<EmulationHandle>,
     pressed_keys: HashMap<EmulationHandle, HashSet<u32>>,
+    /// Per-handle receive-side post-processing. Populated by the
+    /// upper layer before each event is consumed; missing entries
+    /// resolve to `ReceivePostProcessing::default()` (passthrough).
+    post_processing: HashMap<EmulationHandle, ReceivePostProcessing>,
 }
 
 impl InputEmulation {
@@ -96,6 +124,7 @@ impl InputEmulation {
             emulation,
             handles: HashSet::new(),
             pressed_keys: HashMap::new(),
+            post_processing: HashMap::new(),
         })
     }
 
@@ -141,6 +170,36 @@ impl InputEmulation {
         event: Event,
         handle: EmulationHandle,
     ) -> Result<(), EmulationError> {
+        // Apply per-handle receive-side post-processing in a single
+        // place rather than per-backend. Backends stay
+        // platform-mechanics-only and are spared duplicate sign-flip
+        // / multiplier code. Algorithm pattern (mutate-event-and-
+        // forward) borrowed from #347.
+        let pp = self
+            .post_processing
+            .get(&handle)
+            .copied()
+            .unwrap_or_default();
+        let event = match event {
+            Event::Pointer(PointerEvent::Motion { time, dx, dy }) if pp.mouse_sensitivity != 1.0 => {
+                Event::Pointer(PointerEvent::Motion {
+                    time,
+                    dx: dx * pp.mouse_sensitivity,
+                    dy: dy * pp.mouse_sensitivity,
+                })
+            }
+            Event::Pointer(PointerEvent::Axis { time, axis, value }) if pp.natural_scroll => {
+                Event::Pointer(PointerEvent::Axis {
+                    time,
+                    axis,
+                    value: -value,
+                })
+            }
+            Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value }) if pp.natural_scroll => {
+                Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value: -value })
+            }
+            other => other,
+        };
         match event {
             Event::Keyboard(KeyboardEvent::Key { key, state, .. }) => {
                 // prevent double pressed / released keys
@@ -151,6 +210,17 @@ impl InputEmulation {
             }
             _ => self.emulation.consume(event, handle).await,
         }
+    }
+
+    /// Set the receive-side post-processing for a specific handle.
+    /// Subsequent `consume()` calls for this handle apply the
+    /// `natural_scroll` and `mouse_sensitivity` transforms.
+    pub fn set_post_processing(
+        &mut self,
+        handle: EmulationHandle,
+        post_processing: ReceivePostProcessing,
+    ) {
+        self.post_processing.insert(handle, post_processing);
     }
 
     pub async fn create(&mut self, handle: EmulationHandle) -> bool {
@@ -167,6 +237,7 @@ impl InputEmulation {
         let _ = self.release_keys(handle).await;
         if self.handles.remove(&handle) {
             self.pressed_keys.remove(&handle);
+            self.post_processing.remove(&handle);
             self.emulation.destroy(handle).await
         }
     }
@@ -189,12 +260,6 @@ impl InputEmulation {
     /// `Emulation::warp_cursor`.
     pub async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
         self.emulation.warp_cursor(x, y).await
-    }
-
-    /// Configure whether the backend should invert scroll deltas on
-    /// injection. See `Emulation::set_natural_scroll`.
-    pub fn set_natural_scroll(&mut self, natural_scroll: bool) {
-        self.emulation.set_natural_scroll(natural_scroll);
     }
 
     pub async fn release_keys(&mut self, handle: EmulationHandle) -> Result<(), EmulationError> {
@@ -280,10 +345,4 @@ trait Emulation: Send {
         Ok(())
     }
 
-    /// Configure whether the backend should sign-invert scroll
-    /// (axis / axis-discrete) values before injection. Used to
-    /// match the user's libinput natural-scroll preference for
-    /// forwarded events that bypass libinput. Default no-op so
-    /// backends that haven't been updated keep classic behavior.
-    fn set_natural_scroll(&mut self, _natural_scroll: bool) {}
 }
