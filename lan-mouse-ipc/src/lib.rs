@@ -18,10 +18,12 @@ use serde::{Deserialize, Serialize};
 
 mod connect;
 mod connect_async;
+mod gui_lock;
 mod listen;
 
-pub use connect::{FrontendEventReader, FrontendRequestWriter, connect};
+pub use connect::{FrontendEventReader, FrontendRequestWriter, connect, try_connect};
 pub use connect_async::{AsyncFrontendEventReader, AsyncFrontendRequestWriter, connect_async};
+pub use gui_lock::{GuiLock, GuiLockError};
 pub use listen::AsyncFrontendListener;
 
 #[derive(Debug, Error)]
@@ -156,6 +158,100 @@ impl Default for ClientConfig {
 
 pub type ClientHandle = u64;
 
+/// Per-incoming-peer settings, keyed on the peer's TLS certificate
+/// fingerprint in `Config::authorized_fingerprints`. Holds the
+/// human-readable description plus receive-side post-processing
+/// preferences applied to events forwarded from this peer.
+///
+/// Wire format is forward-compatible: legacy configs that store a
+/// bare string per fingerprint deserialize as
+/// `IncomingPeerConfig { description: <string>, .. defaults }`. The
+/// custom `Deserialize` impl handles both shapes so users upgrading
+/// from older versions don't lose their authorizations.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct IncomingPeerConfig {
+    pub description: String,
+    /// Sign-flip scroll deltas before injection. Mirrors the
+    /// libinput natural-scroll concept, but applies only to
+    /// virtual-pointer events forwarded from this specific peer
+    /// (which bypass libinput entirely on Wayland).
+    pub natural_scroll: bool,
+    /// Linear multiplier applied to motion deltas before injection.
+    /// 1.0 = passthrough. Useful when senders capture motion at
+    /// different scales (e.g. a Mac trackpad's small floating-point
+    /// deltas vs a Windows high-DPI mouse's count deltas).
+    pub mouse_sensitivity: f64,
+    /// Most recent IP this peer connected from. Stored as a plain
+    /// string (no port) so reconnects from the same machine on a
+    /// new ephemeral port don't churn the value. Persists across
+    /// daemon restarts so the GUI has something to show even when
+    /// the peer is currently offline.
+    pub last_addr: Option<String>,
+    /// mDNS-resolved hostname for `last_addr` at the time of last
+    /// connect, recovered from the discovery layer's
+    /// `hostname → ip` cache. `None` if discovery wasn't running
+    /// on either side or the peer's mDNS record didn't match the
+    /// IP it connected from.
+    pub last_hostname: Option<String>,
+}
+
+impl Default for IncomingPeerConfig {
+    fn default() -> Self {
+        Self {
+            description: String::new(),
+            natural_scroll: false,
+            mouse_sensitivity: 1.0,
+            last_addr: None,
+            last_hostname: None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for IncomingPeerConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        // Legacy: a bare string is just the description.
+        // Current: a struct with description + post-processing fields.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(String),
+            Full {
+                description: String,
+                #[serde(default)]
+                natural_scroll: bool,
+                #[serde(default = "default_sensitivity")]
+                mouse_sensitivity: f64,
+                #[serde(default)]
+                last_addr: Option<String>,
+                #[serde(default)]
+                last_hostname: Option<String>,
+            },
+        }
+        fn default_sensitivity() -> f64 {
+            1.0
+        }
+        Ok(match Repr::deserialize(de)? {
+            Repr::Legacy(description) => Self {
+                description,
+                ..Self::default()
+            },
+            Repr::Full {
+                description,
+                natural_scroll,
+                mouse_sensitivity,
+                last_addr,
+                last_hostname,
+            } => Self {
+                description,
+                natural_scroll,
+                mouse_sensitivity,
+                last_addr,
+                last_hostname,
+            },
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ClientState {
     /// events should be sent to and received from the client
@@ -176,6 +272,12 @@ pub struct ClientState {
     pub has_pressed_keys: bool,
     /// dns resolving in progress
     pub resolving: bool,
+    /// Peer's build short commit hash from the [`Hello`] proto
+    /// event. `None` means we haven't received a Hello yet — either
+    /// the connection is fresh, or the peer is on an older build
+    /// that predates the Hello event. The frontend uses this to
+    /// soft-warn on version mismatch.
+    pub peer_commit: Option<[u8; 8]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,8 +300,10 @@ pub enum FrontendEvent {
     CaptureStatus(Status),
     /// emulation status
     EmulationStatus(Status),
-    /// authorized public key fingerprints have been updated
-    AuthorizedUpdated(HashMap<String, String>),
+    /// authorized public key fingerprints have been updated.
+    /// The map's value carries each peer's per-pair receive-side
+    /// post-processing preferences alongside its description.
+    AuthorizedUpdated(HashMap<String, IncomingPeerConfig>),
     /// public key fingerprint of this device
     PublicKeyFingerprint(String),
     /// new device connected
@@ -217,9 +321,19 @@ pub enum FrontendEvent {
     IncomingDisconnected(SocketAddr),
     /// failed connection attempt (approval for fingerprint required)
     ConnectionAttempt { fingerprint: String },
+    /// pixel threshold for the wall-press auto-release fallback.
+    /// 0 means disabled.
+    ReleaseThreshold(u32),
+    /// whether mDNS-SD discovery is on. When true, lan-mouse
+    /// advertises a `_lan-mouse._udp.local.` Bonjour service whose
+    /// TXT record's `primary=` field hints at the OS-preferred
+    /// interface (Mac service order / Linux default route), so
+    /// peers can bias their connection attempts toward the right
+    /// interface on multi-homed hosts.
+    MdnsDiscovery(bool),
 }
 
-#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FrontendRequest {
     /// activate/deactivate client
     Activate(ClientHandle, bool),
@@ -255,6 +369,18 @@ pub enum FrontendRequest {
     UpdateEnterHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
+    /// set the wall-press auto-release pixel threshold (0 = disabled)
+    SetReleaseThreshold(u32),
+    /// set whether forwarded scroll events from a specific
+    /// authorized peer should be sign-inverted on injection.
+    /// Keyed on the peer's TLS certificate fingerprint.
+    SetIncomingPeerNaturalScroll(String, bool),
+    /// set the linear motion-sensitivity multiplier for events
+    /// forwarded from a specific authorized peer. 1.0 = passthrough.
+    /// Keyed on the peer's TLS certificate fingerprint.
+    SetIncomingPeerSensitivity(String, f64),
+    /// turn mDNS-SD discovery on or off
+    SetMdnsDiscovery(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -298,4 +424,20 @@ pub fn default_socket_path() -> Result<PathBuf, SocketPathError> {
         .join("Library")
         .join("Caches")
         .join(LAN_MOUSE_SOCKET_NAME))
+}
+
+/// One-shot probe: is a daemon already listening on the IPC socket?
+/// A stale socket file with no listener returns `false` (the daemon's
+/// own listener bind path will clean it up).
+#[cfg(unix)]
+pub fn is_service_running() -> bool {
+    let Ok(socket_path) = default_socket_path() else {
+        return false;
+    };
+    std::os::unix::net::UnixStream::connect(socket_path).is_ok()
+}
+
+#[cfg(windows)]
+pub fn is_service_running() -> bool {
+    std::net::TcpStream::connect("127.0.0.1:5252").is_ok()
 }

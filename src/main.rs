@@ -10,7 +10,7 @@ use lan_mouse::{
 use lan_mouse_cli::CliError;
 #[cfg(feature = "gtk")]
 use lan_mouse_gtk::GtkError;
-use lan_mouse_ipc::{IpcError, IpcListenerCreationError};
+use lan_mouse_ipc::{GuiLock, IpcError, IpcListenerCreationError};
 use std::{
     future::Future,
     io,
@@ -67,24 +67,98 @@ fn run() -> Result<(), LanMouseError> {
                     r => r?,
                 }
             }
+            #[cfg(target_os = "macos")]
+            Command::AxProbe => {
+                // Fresh-process probe of TCC Accessibility state. Spawned
+                // by the daemon's TCC.db watcher (see lan_mouse::tcc_watch
+                // on macOS) to bypass cached-trust state in already-running
+                // processes — particularly important for the "remove from
+                // list" case where AXIsProcessTrusted in the parent keeps
+                // reporting cached-true. Exit 0 = granted, 1 = revoked.
+                let granted = lan_mouse::macos_tcc_probe::is_accessibility_granted();
+                process::exit(if granted { 0 } else { 1 });
+            }
         },
         None => {
             //  otherwise start the service as a child process and
             //  run a frontend
             #[cfg(feature = "gtk")]
             {
-                let mut service = start_service()?;
-                let res = lan_mouse_gtk::run();
+                // Cross-platform GUI singleton: only one Lan Mouse
+                // window per user session. If another GUI is already
+                // listening we send it a "show yourself" byte and
+                // exit; otherwise we hold the lock for the GUI's
+                // lifetime. Decoupled from the daemon socket so a
+                // headless `lan-mouse daemon` doesn't block a later
+                // GUI launch.
+                let gui_lock = match GuiLock::acquire_or_signal() {
+                    Ok(Some(lock)) => Some(lock),
+                    Ok(None) => {
+                        log::info!(
+                            "lan-mouse GUI is already running; brought it to the foreground"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        // Don't fail the whole launch over the lock —
+                        // log and proceed without singleton coverage.
+                        log::warn!("could not acquire GUI singleton lock: {e}");
+                        None
+                    }
+                };
+
+                // Skip the transient daemon child if a daemon is
+                // already listening on the IPC socket — covers both
+                // an externally-started `lan-mouse daemon` and the
+                // case where a previous GUI's daemon outlived its
+                // parent. The GUI then attaches to the existing
+                // daemon and leaves it running on exit.
+                let external_daemon = lan_mouse_ipc::is_service_running();
+                let mut service = if external_daemon {
+                    log::info!("daemon already running; attaching to existing instance");
+                    None
+                } else {
+                    Some(start_service()?)
+                };
+                let res = lan_mouse_gtk::run(gui_lock, config::local_commit(), external_daemon);
+
+                // Bound the daemon-child cleanup so a wedged daemon
+                // (CGEventTap stuck on macOS, hung syscall, etc.)
+                // can't freeze the GUI on quit. SIGINT first, give it
+                // a few seconds to exit cleanly, then SIGKILL. Only
+                // runs when *we* spawned the daemon — an externally
+                // managed daemon outlives the GUI.
                 #[cfg(unix)]
-                {
-                    // on unix we give the service a chance to terminate gracefully
+                if let Some(service) = service.as_mut() {
                     let pid = service.id() as libc::pid_t;
                     unsafe {
                         libc::kill(pid, libc::SIGINT);
                     }
-                    service.wait()?;
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    loop {
+                        match service.try_wait() {
+                            Ok(Some(_)) => break,
+                            Ok(None) if std::time::Instant::now() >= deadline => {
+                                log::warn!(
+                                    "daemon child did not exit on SIGINT in 3s — sending SIGKILL"
+                                );
+                                let _ = service.kill();
+                                let _ = service.wait();
+                                break;
+                            }
+                            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                            Err(e) => {
+                                log::error!("waiting for daemon child: {e}");
+                                break;
+                            }
+                        }
+                    }
                 }
-                service.kill()?;
+                #[cfg(not(unix))]
+                if let Some(service) = service.as_mut() {
+                    let _ = service.kill();
+                    let _ = service.wait();
+                }
                 res?;
             }
             #[cfg(not(feature = "gtk"))]
@@ -132,6 +206,15 @@ async fn run_service(config: Config) -> Result<(), ServiceError> {
     let mut service = Service::new(config).await?;
     log::info!("using config: {config_path:?}");
     log::info!("Press {release_bind:?} to release the mouse");
+
+    // macOS-only: detect AX-permission "remove from list" by polling
+    // TCC.db's mtime and confirming via a fresh subprocess. The
+    // existing in-process AXIsProcessTrusted polling in the GUI only
+    // catches the toggle-off case; the remove case leaves the cached
+    // trust state stuck at true forever. See `macos_tcc_watch`.
+    #[cfg(target_os = "macos")]
+    lan_mouse::macos_tcc_watch::spawn();
+
     service.run().await?;
     log::info!("service exited!");
     Ok(())

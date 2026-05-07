@@ -4,15 +4,15 @@ use crate::{
     config::{Config, ConfigClient},
     connect::LanMouseConnection,
     crypto,
+    discovery::{Discovery, PrimaryCache},
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
-use hickory_resolver::ResolveError;
 use lan_mouse_ipc::{
-    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
-    IpcListenerCreationError, Position, Status,
+    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IncomingPeerConfig,
+    IpcError, IpcListenerCreationError, Position, Status,
 };
 use log;
 use std::{
@@ -20,14 +20,13 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
+    time::Duration,
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
-    #[error(transparent)]
-    Dns(#[from] ResolveError),
     #[error(transparent)]
     IpcListen(#[from] IpcListenerCreationError),
     #[error(transparent)]
@@ -50,7 +49,12 @@ pub struct Service {
     /// frontend listener
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
-    authorized_keys: Arc<RwLock<HashMap<String, String>>>,
+    authorized_keys: Arc<RwLock<HashMap<String, IncomingPeerConfig>>>,
+    /// Shared mDNS browse cache. Used at DTLS-accept time to
+    /// reverse-lookup the connecting peer's IP back to the system
+    /// hostname they advertise via Bonjour, so the GUI can show a
+    /// human-readable identity in the Incoming Connections list.
+    primary_cache: PrimaryCache,
     /// (outgoing) client information
     client_manager: ClientManager,
     /// current port
@@ -70,6 +74,11 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    /// mDNS-SD service registration + browse. Advertises our primary
+    /// interface IP for peer dialers to bias toward; populates
+    /// shared `PrimaryCache` (read by `LanMouseConnection`) from
+    /// peer announcements.
+    discovery: Discovery,
 }
 
 #[derive(Debug)]
@@ -94,21 +103,36 @@ impl Service {
         let frontend_listener = AsyncFrontendListener::new().await?;
 
         let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints()));
-        // listener + connection
+        // listener + connection. The primary-IP cache is owned by
+        // the dialer side so its references survive Discovery
+        // toggles; Discovery writes peer hints into it as browse
+        // events arrive.
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
-        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let primary_cache: PrimaryCache = Default::default();
+        let conn =
+            LanMouseConnection::new(cert.clone(), client_manager.clone(), primary_cache.clone());
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            config.release_threshold_px(),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
+        // Push the persisted authorized-peers table into the receive
+        // pipeline so per-peer post-processing is applied from the
+        // first incoming packet.
+        emulation.set_incoming_peers(authorized_keys.read().expect("lock").clone());
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
 
         let port = config.port();
+        let discovery = Discovery::new(port, config.mdns_discovery(), primary_cache.clone());
         let service = Self {
             config,
             capture,
@@ -116,6 +140,7 @@ impl Service {
             frontend_listener,
             resolver,
             authorized_keys,
+            primary_cache,
             public_key_fingerprint,
             client_manager,
             frontend_event_pending: Default::default(),
@@ -126,6 +151,7 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            discovery,
         };
         Ok(service)
     }
@@ -143,6 +169,19 @@ impl Service {
             self.activate_client(handle);
         }
 
+        // Periodic refresh of the Discovery service registration so
+        // its TXT record stays accurate when the OS-preferred
+        // interface (default route) changes — e.g. user switches
+        // off Wi-Fi and Mac falls back to Ethernet. Cheap: at most
+        // one re-publish every 30s, and a no-op when the primary
+        // hasn't moved. `Skip` so a long suspend doesn't backlog-
+        // burst on resume.
+        let mut discovery_refresh_tick = tokio::time::interval(Duration::from_secs(30));
+        discovery_refresh_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // skip the immediate-fire of the first tick — Discovery
+        // already published once at startup
+        discovery_refresh_tick.tick().await;
+
         loop {
             tokio::select! {
                 request = self.frontend_listener.next() => self.handle_frontend_request(request),
@@ -151,6 +190,7 @@ impl Service {
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
                 _ = self.config.changed() => self.handle_config_change(),
+                _ = discovery_refresh_tick.tick() => self.discovery.refresh(),
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
         }
@@ -218,7 +258,98 @@ impl Service {
                 self.update_enter_hook(handle, enter_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::SetReleaseThreshold(threshold) => {
+                self.config.set_release_threshold_px(threshold);
+                self.capture.set_release_threshold(threshold);
+                self.notify_frontend(FrontendEvent::ReleaseThreshold(threshold));
+                self.save_config();
+            }
+            FrontendRequest::SetIncomingPeerNaturalScroll(fp, natural_scroll) => {
+                self.set_incoming_peer_natural_scroll(fp, natural_scroll);
+                self.save_config();
+            }
+            FrontendRequest::SetIncomingPeerSensitivity(fp, sensitivity) => {
+                self.set_incoming_peer_sensitivity(fp, sensitivity);
+                self.save_config();
+            }
+            FrontendRequest::SetMdnsDiscovery(enabled) => {
+                self.config.set_mdns_discovery(enabled);
+                self.discovery.set_enabled(enabled);
+                self.notify_frontend(FrontendEvent::MdnsDiscovery(enabled));
+                self.save_config();
+            }
         }
+    }
+
+    /// Refresh `last_addr` / `last_hostname` for the authorized-peer
+    /// entry matching `fingerprint` whenever a DTLS connect lands.
+    /// Hostname comes from a reverse-lookup against the mDNS
+    /// `hostname → primary_ip` cache; falls through to addr-only
+    /// if discovery isn't running on either end or the peer's
+    /// announced primary differs from the IP it actually connected
+    /// from. Persists the update so the GUI keeps a useful
+    /// identification across restarts.
+    fn update_incoming_peer_address(&mut self, addr: SocketAddr, fingerprint: &str) {
+        let ip = addr.ip().to_string();
+        let hostname = self.lookup_hostname_for_ip(addr.ip());
+        let mut keys = self.authorized_keys.write().expect("lock");
+        let Some(peer) = keys.get_mut(fingerprint) else {
+            return; // unauthorized peer; nothing to update
+        };
+        let mut changed = peer.last_addr.as_deref() != Some(&ip);
+        if changed {
+            peer.last_addr = Some(ip);
+        }
+        if let Some(h) = hostname {
+            if peer.last_hostname.as_deref() != Some(h.as_str()) {
+                peer.last_hostname = Some(h);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        let snapshot = keys.clone();
+        drop(keys);
+        // No need to push to InputEmulation — last_addr/last_hostname
+        // are display-only; per-pair scroll/sensitivity is unaffected.
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(snapshot));
+        self.save_config();
+    }
+
+    fn lookup_hostname_for_ip(&self, target: std::net::IpAddr) -> Option<String> {
+        self.primary_cache
+            .borrow()
+            .iter()
+            .find_map(|(host, ip)| (*ip == target).then(|| host.clone()))
+    }
+
+    fn set_incoming_peer_natural_scroll(&mut self, fingerprint: String, natural_scroll: bool) {
+        if let Some(peer) = self
+            .authorized_keys
+            .write()
+            .expect("lock")
+            .get_mut(&fingerprint)
+        {
+            peer.natural_scroll = natural_scroll;
+        }
+        let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
+    }
+
+    fn set_incoming_peer_sensitivity(&mut self, fingerprint: String, sensitivity: f64) {
+        if let Some(peer) = self
+            .authorized_keys
+            .write()
+            .expect("lock")
+            .get_mut(&fingerprint)
+        {
+            peer.mouse_sensitivity = sensitivity;
+        }
+        let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
+        self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
     fn save_config(&mut self) {
@@ -258,11 +389,15 @@ impl Service {
         }
         let release_bind = self.config.release_bind();
         self.capture.set_release_bind(release_bind);
+        let release_threshold = self.config.release_threshold_px();
+        self.capture.set_release_threshold(release_threshold);
+        self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
             .unwrap()
             .clone_from(&authorized_keys);
+        self.emulation.set_incoming_peers(authorized_keys);
         self.sync_frontend();
     }
 
@@ -302,6 +437,7 @@ impl Service {
             EmulationEvent::PortChanged(port) => match port {
                 Ok(port) => {
                     self.port = port;
+                    self.discovery.set_port(port);
                     self.notify_frontend(FrontendEvent::PortChanged(port, None));
                 }
                 Err(e) => self
@@ -315,9 +451,21 @@ impl Service {
                 self.emulation_status = Status::Enabled;
                 self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
             }
-            EmulationEvent::ReleaseNotify => self.capture.release(),
+            EmulationEvent::ReleaseNotify => self.capture.release_for_handover(),
             EmulationEvent::Connected { addr, fingerprint } => {
+                self.update_incoming_peer_address(addr, &fingerprint);
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
+            }
+            EmulationEvent::PeerHello { addr, commit } => {
+                // Map the peer's source addr back to its client handle
+                // and stamp the commit. Skip if we don't have an
+                // outgoing client configured for this peer (incoming-
+                // only setup) — there's nowhere to display the version
+                // in that case anyway.
+                if let Some(handle) = self.client_manager.get_client(addr) {
+                    self.client_manager.set_peer_commit(handle, Some(commit));
+                    self.broadcast_client(handle);
+                }
             }
         }
     }
@@ -342,6 +490,9 @@ impl Service {
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
                 self.spawn_hook_command(handle);
+            }
+            ICaptureEvent::PeerCommitUpdated(handle) => {
+                self.broadcast_client(handle);
             }
         }
     }
@@ -379,6 +530,10 @@ impl Service {
         self.notify_frontend(FrontendEvent::PublicKeyFingerprint(
             self.public_key_fingerprint.clone(),
         ));
+        self.notify_frontend(FrontendEvent::ReleaseThreshold(
+            self.config.release_threshold_px(),
+        ));
+        self.notify_frontend(FrontendEvent::MdnsDiscovery(self.config.mdns_discovery()));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
@@ -447,14 +602,26 @@ impl Service {
     }
 
     fn add_authorized_key(&mut self, desc: String, fp: String) {
-        self.authorized_keys.write().expect("lock").insert(fp, desc);
+        // New authorizations land with default post-processing; the
+        // user can tune natural-scroll / sensitivity from the
+        // expanded row in the Incoming Connections list.
+        let entry = IncomingPeerConfig {
+            description: desc,
+            ..IncomingPeerConfig::default()
+        };
+        self.authorized_keys
+            .write()
+            .expect("lock")
+            .insert(fp, entry);
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
     fn remove_authorized_key(&mut self, fp: String) {
         self.authorized_keys.write().expect("lock").remove(&fp);
         let keys = self.authorized_keys.read().expect("lock").clone();
+        self.emulation.set_incoming_peers(keys.clone());
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
