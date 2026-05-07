@@ -16,7 +16,7 @@
 		<child>
 			<object class="AdwActionRow">
 				<property name="title" translatable="yes">Natural Scrolling</property>
-				<property name="subtitle" translatable="yes">Sign-invert scroll deltas forwarded from this peer before injection.</property>
+				<property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events.</property>
 				<!-- non-activatable so clicks don't bubble up and
 				     collapse the surrounding AdwExpanderRow. The inner
 				     GtkSwitch handles its own clicks just fine. -->
@@ -32,7 +32,7 @@
 		<child>
 			<object class="AdwActionRow">
 				<property name="title" translatable="yes">Mouse Sensitivity</property>
-				<property name="subtitle" translatable="yes">Linear multiplier applied to motion deltas from this peer. 1.0 = passthrough.</property>
+				<property name="subtitle" translatable="yes">Adjust the speed of forwarded mouse movement.</property>
 				<property name="activatable">false</property>
 				<child type="suffix">
 					<object class="GtkSpinButton" id="sensitivity_spin">
