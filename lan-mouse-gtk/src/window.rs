@@ -110,6 +110,40 @@ impl Window {
                             }
                         ),
                     );
+                    row.connect_closure(
+                        "request-natural-scroll-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: KeyRow, natural_scroll: bool| {
+                                if let Some(key_obj) = window.authorized_by_idx(row.index() as u32)
+                                {
+                                    window.request(FrontendRequest::SetIncomingPeerNaturalScroll(
+                                        key_obj.get_fingerprint(),
+                                        natural_scroll,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
+                    row.connect_closure(
+                        "request-sensitivity-change",
+                        false,
+                        closure_local!(
+                            #[strong]
+                            window,
+                            move |row: KeyRow, sensitivity: f64| {
+                                if let Some(key_obj) = window.authorized_by_idx(row.index() as u32)
+                                {
+                                    window.request(FrontendRequest::SetIncomingPeerSensitivity(
+                                        key_obj.get_fingerprint(),
+                                        sensitivity,
+                                    ));
+                                }
+                            }
+                        ),
+                    );
                     row.upcast()
                 }
             ),
