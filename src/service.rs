@@ -491,6 +491,9 @@ impl Service {
                 log::info!("entering client {handle} ...");
                 self.spawn_hook_command(handle);
             }
+            ICaptureEvent::PeerCommitUpdated(handle) => {
+                self.broadcast_client(handle);
+            }
         }
     }
 

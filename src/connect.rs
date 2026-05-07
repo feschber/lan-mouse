@@ -439,6 +439,15 @@ async fn receive_loop(
                     }
                     ProtoEvent::Hello { commit } => {
                         client_manager.set_peer_commit(handle, Some(commit));
+                        // Forward to capture.rs so Service can
+                        // broadcast — without this the GUI's
+                        // version-status indicator only updates when
+                        // the listen-side `PeerHello` happens to
+                        // match `get_client(addr)`, which fails when
+                        // Mac dials in before Linux's outbound dial
+                        // has populated `active_addr`.
+                        tx.send((handle, ProtoEvent::Hello { commit }))
+                            .expect("channel closed");
                     }
                     event => tx.send((handle, event)).expect("channel closed"),
                 }
