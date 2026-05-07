@@ -1,15 +1,103 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <interface>
-	<template class="KeyRow" parent="AdwActionRow">
-		<child type="prefix">
-			<object class="GtkButton" id="delete_button">
+	<template class="KeyRow" parent="AdwExpanderRow">
+		<!-- compact summary of non-default settings, shown in the
+		     title-row suffix area so the user can scan a collapsed
+		     row and see what's been customized for this peer.
+		     Visibility flips on at runtime when either setting
+		     differs from its default. -->
+		<child type="suffix">
+			<object class="GtkLabel" id="settings_summary">
 				<property name="valign">center</property>
-				<property name="halign">end</property>
-				<property name="tooltip-text" translatable="yes">revoke authorization</property>
-                <property name="icon-name">edit-delete-symbolic</property>
+				<property name="visible">false</property>
 				<style>
-                    <class name="flat"/>
+					<class name="dim-label"/>
+					<class name="caption"/>
 				</style>
+			</object>
+		</child>
+		<!-- TLS fingerprint as the first row inside the expansion.
+		     Subtitle holds the actual hash so it stays selectable
+		     even though the row itself isn't activatable. The copy
+		     button writes the fingerprint to the clipboard. -->
+		<child>
+			<object class="AdwActionRow" id="fingerprint_row">
+				<property name="title" translatable="yes">Fingerprint</property>
+				<property name="activatable">false</property>
+				<property name="subtitle-selectable">true</property>
+				<style>
+					<class name="property"/>
+				</style>
+				<child type="suffix">
+					<object class="GtkButton" id="copy_fingerprint_button">
+						<property name="valign">center</property>
+						<property name="icon-name">edit-copy-symbolic</property>
+						<property name="tooltip-text" translatable="yes">Copy fingerprint to clipboard</property>
+						<style>
+							<class name="flat"/>
+						</style>
+					</object>
+				</child>
+			</object>
+		</child>
+		<!-- natural-scroll toggle -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Natural Scrolling</property>
+				<property name="subtitle" translatable="yes">Invert the direction of forwarded scroll events.</property>
+				<!-- non-activatable so clicks don't bubble up and
+				     collapse the surrounding AdwExpanderRow. The inner
+				     GtkSwitch handles its own clicks just fine. -->
+				<property name="activatable">false</property>
+				<child type="suffix">
+					<object class="GtkSwitch" id="natural_scroll_switch">
+						<property name="valign">center</property>
+					</object>
+				</child>
+			</object>
+		</child>
+		<!-- mouse-sensitivity numeric -->
+		<child>
+			<object class="AdwActionRow">
+				<property name="title" translatable="yes">Mouse Sensitivity</property>
+				<property name="subtitle" translatable="yes">Adjust the speed of forwarded mouse movement.</property>
+				<property name="activatable">false</property>
+				<child type="suffix">
+					<object class="GtkSpinButton" id="sensitivity_spin">
+						<property name="valign">center</property>
+						<property name="numeric">true</property>
+						<property name="digits">2</property>
+						<property name="adjustment">
+							<object class="GtkAdjustment">
+								<property name="lower">0.1</property>
+								<property name="upper">5.0</property>
+								<property name="step-increment">0.1</property>
+								<property name="page-increment">0.5</property>
+								<property name="value">1.0</property>
+							</object>
+						</property>
+					</object>
+				</child>
+			</object>
+		</child>
+		<!-- revoke authorization (mirrors ClientRow's delete row at
+		     the bottom of its expansion body — destructive action,
+		     hidden behind the expander to avoid fat-finger reaches) -->
+		<child>
+			<object class="AdwActionRow" id="delete_row">
+				<property name="title" translatable="yes">Revoke Authorization</property>
+				<property name="activatable">false</property>
+				<child>
+					<object class="GtkButton" id="delete_button">
+						<property name="icon-name">user-trash-symbolic</property>
+						<property name="valign">center</property>
+						<property name="halign">center</property>
+						<property name="tooltip-text" translatable="yes">Revoke authorization</property>
+						<style>
+							<class name="error"/>
+						</style>
+					</object>
+				</child>
 			</object>
 		</child>
 	</template>

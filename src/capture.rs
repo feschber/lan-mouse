@@ -37,6 +37,19 @@ pub(crate) enum ICaptureEvent {
     /// either the remote client leaving its device region,
     /// a new device entering the screen or the release bind.
     ClientEntered(u64),
+    /// The connect-side received the peer's `Hello` echo and
+    /// updated `client_manager.peer_commit` for `handle`. Forwarded
+    /// upward so Service can broadcast `FrontendEvent::State` and
+    /// the GUI's per-row version-status indicator picks up the new
+    /// value. The listen-side path independently emits
+    /// [`crate::emulation::EmulationEvent::PeerHello`], but it
+    /// races with `active_addr` population — when an incoming
+    /// `Hello` arrives before our outbound dial completes, the
+    /// listen path's `get_client(addr)` returns `None` and the
+    /// commit silently goes unsurfaced. The connect-side path
+    /// fires later but reliably, so it carries the broadcast as a
+    /// belt-and-suspenders fallback.
+    PeerCommitUpdated(CaptureHandle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,8 +64,11 @@ pub(crate) enum CaptureType {
 
 #[derive(Clone, Debug)]
 enum CaptureRequest {
-    /// capture must release the mouse
-    Release,
+    /// release because the remote peer is taking over (they sent
+    /// Enter+CursorPos). Skips the host-side warp so the peer's
+    /// proportional CursorPos warp doesn't get clobbered by a
+    /// racing local warp computed from stale virtual_cursor state.
+    ReleaseForHandover,
     /// add a capture client
     Create(CaptureHandle, Position, CaptureType),
     /// destory a capture client
@@ -61,6 +77,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the auto-release pixel threshold (macOS only). 0 disables.
+    SetReleaseThreshold(u32),
 }
 
 impl Capture {
@@ -68,6 +86,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        release_threshold_px: u32,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -81,6 +100,7 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            release_threshold_px: Rc::new(RefCell::new(release_threshold_px)),
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -124,9 +144,9 @@ impl Capture {
             .expect("channel closed");
     }
 
-    pub(crate) fn release(&self) {
+    pub(crate) fn release_for_handover(&self) {
         self.request_tx
-            .send(CaptureRequest::Release)
+            .send(CaptureRequest::ReleaseForHandover)
             .expect("channel closed");
     }
 
@@ -136,6 +156,12 @@ impl Capture {
 
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
+    }
+
+    pub(crate) fn set_release_threshold(&mut self, threshold: u32) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetReleaseThreshold(threshold));
     }
 }
 
@@ -164,6 +190,7 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    release_threshold_px: Rc<RefCell<u32>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
@@ -210,9 +237,12 @@ impl CaptureTask {
                         CaptureRequest::Reenable => break,
                         CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
                         CaptureRequest::Destroy(h) => self.remove_capture(h),
-                        CaptureRequest::Release => { /* nothing to do */ }
+                        CaptureRequest::ReleaseForHandover => { /* nothing to do */ }
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
+                        }
+                        CaptureRequest::SetReleaseThreshold(threshold) => {
+                            *self.release_threshold_px.borrow_mut() = threshold;
                         }
                     },
                     _ = self.cancellation_token.cancelled() => return,
@@ -240,6 +270,11 @@ impl CaptureTask {
             capture.terminate().await?;
             return Err(e.into());
         }
+
+        // Push the configured auto-release threshold to the freshly
+        // created InputCapture. The wall-press detection is
+        // cross-platform — every backend benefits.
+        capture.set_release_threshold(*self.release_threshold_px.borrow());
 
         let r = self.do_capture_session(&mut capture).await;
 
@@ -285,27 +320,78 @@ impl CaptureTask {
                             log::info!("client {handle} acknowledged the connection!");
                             self.state = State::Sending;
                         }
-                        // client disconnected
+                        // Peer sent Leave — either they just released
+                        // their own outbound capture, or they're
+                        // taking over and want us to stop sending to
+                        // them. The "taking over" case is the common
+                        // one (CaptureBegin on the peer triggers a
+                        // send_leave_event to every incoming address)
+                        // and is followed by Enter+CursorPos from the
+                        // peer. Use the handover release so the local
+                        // host warp doesn't race against the peer's
+                        // upcoming proportional CursorPos warp on our
+                        // shared cursor.
                         ProtoEvent::Leave(_) => {
                             log::info!("releasing capture: left remote client device region");
-                            self.release_capture(capture).await?;
+                            self.release_capture_handover(capture).await?;
                         },
+                        // Peer reported its display geometry — cache it
+                        // so the wall-press model has a real upper
+                        // clamp on virtual_pos for this position.
+                        ProtoEvent::Bounds { width, height } => {
+                            let pos = self.get_pos(handle);
+                            capture.set_peer_bounds(pos, width, height);
+                        }
+                        // Peer reported its per-pair receive-side
+                        // sensitivity multiplier — feed it into the
+                        // wall-press model so its delta accumulator
+                        // tracks the receiver's actual cursor advance.
+                        // Without this, a sub-1.0 multiplier on the
+                        // receiver makes the host's auto-release model
+                        // fire before the cursor reaches the wall.
+                        ProtoEvent::ReceiverSensitivity { mouse_sensitivity } => {
+                            let pos = self.get_pos(handle);
+                            capture.set_peer_sensitivity(pos, mouse_sensitivity);
+                        }
+                        // Peer's commit hash arrived on the outgoing
+                        // DTLS connection. The connect-side
+                        // receive_loop already wrote it to
+                        // `client_manager`; bubble up to Service so
+                        // the GUI's version-status row refreshes.
+                        ProtoEvent::Hello { .. } => {
+                            self.event_tx
+                                .send(ICaptureEvent::PeerCommitUpdated(handle))
+                                .expect("channel closed");
+                        }
                         _ => {}
                     }
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
                     CaptureRequest::Reenable => { /* already active */ },
-                    CaptureRequest::Release => self.release_capture(capture).await?,
+                    CaptureRequest::ReleaseForHandover => self.release_capture_handover(capture).await?,
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
                         capture.create(h, p).await?;
                     }
                     CaptureRequest::Destroy(h) => {
+                        let pos = self.get_pos(h);
                         self.remove_capture(h);
                         capture.destroy(h).await?;
+                        // Drop the cached geometry — the next client
+                        // added at this position may report different
+                        // bounds.
+                        capture.clear_peer_bounds(pos);
+                        // Same lifecycle for the cached sensitivity
+                        // — re-add starts at the 1.0 default until a
+                        // fresh ReceiverSensitivity arrives.
+                        capture.clear_peer_sensitivity(pos);
                     }
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
+                    }
+                    CaptureRequest::SetReleaseThreshold(threshold) => {
+                        *self.release_threshold_px.borrow_mut() = threshold;
+                        capture.set_release_threshold(threshold);
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,
@@ -327,7 +413,16 @@ impl CaptureTask {
             return self.release_capture(capture).await;
         }
 
-        if event == CaptureEvent::Begin {
+        // Backend self-released (currently only macOS, when sustained
+        // back-toward-host motion crosses the configured threshold).
+        // Drive the same teardown path as the release-bind chord so
+        // the peer gets a Leave + key-up flush.
+        if matches!(event, CaptureEvent::AutoRelease) {
+            log::info!("releasing capture: backend auto-release");
+            return self.release_capture(capture).await;
+        }
+
+        if matches!(event, CaptureEvent::Begin { .. }) {
             self.event_tx
                 .send(ICaptureEvent::CaptureBegin(handle))
                 .expect("channel closed");
@@ -346,7 +441,7 @@ impl CaptureTask {
         }
 
         // activated a new client
-        if event == CaptureEvent::Begin && Some(handle) != self.active_client {
+        if matches!(event, CaptureEvent::Begin { .. }) && Some(handle) != self.active_client {
             self.state = State::WaitingForAck;
             self.active_client.replace(handle);
             self.event_tx
@@ -356,24 +451,84 @@ impl CaptureTask {
 
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
-        let event = match event {
-            CaptureEvent::Begin => ProtoEvent::Enter(opposite_pos),
+        // If we're starting a fresh capture and the backend reported
+        // a cursor position at the moment of crossing, send a
+        // `CursorPos` (host-normalized fraction + entry side from the
+        // peer's frame) right after Enter. The peer scales against
+        // its own live bounds and pins the on-axis dimension to the
+        // matching edge — self-sufficient, no prior `Bounds`
+        // round-trip needed, so the very first crossing also lands
+        // the cursor at the visually-corresponding point.
+        let cursor_pos = if let CaptureEvent::Begin {
+            cursor: Some(cursor),
+        } = event
+        {
+            let pos = self.get_pos(handle);
+            capture.host_normalized_cursor(cursor).map(|(nx, ny)| {
+                let proto_pos = to_proto_pos(pos.opposite());
+                (proto_pos, nx, ny)
+            })
+        } else {
+            None
+        };
+
+        let proto_event = match event {
+            CaptureEvent::Begin { .. } => ProtoEvent::Enter(opposite_pos),
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
                 State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
                 State::Sending => ProtoEvent::Input(e),
             },
+            CaptureEvent::AutoRelease => unreachable!("handled in early return above"),
         };
 
-        if let Err(e) = self.conn.send(event, handle).await {
+        if let Err(e) = self.conn.send(proto_event, handle).await {
             const DUR: Duration = Duration::from_millis(500);
             debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
             capture.release().await?;
+            return Ok(());
+        }
+
+        // Send CursorPos right after Enter so the receiver can warp
+        // its cursor to the visually-corresponding point on its own
+        // screen — overrides the entry-edge-midpoint warp the
+        // receiver otherwise applies on Enter.
+        if let Some((pos, nx, ny)) = cursor_pos {
+            log::info!("[cursor-pos] send pos={pos:?} nx={nx:.3} ny={ny:.3}");
+            if let Err(e) = self
+                .conn
+                .send(ProtoEvent::CursorPos { pos, nx, ny }, handle)
+                .await
+            {
+                log::warn!("CursorPos send failed: {e}");
+            }
+        } else if matches!(event, CaptureEvent::Begin { .. }) {
+            log::info!(
+                "[cursor-pos] send skipped — Begin had no cursor or host_normalized_cursor returned None"
+            );
         }
         Ok(())
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
+        self.notify_peer_of_leave(capture).await;
+        capture.release().await
+    }
+
+    /// Release path used when the peer is taking over (they sent
+    /// Enter+CursorPos). Same teardown — synthesize key-ups, reset
+    /// mods, send Leave — but skip the host-side cursor warp so it
+    /// doesn't race against the peer's authoritative CursorPos
+    /// warp on our shared cursor.
+    async fn release_capture_handover(
+        &mut self,
+        capture: &mut InputCapture,
+    ) -> Result<(), CaptureError> {
+        self.notify_peer_of_leave(capture).await;
+        capture.release_no_host_warp().await
+    }
+
+    async fn notify_peer_of_leave(&mut self, capture: &mut InputCapture) {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
             // Synthesize key-up events for every key still held in the
@@ -416,7 +571,6 @@ impl CaptureTask {
                 log::warn!("failed to send Leave to client {handle}: {e}");
             }
         }
-        capture.release().await
     }
 }
 

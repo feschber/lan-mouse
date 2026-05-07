@@ -1,9 +1,11 @@
 use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
+use core_foundation::base::{CFRelease, kCFAllocatorDefault};
+use core_foundation::string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8};
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
-    CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
+    CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
 };
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField,
@@ -17,6 +19,7 @@ use input_event::{
 use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
 use std::collections::HashSet;
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,6 +48,17 @@ pub(crate) struct MacOSEmulation {
     modifier_state: Rc<Cell<XMods>>,
     /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
+    /// IOPMAssertionID returned by the most recent
+    /// `IOPMAssertionDeclareUserActivity` call, kept for re-use within
+    /// the system's 5-second coalesce window. Without this, a CGEvent
+    /// posted while the host's display is asleep wakes nothing — the
+    /// kernel power-manager only treats USB/Bluetooth HID interrupts
+    /// as wake-worthy, not synthesized events. Declaring user
+    /// activity is Apple's documented "treat this as real user input
+    /// for power purposes" signal: it wakes the display and resets
+    /// the idle timer. Initialized to 0; the first call returns a
+    /// real ID, subsequent calls within 5s return the same ID.
+    user_activity_assertion: Cell<u32>,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -74,7 +88,37 @@ impl MacOSEmulation {
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
+            user_activity_assertion: Cell::new(0),
         })
+    }
+
+    /// Tell the macOS power-manager that real user input is arriving
+    /// from this process. Wakes the display if asleep and resets the
+    /// idle timer. Cheap to call on every event — the system itself
+    /// coalesces calls within a 5-second window (returns the same
+    /// IOPMAssertionID), so we just stash the most recent ID in a
+    /// `Cell` and pass it back in. Required because plain
+    /// `CGEventPost` doesn't trigger display wake on its own.
+    fn declare_user_activity(&self) {
+        let cstr = match CString::new("Lan Mouse: remote input") {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let reason = unsafe {
+            CFStringCreateWithCString(
+                kCFAllocatorDefault,
+                cstr.as_ptr() as *const c_char,
+                kCFStringEncodingUTF8,
+            )
+        };
+        if reason.is_null() {
+            return;
+        }
+        let mut id = self.user_activity_assertion.get();
+        let _ret =
+            unsafe { IOPMAssertionDeclareUserActivity(reason, K_IOPM_USER_ACTIVE_LOCAL, &mut id) };
+        self.user_activity_assertion.set(id);
+        unsafe { CFRelease(reason as *const c_void) };
     }
 
     fn get_mouse_location(&self) -> Option<CGPoint> {
@@ -156,6 +200,21 @@ extern "C" {
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
+
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOPMAssertionDeclareUserActivity(
+        assertion_name: CFStringRef,
+        user_type: c_int,
+        out_id: *mut u32,
+    ) -> i32;
+}
+
+/// `kIOPMUserActiveLocal` — local mouse / keyboard activity (the
+/// other variant, `kIOPMUserActiveRemote = 1`, is for screen-sharing
+/// servers acting on behalf of a remote user; "local" is correct
+/// here since we ARE the source generating local HID-style input).
+const K_IOPM_USER_ACTIVE_LOCAL: c_int = 0;
 
 fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
     let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
@@ -261,6 +320,13 @@ impl Emulation for MacOSEmulation {
         _handle: EmulationHandle,
     ) -> Result<(), EmulationError> {
         log::trace!("{event:?}");
+        // Wake the display + reset idle timer for every incoming
+        // event. CGEventPost-synthesized events alone don't trigger
+        // display wake on macOS — the kernel power-manager only
+        // treats USB/Bluetooth HID interrupts as wake-worthy. The
+        // system coalesces these calls within a 5-second window, so
+        // calling on every event is essentially free.
+        self.declare_user_activity();
         match event {
             Event::Pointer(pointer_event) => {
                 match pointer_event {
@@ -489,6 +555,39 @@ impl Emulation for MacOSEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Union of every active display's rectangle. Matches the
+        // shape used on the input-capture side so the host's
+        // wall-press model is consistent across both ends.
+        let displays = CGDisplay::active_displays().ok()?;
+        let mut xmin = f64::INFINITY;
+        let mut xmax = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            xmax = xmax.max(bounds.origin.x + bounds.size.width);
+            ymin = ymin.min(bounds.origin.y);
+            ymax = ymax.max(bounds.origin.y + bounds.size.height);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
+    }
+
+    async fn warp_cursor(&mut self, x: i32, y: i32) -> Result<(), EmulationError> {
+        let pt = CGPoint {
+            x: x as CGFloat,
+            y: y as CGFloat,
+        };
+        // CGDisplay::warp_mouse_cursor_position is a global Quartz
+        // call; it doesn't matter which CGDisplay receiver we use.
+        let _ = CGDisplay::warp_mouse_cursor_position(pt);
+        Ok(())
+    }
 }
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {

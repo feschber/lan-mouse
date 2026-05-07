@@ -1,7 +1,11 @@
+use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{
+    EmulationHandle, InputEmulation, InputEmulationError, ReceivePostProcessing,
+};
 use input_event::Event;
+use lan_mouse_ipc::IncomingPeerConfig;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
@@ -15,6 +19,13 @@ use tokio::{
     select,
     task::{JoinHandle, spawn_local},
 };
+
+fn to_pp(peer: &IncomingPeerConfig) -> ReceivePostProcessing {
+    ReceivePostProcessing {
+        natural_scroll: peer.natural_scroll,
+        mouse_sensitivity: peer.mouse_sensitivity,
+    }
+}
 
 /// emulation handling events received from a listener
 pub(crate) struct Emulation {
@@ -52,12 +63,28 @@ pub(crate) enum EmulationEvent {
     EmulationEnabled,
     /// capture should be released
     ReleaseNotify,
+    /// peer sent us a Hello with its build commit hash. Used to
+    /// populate `client_manager.peer_commit` from the listen side
+    /// too — without this, peer-version visibility silently fails
+    /// whenever the outgoing connection in the *other* direction is
+    /// broken (one-way setups, asymmetric NAT, peer's TCP listener
+    /// down). The connect-side path stays as the primary source;
+    /// this is the defensive fallback.
+    PeerHello {
+        addr: SocketAddr,
+        commit: [u8; 8],
+    },
 }
 
 enum EmulationRequest {
     Reenable,
     Release(SocketAddr),
     ChangePort(u16),
+    /// Replace the per-fingerprint receive-side post-processing
+    /// table. Service pushes this on startup, on every authorization
+    /// change, and whenever the user adjusts a peer's natural-scroll
+    /// or sensitivity from the GUI.
+    SetIncomingPeers(HashMap<String, IncomingPeerConfig>),
     Terminate,
 }
 
@@ -74,6 +101,8 @@ impl Emulation {
             emulation_proxy,
             request_rx,
             event_tx,
+            addr_to_fingerprint: HashMap::new(),
+            incoming_peers: HashMap::new(),
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -101,6 +130,16 @@ impl Emulation {
             .expect("channel closed")
     }
 
+    /// Push the latest authorized-peers table to the receive
+    /// pipeline. Calls fire-and-forget; ListenTask resolves
+    /// per-fingerprint settings against its addr→fingerprint cache
+    /// and pushes per-handle post-processing into InputEmulation.
+    pub(crate) fn set_incoming_peers(&self, peers: HashMap<String, IncomingPeerConfig>) {
+        self.request_tx
+            .send(EmulationRequest::SetIncomingPeers(peers))
+            .expect("channel closed")
+    }
+
     pub(crate) async fn event(&mut self) -> EmulationEvent {
         self.event_rx.recv().await.expect("channel closed")
     }
@@ -122,9 +161,25 @@ struct ListenTask {
     emulation_proxy: EmulationProxy,
     request_rx: Receiver<EmulationRequest>,
     event_tx: Sender<EmulationEvent>,
+    /// addr→fingerprint cache populated from `ListenEvent::Accept`.
+    /// Lets ListenTask resolve `IncomingPeerConfig` for an incoming
+    /// peer without a per-packet round-trip into the listener.
+    addr_to_fingerprint: HashMap<SocketAddr, String>,
+    /// Latest authorized-peers map pushed by Service. Read on Accept
+    /// and on `SetIncomingPeers` to build the per-handle
+    /// `ReceivePostProcessing` snapshots that go into InputEmulation.
+    incoming_peers: HashMap<String, IncomingPeerConfig>,
 }
 
 impl ListenTask {
+    fn post_processing_for_addr(&self, addr: SocketAddr) -> ReceivePostProcessing {
+        self.addr_to_fingerprint
+            .get(&addr)
+            .and_then(|fp| self.incoming_peers.get(fp))
+            .map(to_pp)
+            .unwrap_or_default()
+    }
+
     async fn run(mut self) {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         let mut last_response = HashMap::new();
@@ -141,6 +196,44 @@ impl ListenTask {
                                     log::info!("releasing capture: {addr} entered this device");
                                     self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
                                     self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                    // Send the receiving device's display
+                                    // geometry so the capturing peer can
+                                    // model the guest cursor's position
+                                    // accurately. Old peers that don't
+                                    // recognize this event will skip it
+                                    // per the forward-compat fix.
+                                    if let Some((width, height)) = self.emulation_proxy.display_bounds() {
+                                        self.listener.reply(addr, ProtoEvent::Bounds { width, height }).await;
+                                    }
+                                    // Tell the capturing peer what
+                                    // sensitivity multiplier we'll
+                                    // apply to their motion deltas so
+                                    // their wall-press auto-release
+                                    // model can scale to match.
+                                    let pp = self.post_processing_for_addr(addr);
+                                    self.listener.reply(addr, ProtoEvent::ReceiverSensitivity {
+                                        mouse_sensitivity: pp.mouse_sensitivity,
+                                    }).await;
+                                    // No entry-edge midpoint warp here:
+                                    // the host's CursorPos (sent right
+                                    // after Enter) carries the
+                                    // proportional landing point and
+                                    // pins the on-axis dimension to the
+                                    // matching edge. Warping to the
+                                    // midpoint first would briefly
+                                    // place the cursor at center-edge
+                                    // — and a quick re-cross by the
+                                    // user would have the local
+                                    // CGEventTap (or equivalent) snap
+                                    // its `cursor=` field from the
+                                    // midpoint, masquerading as a
+                                    // mid-screen crossing on the next
+                                    // CursorPos sent back the other
+                                    // way. Trusts the host: if it
+                                    // can't compute a proportional
+                                    // point the cursor stays where it
+                                    // was, which is preferable to a
+                                    // forced midpoint.
                                     self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
                                 }
                             }
@@ -150,10 +243,68 @@ impl ListenTask {
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
+                            // Peer's version handshake. Echo our own
+                            // commit back so the peer's connect-side
+                            // receive_loop populates its `peer_commit`,
+                            // AND publish a PeerHello upward so our
+                            // service can populate ours from the listen
+                            // side too — the connect side is the primary
+                            // path, but if the outbound direction is
+                            // broken (one-way setup, NAT, peer's TCP
+                            // listener down) the version display would
+                            // otherwise silently say "unknown" while
+                            // the peer is in fact happily talking to us.
+                            ProtoEvent::Hello { commit } => {
+                                self.listener.reply(addr, ProtoEvent::Hello { commit: local_commit() }).await;
+                                self.event_tx.send(EmulationEvent::PeerHello { addr, commit }).expect("channel closed");
+                            }
+                            // Capturing peer told us where on its own
+                            // screen the user's cursor was, as a
+                            // normalized fraction (nx, ny) ∈ [0, 1]
+                            // plus the entry side (from our frame).
+                            // Scale against our live display bounds
+                            // and pin the on-axis dimension to the
+                            // matching edge so the cursor lands at
+                            // the visually-corresponding point.
+                            // Works without a prior Bounds round-trip,
+                            // so the very first crossing of a session
+                            // also lands at the visually-corresponding
+                            // point. The cross-axis multiply is
+                            // clamped to dim - 1 so a host edge
+                            // (nx == 1.0 or ny == 1.0) doesn't compute
+                            // one pixel past the addressable column.
+                            ProtoEvent::CursorPos { pos, nx, ny } => {
+                                if let Some((w, h)) = self.emulation_proxy.display_bounds() {
+                                    let pwi = w as i32;
+                                    let phi = h as i32;
+                                    let cx = ((nx * w as f32) as i32).clamp(0, pwi.saturating_sub(1));
+                                    let cy = ((ny * h as f32) as i32).clamp(0, phi.saturating_sub(1));
+                                    let (tx, ty) = match pos {
+                                        Position::Left => (0, cy),
+                                        Position::Right => (pwi.saturating_sub(1), cy),
+                                        Position::Top => (cx, 0),
+                                        Position::Bottom => (cx, phi.saturating_sub(1)),
+                                    };
+                                    log::info!(
+                                        "[cursor-pos] recv pos={pos:?} nx={nx:.3} ny={ny:.3} display_bounds=({w},{h}) → warp=({tx},{ty})"
+                                    );
+                                    self.emulation_proxy.warp_cursor(tx, ty);
+                                } else {
+                                    log::info!(
+                                        "[cursor-pos] recv pos={pos:?} nx={nx:.3} ny={ny:.3} but display_bounds=None — skipping warp"
+                                    );
+                                }
+                            }
                             _ => {}
                         }
                     }
                     Some(ListenEvent::Accept { addr, fingerprint }) => {
+                        self.addr_to_fingerprint.insert(addr, fingerprint.clone());
+                        // Pre-cache the per-handle post-processing so
+                        // EmulationTask can pick it up the moment the
+                        // first Input from this addr arrives.
+                        let pp = self.post_processing_for_addr(addr);
+                        self.emulation_proxy.set_post_processing(addr, pp);
                         self.event_tx.send(EmulationEvent::Connected { addr, fingerprint }).expect("channel closed");
                     }
                     Some(ListenEvent::Rejected { fingerprint }) => {
@@ -176,6 +327,25 @@ impl ListenTask {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
                         self.event_tx.send(EmulationEvent::PortChanged(result)).expect("channel closed");
+                    }
+                    EmulationRequest::SetIncomingPeers(peers) => {
+                        self.incoming_peers = peers;
+                        // Re-resolve every known address so the live
+                        // backend picks up changes for currently-
+                        // active peers, not just future ones.
+                        let known_addrs: Vec<SocketAddr> = self.addr_to_fingerprint.keys().copied().collect();
+                        for addr in known_addrs {
+                            let pp = self.post_processing_for_addr(addr);
+                            self.emulation_proxy.set_post_processing(addr, pp);
+                            // Push the updated sensitivity to the
+                            // capturing peer over the wire so their
+                            // wall-press auto-release model matches
+                            // immediately, without waiting for the
+                            // next cross-back-then-cross-forward.
+                            self.listener.reply(addr, ProtoEvent::ReceiverSensitivity {
+                                mouse_sensitivity: pp.mouse_sensitivity,
+                            }).await;
+                        }
                     }
                     EmulationRequest::Terminate => break,
                 },
@@ -206,6 +376,11 @@ pub(crate) struct EmulationProxy {
     request_tx: Sender<ProxyRequest>,
     event_rx: Receiver<EmulationEvent>,
     task: JoinHandle<()>,
+    /// Cached display bounds. Refreshed each time the underlying
+    /// InputEmulation is (re)created. `None` until the first
+    /// successful query, or if the active backend doesn't report
+    /// geometry.
+    display_bounds: Rc<Cell<Option<(u32, u32)>>>,
 }
 
 enum ProxyRequest {
@@ -213,6 +388,16 @@ enum ProxyRequest {
     Remove(SocketAddr),
     Terminate,
     Reenable,
+    /// Warp the local cursor to an absolute position. Used on
+    /// `Enter` to seat the cursor at the entry edge so the
+    /// capturing peer's wall-press model is synchronized.
+    Warp(i32, i32),
+    /// Set the receive-side post-processing for events arriving
+    /// from `addr`. Resolved by ListenTask from the persistent
+    /// authorized-peers table; cached on the EmulationTask side
+    /// keyed by addr until a handle exists, then pushed into
+    /// InputEmulation by handle.
+    SetPostProcessing(SocketAddr, ReceivePostProcessing),
 }
 
 impl EmulationProxy {
@@ -221,9 +406,12 @@ impl EmulationProxy {
         let (event_tx, event_rx) = channel();
         let emulation_active = Rc::new(Cell::new(false));
         let exit_requested = Rc::new(Cell::new(false));
+        let display_bounds = Rc::new(Cell::new(None));
         let emulation_task = EmulationTask {
             backend,
             exit_requested: exit_requested.clone(),
+            display_bounds: display_bounds.clone(),
+            post_processing: HashMap::new(),
             request_rx,
             event_tx,
             handles: Default::default(),
@@ -236,7 +424,38 @@ impl EmulationProxy {
             request_tx,
             task,
             event_rx,
+            display_bounds,
         }
+    }
+
+    /// Display geometry of this device (cached). Refreshed each
+    /// time the input emulation backend is (re)created.
+    pub(crate) fn display_bounds(&self) -> Option<(u32, u32)> {
+        self.display_bounds.get()
+    }
+
+    /// Fire-and-forget cursor warp. Drops silently if emulation
+    /// isn't currently active (no live backend to receive the
+    /// request).
+    pub(crate) fn warp_cursor(&self, x: i32, y: i32) {
+        if !self.emulation_active.get() {
+            return;
+        }
+        let _ = self.request_tx.send(ProxyRequest::Warp(x, y));
+    }
+
+    /// Fire-and-forget per-addr post-processing update. Persists in
+    /// the EmulationTask cache so settings survive backend respawns
+    /// (CGEventTap timeout, portal session restart, etc.) and so a
+    /// handle created later for this addr inherits the right values.
+    pub(crate) fn set_post_processing(
+        &self,
+        addr: SocketAddr,
+        post_processing: ReceivePostProcessing,
+    ) {
+        let _ = self
+            .request_tx
+            .send(ProxyRequest::SetPostProcessing(addr, post_processing));
     }
 
     async fn event(&mut self) -> EmulationEvent {
@@ -283,6 +502,15 @@ impl EmulationProxy {
 struct EmulationTask {
     backend: Option<input_emulation::Backend>,
     exit_requested: Rc<Cell<bool>>,
+    /// Shared cache; refreshed each time we (re)create the inner
+    /// InputEmulation. Read by `EmulationProxy::display_bounds`.
+    display_bounds: Rc<Cell<Option<(u32, u32)>>>,
+    /// Per-addr receive-side post-processing snapshots. Pushed by
+    /// ListenTask via `ProxyRequest::SetPostProcessing` whenever
+    /// the underlying authorized-peers table changes. Re-applied to
+    /// every newly created InputEmulation (handle by handle) so a
+    /// backend respawn doesn't drop the user's settings.
+    post_processing: HashMap<SocketAddr, ReceivePostProcessing>,
     request_rx: Receiver<ProxyRequest>,
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
@@ -305,6 +533,13 @@ impl EmulationTask {
                     ProxyRequest::Terminate => return,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::Warp(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::SetPostProcessing(addr, pp) => {
+                        // No live backend yet, but cache the values so
+                        // the next created backend picks them up the
+                        // moment a handle is assigned for this addr.
+                        self.post_processing.insert(addr, pp);
+                    }
                 }
             }
         }
@@ -317,6 +552,21 @@ impl EmulationTask {
             // allow termination event while requesting input emulation
             _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
         };
+
+        // Refresh the shared display-bounds cache. Goes through
+        // EmulationProxy::display_bounds() so the daemon can include
+        // it in the ProtoEvent::Bounds reply on Enter.
+        self.display_bounds.set(emulation.display_bounds());
+
+        // Re-apply per-handle post-processing for any handles we
+        // already had before the backend was (re)created. New
+        // handles created from `Input` will pick up their values
+        // from the same cache.
+        for (addr, &handle) in &self.handles {
+            if let Some(&pp) = self.post_processing.get(addr) {
+                emulation.set_post_processing(handle, pp);
+            }
+        }
 
         // used to send enabled and disabled events
         let _emulation_guard = DropGuard::new(
@@ -365,6 +615,12 @@ impl EmulationTask {
                                 self.next_id += 1;
                                 emulation.create(handle).await;
                                 self.handles.insert(addr, handle);
+                                // Apply any cached post-processing
+                                // (set when the DTLS Accept arrived,
+                                // before the first Input).
+                                if let Some(&pp) = self.post_processing.get(&addr) {
+                                    emulation.set_post_processing(handle, pp);
+                                }
                                 handle
                             }
                         };
@@ -373,6 +629,31 @@ impl EmulationTask {
                     ProxyRequest::Remove(addr) => {
                         if let Some(handle) = self.handles.remove(&addr) {
                             emulation.destroy(handle).await;
+                        }
+                        // Intentionally keep `post_processing[addr]`
+                        // alive across handle removal. `Remove` fires
+                        // on every `ProtoEvent::Leave` (cross-back to
+                        // the peer's screen) and on the 1-second
+                        // heartbeat timeout, neither of which means
+                        // the DTLS session is gone for good. The same
+                        // SocketAddr keeps delivering Input events on
+                        // the next cross; we want the user's per-pair
+                        // settings to follow the addr, not the
+                        // ephemeral handle that gets minted fresh on
+                        // each cross. A real DTLS disconnect followed
+                        // by a reconnect arrives with a new
+                        // SocketAddr (new ephemeral port), so a stale
+                        // entry doesn't shadow a fresh one.
+                    }
+                    ProxyRequest::Warp(x, y) => {
+                        if let Err(e) = emulation.warp_cursor(x, y).await {
+                            log::warn!("warp_cursor failed: {e}");
+                        }
+                    }
+                    ProxyRequest::SetPostProcessing(addr, pp) => {
+                        self.post_processing.insert(addr, pp);
+                        if let Some(&handle) = self.handles.get(&addr) {
+                            emulation.set_post_processing(handle, pp);
                         }
                     }
                     ProxyRequest::Terminate => break Ok(()),
@@ -392,12 +673,21 @@ fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
     }
 }
 
+/// Where to seat the local cursor when this device is entered.
+/// `pos` is the protocol-level position in *this device's* frame
+/// (already inverted from the host's perspective by the capture
+/// side). For example, `Position::Left` means "the host is to my
+/// left, the cursor entered from my left edge", so the cursor
+/// should land at x=0. Y is centered along the entry edge for
+/// Left/Right; X is centered for Top/Bottom.
 async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
     loop {
         match rx.recv().await.expect("channel closed") {
             ProxyRequest::Terminate => return,
             ProxyRequest::Input(_, _) => continue,
             ProxyRequest::Remove(_) => continue,
+            ProxyRequest::Warp(_, _) => continue,
+            ProxyRequest::SetPostProcessing(_, _) => continue,
             ProxyRequest::Reenable => continue,
         }
     }
