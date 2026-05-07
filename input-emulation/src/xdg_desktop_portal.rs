@@ -49,10 +49,7 @@ impl DesktopPortalEmulation {
         log::debug!("started session");
         let session = session;
 
-        Ok(Self {
-            proxy,
-            session,
-        })
+        Ok(Self { proxy, session })
     }
 }
 

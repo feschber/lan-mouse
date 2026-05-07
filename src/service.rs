@@ -258,17 +258,6 @@ impl Service {
                 self.notify_frontend(FrontendEvent::ReleaseThreshold(threshold));
                 self.save_config();
             }
-            FrontendRequest::SetNaturalScroll(natural_scroll) => {
-                // Vestigial global toggle. The receive-side
-                // post-processing is now keyed per-peer in
-                // `authorized_fingerprints`; this request only
-                // persists+echoes the global value so the existing
-                // GUI switch keeps round-tripping until the cleanup
-                // commit removes it.
-                self.config.set_natural_scroll(natural_scroll);
-                self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
-                self.save_config();
-            }
             FrontendRequest::SetIncomingPeerNaturalScroll(fp, natural_scroll) => {
                 self.set_incoming_peer_natural_scroll(fp, natural_scroll);
                 self.save_config();
@@ -354,10 +343,6 @@ impl Service {
         let release_threshold = self.config.release_threshold_px();
         self.capture.set_release_threshold(release_threshold);
         self.notify_frontend(FrontendEvent::ReleaseThreshold(release_threshold));
-        // Vestigial: the global toggle is wired up to no real
-        // emulation effect; cleanup commit removes it.
-        let natural_scroll = self.config.natural_scroll();
-        self.notify_frontend(FrontendEvent::NaturalScroll(natural_scroll));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
@@ -495,7 +480,6 @@ impl Service {
         self.notify_frontend(FrontendEvent::ReleaseThreshold(
             self.config.release_threshold_px(),
         ));
-        self.notify_frontend(FrontendEvent::NaturalScroll(self.config.natural_scroll()));
         self.notify_frontend(FrontendEvent::MdnsDiscovery(self.config.mdns_discovery()));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));

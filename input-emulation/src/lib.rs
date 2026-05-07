@@ -181,7 +181,9 @@ impl InputEmulation {
             .copied()
             .unwrap_or_default();
         let event = match event {
-            Event::Pointer(PointerEvent::Motion { time, dx, dy }) if pp.mouse_sensitivity != 1.0 => {
+            Event::Pointer(PointerEvent::Motion { time, dx, dy })
+                if pp.mouse_sensitivity != 1.0 =>
+            {
                 Event::Pointer(PointerEvent::Motion {
                     time,
                     dx: dx * pp.mouse_sensitivity,
@@ -196,7 +198,10 @@ impl InputEmulation {
                 })
             }
             Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value }) if pp.natural_scroll => {
-                Event::Pointer(PointerEvent::AxisDiscrete120 { axis, value: -value })
+                Event::Pointer(PointerEvent::AxisDiscrete120 {
+                    axis,
+                    value: -value,
+                })
             }
             other => other,
         };
@@ -344,5 +349,4 @@ trait Emulation: Send {
     async fn warp_cursor(&mut self, _x: i32, _y: i32) -> Result<(), EmulationError> {
         Ok(())
     }
-
 }
