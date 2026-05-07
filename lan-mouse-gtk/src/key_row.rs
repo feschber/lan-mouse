@@ -8,7 +8,7 @@ use super::KeyObject;
 
 glib::wrapper! {
     pub struct KeyRow(ObjectSubclass<imp::KeyRow>)
-    @extends gtk::ListBoxRow, gtk::Widget, adw::PreferencesRow, adw::ActionRow,
+    @extends gtk::ListBoxRow, gtk::Widget, adw::PreferencesRow, adw::ActionRow, adw::ExpanderRow,
     @implements gtk::Accessible, gtk::Actionable, gtk::Buildable, gtk::ConstraintTarget;
 }
 
@@ -38,6 +38,30 @@ impl KeyRow {
 
         bindings.push(title_binding);
         bindings.push(subtitle_binding);
+
+        // Push initial widget state from KeyObject without firing
+        // the user-change signals (no ping-pong on bind).
+        let imp = self.imp();
+        let switch = &imp.natural_scroll_switch;
+        let switch_handler = imp.natural_scroll_handler.borrow();
+        if let Some(id) = switch_handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(key_object.natural_scroll());
+        switch.set_state(key_object.natural_scroll());
+        if let Some(id) = switch_handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+
+        let spin = &imp.sensitivity_spin;
+        let spin_handler = imp.sensitivity_handler.borrow();
+        if let Some(id) = spin_handler.as_ref() {
+            spin.block_signal(id);
+        }
+        spin.set_value(key_object.mouse_sensitivity());
+        if let Some(id) = spin_handler.as_ref() {
+            spin.unblock_signal(id);
+        }
     }
 
     pub fn unbind(&self) {
