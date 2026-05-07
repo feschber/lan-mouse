@@ -350,6 +350,17 @@ impl CaptureTask {
                             let pos = self.get_pos(handle);
                             capture.set_peer_bounds(pos, width, height);
                         }
+                        // Peer reported its per-pair receive-side
+                        // sensitivity multiplier — feed it into the
+                        // wall-press model so its delta accumulator
+                        // tracks the receiver's actual cursor advance.
+                        // Without this, a sub-1.0 multiplier on the
+                        // receiver makes the host's auto-release model
+                        // fire before the cursor reaches the wall.
+                        ProtoEvent::ReceiverSensitivity { mouse_sensitivity } => {
+                            let pos = self.get_pos(handle);
+                            capture.set_peer_sensitivity(pos, mouse_sensitivity);
+                        }
                         _ => {}
                     }
                 },
@@ -368,6 +379,10 @@ impl CaptureTask {
                         // added at this position may report different
                         // bounds.
                         capture.clear_peer_bounds(pos);
+                        // Same lifecycle for the cached sensitivity
+                        // — re-add starts at the 1.0 default until a
+                        // fresh ReceiverSensitivity arrives.
+                        capture.clear_peer_sensitivity(pos);
                     }
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);

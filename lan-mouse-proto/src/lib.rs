@@ -97,6 +97,17 @@ pub enum ProtoEvent {
     /// recognize the event type silently skip it per the
     /// forward-compat handling in the receive loop.
     Hello { commit: [u8; 8] },
+    /// The receiver's per-pair motion-sensitivity multiplier.
+    /// Sent by the emulating peer immediately after the
+    /// [`ProtoEvent::Ack`] of an [`ProtoEvent::Enter`] so the
+    /// capturing peer can scale its wall-press auto-release model
+    /// to match. Without this, a sensitivity multiplier below 1.0
+    /// would make the host's model accumulate "wall pressure"
+    /// faster than the receiver's actual cursor moves, firing
+    /// AutoRelease before the cursor has reached the edge. Old
+    /// peers that don't recognize the event type silently skip it
+    /// per the existing forward-compat handling.
+    ReceiverSensitivity { mouse_sensitivity: f64 },
 }
 
 impl Display for ProtoEvent {
@@ -118,6 +129,9 @@ impl Display for ProtoEvent {
             ProtoEvent::MotionAbsolute { x, y } => write!(f, "MotionAbsolute({x}, {y})"),
             ProtoEvent::CursorPos { pos, nx, ny } => {
                 write!(f, "CursorPos({pos}, {nx:.4}, {ny:.4})")
+            }
+            ProtoEvent::ReceiverSensitivity { mouse_sensitivity } => {
+                write!(f, "ReceiverSensitivity({mouse_sensitivity:.2})")
             }
             ProtoEvent::Hello { commit } => {
                 let s = std::str::from_utf8(commit).unwrap_or("????????");
@@ -145,6 +159,7 @@ pub enum EventType {
     MotionAbsolute,
     CursorPos,
     Hello,
+    ReceiverSensitivity,
 }
 
 impl ProtoEvent {
@@ -171,6 +186,7 @@ impl ProtoEvent {
             ProtoEvent::MotionAbsolute { .. } => EventType::MotionAbsolute,
             ProtoEvent::CursorPos { .. } => EventType::CursorPos,
             ProtoEvent::Hello { .. } => EventType::Hello,
+            ProtoEvent::ReceiverSensitivity { .. } => EventType::ReceiverSensitivity,
         }
     }
 }
@@ -245,6 +261,9 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
                 }
                 Ok(Self::Hello { commit })
             }
+            EventType::ReceiverSensitivity => Ok(Self::ReceiverSensitivity {
+                mouse_sensitivity: decode_f64(&mut buf)?,
+            }),
         }
     }
 }
@@ -326,6 +345,9 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                     for b in commit.iter() {
                         encode_u8(buf, len, *b);
                     }
+                }
+                ProtoEvent::ReceiverSensitivity { mouse_sensitivity } => {
+                    encode_f64(buf, len, mouse_sensitivity);
                 }
             }
         }
