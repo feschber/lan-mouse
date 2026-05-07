@@ -241,6 +241,23 @@ fn present_window() {
     });
 }
 
+/// macOS NSApplicationActivationPolicy values.
+/// - `Regular` (0): standard app, Dock icon visible.
+/// - `Accessory` (1): no Dock icon, can have menu-bar item.
+pub(crate) const ACTIVATION_POLICY_REGULAR: usize = 0;
+pub(crate) const ACTIVATION_POLICY_ACCESSORY: usize = 1;
+
+/// Set NSApp's activation policy. Toggle between Regular (Dock
+/// icon shown — used while the main window is visible) and
+/// Accessory (no Dock icon — used while only the menu bar is
+/// visible).
+pub(crate) fn set_activation_policy(policy: usize) {
+    unsafe {
+        let ns_app = msg_send_id(class(c"NSApplication"), sel(c"sharedApplication"));
+        msg_send_bool_usize(ns_app, sel(c"setActivationPolicy:"), policy);
+    }
+}
+
 // Register the status-item delegate as the handler for the
 // kAEReopenApplication Apple Event ('aevt'/'rapp'). NSApplication
 // installs a default handler at -finishLaunching that just delegates to
@@ -273,7 +290,7 @@ unsafe fn install_reopen_handler(delegate: Id) {
 extern "C" fn quit_lan_mouse(_this: Id, _cmd: Sel, _sender: Id) {
     STATUS_ITEM.with(|item| {
         if let Some(app) = item.borrow().as_ref().and_then(|item| item.app.upgrade()) {
-            app.quit();
+            crate::request_quit_with_backstop(&app);
         }
     });
 }

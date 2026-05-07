@@ -365,6 +365,13 @@ impl Window {
             .map(|ip| ip.to_string())
             .collect::<Vec<_>>();
         client_object.set_ips(ips);
+
+        /* peer build version (drives the version-match indicator) */
+        client_object.set_property(
+            "peer-commit",
+            crate::client_object::peer_commit_to_string(state.peer_commit),
+        );
+        row.refresh_version_status();
     }
 
     fn client_object_for_handle(&self, handle: ClientHandle) -> Option<ClientObject> {
@@ -407,9 +414,27 @@ impl Window {
         self.request(FrontendRequest::Create);
     }
 
+    pub(super) fn request_release_threshold(&self, threshold: u32) {
+        self.request(FrontendRequest::SetReleaseThreshold(threshold));
+    }
+
+    pub(super) fn request_mdns_discovery(&self, enabled: bool) {
+        self.request(FrontendRequest::SetMdnsDiscovery(enabled));
+    }
+
     fn open_fingerprint_dialog(&self, fp: Option<String>) {
         let window = FingerprintWindow::new(fp);
         window.set_transient_for(Some(self));
+        // Size the popup 40 px narrower than the parent so it stays
+        // fully visible when the parent has been tiled into a narrow
+        // split (Hyprland and similar). Falls back to the XML default
+        // (460 px) when the parent's allocated width isn't yet known
+        // and clamps to the XML width-request floor.
+        let parent_w = self.width();
+        if parent_w > 0 {
+            let popup_w = (parent_w - 40).clamp(280, 460);
+            window.set_default_width(popup_w);
+        }
         window.connect_closure(
             "confirm-clicked",
             false,
@@ -461,6 +486,42 @@ impl Window {
         self.update_capture_emulation_status();
     }
 
+    pub(super) fn set_mdns_discovery(&self, enabled: bool) {
+        let imp = self.imp();
+        let switch = &imp.mdns_discovery_switch;
+        let handler = imp.mdns_discovery_handler.borrow();
+        if let Some(id) = handler.as_ref() {
+            switch.block_signal(id);
+        }
+        switch.set_active(enabled);
+        switch.set_state(enabled);
+        if let Some(id) = handler.as_ref() {
+            switch.unblock_signal(id);
+        }
+    }
+
+    pub(super) fn set_release_threshold(&self, threshold: u32) {
+        let imp = self.imp();
+        // Block the value-changed handler so programmatically setting
+        // the slider value (e.g. on Sync from the daemon) doesn't
+        // ricochet back as a SetReleaseThreshold request.
+        let scale = &imp.release_threshold_scale;
+        let handler_id = imp.release_threshold_handler.borrow();
+        if let Some(id) = handler_id.as_ref() {
+            scale.block_signal(id);
+        }
+        scale.set_value(threshold as f64);
+        if let Some(id) = handler_id.as_ref() {
+            scale.unblock_signal(id);
+        }
+        let label = if threshold == 0 {
+            "Disabled".to_string()
+        } else {
+            format!("{threshold} px")
+        };
+        imp.release_threshold_value.set_label(&label);
+    }
+
     #[cfg(target_os = "macos")]
     pub(super) fn refresh_capture_emulation_status(&self) {
         self.update_capture_emulation_status();
@@ -507,13 +568,13 @@ impl Window {
             // AX granted but capture/emulation still off → the daemon
             // subprocess bailed at startup and needs a fresh process to
             // re-initialize with the new grant in place.
-            row.set_title("relaunch required");
-            row.set_subtitle("Accessibility granted — restart to activate capture and emulation");
+            row.set_title("Relaunch Required");
+            row.set_subtitle("Accessibility granted — restart to activate capture and emulation.");
             set_button_content_label(button, "Relaunch");
         } else {
             // AX missing → send the user to System Settings.
-            row.set_title("input capture is disabled");
-            row.set_subtitle("grant Accessibility permission to enable");
+            row.set_title("Input Capture Disabled");
+            row.set_subtitle("Grant accessibility permission to enable.");
             set_button_content_label(button, "Grant");
         }
     }
@@ -540,6 +601,15 @@ impl Window {
         }
         let window = AuthorizationWindow::new(fingerprint);
         window.set_transient_for(Some(self));
+        // Same parent-relative sizing as the fingerprint dialog —
+        // 40 px narrower than the parent, capped at 460 to match the
+        // Add-Certificate modal, floored at 280 so it doesn't shrink
+        // under content.
+        let parent_w = self.width();
+        if parent_w > 0 {
+            let popup_w = (parent_w - 40).clamp(280, 460);
+            window.set_default_width(popup_w);
+        }
         window.connect_closure(
             "confirm-clicked",
             false,

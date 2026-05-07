@@ -5,11 +5,11 @@ use core_foundation::{
     base::{CFRelease, TCFType, kCFAllocatorDefault},
     date::CFTimeInterval,
     number::{CFBooleanRef, kCFBooleanTrue},
-    runloop::{CFRunLoop, CFRunLoopSource, kCFRunLoopCommonModes},
+    runloop::{CFRunLoop, CFRunLoopSource, CFRunLoopSourceRef, kCFRunLoopCommonModes},
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{CGError, kCGErrorSuccess},
+    base::{CGError, CGFloat, kCGErrorSuccess},
     display::{CGDisplay, CGPoint},
     event::{
         CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
@@ -62,7 +62,14 @@ struct InputCaptureState {
 
 #[derive(Debug)]
 enum ProducerEvent {
-    Release,
+    /// `warp_target`, when present, is a screen-space (Quartz) point
+    /// at which to warp the local cursor before showing it. Used to
+    /// preserve cross-axis continuity on release: the visible cursor
+    /// reappears at the host point matching where it visually was on
+    /// the guest, instead of snapping back to the capture-start edge.
+    Release {
+        warp_target: Option<(i32, i32)>,
+    },
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -153,8 +160,26 @@ impl InputCaptureState {
     ) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
-            ProducerEvent::Release => {
+            ProducerEvent::Release { warp_target } => {
+                log::info!(
+                    "[release-warp] handle_producer_event Release: current_pos={:?} warp_target={warp_target:?}",
+                    self.current_pos
+                );
                 if self.current_pos.is_some() {
+                    // Warp BEFORE clearing current_pos so the
+                    // event-tap callback can't see Some(pos) and
+                    // re-snap the cursor to the entry edge before we
+                    // make it visible again. Then show_cursor() reveals
+                    // it at the warped point.
+                    if let Some((x, y)) = warp_target {
+                        log::info!("[release-warp] warping local cursor to ({x}, {y})");
+                        if let Err(e) = CGDisplay::warp_mouse_cursor_position(CGPoint {
+                            x: x as CGFloat,
+                            y: y as CGFloat,
+                        }) {
+                            log::warn!("[release-warp] warp_mouse_cursor_position failed: {e:?}");
+                        }
+                    }
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -185,6 +210,25 @@ impl InputCaptureState {
                 if self.current_pos.is_some() {
                     self.show_cursor()?;
                     self.current_pos = None;
+                }
+                // Distinguish AX revocation from a recoverable cause
+                // (secure-input mode while typing in a password field
+                // also fires TapDisabledByUserInput). If AX is gone,
+                // the tap can't be recreated and the GUI's polling
+                // watcher may not flip for a while when the user
+                // *removed* the entry from System Settings → Privacy
+                // & Security → Accessibility (vs just toggling it
+                // off — removal can leave AXIsProcessTrusted reporting
+                // cached-true in already-running processes). Exit
+                // the daemon process directly: the GUI will see its
+                // IPC connection drop and trigger its own
+                // quit-with-backstop path. This is the only reliable
+                // way to tear down a wedged HID-level tap quickly.
+                if !unsafe { AXIsProcessTrusted() } {
+                    log::error!(
+                        "CGEventTap disabled and Accessibility no longer granted — daemon exiting"
+                    );
+                    std::process::exit(0);
                 }
                 return Err(CaptureError::EventTapDisabled);
             }
@@ -518,14 +562,34 @@ fn create_event_tap<'a>(
         } else if matches!(event_type, CGEventType::MouseMoved) {
             // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
-                capture_position = Some(new_pos);
-                state
-                    .start_capture(cg_ev, new_pos)
-                    .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
-                notify_tx
-                    .blocking_send(ProducerEvent::Grab(new_pos))
-                    .expect("Failed to send notification");
+                // About to commit the cross — final gate: skip if the
+                // host is locked, since the lock screen consumes
+                // keyboard before our tap sees it and allowing the
+                // cursor to leave would produce a mouse-only-on-peer
+                // half-broken state. Polling CGSession only at this
+                // commit point (rather than every MouseMoved) keeps
+                // the per-event cost zero — `is_screen_locked()` is
+                // an XPC to WindowServer (~10–50µs); a typical user
+                // crosses a wall a few times per minute.
+                if is_screen_locked() {
+                    log::info!("host screen locked; suppressing cross to {new_pos:?}");
+                } else {
+                    capture_position = Some(new_pos);
+                    // Snapshot the cursor's screen-space position at the
+                    // instant of crossing — before start_capture's
+                    // reset_cursor() snaps it to the edge. The peer uses
+                    // this for the visually-corresponding warp on Enter
+                    // so the cursor doesn't jump to the entry-edge midpoint.
+                    let cross_loc = cg_ev.location();
+                    let cursor = Some((cross_loc.x as i32, cross_loc.y as i32));
+                    state
+                        .start_capture(cg_ev, new_pos)
+                        .unwrap_or_else(|e| log::warn!("{e}"));
+                    res_events.push(CaptureEvent::Begin { cursor });
+                    notify_tx
+                        .blocking_send(ProducerEvent::Grab(new_pos))
+                        .expect("Failed to send notification");
+                }
             }
         }
 
@@ -600,13 +664,46 @@ fn event_tap_thread(
     // callback runs on this thread's CFRunLoop. Box-leak the sender
     // so the C side has a stable user_info pointer; reclaim it after
     // the run loop exits.
-    let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
+    let display_user_info = Box::into_raw(Box::new(display_notify_tx.clone())) as *mut c_void;
     unsafe {
         CGDisplayRegisterReconfigurationCallback(
             display_reconfiguration_callback,
             display_user_info,
         );
     }
+
+    // Also subscribe to system-power events so we recover from
+    // sleep/wake, where the Quartz reconfigure callback may not
+    // fire (or fires before our run loop is processing again, e.g.
+    // clamshell-disconnect → lid-open). On wake we send the same
+    // DisplayReconfigured event the existing handler consumes, so
+    // bounds get refreshed for free.
+    let mut power_notifier_object: u32 = 0;
+    let mut power_notification_port: *mut c_void = std::ptr::null_mut();
+    let power_ctx = Box::into_raw(Box::new(PowerCtx {
+        sender: display_notify_tx,
+        root_port: 0,
+    }));
+    let power_root_port = unsafe {
+        let port = IORegisterForSystemPower(
+            power_ctx as *mut c_void,
+            &mut power_notification_port,
+            power_callback,
+            &mut power_notifier_object,
+        );
+        // Stash the root port for the callback's IOAllowPowerChange
+        // ack — we couldn't know it at Box-construction time because
+        // it's the registration's return value.
+        (*power_ctx).root_port = port;
+        if !power_notification_port.is_null() {
+            let src_ref = IONotificationPortGetRunLoopSource(power_notification_port);
+            if !src_ref.is_null() {
+                let src = CFRunLoopSource::wrap_under_get_rule(src_ref);
+                CFRunLoop::get_current().add_source(&src, kCFRunLoopCommonModes);
+            }
+        }
+        port
+    };
 
     log::debug!("running CFRunLoop...");
     CFRunLoop::run_current();
@@ -619,9 +716,108 @@ fn event_tap_thread(
         drop(Box::from_raw(
             display_user_info as *mut Sender<ProducerEvent>,
         ));
+
+        if power_notifier_object != 0 {
+            let _ = IODeregisterForSystemPower(&mut power_notifier_object);
+        }
+        if !power_notification_port.is_null() {
+            IONotificationPortDestroy(power_notification_port);
+        }
+        let _ = power_root_port;
+        drop(Box::from_raw(power_ctx));
     }
 
     let _ = exit.send(());
+}
+
+/// Query whether the host's screen is locked. Asks the WindowServer
+/// for the current login session dictionary and looks up the
+/// `CGSSessionScreenIsLocked` key. The key is `kCFBooleanTrue` when
+/// locked; on Sequoia 15+ it's typically absent when unlocked rather
+/// than `kCFBooleanFalse`, so missing-or-nil is treated as unlocked.
+/// Costs ~10–50µs per call (an XPC round-trip to WindowServer);
+/// called from the event tap callback only on `MouseMoved`, so the
+/// amortized cost is negligible (<2% CPU at typical mouse rates).
+fn is_screen_locked() -> bool {
+    let key = unsafe {
+        let cstr = CString::new("CGSSessionScreenIsLocked").unwrap();
+        CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            cstr.as_ptr() as *const c_char,
+            kCFStringEncodingUTF8,
+        )
+    };
+    let dict = unsafe { CGSessionCopyCurrentDictionary() };
+    if dict.is_null() {
+        unsafe { CFRelease(key as *const c_void) };
+        return false;
+    }
+    let value = unsafe { CFDictionaryGetValue(dict, key as *const c_void) };
+    let locked = !value.is_null() && unsafe { CFBooleanGetValue(value as CFBooleanRef) };
+    unsafe {
+        CFRelease(dict as *const c_void);
+        CFRelease(key as *const c_void);
+    }
+    locked
+}
+
+/// Refcon for the IOKit system-power callback. Bundles the channel
+/// sender (so the callback can post `DisplayReconfigured` on wake)
+/// and the `io_connect_t` root port (so the callback can ack
+/// sleep-related messages with `IOAllowPowerChange`). Built on the
+/// event-tap thread, used only by the callback on the same thread —
+/// never crosses thread boundaries, so no Send/Sync needed.
+struct PowerCtx {
+    sender: Sender<ProducerEvent>,
+    root_port: u32,
+}
+
+/// IOKit system-power callback. Fires for every power-management
+/// transition (CanSleep, WillSleep, WillPowerOn, HasPoweredOn).
+/// We only care about `kIOMessageSystemHasPoweredOn` (post-wake);
+/// for the sleep-pending messages we just ack so the kernel doesn't
+/// hold the system in its "waiting for clients" state for the full
+/// 30-second timeout.
+extern "C" fn power_callback(
+    refcon: *mut c_void,
+    _service: u32,
+    msg_type: u32,
+    msg_arg: *mut c_void,
+) {
+    const K_IO_MESSAGE_CAN_SYSTEM_SLEEP: u32 = 0xE000_0270;
+    const K_IO_MESSAGE_SYSTEM_WILL_SLEEP: u32 = 0xE000_0280;
+    const K_IO_MESSAGE_SYSTEM_HAS_POWERED_ON: u32 = 0xE000_0300;
+
+    if refcon.is_null() {
+        return;
+    }
+    // SAFETY: `refcon` is `Box::into_raw(Box::new(PowerCtx))` owned by
+    // `event_tap_thread`; valid until the run loop exits and the box
+    // is reclaimed. The callback only fires while the run loop runs
+    // on that thread, so the box is live here.
+    let ctx = unsafe { &*(refcon as *const PowerCtx) };
+    match msg_type {
+        K_IO_MESSAGE_CAN_SYSTEM_SLEEP | K_IO_MESSAGE_SYSTEM_WILL_SLEEP => {
+            // Ack so the OS doesn't stall on its 30s default timeout.
+            // `msg_arg` carries the notification ID (an `intptr_t`);
+            // pass it through verbatim.
+            unsafe {
+                IOAllowPowerChange(ctx.root_port, msg_arg as isize);
+            }
+        }
+        K_IO_MESSAGE_SYSTEM_HAS_POWERED_ON => {
+            // Bounce a DisplayReconfigured into the producer so
+            // `update_bounds()` runs. Covers the case where Quartz's
+            // own reconfigure callback didn't fire (or fired during
+            // the sleep window) — e.g. clamshell-disconnect →
+            // lid-open transitions.
+            log::info!("system woke from sleep; refreshing display bounds");
+            if let Err(e) = ctx.sender.blocking_send(ProducerEvent::DisplayReconfigured) {
+                log::warn!("failed to post wake → DisplayReconfigured: {e}");
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Quartz display-reconfiguration callback. Fires twice per change:
@@ -772,17 +968,66 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
-    async fn release(&mut self) -> Result<(), CaptureError> {
+    async fn release(&mut self, warp_target: Option<(i32, i32)>) -> Result<(), CaptureError> {
+        log::info!("[release-warp] macOS backend release(warp_target={warp_target:?})");
         let notify_tx = self.notify_tx.clone();
         tokio::task::spawn_local(async move {
             log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
+            let _ = notify_tx.send(ProducerEvent::Release { warp_target }).await;
         });
         Ok(())
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn display_bounds(&self) -> Option<(u32, u32)> {
+        // Mirror the InputEmulation-side implementation: the union of
+        // every active display's rectangle, in points (which match
+        // the units used by CGEvent.location() so the
+        // MotionAbsolute math stays internally consistent).
+        let displays = CGDisplay::active_displays().ok()?;
+        let mut xmin = f64::INFINITY;
+        let mut xmax = f64::NEG_INFINITY;
+        let mut ymin = f64::INFINITY;
+        let mut ymax = f64::NEG_INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            xmax = xmax.max(bounds.origin.x + bounds.size.width);
+            ymin = ymin.min(bounds.origin.y);
+            ymax = ymax.max(bounds.origin.y + bounds.size.height);
+        }
+        if xmax <= xmin || ymax <= ymin {
+            return None;
+        }
+        Some(((xmax - xmin) as u32, (ymax - ymin) as u32))
+    }
+
+    fn display_origin(&self) -> (i32, i32) {
+        // Top-left of the union of all active displays. Matters when
+        // a secondary monitor is positioned LEFT of (or ABOVE) the
+        // primary — the global pointer-coordinate system is anchored
+        // at the primary's top-left, so a left-attached external
+        // gives cursor x ∈ [-w, 0). Without this offset,
+        // host_normalized_cursor / peer_warp_target's clamp(0, 1)
+        // silently maps every point on the external to "left edge"
+        // and the receiver warps to the wrong column.
+        let Ok(displays) = CGDisplay::active_displays() else {
+            return (0, 0);
+        };
+        let mut xmin = f64::INFINITY;
+        let mut ymin = f64::INFINITY;
+        for id in displays {
+            let bounds = CGDisplay::new(id).bounds();
+            xmin = xmin.min(bounds.origin.x);
+            ymin = ymin.min(bounds.origin.y);
+        }
+        if xmin.is_infinite() || ymin.is_infinite() {
+            return (0, 0);
+        }
+        (xmin as i32, ymin as i32)
     }
 }
 
@@ -810,6 +1055,19 @@ extern "C" {
     fn _CGSDefaultConnection() -> CGSConnectionID;
 }
 
+type CFDictionaryRef = *mut c_void;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFDictionaryGetValue(dict: CFDictionaryRef, key: *const c_void) -> *const c_void;
+    fn CFBooleanGetValue(boolean: CFBooleanRef) -> bool;
+}
+
 extern "C" {
     fn CGEventSourceSetLocalEventsSuppressionInterval(
         event_source: CGEventSource,
@@ -834,6 +1092,31 @@ extern "C" {
         callback: extern "C" fn(u32, u32, *mut c_void),
         user_info: *mut c_void,
     ) -> CGError;
+}
+
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    /// Register the calling process for system-power notifications.
+    /// Returns the `io_connect_t` root power port (used later in
+    /// `IOAllowPowerChange` to ack sleep-related messages) and writes
+    /// the notification port + an `io_object_t` notifier through the
+    /// out-pointers. The returned notification port carries a
+    /// CFRunLoopSource we attach to this thread's run loop so the
+    /// callback fires inline with the existing event-tap loop.
+    fn IORegisterForSystemPower(
+        refcon: *mut c_void,
+        port_ref: *mut *mut c_void,
+        callback: extern "C" fn(*mut c_void, u32, u32, *mut c_void),
+        notifier: *mut u32,
+    ) -> u32;
+    fn IODeregisterForSystemPower(notifier: *mut u32) -> i32;
+    fn IONotificationPortGetRunLoopSource(notify: *mut c_void) -> CFRunLoopSourceRef;
+    fn IONotificationPortDestroy(notify: *mut c_void);
+    /// Ack a kIOMessageCanSystemSleep / kIOMessageSystemWillSleep so
+    /// the OS doesn't stall on its 30s default timeout waiting for us.
+    /// Required even when we have no objection — silence is treated as
+    /// "still thinking" by the kernel.
+    fn IOAllowPowerChange(kernel_port: u32, notification_id: isize) -> i32;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
