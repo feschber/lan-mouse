@@ -137,36 +137,41 @@ impl ClipboardMonitor {
                             } else {
                                 is_suppressed(&suppression_clone2)
                             };
+                            // Always advance `last_content` after
+                            // a content change, even when we drop
+                            // the event. The earlier "blind to
+                            // suppressed value" approach left
+                            // `last_content` at the previous
+                            // emitted value, which made every
+                            // subsequent 500ms poll see the SAME
+                            // suppressed content as "changed" and
+                            // re-run the suppression check. Any
+                            // focus shift between polls (user
+                            // alt-tabs after copying a password)
+                            // would then find a non-suppressed
+                            // frontmost and leak the password.
+                            // Advancing `last_content` here
+                            // converts the change-detection event
+                            // into a single decision point — the
+                            // suppressed value is "consumed" and
+                            // we wait for the NEXT actual clipboard
+                            // change before deciding again.
+                            *last_content = Some(current_text.clone());
+                            *last_change = Some(Instant::now());
                             if concealed {
                                 log::debug!(
                                     "clipboard change suppressed (concealed pasteboard type)"
                                 );
-                                // Same blind-to-suppressed-value rule
-                                // as the app-list path below.
                             } else if let Some(app) = suppressed {
                                 log::debug!(
                                     "clipboard change suppressed (frontmost app `{}`)",
                                     app.label()
                                 );
-                                // Intentionally NOT updating
-                                // last_content / last_change. If
-                                // the user later copies a non-
-                                // suppressed value followed by the
-                                // same suppressed text, we still
-                                // want the non-suppressed copy to
-                                // emit and the suppressed re-copy
-                                // to be re-evaluated (and re-
-                                // suppressed) — keeping
-                                // last_content "blind" to the
-                                // suppressed value preserves that.
                             } else {
                                 log::info!(
                                     "Clipboard changed, length: {} bytes",
                                     current_text.len()
                                 );
-                                *last_content = Some(current_text.clone());
-                                *last_change = Some(Instant::now());
-
                                 // Send event
                                 let event = CaptureEvent::Input(Event::Clipboard(
                                     ClipboardEvent::Text(current_text),
@@ -252,12 +257,22 @@ fn is_concealed_clipboard() -> bool {
 /// out to hyprctl/swaymsg).
 fn is_suppressed(list: &SuppressionList) -> Option<AppIdent> {
     let snapshot: Vec<AppIdent> = {
-        let guard = list.lock().ok()?;
+        let Ok(guard) = list.lock() else {
+            log::debug!("clipboard suppression: lock poisoned");
+            return None;
+        };
         if guard.is_empty() {
+            log::debug!("clipboard suppression: list is empty");
             return None;
         }
         guard.iter().cloned().collect()
     };
-    let active = frontmost_app::frontmost_app()?;
+    let active = frontmost_app::frontmost_app();
+    log::debug!(
+        "clipboard suppression check: list={:?} active={:?}",
+        snapshot,
+        active
+    );
+    let active = active?;
     snapshot.into_iter().find(|s| s.matches(&active))
 }
