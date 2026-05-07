@@ -344,40 +344,33 @@ UI for managing the suppression list. Modal dialog mirrors
 (All sign-offs done as of plan creation. Section is intentionally empty;
 re-add here if anything comes up during implementation.)
 
-## macOS TODOs (deferred to a follow-up build pass on a Mac)
+## macOS TODOs — DONE
 
-Phase 4 landed Linux (Hyprland + Sway + X11) and Windows
-implementations of `frontmost_app::frontmost_app()` /
-`list_running_apps()`. macOS is currently a stub returning
-`None` / `Vec::new()`. To finish:
+All three deferred macOS items now implemented via `objc2` +
+`objc2-app-kit`:
 
-1. **Frontmost app**:
-   `NSWorkspace.frontmostApplication.bundleIdentifier`. Either pull
-   in `objc2` + `objc2-app-kit` (clean Rust bindings, ~10 LOC)
-   or shell out to:
-   ```sh
-   osascript -e 'tell application "System Events" to get bundle identifier of first application process whose frontmost is true'
-   ```
-   The shell-out has ~50ms latency — fine for the 500ms clipboard
-   poll. The bindings approach is preferred if we expect concealed-
-   type detection too (next bullet).
+1. **Frontmost app** —
+   `input-capture/src/frontmost_app.rs::backend::frontmost_app`
+   calls `NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier`
+   and wraps the result in `AppIdent::MacBundle`.
 
-2. **Running apps**:
-   `NSWorkspace.runningApplications` map → bundle IDs.
+2. **Running apps** —
+   `input-capture/src/frontmost_app.rs::backend::list_running_apps`
+   iterates `NSWorkspace.runningApplications` and emits one
+   `AppIdent::MacBundle` per app that exposes a bundle identifier
+   (sorted, deduped).
 
-3. **Concealed-type auto-suppression**:
-   `NSPasteboard.generalPasteboard.types` checking for
-   `org.nspasteboard.ConcealedType` UTI. Layer this on top of the
-   user-maintained suppression list; when present, drop the change
-   without consulting the list (and without
-   `update_last_content`). Same Objective-C bridge as #1, so worth
-   doing in the same patch.
+3. **Concealed-type auto-suppression** —
+   `input-capture/src/clipboard.rs::is_concealed_clipboard` checks
+   `NSPasteboard.generalPasteboard.types` for the
+   `org.nspasteboard.ConcealedType` UTI and short-circuits the
+   `ClipboardMonitor` change-detection loop when found, without
+   updating `last_content` (preserving the "blind to suppressed"
+   property described in Phase 4).
 
-The bundle of changes lives in `input-capture/src/frontmost_app.rs`
-under `#[cfg(target_os = "macos")]`. The user-maintained list +
-manual entry already work cross-platform, so macOS users can still
-exercise the feature today by typing bundle IDs into the manual
-entry tab — the auto-detect is the missing piece.
+`objc2-app-kit` is already pulled in transitively by `arboard`, so
+the new direct deps in `input-capture/Cargo.toml` (`objc2`,
+`objc2-app-kit`, `objc2-foundation`) don't grow the dep graph.
 
 ## Reference links
 

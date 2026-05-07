@@ -81,9 +81,9 @@ pub struct Window {
     /// the SuppressedAppsUpdated event handler regardless of
     /// whether the window is currently presented.
     pub clipboard_privacy_window: RefCell<Option<ClipboardPrivacyWindow>>,
-    /// Latest server-confirmed suppression list. Cached so the
-    /// main-window subtitle stays in sync without re-querying.
-    pub suppressed_apps: RefCell<Vec<lan_mouse_ipc::AppIdent>>,
+    /// Latest server-confirmed host-OS suppression list. Cached so
+    /// the main-window subtitle stays in sync without re-querying.
+    pub suppressed_apps: RefCell<Vec<String>>,
 }
 
 #[glib::object_subclass]

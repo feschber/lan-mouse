@@ -58,34 +58,12 @@
                       </object>
                     </child>
                     <child>
-                      <object class="AdwPreferencesGroup">
+                      <object class="AdwPreferencesGroup" id="add_group">
                         <property name="title" translatable="yes">Add an App</property>
-                        <property name="description" translatable="yes">Pick the platform identifier shape, enter the value, and confirm. Use lowercase identifiers — match is case-insensitive within a kind.</property>
                         <child>
-                          <object class="AdwComboRow" id="kind_row">
-                            <property name="title" translatable="yes">Identifier Kind</property>
-                            <property name="model">
-                              <object class="GtkStringList">
-                                <items>
-                                  <item>macOS bundle (com.example.app)</item>
-                                  <item>Windows exe (example.exe)</item>
-                                  <item>X11 WM_CLASS (example)</item>
-                                  <item>Wayland app_id (org.example.App)</item>
-                                </items>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Identifier</property>
-                            <child type="suffix">
-                              <object class="GtkEntry" id="value_entry">
-                                <property name="valign">center</property>
-                                <property name="hexpand">true</property>
-                                <property name="placeholder-text" translatable="yes">e.g. com.1password.1password7</property>
-                              </object>
-                            </child>
+                          <object class="AdwComboRow" id="app_picker">
+                            <property name="title" translatable="yes">Running App</property>
+                            <property name="enable-search">true</property>
                           </object>
                         </child>
                         <child>

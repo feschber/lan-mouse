@@ -62,6 +62,12 @@ core-foundation-sys = "0.8.6"
 libc = "0.2.155"
 keycode = "1.0.0"
 bitflags = "2.6.0"
+# Used by `frontmost_app::macos` and `clipboard::is_concealed_clipboard`
+# to call NSWorkspace / NSPasteboard. Already pulled in transitively
+# via arboard, so listed here as direct deps.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSPasteboard", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSData", "NSDictionary", "NSGeometry", "NSURL"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.2", features = [

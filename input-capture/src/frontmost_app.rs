@@ -14,32 +14,21 @@
 //!
 //! # macOS
 //!
-//! `frontmost_app()` and `list_running_apps()` are currently stubs
-//! that return `None` / `Vec::new()`. A proper implementation needs
-//! to call into AppKit:
+//! Implemented via `objc2-app-kit` against `NSWorkspace`:
 //!
-//! - `NSWorkspace.frontmostApplication.bundleIdentifier` →
-//!   `Some(AppIdent::MacBundle(...))`
-//! - `NSWorkspace.runningApplications` → list
+//! - `frontmost_app()` →
+//!   `NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier`
+//!   wrapped in `AppIdent::MacBundle`.
+//! - `list_running_apps()` →
+//!   `NSWorkspace.runningApplications` map → bundle ID. Apps with
+//!   no bundle ID (anonymous helpers) are skipped.
 //!
-//! Either pull in `objc2` + `objc2-app-kit` and call the bindings
-//! directly, or shell out to `osascript` (`tell application
-//! "System Events" to get bundle identifier of first application
-//! process whose frontmost is true`). The shell-out path avoids new
-//! deps but is comparatively slow (~50ms) — fine for clipboard's
-//! 500ms poll cadence. Until either lands, manual entries in the
-//! suppression list are the way to suppress on macOS.
-//!
-//! # Concealed-type detection (macOS only, also TODO)
-//!
-//! macOS password managers stamp `org.nspasteboard.ConcealedType`
-//! on the pasteboard so apps can voluntarily skip syncing
-//! passwords. Reading that requires
-//! `NSPasteboard.generalPasteboard.types`, which lives behind the
-//! same Objective-C bridge as the bundle-id lookup above. Implement
-//! both at the same time.
+//! Concealed-type pasteboard detection lives in
+//! [`crate::clipboard`] (`is_concealed_clipboard`) and uses the
+//! same objc bridge to check `NSPasteboard.types` for
+//! `org.nspasteboard.ConcealedType`.
 
-use lan_mouse_ipc::AppIdent;
+use lan_mouse_ipc::{AppIdent, RunningApp};
 
 /// Helpers used by the platform-specific backends and exercised in
 /// unit tests. Lives at module scope (rather than inside a
@@ -68,11 +57,27 @@ pub fn frontmost_app() -> Option<AppIdent> {
 }
 
 /// Best-effort enumeration of currently-running apps suitable for
-/// the suppression-list "From running apps" UI tab. Empty when the
-/// platform doesn't implement enumeration yet — the manual-entry
-/// tab still works, so the feature remains usable.
-pub fn list_running_apps() -> Vec<AppIdent> {
+/// the suppression-list picker. Each entry pairs a human-readable
+/// display name with the host-OS identifier used by the runtime
+/// suppression check. Empty when the platform can't enumerate
+/// (no compositor support, missing permissions, transient race).
+pub fn list_running_apps() -> Vec<RunningApp> {
     backend::list_running_apps()
+}
+
+/// Resolve a host-OS identifier (e.g. macOS bundle ID) into a
+/// `RunningApp` with display name + icon, even when the app isn't
+/// currently running. Used by the GUI to render the suppressed-
+/// apps list — the user added entries by bundle ID and we want to
+/// show "1Password" with the 1Password icon, not the raw
+/// `com.1password.1password` string.
+///
+/// Returns `None` when the identifier doesn't resolve to an
+/// installed app (e.g. uninstalled since being added) or on
+/// platforms without a per-platform implementation. Callers
+/// should fall back to displaying the identifier verbatim.
+pub fn lookup_app_metadata(identifier: &str) -> Option<RunningApp> {
+    backend::lookup_app_metadata(identifier)
 }
 
 #[cfg(test)]
@@ -108,24 +113,225 @@ mod tests {
 
 #[cfg(target_os = "macos")]
 mod backend {
-    use super::AppIdent;
+    use super::{AppIdent, RunningApp};
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSWorkspace,
+    };
+    use objc2_foundation::{NSDictionary, NSString};
+    use std::collections::HashMap;
+    use std::process::Command;
+    use std::sync::{Mutex, OnceLock};
 
     pub fn frontmost_app() -> Option<AppIdent> {
-        // TODO(macOS): NSWorkspace.frontmostApplication.bundleIdentifier
-        // via objc2-app-kit. See module-level docs.
-        None
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app = workspace.frontmostApplication()?;
+        let bundle_id = app.bundleIdentifier()?;
+        Some(AppIdent::MacBundle(bundle_id.to_string()))
     }
 
-    pub fn list_running_apps() -> Vec<AppIdent> {
-        // TODO(macOS): NSWorkspace.runningApplications via
-        // objc2-app-kit. See module-level docs.
-        Vec::new()
+    /// Enumerate user-visible apps via `osascript` → System Events.
+    ///
+    /// Three direct AppKit APIs all silently scope to the caller's
+    /// loginwindow / Aqua session — a non-Cocoa GTK process running
+    /// as the .app's main process does NOT have a full session, so
+    /// `NSWorkspace.runningApplications`, `NSRunningApplication
+    /// .runningApplicationWithProcessIdentifier`, and
+    /// `CGWindowListCopyWindowInfo` only return apps with which
+    /// our process happens to share a Mach connection (XPC services
+    /// we use, accessibility agents, recently-activated panes,
+    /// pasteboard peers). Real Cocoa apps the user is using stay
+    /// invisible.
+    ///
+    /// System Events is itself fully session-attached and returns
+    /// the complete process list. We talk to it through the
+    /// already-permissioned Apple Events channel
+    /// (`NSAppleEventsUsageDescription` is declared, the user has
+    /// already granted automation control for input emulation).
+    /// The script returns one tab-separated row per visible app:
+    /// `bundle_id\tposix_path\tname`. Helpers / XPC services /
+    /// preference-pane extensions are excluded by System Events'
+    /// own definition of `background only is false`.
+    pub fn list_running_apps() -> Vec<RunningApp> {
+        let raw = match query_visible_apps_via_system_events() {
+            Some(s) => s,
+            None => {
+                log::debug!("list_running_apps: System Events query failed");
+                return Vec::new();
+            }
+        };
+        let mut out: Vec<RunningApp> = Vec::with_capacity(32);
+        for line in raw.lines() {
+            let mut parts = line.splitn(3, '\t');
+            let identifier = parts.next().unwrap_or("").trim();
+            let path = parts.next().unwrap_or("").trim();
+            let display_name = parts.next().unwrap_or("").trim();
+            if identifier.is_empty() || path.is_empty() || display_name.is_empty() {
+                continue;
+            }
+            // Hide our own bundle — suppressing your own clipboard
+            // app makes no sense (we ARE the clipboard sender).
+            if identifier == "de.feschber.LanMouse" {
+                continue;
+            }
+            let icon_png = cached_or_encoded_icon(identifier, path);
+            out.push(RunningApp {
+                display_name: display_name.to_owned(),
+                identifier: identifier.to_owned(),
+                icon_png,
+            });
+        }
+        out.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        out.dedup_by(|a, b| a.identifier == b.identifier);
+        log::debug!("list_running_apps: {} visible apps via System Events", out.len());
+        out
     }
+
+    /// Spawn `osascript` with an inline AppleScript that asks
+    /// System Events for every non-background process and returns
+    /// `bundle_id\tposix_path\tname` per line. Inner try-catches
+    /// silently skip processes whose bundle ID or file we can't
+    /// resolve (rare system processes), so the result is always
+    /// well-formed. Returns `None` only if osascript itself fails
+    /// — typically because the user hasn't granted Apple Events
+    /// permission yet, in which case the picker stays empty until
+    /// they accept the system prompt.
+    fn query_visible_apps_via_system_events() -> Option<String> {
+        const SCRIPT: &str = r#"
+tell application "System Events"
+    set out to ""
+    try
+        set procs to (every process where background only is false)
+        repeat with p in procs
+            try
+                set bid to bundle identifier of p
+                set fp to POSIX path of ((file of p) as alias)
+                set nm to name of p
+                set out to out & bid & tab & fp & tab & nm & linefeed
+            end try
+        end repeat
+    end try
+    return out
+end tell
+"#;
+        let output = Command::new("/usr/bin/osascript")
+            .args(["-e", SCRIPT])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            log::debug!(
+                "osascript failed (exit {:?}): {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return None;
+        }
+        String::from_utf8(output.stdout).ok()
+    }
+
+    /// Cache PNG icon bytes by bundle identifier. The 5-second
+    /// auto-refresh would otherwise re-encode every icon on every
+    /// tick, which adds up to tens of milliseconds of main-thread
+    /// work per refresh. Icons rarely change while an app is
+    /// running, so caching by bundle ID is a clean trade.
+    fn cached_or_encoded_icon(bundle_id: &str, app_path: &str) -> Option<Vec<u8>> {
+        static CACHE: OnceLock<Mutex<HashMap<String, Option<Vec<u8>>>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        if let Ok(guard) = cache.lock() {
+            if let Some(hit) = guard.get(bundle_id) {
+                return hit.clone();
+            }
+        }
+        let png = encode_icon_for_app_path(app_path);
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(bundle_id.to_owned(), png.clone());
+        }
+        png
+    }
+
+    fn encode_icon_for_app_path(app_path: &str) -> Option<Vec<u8>> {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let path_str = NSString::from_str(app_path);
+        let icon = workspace.iconForFile(&path_str);
+        encode_nsimage_to_small_png(&icon)
+    }
+
+    /// Look up display name + icon for an installed app by bundle
+    /// ID, even if it's not currently running. Uses Launch
+    /// Services (`URLForApplicationWithBundleIdentifier`) to find
+    /// the .app's path on disk, then derives the display name from
+    /// the bundle's file name (`/Applications/1Password.app` →
+    /// `1Password`) and loads its icon via `iconForFile:`. Both
+    /// APIs are path-based and session-independent.
+    pub(super) fn lookup_app_metadata(identifier: &str) -> Option<RunningApp> {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let bid_str = NSString::from_str(identifier);
+        let url = unsafe { workspace.URLForApplicationWithBundleIdentifier(&bid_str) }?;
+        let path_ns = url.path()?;
+        let path_str = path_ns.to_string();
+        let display_name = std::path::Path::new(&path_str)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(String::from)
+            .unwrap_or_else(|| identifier.to_owned());
+        let icon_png = cached_or_encoded_icon(identifier, &path_str);
+        Some(RunningApp {
+            display_name,
+            identifier: identifier.to_owned(),
+            icon_png,
+        })
+    }
+
+    fn encode_nsimage_to_small_png(icon: &NSImage) -> Option<Vec<u8>> {
+        // Pick the rep that's closest-but-no-smaller than 64 px.
+        // .icns files typically include 16/32/64/128/256/512/1024;
+        // anything bigger ships hundreds of KB of PNG over IPC for
+        // no display benefit.
+        let target_px: f64 = 64.0;
+        let reps = icon.representations();
+        let mut best_idx: Option<usize> = None;
+        let mut best_w: f64 = f64::INFINITY;
+        for (i, rep) in reps.iter().enumerate() {
+            let w = rep.size().width;
+            if w >= target_px && w < best_w {
+                best_idx = Some(i);
+                best_w = w;
+            }
+        }
+        if best_idx.is_none() {
+            let mut max_w: f64 = 0.0;
+            for (i, rep) in reps.iter().enumerate() {
+                let w = rep.size().width;
+                if w > max_w {
+                    best_idx = Some(i);
+                    max_w = w;
+                }
+            }
+        }
+        let bitmap_rep = if let Some(i) = best_idx {
+            reps.objectAtIndex(i)
+                .downcast::<NSBitmapImageRep>()
+                .ok()
+                .or_else(|| {
+                    let tiff = icon.TIFFRepresentation()?;
+                    NSBitmapImageRep::imageRepWithData(&tiff)
+                })
+        } else {
+            let tiff = icon.TIFFRepresentation()?;
+            NSBitmapImageRep::imageRepWithData(&tiff)
+        }?;
+        let empty = NSDictionary::<NSString>::dictionary();
+        let png = unsafe {
+            bitmap_rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &empty)
+        }?;
+        let bytes = unsafe { png.as_bytes_unchecked() };
+        Some(bytes.to_vec())
+    }
+
 }
 
 #[cfg(windows)]
 mod backend {
-    use super::AppIdent;
+    use super::{AppIdent, RunningApp};
     use windows::Win32::Foundation::{CloseHandle, FALSE, HWND};
     use windows::Win32::System::Threading::{
         OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -172,7 +378,7 @@ mod backend {
         }
     }
 
-    pub fn list_running_apps() -> Vec<AppIdent> {
+    pub fn list_running_apps() -> Vec<RunningApp> {
         // Walk every visible top-level window, dedup by process
         // basename. Closures captured via LPARAM pointer to a Vec.
         let mut basenames: Vec<String> = Vec::new();
@@ -199,16 +405,27 @@ mod backend {
                 LPARAM(&mut basenames as *mut _ as isize),
             );
         }
-        basenames
+        let mut out: Vec<RunningApp> = basenames
             .into_iter()
-            .map(AppIdent::WindowsExe)
-            .collect()
+            .map(|name| RunningApp {
+                display_name: name.clone(),
+                identifier: name,
+                icon_png: None,
+            })
+            .collect();
+        out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        out
+    }
+
+    pub(super) fn lookup_app_metadata(_identifier: &str) -> Option<RunningApp> {
+        // No installed-app metadata source on Windows yet.
+        None
     }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 mod backend {
-    use super::AppIdent;
+    use super::{AppIdent, RunningApp};
     use std::process::Command;
 
     /// Detect compositor flavor via env vars. Wayland sessions set
@@ -230,31 +447,39 @@ mod backend {
         }
     }
 
-    pub fn list_running_apps() -> Vec<AppIdent> {
-        if is_wayland() {
+    pub fn list_running_apps() -> Vec<RunningApp> {
+        let mut idents: Vec<String> = if is_wayland() {
             // Hyprland's `clients -j` returns every mapped client;
             // sway's `get_tree` returns the whole tree. Either way
             // we extract `class` / `app_id`, dedup, and sort for
             // stable display in the GUI.
-            let mut idents: Vec<String> = hyprland_clients()
+            hyprland_clients()
                 .into_iter()
                 .chain(sway_clients())
-                .collect();
-            idents.sort();
-            idents.dedup();
-            idents
-                .into_iter()
-                .map(|s| AppIdent::LinuxWayland(s.to_lowercase()))
                 .collect()
         } else {
-            let mut classes = x11_client_list();
-            classes.sort();
-            classes.dedup();
-            classes
-                .into_iter()
-                .map(|s| AppIdent::LinuxX11(s.to_lowercase()))
-                .collect()
-        }
+            x11_client_list()
+        };
+        idents.sort();
+        idents.dedup();
+        idents
+            .into_iter()
+            .map(|s| {
+                let lower = s.to_lowercase();
+                RunningApp {
+                    display_name: s,
+                    identifier: lower,
+                    icon_png: None,
+                }
+            })
+            .collect()
+    }
+
+    pub(super) fn lookup_app_metadata(_identifier: &str) -> Option<RunningApp> {
+        // No installed-app metadata source on Linux yet — would
+        // need to scan .desktop files. Falls back to displaying
+        // the raw app_id / WM_CLASS.
+        None
     }
 
     fn run_capture(cmd: &str, args: &[&str]) -> Option<String> {

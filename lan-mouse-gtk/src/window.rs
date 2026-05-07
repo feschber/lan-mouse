@@ -11,13 +11,13 @@ use gtk::{
 };
 
 use lan_mouse_ipc::{
-    AppIdent, ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest,
-    FrontendRequestWriter, Position,
+    ClientConfig, ClientHandle, ClientState, DEFAULT_PORT, FrontendRequest, FrontendRequestWriter,
+    Position,
 };
 
 use crate::{
     authorization_window::AuthorizationWindow,
-    clipboard_privacy_window::{ClipboardPrivacyWindow, pair_to_app_ident},
+    clipboard_privacy_window::ClipboardPrivacyWindow,
     fingerprint_window::FingerprintWindow,
     key_object::KeyObject,
     key_row::KeyRow,
@@ -495,9 +495,19 @@ impl Window {
         self.request(FrontendRequest::SetMdnsDiscovery(enabled));
     }
 
-    /// Replace the cached suppression list and update both the
-    /// main-window subtitle and the modal (if open).
-    pub(super) fn set_suppressed_apps(&self, apps: Vec<AppIdent>) {
+    /// Forward the daemon's running-apps snapshot to the modal (if
+    /// it's been created). No-op when the user hasn't opened the
+    /// privacy window yet, since the picker is built lazily.
+    pub(super) fn set_running_apps(&self, apps: Vec<lan_mouse_ipc::RunningApp>) {
+        if let Some(window) = self.imp().clipboard_privacy_window.borrow().as_ref() {
+            window.set_running_apps(apps);
+        }
+    }
+
+    /// Replace the cached suppression list (host-OS strings) and
+    /// update both the main-window subtitle and the modal (if
+    /// open).
+    pub(super) fn set_suppressed_apps(&self, apps: Vec<String>) {
         let imp = self.imp();
         imp.suppressed_apps.replace(apps.clone());
         let count = apps.len();
@@ -534,10 +544,8 @@ impl Window {
                 closure_local!(
                     #[strong(rename_to = parent)]
                     self,
-                    move |_w: ClipboardPrivacyWindow, kind: u32, value: String| {
-                        parent.request(FrontendRequest::AddSuppressedApp(pair_to_app_ident(
-                            kind, value,
-                        )));
+                    move |_w: ClipboardPrivacyWindow, value: String| {
+                        parent.request(FrontendRequest::AddSuppressedApp(value));
                     }
                 ),
             );
@@ -547,19 +555,47 @@ impl Window {
                 closure_local!(
                     #[strong(rename_to = parent)]
                     self,
-                    move |_w: ClipboardPrivacyWindow, kind: u32, value: String| {
-                        parent.request(FrontendRequest::RemoveSuppressedApp(
-                            pair_to_app_ident(kind, value),
-                        ));
+                    move |_w: ClipboardPrivacyWindow, value: String| {
+                        parent.request(FrontendRequest::RemoveSuppressedApp(value));
                     }
                 ),
             );
             window.set_apps(imp.suppressed_apps.borrow().clone());
+            // The daemon (a forked LSUIElement child) can't see
+            // other apps via NSWorkspace / NSRunningApplication —
+            // those APIs are scoped to the caller's loginwindow
+            // session and the daemon doesn't fully inherit one.
+            // The GUI process IS Aqua-attached, so we enumerate
+            // here and skip the IPC roundtrip entirely.
+            window.set_running_apps(input_capture::frontmost_app::list_running_apps());
+            // Auto-refresh every 5s while the modal is visible so
+            // launches/quits surface eventually without thrashing
+            // the main thread (each refresh re-encodes ~30 PNG
+            // icons). Skip refresh while the picker's popover is
+            // open so the user's selection / search doesn't
+            // disappear mid-interaction. Timer self-detaches when
+            // the window is dropped.
+            let window_weak = window.downgrade();
+            glib::source::timeout_add_local(std::time::Duration::from_secs(5), move || {
+                let Some(window) = window_weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if !window.is_visible() {
+                    return glib::ControlFlow::Continue;
+                }
+                if window.picker_is_open() {
+                    return glib::ControlFlow::Continue;
+                }
+                window.set_running_apps(input_capture::frontmost_app::list_running_apps());
+                glib::ControlFlow::Continue
+            });
             imp.clipboard_privacy_window.replace(Some(window));
         } else if let Some(window) = imp.clipboard_privacy_window.borrow().as_ref() {
-            // Refresh the list in case it changed while the modal
-            // was hidden.
+            // Refresh both the suppressed-apps list and the
+            // running-apps picker in case they changed while the
+            // modal was hidden.
             window.set_apps(imp.suppressed_apps.borrow().clone());
+            window.set_running_apps(input_capture::frontmost_app::list_running_apps());
         }
         if let Some(window) = imp.clipboard_privacy_window.borrow().as_ref() {
             window.present();

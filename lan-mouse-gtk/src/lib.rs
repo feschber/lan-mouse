@@ -5,6 +5,7 @@ mod clipboard_privacy_window;
 mod fingerprint_window;
 mod key_object;
 mod key_row;
+mod running_app_object;
 #[cfg(target_os = "macos")]
 mod macos_privacy;
 #[cfg(target_os = "macos")]
@@ -364,12 +365,8 @@ fn build_ui(app: &Application) {
                     FrontendEvent::SuppressedAppsUpdated(apps) => {
                         window.set_suppressed_apps(apps);
                     }
-                    FrontendEvent::RunningApps(_apps) => {
-                        // Phase 5's minimal modal doesn't surface a
-                        // "from running apps" picker yet. Reserved
-                        // for a follow-up that adds an
-                        // AdwViewStack with running-apps + manual
-                        // tabs.
+                    FrontendEvent::RunningApps(apps) => {
+                        window.set_running_apps(apps);
                     }
                 }
             }

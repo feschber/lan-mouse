@@ -123,8 +123,27 @@ impl ClipboardMonitor {
                             // lookup happens here (not on every
                             // poll) so we only pay the cost when
                             // the clipboard actually changed.
-                            let suppressed = is_suppressed(&suppression_clone2);
-                            if let Some(app) = suppressed {
+                            //
+                            // On macOS, password managers stamp
+                            // `org.nspasteboard.ConcealedType` on
+                            // the pasteboard so apps can voluntarily
+                            // skip syncing passwords. Honor that
+                            // first — it catches password managers
+                            // even when the user hasn't added them
+                            // to their list.
+                            let concealed = is_concealed_clipboard();
+                            let suppressed = if concealed {
+                                None
+                            } else {
+                                is_suppressed(&suppression_clone2)
+                            };
+                            if concealed {
+                                log::debug!(
+                                    "clipboard change suppressed (concealed pasteboard type)"
+                                );
+                                // Same blind-to-suppressed-value rule
+                                // as the app-list path below.
+                            } else if let Some(app) = suppressed {
                                 log::debug!(
                                     "clipboard change suppressed (frontmost app `{}`)",
                                     app.label()
@@ -199,6 +218,31 @@ impl ClipboardMonitor {
         *last_content = Some(content);
         *last_change = Some(Instant::now());
     }
+}
+
+/// macOS password managers stamp `org.nspasteboard.ConcealedType`
+/// on the general pasteboard so cooperating apps skip syncing
+/// passwords. Returns `true` when that UTI is present on the
+/// current pasteboard contents. Always `false` on non-macOS.
+///
+/// This is the standard "nspasteboard.com" convention — see
+/// <https://nspasteboard.org/>.
+#[cfg(target_os = "macos")]
+fn is_concealed_clipboard() -> bool {
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::NSString;
+
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let Some(types) = pasteboard.types() else {
+        return false;
+    };
+    let concealed = NSString::from_str("org.nspasteboard.ConcealedType");
+    types.iter().any(|t| t.isEqualToString(&concealed))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_concealed_clipboard() -> bool {
+    false
 }
 
 /// If [`frontmost_app::frontmost_app()`] reports an app whose ident

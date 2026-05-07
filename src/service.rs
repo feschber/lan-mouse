@@ -14,7 +14,7 @@ use input_capture::clipboard::{ClipboardMonitor, SuppressionList};
 use input_capture::frontmost_app;
 use input_event::{ClipboardEvent, Event as InputEvent};
 use lan_mouse_ipc::{
-    AppIdent, AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest,
+    AppIdent, AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, HostKind,
     IncomingPeerConfig, IpcError, IpcListenerCreationError, Position, Status,
 };
 use lan_mouse_proto::ProtoEvent;
@@ -175,8 +175,14 @@ impl Service {
         // sync rather than tying daemon startup to clipboard
         // availability.
         let clipboard_suppression: SuppressionList = {
-            let initial: std::collections::HashSet<AppIdent> =
-                config.clipboard_suppressed_apps().into_iter().collect();
+            let host = HostKind::current();
+            let initial: HashSet<AppIdent> = config
+                .clipboard_suppression()
+                .host()
+                .iter()
+                .cloned()
+                .map(|s| host.make_ident(s))
+                .collect();
             Arc::new(std::sync::Mutex::new(initial))
         };
         let clipboard_monitor = match ClipboardMonitor::with_suppression(clipboard_suppression.clone())
@@ -349,12 +355,12 @@ impl Service {
                 self.set_incoming_peer_clipboard_receive(fp, enabled);
                 self.save_config();
             }
-            FrontendRequest::AddSuppressedApp(app) => {
-                self.add_suppressed_app(app);
+            FrontendRequest::AddSuppressedApp(value) => {
+                self.add_suppressed_app(value);
                 self.save_config();
             }
-            FrontendRequest::RemoveSuppressedApp(app) => {
-                self.remove_suppressed_app(app);
+            FrontendRequest::RemoveSuppressedApp(value) => {
+                self.remove_suppressed_app(value);
                 self.save_config();
             }
             FrontendRequest::ListRunningApps => {
@@ -364,26 +370,42 @@ impl Service {
         }
     }
 
-    fn add_suppressed_app(&mut self, app: AppIdent) {
-        let mut guard = self.clipboard_suppression.lock().expect("lock");
-        guard.insert(app);
-        let snapshot: Vec<AppIdent> = guard.iter().cloned().collect();
-        drop(guard);
-        self.config.set_clipboard_suppressed_apps(snapshot.clone());
-        self.notify_frontend(FrontendEvent::SuppressedAppsUpdated(snapshot));
+    fn add_suppressed_app(&mut self, value: String) {
+        let value = value.trim().to_owned();
+        if value.is_empty() {
+            return;
+        }
+        let mut suppression = self.config.clipboard_suppression();
+        let host = suppression.host_mut();
+        if !host.iter().any(|v| v.eq_ignore_ascii_case(&value)) {
+            host.push(value);
+        }
+        self.commit_suppression(suppression);
     }
 
-    fn remove_suppressed_app(&mut self, app: AppIdent) {
-        let mut guard = self.clipboard_suppression.lock().expect("lock");
-        // HashSet::remove takes &T; AppIdent's Hash + Eq impls
-        // ensure case-sensitive removal targets the same entry the
-        // GUI added. (Suppression matches case-insensitively at
-        // poll time but identity in the set is exact.)
-        guard.remove(&app);
-        let snapshot: Vec<AppIdent> = guard.iter().cloned().collect();
-        drop(guard);
-        self.config.set_clipboard_suppressed_apps(snapshot.clone());
-        self.notify_frontend(FrontendEvent::SuppressedAppsUpdated(snapshot));
+    fn remove_suppressed_app(&mut self, value: String) {
+        let mut suppression = self.config.clipboard_suppression();
+        suppression
+            .host_mut()
+            .retain(|v| !v.eq_ignore_ascii_case(&value));
+        self.commit_suppression(suppression);
+    }
+
+    /// Persist the per-OS struct, refresh the runtime `HashSet`
+    /// shared with [`ClipboardMonitor`], and push the host slot to
+    /// the GUI. Centralized so add/remove can't drift apart.
+    fn commit_suppression(&mut self, suppression: lan_mouse_ipc::ClipboardSuppression) {
+        let host = HostKind::current();
+        let host_list = suppression.host().clone();
+        {
+            let mut guard = self.clipboard_suppression.lock().expect("lock");
+            guard.clear();
+            for s in &host_list {
+                guard.insert(host.make_ident(s.clone()));
+            }
+        }
+        self.config.set_clipboard_suppression(suppression);
+        self.notify_frontend(FrontendEvent::SuppressedAppsUpdated(host_list));
     }
 
     /// Refresh `last_addr` / `last_hostname` for the authorized-peer
@@ -784,14 +806,8 @@ impl Service {
         self.notify_frontend(FrontendEvent::MdnsDiscovery(self.config.mdns_discovery()));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
-        let apps: Vec<AppIdent> = self
-            .clipboard_suppression
-            .lock()
-            .expect("lock")
-            .iter()
-            .cloned()
-            .collect();
-        self.notify_frontend(FrontendEvent::SuppressedAppsUpdated(apps));
+        let host_list = self.config.clipboard_suppression().host().clone();
+        self.notify_frontend(FrontendEvent::SuppressedAppsUpdated(host_list));
     }
 
     const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;

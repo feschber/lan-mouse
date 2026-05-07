@@ -105,6 +105,136 @@ impl AppIdent {
     }
 }
 
+/// Per-OS clipboard suppression lists. Each host machine reads and
+/// writes only the field that matches its own OS (`host()` /
+/// `host_mut()`); the remaining fields round-trip through
+/// `config.toml` untouched, so a single config file shipped across
+/// machines (dotfiles, Syncthing, …) keeps each machine's
+/// suppressed-app list intact. Strings are opaque platform
+/// identifiers in the section's natural shape — bundle ID for
+/// macOS, exe basename for Windows, etc.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardSuppression {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macos: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linux_wayland: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linux_x11: Vec<String>,
+}
+
+impl ClipboardSuppression {
+    /// Borrow the host machine's slot — the only one the GUI/CLI on
+    /// this device ever interacts with. On Linux the choice between
+    /// `linux_wayland` and `linux_x11` is decided at runtime via
+    /// `WAYLAND_DISPLAY` so a single binary serves both session
+    /// types correctly.
+    pub fn host(&self) -> &Vec<String> {
+        match HostKind::current() {
+            HostKind::MacBundle => &self.macos,
+            HostKind::WindowsExe => &self.windows,
+            HostKind::LinuxWayland => &self.linux_wayland,
+            HostKind::LinuxX11 => &self.linux_x11,
+        }
+    }
+
+    /// Mutable borrow of [`Self::host`] for add/remove operations.
+    pub fn host_mut(&mut self) -> &mut Vec<String> {
+        match HostKind::current() {
+            HostKind::MacBundle => &mut self.macos,
+            HostKind::WindowsExe => &mut self.windows,
+            HostKind::LinuxWayland => &mut self.linux_wayland,
+            HostKind::LinuxX11 => &mut self.linux_x11,
+        }
+    }
+
+    /// True when every per-OS slot is empty — used by the config
+    /// writer to drop the key entirely instead of writing an empty
+    /// table on save.
+    pub fn is_empty(&self) -> bool {
+        self.macos.is_empty()
+            && self.windows.is_empty()
+            && self.linux_wayland.is_empty()
+            && self.linux_x11.is_empty()
+    }
+}
+
+/// The [`AppIdent`] variant that this binary's host OS produces.
+/// Computed once per call (cheap) so a Wayland session that
+/// starts/stops mid-process picks up the change at the next
+/// suppression check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKind {
+    MacBundle,
+    WindowsExe,
+    LinuxWayland,
+    LinuxX11,
+}
+
+impl HostKind {
+    pub fn current() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            HostKind::MacBundle
+        }
+        #[cfg(windows)]
+        {
+            HostKind::WindowsExe
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            if std::env::var_os("WAYLAND_DISPLAY")
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+            {
+                HostKind::LinuxWayland
+            } else {
+                HostKind::LinuxX11
+            }
+        }
+    }
+
+    /// Wrap a host-OS identifier string in the matching [`AppIdent`]
+    /// variant for the runtime suppression check.
+    pub fn make_ident(self, value: String) -> AppIdent {
+        match self {
+            HostKind::MacBundle => AppIdent::MacBundle(value),
+            HostKind::WindowsExe => AppIdent::WindowsExe(value),
+            HostKind::LinuxWayland => AppIdent::LinuxWayland(value),
+            HostKind::LinuxX11 => AppIdent::LinuxX11(value),
+        }
+    }
+
+    /// Short noun used in GUI prompts ("Bundle ID", "Executable
+    /// name", "WM_CLASS", …).
+    pub fn entry_noun(self) -> &'static str {
+        match self {
+            HostKind::MacBundle => "Bundle ID",
+            HostKind::WindowsExe => "Executable name",
+            HostKind::LinuxWayland => "App ID",
+            HostKind::LinuxX11 => "WM_CLASS",
+        }
+    }
+
+    /// Placeholder shown inside the GUI's add-an-app text field.
+    pub fn placeholder(self) -> &'static str {
+        match self {
+            HostKind::MacBundle => "e.g. com.1password.1password7",
+            HostKind::WindowsExe => "e.g. 1Password.exe",
+            HostKind::LinuxWayland => "e.g. org.keepassxc.KeePassXC",
+            HostKind::LinuxX11 => "e.g. KeePassXC",
+        }
+    }
+}
+
+/// Convenience: wrap `value` in the host-OS [`AppIdent`] variant.
+/// Equivalent to `HostKind::current().make_ident(value)`.
+pub fn host_app_ident(value: String) -> AppIdent {
+    HostKind::current().make_ident(value)
+}
+
 #[derive(Debug, Default, Eq, Hash, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Position {
@@ -397,14 +527,38 @@ pub enum FrontendEvent {
     /// peers can bias their connection attempts toward the right
     /// interface on multi-homed hosts.
     MdnsDiscovery(bool),
-    /// Snapshot of the clipboard-suppression list. Pushed on Sync
-    /// and after every Add/Remove so the GUI never has to query.
-    SuppressedAppsUpdated(Vec<AppIdent>),
+    /// Snapshot of the host-OS clipboard-suppression list. Pushed
+    /// on Sync and after every Add/Remove so the GUI never has to
+    /// query. The strings are opaque platform identifiers in the
+    /// host's natural shape — bundle ID on macOS, exe basename on
+    /// Windows, `xdg-toplevel.app_id` on Wayland, `WM_CLASS` on
+    /// X11. Other-OS sections in `config.toml` are intentionally
+    /// not surfaced — you edit those by sitting in front of that
+    /// machine.
+    SuppressedAppsUpdated(Vec<String>),
     /// Reply to [`FrontendRequest::ListRunningApps`]: best-effort
-    /// list of apps currently running on this device. Empty on
-    /// platforms where enumeration isn't implemented yet (e.g.
-    /// macOS without an objc2 bridge).
-    RunningApps(Vec<AppIdent>),
+    /// list of apps currently running on this device. Empty when
+    /// enumeration isn't reachable (no compositor support, missing
+    /// permissions, transient race).
+    RunningApps(Vec<RunningApp>),
+}
+
+/// One running-app candidate for the suppression-list picker. The
+/// `identifier` is the host-OS string the runtime suppression check
+/// compares against (bundle ID on macOS, exe basename on Windows,
+/// `xdg-toplevel.app_id` on Wayland, `WM_CLASS` on X11). The
+/// `display_name` is what we show in the dropdown — usually the
+/// app's localized name on macOS, or just the identifier on
+/// platforms where there's no separate user-facing label.
+/// `icon_png` is an optional PNG-encoded icon (~32×32) the GUI can
+/// render alongside the name; `None` on platforms where icon
+/// extraction isn't implemented or when the OS reports no icon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunningApp {
+    pub display_name: String,
+    pub identifier: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_png: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -462,13 +616,14 @@ pub enum FrontendRequest {
     /// is applied to this device's clipboard. Per-pair receive-side
     /// gate, keyed on the peer's TLS certificate fingerprint.
     SetIncomingPeerClipboardReceive(String, bool),
-    /// Add an application to the clipboard suppression list — its
-    /// clipboard contents will never be broadcast to any peer.
-    /// Idempotent; adding an already-present entry is a no-op.
-    AddSuppressedApp(AppIdent),
-    /// Remove an application from the clipboard suppression list.
-    /// Idempotent.
-    RemoveSuppressedApp(AppIdent),
+    /// Add a host-OS app identifier to the clipboard suppression
+    /// list — that app's clipboard contents will never be
+    /// broadcast to peers. The kind is implicit from the OS the
+    /// daemon is running on (see [`host_app_ident`]). Idempotent.
+    AddSuppressedApp(String),
+    /// Remove a host-OS app identifier from the clipboard
+    /// suppression list. Idempotent.
+    RemoveSuppressedApp(String),
     /// Ask the daemon to enumerate currently-running apps so the
     /// "From running apps" tab in the suppression-list modal can be
     /// populated. The daemon replies with a
