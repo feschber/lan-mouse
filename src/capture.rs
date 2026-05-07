@@ -82,6 +82,7 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             state: Default::default(),
+            last_enter_sent_at: None,
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -156,6 +157,20 @@ macro_rules! debounce {
     };
 }
 
+/// Minimum interval between successive `Enter` re-sends while in
+/// [`State::WaitingForAck`]. The original protocol re-sent `Enter`
+/// for *every* incoming motion event as a reliability hedge, but
+/// on a typical LAN the round-trip-to-Ack is sub-millisecond and
+/// the user's mouse fires at 1000 Hz — so the original behavior
+/// produced 2–10 redundant `Enter` events per cross, each forcing
+/// the receiver to re-warp the cursor. The user sees that as a
+/// visible stutter / "the cross got rejected" feeling.
+///
+/// 50 ms is short enough that a genuinely lost `Enter` recovers
+/// well within human reaction time, and long enough that a healthy
+/// LAN never re-sends at all.
+const ENTER_RESEND_INTERVAL: Duration = Duration::from_millis(50);
+
 struct CaptureTask {
     active_client: Option<CaptureHandle>,
     backend: Option<input_capture::Backend>,
@@ -166,6 +181,11 @@ struct CaptureTask {
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    /// Timestamp of the most recent `Enter` we sent for the
+    /// current cross. Used by the [`State::WaitingForAck`] path to
+    /// throttle re-sends to one per [`ENTER_RESEND_INTERVAL`].
+    /// Cleared on `Ack` (transition to `Sending`).
+    last_enter_sent_at: Option<Instant>,
 }
 
 impl CaptureTask {
@@ -284,6 +304,7 @@ impl CaptureTask {
                         ProtoEvent::Ack(_) => {
                             log::info!("client {handle} acknowledged the connection!");
                             self.state = State::Sending;
+                            self.last_enter_sent_at = None;
                         }
                         // client disconnected
                         ProtoEvent::Leave(_) => {
@@ -348,6 +369,7 @@ impl CaptureTask {
         // activated a new client
         if event == CaptureEvent::Begin && Some(handle) != self.active_client {
             self.state = State::WaitingForAck;
+            self.last_enter_sent_at = None;
             self.active_client.replace(handle);
             self.event_tx
                 .send(ICaptureEvent::ClientEntered(handle))
@@ -356,13 +378,40 @@ impl CaptureTask {
 
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
+        // While `WaitingForAck`, motion events used to be converted
+        // 1:1 into repeat `Enter` packets as a reliability hedge.
+        // On a LAN the round-trip-to-Ack is sub-millisecond and the
+        // user's mouse fires at 1000 Hz — so each cross was sending
+        // 2–10 `Enter` packets, each making the receiver re-warp the
+        // cursor on its entry edge. That's the visible stutter
+        // ("cross got rejected") symptom. Throttle to at most one
+        // re-send per [`ENTER_RESEND_INTERVAL`] (50 ms): the first
+        // `Enter` always goes through, subsequent motions in the
+        // same window are dropped, and a stalled handshake recovers
+        // well within human reaction time on the next motion.
         let event = match event {
-            CaptureEvent::Begin => ProtoEvent::Enter(opposite_pos),
+            CaptureEvent::Begin => {
+                self.last_enter_sent_at = Some(Instant::now());
+                Some(ProtoEvent::Enter(opposite_pos))
+            }
             CaptureEvent::Input(e) => match self.state {
-                // connection not acknowledged, repeat `Enter` event
-                State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
-                State::Sending => ProtoEvent::Input(e),
+                State::WaitingForAck => {
+                    let should_resend = self
+                        .last_enter_sent_at
+                        .is_none_or(|t| t.elapsed() >= ENTER_RESEND_INTERVAL);
+                    if should_resend {
+                        self.last_enter_sent_at = Some(Instant::now());
+                        Some(ProtoEvent::Enter(opposite_pos))
+                    } else {
+                        None
+                    }
+                }
+                State::Sending => Some(ProtoEvent::Input(e)),
             },
+        };
+
+        let Some(event) = event else {
+            return Ok(());
         };
 
         if let Err(e) = self.conn.send(event, handle).await {
