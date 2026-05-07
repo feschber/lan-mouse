@@ -10,11 +10,28 @@ mod macos_privacy;
 mod macos_status_item;
 mod window;
 
-use std::{env, process, str};
+use std::{env, process, str, sync::OnceLock};
 
 use window::Window;
 
-use lan_mouse_ipc::FrontendEvent;
+/// Local build's commit hash, set once by [`run`] before the GTK
+/// main loop starts. Read by per-row UI to compare against each
+/// peer's [`lan_mouse_ipc::ClientState::peer_commit`] for the
+/// soft-warn version-mismatch indicator.
+pub(crate) static LOCAL_COMMIT: OnceLock<[u8; 8]> = OnceLock::new();
+
+/// Convenience: returns the local commit as an 8-char ASCII string,
+/// or a placeholder if unset (which would indicate a programmer
+/// error since [`run`] always sets it).
+pub(crate) fn local_commit_str() -> String {
+    LOCAL_COMMIT
+        .get()
+        .and_then(|c| std::str::from_utf8(c).ok())
+        .unwrap_or("????????")
+        .to_string()
+}
+
+use lan_mouse_ipc::{FrontendEvent, GuiLock};
 
 use adw::Application;
 use gtk::{IconTheme, gdk::Display, glib::clone, prelude::*};
@@ -31,18 +48,82 @@ pub enum GtkError {
     NonZeroExitCode(i32),
 }
 
-pub fn run() -> Result<(), GtkError> {
+/// Arm a process-level force-exit backstop and request a normal app
+/// quit. macOS-only because shutdown wedges (GTK main loop pumping
+/// pending events while the daemon is also being torn down, a
+/// CGEventTap that hasn't been removed yet, an outgoing IPC write
+/// blocked on a closing socket) only show up on macOS in practice.
+///
+/// The backstop thread sleeps outside the GTK main loop so it fires
+/// even if the loop itself is the thing that's wedged. If normal
+/// cleanup completes first (the usual case) the process exits via
+/// `main` returning and the sleeping backstop thread is killed by
+/// the OS along with everything else — the timer never fires.
+///
+/// Calling this twice in quick succession is a no-op on the second
+/// call so we don't spawn multiple backstops.
+#[cfg(target_os = "macos")]
+pub(crate) fn request_quit_with_backstop(app: &adw::Application) {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ARMED: OnceLock<AtomicBool> = OnceLock::new();
+    let armed = ARMED.get_or_init(|| AtomicBool::new(false));
+    if armed.swap(true, Ordering::SeqCst) {
+        app.quit();
+        return;
+    }
+
+    std::thread::Builder::new()
+        .name("lan-mouse-quit-backstop".into())
+        .spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            log::warn!("quit cleanup did not complete in 5s — force-exiting");
+            std::process::exit(0);
+        })
+        .ok();
+    app.quit();
+}
+
+pub fn run(
+    gui_lock: Option<GuiLock>,
+    local_commit: [u8; 8],
+    external_daemon: bool,
+) -> Result<(), GtkError> {
     log::debug!("running gtk frontend");
+    LOCAL_COMMIT
+        .set(local_commit)
+        .expect("local_commit set once");
+
+    // Spawn the GUI lock listener: a blocking thread that waits for
+    // future `lan-mouse` invocations to connect and ask us to show
+    // ourselves. Forwards each request to the GTK main loop via an
+    // async channel. When `gui_lock` is None (lock acquisition failed
+    // earlier — non-fatal) we just don't have a singleton-show path.
+    let show_rx = gui_lock.map(|lock| {
+        let (tx, rx) = async_channel::unbounded::<()>();
+        std::thread::Builder::new()
+            .name("lan-mouse-gui-lock".into())
+            .spawn(move || {
+                while let Some(()) = lock.next_show() {
+                    if tx.send_blocking(()).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn gui lock listener");
+        rx
+    });
+
     #[cfg(windows)]
     let ret = std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024) // https://gitlab.gnome.org/GNOME/gtk/-/commit/52dbb3f372b2c3ea339e879689c1de535ba2c2c3 -> caused crash on windows
         .name("gtk".into())
-        .spawn(gtk_main)
+        .spawn(move || gtk_main(show_rx, external_daemon))
         .unwrap()
         .join()
         .unwrap();
     #[cfg(not(windows))]
-    let ret = gtk_main();
+    let ret = gtk_main(show_rx, external_daemon);
 
     match ret {
         glib::ExitCode::SUCCESS => Ok(()),
@@ -50,7 +131,7 @@ pub fn run() -> Result<(), GtkError> {
     }
 }
 
-fn gtk_main() -> glib::ExitCode {
+fn gtk_main(show_rx: Option<async_channel::Receiver<()>>, external_daemon: bool) -> glib::ExitCode {
     #[cfg(target_os = "macos")]
     {
         configure_macos_bundle_environment();
@@ -68,7 +149,7 @@ fn gtk_main() -> glib::ExitCode {
         setup_actions(app);
         setup_menu(app);
     });
-    app.connect_activate(build_ui);
+    app.connect_activate(move |app| build_ui(app, show_rx.clone(), external_daemon));
 
     let args: Vec<&'static str> = vec![];
     app.run_with_args(&args)
@@ -146,10 +227,24 @@ fn setup_actions(app: &adw::Application) {
     quit_action.connect_activate({
         let app = app.clone();
         move |_, _| {
+            #[cfg(target_os = "macos")]
+            request_quit_with_backstop(&app);
+            #[cfg(not(target_os = "macos"))]
             app.quit();
         }
     });
     app.add_action(&quit_action);
+
+    // Cmd+W → close the front window. GtkWindow's built-in `close`
+    // action fires `close-request`, which on macOS we've hooked to
+    // hide the window instead of destroying it (see `build_ui`). The
+    // window's connect_hide handler then flips the activation policy
+    // to Accessory — net effect is that Cmd+W collapses the GUI to a
+    // menu-bar-only background helper, freeing focus for whatever the
+    // user does next. Wired only on macOS so we don't override the
+    // native Ctrl+W behavior on Linux/Windows.
+    #[cfg(target_os = "macos")]
+    app.set_accels_for_action("window.close", &["<Meta>w"]);
 }
 
 // Set up a global menu
@@ -159,15 +254,66 @@ fn setup_menu(app: &adw::Application) {
     let menu = gio::Menu::new();
 
     let file_menu = gio::Menu::new();
+    file_menu.append(Some("Close Window"), Some("window.close"));
     file_menu.append(Some("Quit"), Some("app.quit"));
     menu.append_submenu(Some("_File"), &file_menu);
 
     app.set_menubar(Some(&menu))
 }
 
-fn build_ui(app: &Application) {
+fn build_ui(
+    app: &Application,
+    show_rx: Option<async_channel::Receiver<()>>,
+    external_daemon: bool,
+) {
+    // Defense in depth: if `activate` fires a second time in the same
+    // process — the GApplication DBus single-instance hand-off does
+    // this on Linux, and `kAEReopenApplication` does this on macOS —
+    // present the existing window instead of building another one.
+    if let Some(existing) = app.windows().first() {
+        existing.present();
+        return;
+    }
+
     log::debug!("connecting to lan-mouse-socket");
-    let (mut frontend_rx, frontend_tx) = match lan_mouse_ipc::connect() {
+    // Two paths into the IPC socket:
+    //
+    // - main.rs spawned a daemon child (external_daemon == false):
+    //   use the retrying connect(), which handles the racy startup
+    //   window where the daemon hasn't bound yet.
+    //
+    // - main.rs detected an existing daemon and skipped spawning
+    //   (external_daemon == true): probe with try_connect; if it
+    //   fails (the daemon died between is_service_running and now)
+    //   spawn a fresh one ourselves and fall back to the retrying
+    //   connect(). The respawned daemon is fire-and-forget — the
+    //   GUI no longer manages its lifecycle, matching the
+    //   externally-managed-daemon semantics that put us on this
+    //   branch in the first place.
+    let conn_result = if external_daemon {
+        match lan_mouse_ipc::try_connect() {
+            Ok(conn) => Ok(conn),
+            Err(probe_err) => {
+                log::warn!(
+                    "could not attach to existing daemon ({probe_err}) — spawning a new one"
+                );
+                if let Err(spawn_err) = process::Command::new(
+                    env::current_exe().expect("could not determine executable path"),
+                )
+                .args(env::args().skip(1))
+                .arg("daemon")
+                .spawn()
+                {
+                    log::error!("failed to spawn replacement daemon: {spawn_err}");
+                    process::exit(1);
+                }
+                lan_mouse_ipc::connect()
+            }
+        }
+    } else {
+        lan_mouse_ipc::connect()
+    };
+    let (mut frontend_rx, frontend_tx) = match conn_result {
         Ok(conn) => conn,
         Err(e) => {
             log::error!("{e}");
@@ -197,6 +343,19 @@ fn build_ui(app: &Application) {
             window.set_visible(false);
             glib::Propagation::Stop
         });
+        // Toggle the Dock icon based on the window's visibility:
+        // Regular while the window is open (Dock icon shown so the
+        // user has a familiar way back to the app), Accessory while
+        // the window is hidden and only the menu-bar item is around
+        // (matches the LSUIElement-style background-helper feel).
+        window.connect_show(|_| {
+            macos_status_item::set_activation_policy(macos_status_item::ACTIVATION_POLICY_REGULAR);
+        });
+        window.connect_hide(|_| {
+            macos_status_item::set_activation_policy(
+                macos_status_item::ACTIVATION_POLICY_ACCESSORY,
+            );
+        });
         macos_status_item::setup(app, &window);
         // First-launch TCC prompts. No-op when already granted.
         macos_privacy::fire_initial_prompts();
@@ -221,18 +380,53 @@ fn build_ui(app: &Application) {
             macos_privacy::AccessibilityChange::Revoked => {
                 log::warn!("Accessibility revoked — quitting to avoid wedging system input");
                 if let Some(app) = app_weak.upgrade() {
-                    app.quit();
+                    request_quit_with_backstop(&app);
                 }
             }
         });
     }
 
+    // Wire up the GUI singleton: when a later `lan-mouse` invocation
+    // signals us, present (and on macOS also un-hide) the window. The
+    // sender lives on a dedicated std::thread spawned in `run()`.
+    if let Some(show_rx) = show_rx {
+        glib::spawn_future_local(clone!(
+            #[weak]
+            window,
+            async move {
+                while show_rx.recv().await.is_ok() {
+                    log::debug!("show signal from second instance — presenting window");
+                    window.set_visible(true);
+                    window.present();
+                }
+            }
+        ));
+    }
+
     glib::spawn_future_local(clone!(
         #[weak]
         window,
+        #[weak]
+        app,
         async move {
             loop {
-                let notify = receiver.recv().await.unwrap_or_else(|_| process::exit(1));
+                // If the daemon-IPC channel drops, the daemon child has
+                // exited (e.g. its CGEventTap died after AX was revoked
+                // — see input-capture/macos.rs ProducerEvent::EventTapDisabled).
+                // Quit the GUI cleanly instead of staying alive with a
+                // dead daemon, and route through the macOS quit-backstop
+                // so a wedged event loop can't leave the process around.
+                let notify = match receiver.recv().await {
+                    Ok(n) => n,
+                    Err(_) => {
+                        log::warn!("daemon IPC closed — quitting GUI");
+                        #[cfg(target_os = "macos")]
+                        request_quit_with_backstop(&app);
+                        #[cfg(not(target_os = "macos"))]
+                        app.quit();
+                        return;
+                    }
+                };
                 match notify {
                     FrontendEvent::Created(handle, client, state) => {
                         window.new_client(handle, client, state)
@@ -268,6 +462,12 @@ fn build_ui(app: &Application) {
                     }
                     FrontendEvent::IncomingDisconnected(addr) => {
                         window.show_toast(format!("{addr} disconnected").as_str());
+                    }
+                    FrontendEvent::ReleaseThreshold(threshold) => {
+                        window.set_release_threshold(threshold);
+                    }
+                    FrontendEvent::MdnsDiscovery(enabled) => {
+                        window.set_mdns_discovery(enabled);
                     }
                 }
             }

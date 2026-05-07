@@ -4,8 +4,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use glib::subclass::InitializingObject;
 use gtk::{
-    Button, CompositeTemplate, Label,
-    glib::{self, subclass::Signal},
+    Button, CompositeTemplate, Entry, EventControllerKey, gdk,
+    glib::{self, Propagation, subclass::Signal},
     template_callbacks,
 };
 
@@ -13,7 +13,7 @@ use gtk::{
 #[template(resource = "/de/feschber/LanMouse/authorization_window.ui")]
 pub struct AuthorizationWindow {
     #[template_child]
-    pub fingerprint: TemplateChild<Label>,
+    pub fingerprint: TemplateChild<Entry>,
     #[template_child]
     pub cancel_button: TemplateChild<Button>,
     #[template_child]
@@ -67,6 +67,26 @@ impl ObjectImpl for AuthorizationWindow {
                 Signal::builder("cancel-clicked").build(),
             ]
         })
+    }
+
+    fn constructed(&self) {
+        self.parent_constructed();
+
+        // Close on Escape — same affordance as the fingerprint dialog.
+        let obj = self.obj();
+        let key = EventControllerKey::new();
+        let weak_close = obj.downgrade();
+        key.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gdk::Key::Escape {
+                if let Some(w) = weak_close.upgrade() {
+                    w.close();
+                }
+                Propagation::Stop
+            } else {
+                Propagation::Proceed
+            }
+        });
+        obj.add_controller(key);
     }
 }
 

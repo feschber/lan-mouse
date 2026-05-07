@@ -1,29 +1,52 @@
 use std::cell::RefCell;
 
+use adw::ActionRow;
 use adw::subclass::prelude::*;
-use adw::{ActionRow, prelude::*};
+use adw::{ExpanderRow, prelude::*};
 use glib::{Binding, subclass::InitializingObject};
 use gtk::glib::clone;
 use gtk::glib::subclass::Signal;
-use gtk::{Button, CompositeTemplate, glib};
+use gtk::{Button, CompositeTemplate, Label, SpinButton, Switch, glib};
 use std::sync::OnceLock;
+
+use super::super::KeyObject;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/key_row.ui")]
 pub struct KeyRow {
     #[template_child]
-    pub delete_button: TemplateChild<gtk::Button>,
+    pub delete_button: TemplateChild<Button>,
+    #[template_child]
+    pub natural_scroll_switch: TemplateChild<Switch>,
+    #[template_child]
+    pub sensitivity_spin: TemplateChild<SpinButton>,
+    #[template_child]
+    pub settings_summary: TemplateChild<Label>,
+    #[template_child]
+    pub fingerprint_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub copy_fingerprint_button: TemplateChild<Button>,
     pub bindings: RefCell<Vec<Binding>>,
+    /// Signal-handler IDs for the per-row controls. Used to
+    /// `block_signal` while pushing daemon-driven state into the
+    /// widgets so we don't ping-pong a server-originated update
+    /// back as a fresh user request.
+    pub natural_scroll_handler: RefCell<Option<glib::SignalHandlerId>>,
+    pub sensitivity_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Property-notify handlers we connect on the bound KeyObject
+    /// so per-row widget state tracks in-place mutations from
+    /// `Window::set_authorized_keys`. Disconnected in `unbind` to
+    /// avoid leaking handlers when a peer is revoked.
+    pub key_object_handlers: RefCell<Vec<(KeyObject, glib::SignalHandlerId)>>,
 }
 
 #[glib::object_subclass]
 impl ObjectSubclass for KeyRow {
-    // `NAME` needs to match `class` attribute of template
     const NAME: &'static str = "KeyRow";
     const ABSTRACT: bool = false;
 
     type Type = super::KeyRow;
-    type ParentType = ActionRow;
+    type ParentType = ExpanderRow;
 
     fn class_init(klass: &mut Self::Class) {
         klass.bind_template();
@@ -38,6 +61,7 @@ impl ObjectSubclass for KeyRow {
 impl ObjectImpl for KeyRow {
     fn constructed(&self) {
         self.parent_constructed();
+
         self.delete_button.connect_clicked(clone!(
             #[weak(rename_to = row)]
             self,
@@ -45,11 +69,45 @@ impl ObjectImpl for KeyRow {
                 row.handle_delete(button);
             }
         ));
+
+        let natural_scroll_handler = self.natural_scroll_switch.connect_state_set(clone!(
+            #[weak(rename_to = row)]
+            self,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                row.obj()
+                    .emit_by_name::<()>("request-natural-scroll-change", &[&state]);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.natural_scroll_handler
+            .replace(Some(natural_scroll_handler));
+
+        let sensitivity_handler = self.sensitivity_spin.connect_value_changed(clone!(
+            #[weak(rename_to = row)]
+            self,
+            move |spin| {
+                row.obj()
+                    .emit_by_name::<()>("request-sensitivity-change", &[&spin.value()]);
+            }
+        ));
+        self.sensitivity_handler.replace(Some(sensitivity_handler));
     }
 
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
-        SIGNALS.get_or_init(|| vec![Signal::builder("request-delete").build()])
+        SIGNALS.get_or_init(|| {
+            vec![
+                Signal::builder("request-delete").build(),
+                Signal::builder("request-natural-scroll-change")
+                    .param_types([bool::static_type()])
+                    .build(),
+                Signal::builder("request-sensitivity-change")
+                    .param_types([f64::static_type()])
+                    .build(),
+            ]
+        })
     }
 }
 
@@ -65,4 +123,4 @@ impl WidgetImpl for KeyRow {}
 impl BoxImpl for KeyRow {}
 impl ListBoxRowImpl for KeyRow {}
 impl PreferencesRowImpl for KeyRow {}
-impl ActionRowImpl for KeyRow {}
+impl ExpanderRowImpl for KeyRow {}

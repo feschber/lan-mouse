@@ -91,6 +91,15 @@ impl ClientManager {
     }
 
     /// find a client by its address
+    ///
+    /// Matches against the union of (a) the client's known ip set
+    /// `s.ips` (`fix_ips` plus DNS-resolved addresses), and (b) the
+    /// client's currently-active outbound DTLS address. The
+    /// `active_addr` fallback covers mDNS-primary scenarios where
+    /// the dialer picked an address that wasn't in DNS — the
+    /// listen-side counterpart of that connection arrives from the
+    /// same IP, which we'd otherwise drop on the floor (silently
+    /// breaking peer-version display, among other things).
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
         // since there shouldn't be more than a handful of clients at any given
         // time this is likely faster than using a HashMap
@@ -98,7 +107,12 @@ impl ClientManager {
             .borrow()
             .iter()
             .find_map(|(k, (_, s))| {
-                if s.active && s.ips.contains(&addr.ip()) {
+                if !s.active {
+                    return None;
+                }
+                let ip = addr.ip();
+                let active_match = s.active_addr.is_some_and(|a| a.ip() == ip);
+                if s.ips.contains(&ip) || active_match {
                     Some(k)
                 } else {
                     None
@@ -279,6 +293,12 @@ impl ClientManager {
     pub(crate) fn set_alive(&self, handle: ClientHandle, alive: bool) {
         if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
             s.alive = alive;
+        }
+    }
+
+    pub(crate) fn set_peer_commit(&self, handle: ClientHandle, commit: Option<[u8; 8]>) {
+        if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            s.peer_commit = commit;
         }
     }
 
