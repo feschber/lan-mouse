@@ -354,7 +354,7 @@ end tell
 #[cfg(windows)]
 mod backend {
     use super::{AppIdent, RunningApp};
-    use windows::Win32::Foundation::{CloseHandle, FALSE, HWND};
+    use windows::Win32::Foundation::{CloseHandle, FALSE, HWND, LPARAM};
     use windows::Win32::System::Threading::{
         OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
         QueryFullProcessImageNameW,
@@ -362,7 +362,7 @@ mod backend {
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible,
     };
-    use windows::core::{BOOL, LPARAM, PWSTR};
+    use windows::core::{BOOL, PWSTR};
 
     fn process_basename(pid: u32) -> Option<String> {
         if pid == 0 {
@@ -411,7 +411,7 @@ mod backend {
                 }
                 let mut pid: u32 = 0;
                 GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                let Some(name) = super::process_basename(pid) else {
+                let Some(name) = process_basename(pid) else {
                     return BOOL(1);
                 };
                 let v: &mut Vec<String> = &mut *(lparam.0 as *mut Vec<String>);
