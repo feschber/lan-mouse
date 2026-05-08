@@ -127,81 +127,82 @@ impl ClipboardMonitor {
                     let mut last_content = last_content_clone2.lock().unwrap();
                     let mut last_change = last_change_clone2.lock().unwrap();
 
-                    let content_changed = match last_content.as_ref() {
-                        None => true,
-                        Some(last) => last != &current_text,
-                    };
-
-                    if content_changed {
-                        // Debounce: ignore changes within 200ms of last change
-                        // This prevents infinite loops when both sides update clipboard
-                        let should_emit = match *last_change {
-                            None => true,
-                            Some(instant) => instant.elapsed() > Duration::from_millis(200),
+                    let last_change_elapsed = last_change.map(|t| t.elapsed());
+                    // App-source suppression. Frontmost-app lookup
+                    // and the macOS concealed-pasteboard probe both
+                    // run only after we've decided the content
+                    // actually changed (see PollDecision::classify).
+                    // Pre-compute the inputs here so the classifier
+                    // stays a pure function.
+                    let needs_decision = PollDecision::content_might_emit(
+                        &current_text,
+                        last_content.as_deref(),
+                        last_change_elapsed,
+                    );
+                    let (concealed, suppressed) = if needs_decision {
+                        let concealed = is_concealed_clipboard();
+                        let suppressed = if concealed {
+                            None
+                        } else {
+                            is_suppressed(&suppression_clone2)
                         };
-
-                        if should_emit {
-                            // App-source suppression. Frontmost-app
-                            // lookup happens here (not on every
-                            // poll) so we only pay the cost when
-                            // the clipboard actually changed.
-                            //
-                            // On macOS, password managers stamp
-                            // `org.nspasteboard.ConcealedType` on
-                            // the pasteboard so apps can voluntarily
-                            // skip syncing passwords. Honor that
-                            // first — it catches password managers
-                            // even when the user hasn't added them
-                            // to their list.
-                            let concealed = is_concealed_clipboard();
-                            let suppressed = if concealed {
-                                None
-                            } else {
-                                is_suppressed(&suppression_clone2)
-                            };
-                            // Always advance `last_content` after
-                            // a content change, even when we drop
-                            // the event. The earlier "blind to
-                            // suppressed value" approach left
-                            // `last_content` at the previous
-                            // emitted value, which made every
-                            // subsequent 500ms poll see the SAME
-                            // suppressed content as "changed" and
-                            // re-run the suppression check. Any
-                            // focus shift between polls (user
-                            // alt-tabs after copying a password)
-                            // would then find a non-suppressed
-                            // frontmost and leak the password.
-                            // Advancing `last_content` here
-                            // converts the change-detection event
-                            // into a single decision point — the
-                            // suppressed value is "consumed" and
-                            // we wait for the NEXT actual clipboard
-                            // change before deciding again.
-                            *last_content = Some(current_text.clone());
-                            *last_change = Some(Instant::now());
-                            if concealed {
-                                log::debug!(
-                                    "clipboard change suppressed (concealed pasteboard type)"
-                                );
-                            } else if let Some(app) = suppressed {
+                        (concealed, suppressed)
+                    } else {
+                        (false, None)
+                    };
+                    let decision = PollDecision::classify(
+                        &current_text,
+                        last_content.as_deref(),
+                        last_change_elapsed,
+                        concealed,
+                        suppressed.is_some(),
+                    );
+                    // Always advance `last_content` after a state-
+                    // changing decision (Suppressed or Emit),
+                    // regardless of which suppression branch
+                    // fired. The earlier "blind to suppressed
+                    // value" approach left `last_content` at the
+                    // previous emitted value, which made every
+                    // subsequent 500ms poll see the SAME
+                    // suppressed content as "changed" and re-run
+                    // the suppression check. Any focus shift
+                    // between polls (user alt-tabs after copying
+                    // a password) would then find a non-
+                    // suppressed frontmost and leak the password.
+                    // PollDecision::advances_state pins this
+                    // contract — see the unit tests at the
+                    // bottom of this file.
+                    if decision.advances_state() {
+                        *last_content = Some(current_text.clone());
+                        *last_change = Some(Instant::now());
+                    }
+                    match decision {
+                        PollDecision::Unchanged => {}
+                        PollDecision::Debounced => {
+                            log::trace!("Clipboard changed but debounced (too recent)");
+                        }
+                        PollDecision::Suppressed if concealed => {
+                            log::debug!(
+                                "clipboard change suppressed (concealed pasteboard type)"
+                            );
+                        }
+                        PollDecision::Suppressed => {
+                            if let Some(app) = suppressed.as_ref() {
                                 log::debug!(
                                     "clipboard change suppressed (frontmost app `{}`)",
                                     app.label()
                                 );
-                            } else {
-                                log::info!(
-                                    "Clipboard changed, length: {} bytes",
-                                    current_text.len()
-                                );
-                                // Send event
-                                let event = CaptureEvent::Input(Event::Clipboard(
-                                    ClipboardEvent::Text(current_text),
-                                ));
-                                let _ = event_tx_clone2.blocking_send(event);
                             }
-                        } else {
-                            log::trace!("Clipboard changed but debounced (too recent)");
+                        }
+                        PollDecision::Emit => {
+                            log::info!(
+                                "Clipboard changed, length: {} bytes",
+                                current_text.len()
+                            );
+                            let event = CaptureEvent::Input(Event::Clipboard(
+                                ClipboardEvent::Text(current_text),
+                            ));
+                            let _ = event_tx_clone2.blocking_send(event);
                         }
                     }
                 })
@@ -324,4 +325,219 @@ fn pasteboard_change_count_advanced() -> bool {
     let now = pb.changeCount() as i64;
     let prev = LAST.swap(now, Ordering::Relaxed);
     prev != now
+}
+
+/// Outcome of a single clipboard-poll cycle. Pulled into a pure
+/// function so the focus-race invariant — "advance `last_content`
+/// on every state-changing decision, even when we suppress" — is
+/// pinned by unit tests rather than implicit in the closure
+/// body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PollDecision {
+    /// Current text equals last recorded — nothing to do.
+    Unchanged,
+    /// Content changed but the 200 ms debounce window from the
+    /// previous advance hasn't elapsed yet.
+    Debounced,
+    /// Content changed, debounce passed, but suppression
+    /// (concealed pasteboard or app-list match) tells us not to
+    /// emit. State must still advance so subsequent polls don't
+    /// re-check the same content and leak on a focus shift.
+    Suppressed,
+    /// Content changed, debounce passed, suppression cleared.
+    /// Caller emits the event and advances state.
+    Emit,
+}
+
+impl PollDecision {
+    /// Cheap pre-flight: `true` when the next call to
+    /// [`PollDecision::classify`] could return `Suppressed` or
+    /// `Emit`. The poll loop uses this to skip the relatively
+    /// expensive `is_concealed_clipboard()` / `frontmost_app()` /
+    /// `is_suppressed()` calls when the content hasn't changed
+    /// or the debounce window blocks emission anyway.
+    fn content_might_emit(
+        current_text: &str,
+        last_content: Option<&str>,
+        last_change_elapsed: Option<Duration>,
+    ) -> bool {
+        if last_content == Some(current_text) {
+            return false;
+        }
+        last_change_elapsed.is_none_or(|d| d > Duration::from_millis(200))
+    }
+
+    /// Decide what to do with this poll cycle. Pure function — no
+    /// I/O, no global state — so the focus-race invariant is
+    /// expressible as a series of `assert_eq!` calls.
+    fn classify(
+        current_text: &str,
+        last_content: Option<&str>,
+        last_change_elapsed: Option<Duration>,
+        concealed: bool,
+        suppressed_match: bool,
+    ) -> Self {
+        if last_content == Some(current_text) {
+            return Self::Unchanged;
+        }
+        let debounce_passed =
+            last_change_elapsed.is_none_or(|d| d > Duration::from_millis(200));
+        if !debounce_passed {
+            return Self::Debounced;
+        }
+        if concealed || suppressed_match {
+            Self::Suppressed
+        } else {
+            Self::Emit
+        }
+    }
+
+    /// True when this decision must advance `last_content` /
+    /// `last_change` in the caller. Both `Suppressed` and `Emit`
+    /// are state-changing — the focus-race fix lives here.
+    fn advances_state(self) -> bool {
+        matches!(self, Self::Suppressed | Self::Emit)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_unchanged_when_text_matches_last_content() {
+        let d = PollDecision::classify(
+            "secret",
+            Some("secret"),
+            Some(Duration::from_secs(60)),
+            false,
+            false,
+        );
+        assert_eq!(d, PollDecision::Unchanged);
+        assert!(!d.advances_state());
+    }
+
+    #[test]
+    fn classify_debounced_when_recent_change() {
+        // Content differs but only 100ms since last advance —
+        // hold off so a peer's set_clipboard echo doesn't bounce
+        // back as a fresh local emit.
+        let d = PollDecision::classify(
+            "new",
+            Some("old"),
+            Some(Duration::from_millis(100)),
+            false,
+            false,
+        );
+        assert_eq!(d, PollDecision::Debounced);
+        assert!(!d.advances_state());
+    }
+
+    #[test]
+    fn classify_emit_when_changed_unsuppressed() {
+        let d = PollDecision::classify(
+            "new",
+            Some("old"),
+            Some(Duration::from_secs(1)),
+            false,
+            false,
+        );
+        assert_eq!(d, PollDecision::Emit);
+        assert!(d.advances_state());
+    }
+
+    #[test]
+    fn classify_emit_on_first_change() {
+        // No prior advance: the first poll always falls through
+        // to Emit (assuming nothing's suppressed) so the very
+        // first clipboard read after startup is broadcast.
+        let d = PollDecision::classify("first", None, None, false, false);
+        assert_eq!(d, PollDecision::Emit);
+    }
+
+    #[test]
+    fn classify_suppressed_when_concealed() {
+        let d = PollDecision::classify(
+            "password",
+            Some("plain"),
+            Some(Duration::from_secs(1)),
+            true,
+            false,
+        );
+        assert_eq!(d, PollDecision::Suppressed);
+    }
+
+    #[test]
+    fn classify_suppressed_when_app_list_matches() {
+        let d = PollDecision::classify(
+            "password",
+            Some("plain"),
+            Some(Duration::from_secs(1)),
+            false,
+            true,
+        );
+        assert_eq!(d, PollDecision::Suppressed);
+    }
+
+    /// The focus-race invariant: a Suppressed decision MUST tell
+    /// the caller to advance `last_content`. If this assert
+    /// fails, the regression we hit live (1Password password
+    /// leaks on Ghostty alt-tab after copy) is back.
+    #[test]
+    fn suppressed_decision_advances_state() {
+        let d = PollDecision::classify(
+            "password",
+            Some("plain"),
+            Some(Duration::from_secs(1)),
+            false,
+            true,
+        );
+        assert!(
+            d.advances_state(),
+            "Suppressed must advance last_content; otherwise the \
+             same content gets re-checked on the next poll and a \
+             focus shift between polls will leak the password."
+        );
+    }
+
+    /// Companion: Unchanged and Debounced must NOT advance state.
+    /// Advancing on Debounced would defeat the 200 ms window and
+    /// turn every peer-driven clipboard sync into a fresh local
+    /// emit (echo loop).
+    #[test]
+    fn non_state_changing_decisions_do_not_advance() {
+        for (current, last, elapsed) in [
+            ("same", Some("same"), Some(Duration::from_secs(1))),
+            ("new", Some("old"), Some(Duration::from_millis(50))),
+        ] {
+            let d = PollDecision::classify(current, last, elapsed, false, false);
+            assert!(
+                !d.advances_state(),
+                "{d:?} should not advance state (current={current:?} last={last:?} elapsed={elapsed:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn content_might_emit_skips_unchanged_and_debounced() {
+        // Used by the poll loop to short-circuit the expensive
+        // suppression probes. Same matrix as `classify`'s "no
+        // emission possible" cases.
+        assert!(!PollDecision::content_might_emit(
+            "same",
+            Some("same"),
+            None
+        ));
+        assert!(!PollDecision::content_might_emit(
+            "new",
+            Some("old"),
+            Some(Duration::from_millis(50))
+        ));
+        assert!(PollDecision::content_might_emit(
+            "new",
+            Some("old"),
+            Some(Duration::from_secs(1))
+        ));
+        assert!(PollDecision::content_might_emit("new", None, None));
+    }
 }
