@@ -55,9 +55,21 @@ impl ClipboardMonitor {
         let event_tx_clone = event_tx.clone();
         let suppression_clone = suppression.clone();
 
-        // Spawn monitoring task
+        // Spawn monitoring task. Cadence: 100 ms on macOS (cheap
+        // because `pasteboard_change_count_advanced` short-circuits
+        // 99% of ticks via a single integer compare); 500 ms
+        // elsewhere (no cheap precheck, full content read every
+        // tick). Tighter cadence on macOS shrinks the
+        // frontmost-app suppression race window from 500 ms →
+        // 100 ms — the user would have to Cmd+Tab faster than
+        // human reaction time after copying to defeat the check.
+        #[cfg(target_os = "macos")]
+        const POLL_MS: u64 = 100;
+        #[cfg(not(target_os = "macos"))]
+        const POLL_MS: u64 = 500;
+
         tokio::spawn(async move {
-            let mut check_interval = interval(Duration::from_millis(500));
+            let mut check_interval = interval(Duration::from_millis(POLL_MS));
 
             loop {
                 check_interval.tick().await;
@@ -69,6 +81,16 @@ impl ClipboardMonitor {
                 };
 
                 if !is_enabled {
+                    continue;
+                }
+
+                // macOS: skip the expensive content-read entirely
+                // when NSPasteboard.changeCount hasn't advanced
+                // since last tick. This is the canonical clipboard-
+                // monitor optimization (Maccy / Alfred / Paste all
+                // do it). Single integer compare per idle tick.
+                #[cfg(target_os = "macos")]
+                if !pasteboard_change_count_advanced() {
                     continue;
                 }
 
@@ -275,4 +297,31 @@ fn is_suppressed(list: &SuppressionList) -> Option<AppIdent> {
     );
     let active = active?;
     snapshot.into_iter().find(|s| s.matches(&active))
+}
+
+/// Returns `true` the first time it's called, and on every later
+/// call where `NSPasteboard.generalPasteboard.changeCount` has
+/// advanced since the previous call. Used as a cheap precheck so
+/// the polling loop only invokes `arboard::Clipboard::get_text`
+/// (which round-trips through `pboardd` via XPC) on ticks where
+/// the pasteboard actually mutated.
+///
+/// `changeCount` reads are an Apple-blessed background-thread
+/// operation — the property is designed for exactly this kind of
+/// polling. No autorelease pool needed: the return value is a
+/// primitive `NSInteger`, not an Objective-C object.
+#[cfg(target_os = "macos")]
+fn pasteboard_change_count_advanced() -> bool {
+    use objc2_app_kit::NSPasteboard;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    // Initial sentinel `i64::MIN` ensures the first call always
+    // returns `true` so we read once at startup to seed the
+    // diff-against-`last_content` machinery downstream.
+    static LAST: AtomicI64 = AtomicI64::new(i64::MIN);
+
+    let pb = NSPasteboard::generalPasteboard();
+    let now = pb.changeCount() as i64;
+    let prev = LAST.swap(now, Ordering::Relaxed);
+    prev != now
 }

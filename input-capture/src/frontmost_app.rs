@@ -122,11 +122,30 @@ mod backend {
     use std::process::Command;
     use std::sync::{Mutex, OnceLock};
 
+    /// Return the bundle ID of the frontmost app via osascript →
+    /// System Events. `NSWorkspace.frontmostApplication` from the
+    /// daemon process is silently scoped to the caller's
+    /// loginwindow / Aqua session and returns `nil` for plain
+    /// Cocoa apps the daemon doesn't share a Mach connection with
+    /// (Messages, Notes, most Apple system apps). System Events is
+    /// fully session-attached so it sees the real frontmost
+    /// regardless. ~50 ms per call but only fires when the
+    /// clipboard polling loop notices a change, so latency is
+    /// acceptable.
     pub fn frontmost_app() -> Option<AppIdent> {
-        let workspace = NSWorkspace::sharedWorkspace();
-        let app = workspace.frontmostApplication()?;
-        let bundle_id = app.bundleIdentifier()?;
-        Some(AppIdent::MacBundle(bundle_id.to_string()))
+        const SCRIPT: &str = "tell application \"System Events\" to get bundle identifier of first application process whose frontmost is true";
+        let output = Command::new("/usr/bin/osascript")
+            .args(["-e", SCRIPT])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let bundle_id = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+        if bundle_id.is_empty() {
+            return None;
+        }
+        Some(AppIdent::MacBundle(bundle_id))
     }
 
     /// Enumerate user-visible apps via `osascript` → System Events.
