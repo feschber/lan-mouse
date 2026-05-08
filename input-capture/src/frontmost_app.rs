@@ -30,13 +30,16 @@
 
 use lan_mouse_ipc::{AppIdent, RunningApp};
 
-/// Helpers used by the platform-specific backends and exercised in
-/// unit tests. Lives at module scope (rather than inside a
-/// `#[cfg]`-gated `backend` mod) so the test suite can call into
-/// shared logic regardless of which backend is compiled.
+/// Helpers used by the Linux backend and exercised by Linux-only
+/// unit tests. Module-scoped (rather than nested inside the
+/// `#[cfg]`-gated Linux `backend` mod) so the test suite can
+/// reach it without duplicating cfg gates. Compiled only on
+/// non-macOS unixes — on macOS / Windows it would be dead code
+/// and clippy's `-D dead-code` would fail the build.
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) mod backend_helpers {
-    /// Detect Wayland via `WAYLAND_DISPLAY` env var. Used by both
-    /// the Linux backend and a unit test that pins the precedence
+    /// Detect Wayland via `WAYLAND_DISPLAY` env var. Used by the
+    /// Linux backend and a unit test that pins the precedence
     /// rule so a regression in env-var detection surfaces with a
     /// clear failure rather than a silent compositor-mismatch.
     pub fn is_wayland_for_test() -> bool {
@@ -114,9 +117,7 @@ mod tests {
 #[cfg(target_os = "macos")]
 mod backend {
     use super::{AppIdent, RunningApp};
-    use objc2_app_kit::{
-        NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSWorkspace,
-    };
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage, NSWorkspace};
     use objc2_foundation::{NSDictionary, NSString};
     use std::collections::HashMap;
     use std::process::Command;
@@ -199,9 +200,12 @@ mod backend {
                 icon_png,
             });
         }
-        out.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        out.sort_by_key(|a| a.display_name.to_lowercase());
         out.dedup_by(|a, b| a.identifier == b.identifier);
-        log::debug!("list_running_apps: {} visible apps via System Events", out.len());
+        log::debug!(
+            "list_running_apps: {} visible apps via System Events",
+            out.len()
+        );
         out
     }
 
@@ -284,7 +288,7 @@ end tell
     pub(super) fn lookup_app_metadata(identifier: &str) -> Option<RunningApp> {
         let workspace = NSWorkspace::sharedWorkspace();
         let bid_str = NSString::from_str(identifier);
-        let url = unsafe { workspace.URLForApplicationWithBundleIdentifier(&bid_str) }?;
+        let url = workspace.URLForApplicationWithBundleIdentifier(&bid_str)?;
         let path_ns = url.path()?;
         let path_str = path_ns.to_string();
         let display_name = std::path::Path::new(&path_str)
@@ -345,7 +349,6 @@ end tell
         let bytes = unsafe { png.as_bytes_unchecked() };
         Some(bytes.to_vec())
     }
-
 }
 
 #[cfg(windows)]
@@ -419,10 +422,7 @@ mod backend {
             }
         }
         unsafe {
-            let _ = EnumWindows(
-                Some(enum_proc),
-                LPARAM(&mut basenames as *mut _ as isize),
-            );
+            let _ = EnumWindows(Some(enum_proc), LPARAM(&mut basenames as *mut _ as isize));
         }
         let mut out: Vec<RunningApp> = basenames
             .into_iter()
@@ -736,14 +736,9 @@ mod backend {
             return Vec::new();
         };
         let net_client_list = net_client_list.atom;
-        let Ok(prop_req) = conn.get_property(
-            false,
-            root,
-            net_client_list,
-            AtomEnum::WINDOW,
-            0,
-            u32::MAX,
-        ) else {
+        let Ok(prop_req) =
+            conn.get_property(false, root, net_client_list, AtomEnum::WINDOW, 0, u32::MAX)
+        else {
             return Vec::new();
         };
         let Ok(prop) = prop_req.reply() else {

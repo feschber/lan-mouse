@@ -16,11 +16,8 @@ use lan_mouse_ipc::{
 };
 
 use crate::{
-    authorization_window::AuthorizationWindow,
-    clipboard_privacy_window::ClipboardPrivacyWindow,
-    fingerprint_window::FingerprintWindow,
-    key_object::KeyObject,
-    key_row::KeyRow,
+    authorization_window::AuthorizationWindow, clipboard_privacy_window::ClipboardPrivacyWindow,
+    fingerprint_window::FingerprintWindow, key_object::KeyObject, key_row::KeyRow,
 };
 
 use super::{client_object::ClientObject, client_row::ClientRow};

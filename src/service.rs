@@ -185,14 +185,14 @@ impl Service {
                 .collect();
             Arc::new(std::sync::Mutex::new(initial))
         };
-        let clipboard_monitor = match ClipboardMonitor::with_suppression(clipboard_suppression.clone())
-        {
-            Ok(m) => Some(m),
-            Err(e) => {
-                log::warn!("clipboard monitor unavailable: {e}; clipboard sync disabled");
-                None
-            }
-        };
+        let clipboard_monitor =
+            match ClipboardMonitor::with_suppression(clipboard_suppression.clone()) {
+                Ok(m) => Some(m),
+                Err(e) => {
+                    log::warn!("clipboard monitor unavailable: {e}; clipboard sync disabled");
+                    None
+                }
+            };
         let service = Self {
             config,
             capture,
@@ -479,7 +479,11 @@ impl Service {
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
     }
 
-    fn set_incoming_peer_clipboard_receive(&mut self, fingerprint: String, clipboard_receive: bool) {
+    fn set_incoming_peer_clipboard_receive(
+        &mut self,
+        fingerprint: String,
+        clipboard_receive: bool,
+    ) {
         if let Some(peer) = self
             .authorized_keys
             .write()
@@ -629,10 +633,7 @@ impl Service {
     /// `recent_forwarded` so a later forwarded copy of the same
     /// content (re-arriving via another peer in an N-peer ring)
     /// won't be redundantly re-broadcast.
-    async fn handle_local_clipboard_event(
-        &mut self,
-        event: Option<input_capture::CaptureEvent>,
-    ) {
+    async fn handle_local_clipboard_event(&mut self, event: Option<input_capture::CaptureEvent>) {
         let Some(event) = event else {
             return;
         };

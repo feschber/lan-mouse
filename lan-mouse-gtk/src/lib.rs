@@ -5,12 +5,12 @@ mod clipboard_privacy_window;
 mod fingerprint_window;
 mod key_object;
 mod key_row;
-mod modal_keys;
-mod running_app_object;
 #[cfg(target_os = "macos")]
 mod macos_privacy;
 #[cfg(target_os = "macos")]
 mod macos_status_item;
+mod modal_keys;
+mod running_app_object;
 mod window;
 
 use std::{env, process, str, sync::OnceLock};

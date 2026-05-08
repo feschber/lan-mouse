@@ -128,11 +128,7 @@ pub fn discover_apps() -> AppDirectory {
             // matching against window classes that disagree with
             // the filename stem (`1password.desktop` →
             // `StartupWMClass=1Password`).
-            if let Some(wmclass) = parsed
-                .startup_wm_class
-                .as_deref()
-                .filter(|s| !s.is_empty())
-            {
+            if let Some(wmclass) = parsed.startup_wm_class.as_deref().filter(|s| !s.is_empty()) {
                 by_identifier
                     .entry(wmclass.to_lowercase())
                     .or_insert_with(|| metadata.clone());
@@ -180,7 +176,10 @@ pub fn icon_bytes_for_name(icon_name: &str) -> Option<Vec<u8>> {
     ];
     for base in icon_search_dirs() {
         for size in RASTER_SIZES {
-            let p = base.join(size).join("apps").join(format!("{icon_name}.png"));
+            let p = base
+                .join(size)
+                .join("apps")
+                .join(format!("{icon_name}.png"));
             if let Ok(bytes) = fs::read(&p) {
                 return Some(bytes);
             }
@@ -217,7 +216,9 @@ fn standard_app_dirs() -> Vec<PathBuf> {
     } else if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/share/applications"));
     }
-    let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty());
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|v| !v.is_empty());
     let data_dirs = data_dirs.unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
     for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
         dirs.push(PathBuf::from(d).join("applications"));
@@ -227,9 +228,7 @@ fn standard_app_dirs() -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(&home).join(".local/share/flatpak/exports/share/applications"));
     }
-    dirs.push(PathBuf::from(
-        "/var/lib/flatpak/exports/share/applications",
-    ));
+    dirs.push(PathBuf::from("/var/lib/flatpak/exports/share/applications"));
     dirs
 }
 
@@ -245,7 +244,9 @@ fn icon_search_dirs() -> Vec<PathBuf> {
     } else if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/share/icons/hicolor"));
     }
-    let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty());
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|v| !v.is_empty());
     let data_dirs = data_dirs.unwrap_or_else(|| "/usr/local/share:/usr/share".to_owned());
     for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
         dirs.push(PathBuf::from(d).join("icons/hicolor"));
@@ -335,9 +336,7 @@ fn extract_hosts_from_exec(exec: &str) -> Vec<String> {
         };
         // Host runs until the first /, ?, #, : (port), or
         // end-of-token.
-        let host_end = after
-            .find(['/', '?', '#', ':'])
-            .unwrap_or(after.len());
+        let host_end = after.find(['/', '?', '#', ':']).unwrap_or(after.len());
         let host = &after[..host_end];
         if host.is_empty() || !host.contains('.') {
             continue;
@@ -375,7 +374,13 @@ fn parse_chrome_pwa_host(class_lowercased: &str) -> Option<&str> {
         // standard Chrome multi-profile setup. `-default` is also
         // what Brave / Vivaldi / Edge use.
         let mut trimmed = after;
-        for suffix in ["-default", "-profile_1", "-profile_2", "-profile_3", "-profile_4"] {
+        for suffix in [
+            "-default",
+            "-profile_1",
+            "-profile_2",
+            "-profile_3",
+            "-profile_4",
+        ] {
             if let Some(s) = trimmed.strip_suffix(suffix) {
                 trimmed = s;
                 break;
@@ -412,10 +417,7 @@ mod tests {
         let raw = "[Desktop Entry]\nName=1Password\nIcon=1password\n\
                    Type=Application\nStartupWMClass=1Password\n";
         let parsed = parse_desktop_entry(raw).expect("application entry");
-        assert_eq!(
-            parsed.startup_wm_class.as_deref(),
-            Some("1Password")
-        );
+        assert_eq!(parsed.startup_wm_class.as_deref(), Some("1Password"));
     }
 
     #[test]
@@ -473,9 +475,8 @@ mod tests {
 
     #[test]
     fn extract_hosts_handles_simple_https_url() {
-        let hosts = extract_hosts_from_exec(
-            "omarchy-launch-webapp https://discord.com/channels/@me",
-        );
+        let hosts =
+            extract_hosts_from_exec("omarchy-launch-webapp https://discord.com/channels/@me");
         assert_eq!(hosts, vec!["discord.com"]);
     }
 
@@ -495,9 +496,7 @@ mod tests {
 
     #[test]
     fn extract_hosts_strips_port_and_query() {
-        let hosts = extract_hosts_from_exec(
-            "open https://example.com:8080/path?q=1#frag",
-        );
+        let hosts = extract_hosts_from_exec("open https://example.com:8080/path?q=1#frag");
         assert_eq!(hosts, vec!["example.com"]);
     }
 
@@ -579,7 +578,10 @@ mod tests {
             by_webapp_host: by_host,
         };
         // Direct hit by stem.
-        assert_eq!(dir.lookup("discord").map(|m| m.display_name), Some("Discord".into()));
+        assert_eq!(
+            dir.lookup("discord").map(|m| m.display_name),
+            Some("Discord".into())
+        );
         // Webapp fallback for the omarchy class.
         assert_eq!(
             dir.lookup("chrome-discord.com__channels_@me-Default")

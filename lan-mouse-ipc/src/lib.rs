@@ -749,16 +749,22 @@ mod tests {
 
     #[test]
     fn app_ident_label_includes_platform() {
-        assert!(AppIdent::MacBundle("com.x.y".into())
-            .label()
-            .contains("macOS bundle"));
-        assert!(AppIdent::WindowsExe("z.exe".into())
-            .label()
-            .contains("Windows"));
+        assert!(
+            AppIdent::MacBundle("com.x.y".into())
+                .label()
+                .contains("macOS bundle")
+        );
+        assert!(
+            AppIdent::WindowsExe("z.exe".into())
+                .label()
+                .contains("Windows")
+        );
         assert!(AppIdent::LinuxX11("z".into()).label().contains("X11"));
-        assert!(AppIdent::LinuxWayland("z".into())
-            .label()
-            .contains("Wayland"));
+        assert!(
+            AppIdent::LinuxWayland("z".into())
+                .label()
+                .contains("Wayland")
+        );
     }
 
     #[test]

@@ -1,8 +1,6 @@
 use futures::{Stream, StreamExt};
 use lan_mouse_ipc::IncomingPeerConfig;
-use lan_mouse_proto::{
-    MAX_CLIPBOARD_SIZE, MAX_EVENT_SIZE, ProtoEvent, decode_clipboard_event,
-};
+use lan_mouse_proto::{MAX_CLIPBOARD_SIZE, MAX_EVENT_SIZE, ProtoEvent, decode_clipboard_event};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use rustls::pki_types::CertificateDer;
 use std::{

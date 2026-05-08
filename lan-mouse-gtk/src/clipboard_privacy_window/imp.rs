@@ -144,18 +144,22 @@ impl ObjectImpl for ClipboardPrivacyWindow {
                 .set_child(Some(&row));
         });
         factory.connect_bind(|_, list_item| {
-            let item = list_item
-                .downcast_ref::<ListItem>()
-                .expect("ListItem");
+            let item = list_item.downcast_ref::<ListItem>().expect("ListItem");
             let Some(obj) = item.item() else { return };
             let Ok(app) = obj.downcast::<RunningAppObject>() else {
                 return;
             };
             let Some(child) = item.child() else { return };
-            let Ok(row) = child.downcast::<GtkBox>() else { return };
+            let Ok(row) = child.downcast::<GtkBox>() else {
+                return;
+            };
             // first child = Image, next = Label
-            let Some(first) = row.first_child() else { return };
-            let Some(second) = first.next_sibling() else { return };
+            let Some(first) = row.first_child() else {
+                return;
+            };
+            let Some(second) = first.next_sibling() else {
+                return;
+            };
             if let Ok(image) = first.downcast::<Image>() {
                 if let Some(texture) = app.icon() {
                     image.set_paintable(Some(&texture));

@@ -105,7 +105,7 @@ impl ClipboardMonitor {
                     let mut clipboard = match Clipboard::new() {
                         Ok(c) => c,
                         Err(e) => {
-                            log::debug!("Failed to create clipboard: {}", e);
+                            log::debug!("Failed to create clipboard: {e}");
                             return;
                         }
                     };
@@ -118,7 +118,7 @@ impl ClipboardMonitor {
                         }
                         Err(e) => {
                             // Clipboard might be empty or contain non-text data
-                            log::trace!("Failed to get clipboard text: {}", e);
+                            log::trace!("Failed to get clipboard text: {e}");
                             return;
                         }
                     };
@@ -182,9 +182,7 @@ impl ClipboardMonitor {
                             log::trace!("Clipboard changed but debounced (too recent)");
                         }
                         PollDecision::Suppressed if concealed => {
-                            log::debug!(
-                                "clipboard change suppressed (concealed pasteboard type)"
-                            );
+                            log::debug!("clipboard change suppressed (concealed pasteboard type)");
                         }
                         PollDecision::Suppressed => {
                             if let Some(app) = suppressed.as_ref() {
@@ -195,10 +193,7 @@ impl ClipboardMonitor {
                             }
                         }
                         PollDecision::Emit => {
-                            log::info!(
-                                "Clipboard changed, length: {} bytes",
-                                current_text.len()
-                            );
+                            log::info!("Clipboard changed, length: {} bytes", current_text.len());
                             let event = CaptureEvent::Input(Event::Clipboard(
                                 ClipboardEvent::Text(current_text),
                             ));
@@ -291,11 +286,7 @@ fn is_suppressed(list: &SuppressionList) -> Option<AppIdent> {
         guard.iter().cloned().collect()
     };
     let active = frontmost_app::frontmost_app();
-    log::debug!(
-        "clipboard suppression check: list={:?} active={:?}",
-        snapshot,
-        active
-    );
+    log::debug!("clipboard suppression check: list={snapshot:?} active={active:?}");
     let active = active?;
     snapshot.into_iter().find(|s| s.matches(&active))
 }
@@ -380,8 +371,7 @@ impl PollDecision {
         if last_content == Some(current_text) {
             return Self::Unchanged;
         }
-        let debounce_passed =
-            last_change_elapsed.is_none_or(|d| d > Duration::from_millis(200));
+        let debounce_passed = last_change_elapsed.is_none_or(|d| d > Duration::from_millis(200));
         if !debounce_passed {
             return Self::Debounced;
         }

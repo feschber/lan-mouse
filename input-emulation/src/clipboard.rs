@@ -25,7 +25,7 @@ impl ClipboardEmulation {
         let clipboard = match Clipboard::new() {
             Ok(c) => Some(c),
             Err(e) => {
-                log::warn!("Failed to create clipboard instance: {}", e);
+                log::warn!("Failed to create clipboard instance: {e}");
                 None
             }
         };
@@ -55,7 +55,7 @@ impl ClipboardEmulation {
                                     clipboard_guard.as_mut().unwrap()
                                 }
                                 Err(e) => {
-                                    return Err(ClipboardError::Access(format!("{}", e)));
+                                    return Err(ClipboardError::Access(format!("{e}")));
                                 }
                             }
                         }
@@ -64,13 +64,13 @@ impl ClipboardEmulation {
                     // Set clipboard text
                     clipboard
                         .set_text(text.clone())
-                        .map_err(|e| ClipboardError::Set(format!("{}", e)))?;
+                        .map_err(|e| ClipboardError::Set(format!("{e}")))?;
 
                     log::debug!("Clipboard set, length: {} bytes", text.len());
                     Ok(())
                 })
                 .await
-                .map_err(|e| ClipboardError::Access(format!("Task join error: {}", e)))?
+                .map_err(|e| ClipboardError::Access(format!("Task join error: {e}")))?
             }
         }
     }
@@ -90,16 +90,16 @@ impl ClipboardEmulation {
                         clipboard_guard.as_mut().unwrap()
                     }
                     Err(e) => {
-                        return Err(ClipboardError::Access(format!("{}", e)));
+                        return Err(ClipboardError::Access(format!("{e}")));
                     }
                 },
             };
 
             clipboard
                 .get_text()
-                .map_err(|e| ClipboardError::Access(format!("{}", e)))
+                .map_err(|e| ClipboardError::Access(format!("{e}")))
         })
         .await
-        .map_err(|e| ClipboardError::Access(format!("Task join error: {}", e)))?
+        .map_err(|e| ClipboardError::Access(format!("Task join error: {e}")))?
     }
 }

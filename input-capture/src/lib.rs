@@ -826,8 +826,7 @@ impl Stream for InputCapture {
         };
 
         // handle key presses
-        if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })) =
-            &event
+        if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })) = &event
         {
             self.update_pressed_keys(*key, *state);
         }
