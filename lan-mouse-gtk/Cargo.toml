@@ -16,5 +16,8 @@ lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.2.0" }
 input-capture = { path = "../input-capture", version = "0.3.0", default-features = false }
 thiserror = "2.0.0"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.2"
+
 [build-dependencies]
 glib-build-tools = { version = "0.20.0" }
