@@ -61,7 +61,17 @@ impl Tray for LanMouseTray {
         }
     }
 
-    fn activate(&mut self, _x: i32, _y: i32) {
+    fn activate(&mut self, x: i32, y: i32) {
+        log::info!("linux_tray: tray Activate at ({x},{y}) — toggling window");
+        let _ = self.tx.send_blocking(TrayCmd::TogglePresent);
+    }
+
+    // Some tray hosts (older waybar, certain Plasma versions) treat
+    // middle-click as the only "primary" interaction. Map it to the
+    // same toggle so the icon is responsive regardless of which
+    // event the host emits.
+    fn secondary_activate(&mut self, x: i32, y: i32) {
+        log::info!("linux_tray: tray SecondaryActivate at ({x},{y}) — toggling window");
         let _ = self.tx.send_blocking(TrayCmd::TogglePresent);
     }
 
@@ -105,7 +115,12 @@ pub(crate) fn setup(app: &adw::Application, window: &Window) -> gio::Application
         while let Ok(cmd) = rx.recv().await {
             match cmd {
                 TrayCmd::TogglePresent => {
-                    if window.is_visible() {
+                    let visible = window.is_visible();
+                    log::info!(
+                        "linux_tray: TogglePresent — currently visible={visible}, will {}",
+                        if visible { "hide" } else { "present" }
+                    );
+                    if visible {
                         window.set_visible(false);
                     } else {
                         window.present();
