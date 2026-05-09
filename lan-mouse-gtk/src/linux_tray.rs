@@ -129,19 +129,22 @@ impl Tray for LanMouseTray {
 }
 
 /// Render the bundled SVG into a set of ARGB32 pixmaps the tray host
-/// can pick from. We render at 1.3× the target size and crop the
-/// center, so the visible glyph fills the entire pixmap with no
-/// surrounding margin. The host then scales the pixmap to its own
-/// `icon-size`; because our pixmap has no padding, the rendered icon
-/// fills the slot more completely than typical theme icons (which
-/// reserve ~10% padding by convention) — that's the "zoom" the user
-/// asked for, achieved without changing the host's icon-size.
+/// can pick from. For each target size we render the SVG at 4× that
+/// size, scan the actual non-transparent bounding box, and crop to
+/// it (with a tiny edge margin so anti-aliased pixels aren't shaved
+/// off). The host then scales the pixmap to its own `icon-size`;
+/// because our pixmap is exactly the glyph with no surrounding
+/// padding, the rendered icon fills the slot edge-to-edge — visibly
+/// larger than neighbouring icons that include theme padding.
 fn render_tray_pixmaps() -> Vec<Icon> {
-    const SVG_RESOURCE: &str = "/de/feschber/LanMouse/icons/de.feschber.LanMouse.svg";
-    // Zoom factor: how much of the SVG canvas we crop away to remove
-    // the inherent padding. 1.3 trims ~23% of each edge, which lines
-    // up well with how Inkscape-authored icons are typically padded.
-    const ZOOM: f64 = 1.3;
+    // Distinct from the desktop icon — see comments in
+    // resources/icons/lan-mouse-tray.svg. Tight viewBox + simple
+    // silhouette so the glyph remains readable at 12-22 px.
+    const SVG_RESOURCE: &str = "/de/feschber/LanMouse/icons/lan-mouse-tray.svg";
+    // High-density render so the alpha bbox scan operates on a
+    // reasonably anti-aliased pixmap; the result is then cropped and
+    // resampled by the host.
+    const RENDER_OVERSAMPLE: i32 = 4;
     // Provide a few common host sizes; SNI hosts pick the closest fit
     // and downscale, which is much sharper than upscaling a single
     // tiny pixmap.
@@ -149,14 +152,19 @@ fn render_tray_pixmaps() -> Vec<Icon> {
 
     let mut icons = Vec::with_capacity(TARGET_SIZES.len());
     for &target in TARGET_SIZES {
-        let render = (f64::from(target) * ZOOM).round() as i32;
+        let render = target * RENDER_OVERSAMPLE;
         let Ok(pixbuf) = Pixbuf::from_resource_at_scale(SVG_RESOURCE, render, render, true) else {
             log::warn!("linux_tray: failed to render SVG at {render}px");
             continue;
         };
-        let Some(icon) = pixbuf_center_crop_argb32(&pixbuf, target) else {
+        let Some(icon) = pixbuf_bbox_crop_argb32(&pixbuf) else {
             continue;
         };
+        log::debug!(
+            "linux_tray: tray pixmap target={target} → cropped {}x{}",
+            icon.width,
+            icon.height
+        );
         icons.push(icon);
     }
     if icons.is_empty() {
@@ -165,39 +173,82 @@ fn render_tray_pixmaps() -> Vec<Icon> {
     icons
 }
 
-/// Take the centre `target × target` region of an oversized RGBA
-/// pixbuf and convert to ARGB32 (network byte order), the encoding
-/// the StatusNotifierItem spec requires for `IconPixmap`.
-fn pixbuf_center_crop_argb32(pixbuf: &Pixbuf, target: i32) -> Option<Icon> {
+/// Scan the alpha channel for the bounding box of visible pixels,
+/// crop the pixbuf to that bbox (as a square so the host doesn't
+/// letterbox) and convert to ARGB32 in network byte order — the
+/// encoding the StatusNotifierItem spec requires for `IconPixmap`.
+///
+/// Adds a 1-pixel transparent margin so soft-edged anti-aliased
+/// pixels at the rim aren't clipped to a hard edge by aggressive
+/// host downscaling.
+fn pixbuf_bbox_crop_argb32(pixbuf: &Pixbuf) -> Option<Icon> {
     if pixbuf.n_channels() != 4 || pixbuf.bits_per_sample() != 8 {
         return None;
     }
-    let src_w = pixbuf.width();
-    let src_h = pixbuf.height();
-    if target <= 0 || target > src_w.min(src_h) {
-        return None;
-    }
-    let x0 = (src_w - target) / 2;
-    let y0 = (src_h - target) / 2;
+    let w = pixbuf.width();
+    let h = pixbuf.height();
     let rowstride = pixbuf.rowstride() as usize;
     let bytes = pixbuf.read_pixel_bytes();
     let pixels = bytes.as_ref();
 
-    let mut data = Vec::with_capacity((target * target * 4) as usize);
-    for y in y0..(y0 + target) {
-        for x in x0..(x0 + target) {
+    // Anything below this alpha is treated as background — guards
+    // against a few stray sub-1% alpha pixels (Inkscape's renderer
+    // sometimes emits them outside the visible glyph) anchoring the
+    // bbox to the canvas edges.
+    const ALPHA_THRESHOLD: u8 = 8;
+
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (w, h, -1i32, -1i32);
+    for y in 0..h {
+        for x in 0..w {
             let i = (y as usize) * rowstride + (x as usize) * 4;
-            // gdk-pixbuf encodes RGBA in memory order; SNI wants ARGB
-            // in network byte order.
-            data.push(pixels[i + 3]);
-            data.push(pixels[i]);
-            data.push(pixels[i + 1]);
-            data.push(pixels[i + 2]);
+            if pixels[i + 3] >= ALPHA_THRESHOLD {
+                if x < min_x {
+                    min_x = x;
+                }
+                if y < min_y {
+                    min_y = y;
+                }
+                if x > max_x {
+                    max_x = x;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
+            }
+        }
+    }
+    if max_x < 0 || max_y < 0 {
+        return None;
+    }
+
+    // 1-px breathing room on each side, then square up by padding
+    // the shorter axis so the host doesn't letterbox.
+    let pad = 1;
+    let x0 = (min_x - pad).max(0);
+    let y0 = (min_y - pad).max(0);
+    let x1 = (max_x + pad + 1).min(w);
+    let y1 = (max_y + pad + 1).min(h);
+    let crop_w = x1 - x0;
+    let crop_h = y1 - y0;
+    let side = crop_w.max(crop_h);
+    let off_x = (side - crop_w) / 2;
+    let off_y = (side - crop_h) / 2;
+
+    let mut data = vec![0u8; (side * side * 4) as usize];
+    for sy in 0..crop_h {
+        for sx in 0..crop_w {
+            let src = ((y0 + sy) as usize) * rowstride + ((x0 + sx) as usize) * 4;
+            let dst = (((off_y + sy) * side + (off_x + sx)) * 4) as usize;
+            // gdk-pixbuf RGBA → SNI ARGB32 (network byte order).
+            data[dst] = pixels[src + 3];
+            data[dst + 1] = pixels[src];
+            data[dst + 2] = pixels[src + 1];
+            data[dst + 3] = pixels[src + 2];
         }
     }
     Some(Icon {
-        width: target,
-        height: target,
+        width: side,
+        height: side,
         data,
     })
 }
