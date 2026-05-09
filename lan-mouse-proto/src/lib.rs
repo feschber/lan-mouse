@@ -170,10 +170,11 @@ impl Display for ProtoEvent {
                 from_fingerprint,
                 content,
             } => {
-                let preview = if content.len() > 40 {
-                    format!("{}…", &content[..40])
+                let head: String = content.chars().take(40).collect();
+                let preview = if head.len() < content.len() {
+                    format!("{head}…")
                 } else {
-                    content.clone()
+                    head
                 };
                 write!(
                     f,
