@@ -2,12 +2,6 @@
 <interface>
   <requires lib="gtk" version="4.0"/>
   <requires lib="libadwaita" version="1.0"/>
-  <menu id="main-menu">
-    <item>
-      <attribute name="label" translatable="yes">_Close window</attribute>
-      <attribute name="action">window.close</attribute>
-    </item>
-  </menu>
   <template class="LanMouseWindow" parent="AdwApplicationWindow">
     <property name="default-width">600</property>
     <property name="default-height">1400</property>
@@ -18,12 +12,6 @@
         <property name="orientation">vertical</property>
         <child type="top">
           <object class="AdwHeaderBar">
-            <child type ="end">
-              <object class="GtkMenuButton">
-                <property name="icon-name">open-menu-symbolic</property>
-                <property name="menu-model">main-menu</property>
-              </object>
-            </child>
             <style>
               <class name="flat"/>
             </style>
