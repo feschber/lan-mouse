@@ -10,6 +10,7 @@
   wrapGAppsHook4,
   librsvg,
   git,
+  dbus,
 }:
 let
   cargoToml = fromTOML (builtins.readFile ../Cargo.toml);
@@ -34,6 +35,7 @@ rustPlatform.buildRustPackage {
   ++ lib.optionals stdenv.isLinux [
     libX11
     libXtst
+    dbus
   ];
 
   src = builtins.path {
