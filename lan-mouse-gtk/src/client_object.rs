@@ -26,12 +26,22 @@ impl ClientObject {
                     .collect::<Vec<_>>(),
             )
             .property("resolving", state.resolving)
+            .property("peer-commit", peer_commit_to_string(state.peer_commit))
+            .property("clipboard-send", client.clipboard_send)
             .build()
     }
 
     pub fn get_data(&self) -> ClientData {
         self.imp().data.borrow().clone()
     }
+}
+
+/// Render the 8-byte ASCII commit hash carried in
+/// [`lan_mouse_ipc::ClientState::peer_commit`] as a `String`. `None`
+/// in → `None` out (peer hasn't sent a Hello yet, or speaks an older
+/// proto).
+pub fn peer_commit_to_string(commit: Option<[u8; 8]>) -> Option<String> {
+    commit.and_then(|c| std::str::from_utf8(&c).ok().map(str::to_string))
 }
 
 #[derive(Default, Clone)]
@@ -43,4 +53,6 @@ pub struct ClientData {
     pub position: String,
     pub resolving: bool,
     pub ips: Vec<String>,
+    pub peer_commit: Option<String>,
+    pub clipboard_send: bool,
 }

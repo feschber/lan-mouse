@@ -33,6 +33,7 @@ impl ClientManager {
             port: config_client.port,
             pos: config_client.pos,
             cmd: config_client.enter_hook,
+            clipboard_send: config_client.clipboard_send,
         };
         let state = ClientState {
             active: config_client.active,
@@ -91,6 +92,15 @@ impl ClientManager {
     }
 
     /// find a client by its address
+    ///
+    /// Matches against the union of (a) the client's known ip set
+    /// `s.ips` (`fix_ips` plus DNS-resolved addresses), and (b) the
+    /// client's currently-active outbound DTLS address. The
+    /// `active_addr` fallback covers mDNS-primary scenarios where
+    /// the dialer picked an address that wasn't in DNS — the
+    /// listen-side counterpart of that connection arrives from the
+    /// same IP, which we'd otherwise drop on the floor (silently
+    /// breaking peer-version display, among other things).
     pub fn get_client(&self, addr: SocketAddr) -> Option<ClientHandle> {
         // since there shouldn't be more than a handful of clients at any given
         // time this is likely faster than using a HashMap
@@ -98,7 +108,12 @@ impl ClientManager {
             .borrow()
             .iter()
             .find_map(|(k, (_, s))| {
-                if s.active && s.ips.contains(&addr.ip()) {
+                if !s.active {
+                    return None;
+                }
+                let ip = addr.ip();
+                let active_match = s.active_addr.is_some_and(|a| a.ip() == ip);
+                if s.ips.contains(&ip) || active_match {
                     Some(k)
                 } else {
                     None
@@ -282,6 +297,12 @@ impl ClientManager {
         }
     }
 
+    pub(crate) fn set_peer_commit(&self, handle: ClientHandle, commit: Option<[u8; 8]>) {
+        if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            s.peer_commit = commit;
+        }
+    }
+
     pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
         self.clients
             .borrow()
@@ -309,5 +330,31 @@ impl ClientManager {
             .borrow()
             .get(handle as usize)
             .map(|(_, s)| s.ips.clone())
+    }
+
+    /// Update the per-pair clipboard-send gate for the given client.
+    /// Returns `true` when the value changed (so callers can avoid
+    /// no-op config writes / frontend broadcasts).
+    pub(crate) fn set_clipboard_send(&self, handle: ClientHandle, enabled: bool) -> bool {
+        match self.clients.borrow_mut().get_mut(handle as usize) {
+            Some((c, _)) if c.clipboard_send != enabled => {
+                c.clipboard_send = enabled;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Snapshot of every client whose `clipboard_send` is true and
+    /// whose state is `active`. Used by Service to fan-out a local
+    /// clipboard change without holding the manager's borrow across
+    /// async sends.
+    pub(crate) fn clipboard_send_targets(&self) -> Vec<ClientHandle> {
+        self.clients
+            .borrow()
+            .iter()
+            .filter(|(_, (c, s))| c.clipboard_send && s.active)
+            .map(|(k, _)| k as ClientHandle)
+            .collect()
     }
 }

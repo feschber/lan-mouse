@@ -28,6 +28,9 @@ tokio = { version = "1.32.0", features = [
 once_cell = "1.19.0"
 async-trait = "0.1.81"
 tokio-util = "0.7.11"
+arboard = { version = "3.4", features = ["wayland-data-control"] }
+lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.2.0" }
+serde_json = "1.0"
 
 
 [target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
@@ -46,6 +49,11 @@ ashpd = { version = "0.13.9", default-features = false, features = [
     "tokio",
 ], optional = true }
 reis = { version = "0.5.0", features = ["tokio"], optional = true }
+# Used unconditionally on Linux for frontmost-app detection in
+# `frontmost_app::linux_x11`. Already pulled in transitively via
+# arboard's wayland-data-control feature, so listing it here just
+# pins it as a direct dep.
+x11rb = "0.13"
 
 [target.'cfg(target_os="macos")'.dependencies]
 core-graphics = { version = "0.25.0", features = ["highsierra"] }
@@ -54,10 +62,17 @@ core-foundation-sys = "0.8.6"
 libc = "0.2.155"
 keycode = "1.0.0"
 bitflags = "2.6.0"
+# Used by `frontmost_app::macos` and `clipboard::is_concealed_clipboard`
+# to call NSWorkspace / NSPasteboard. Already pulled in transitively
+# via arboard, so listed here as direct deps.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSPasteboard", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSData", "NSDictionary", "NSGeometry", "NSURL"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.2", features = [
     "Win32_System_LibraryLoader",
+    "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
     "Win32_Foundation",
     "Win32_Graphics",

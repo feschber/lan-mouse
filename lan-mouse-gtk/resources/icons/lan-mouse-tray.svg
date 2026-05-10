@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tray-only glyph for the StatusNotifierItem. Distinct from
+  de.feschber.LanMouse.svg, which is the full-detail desktop icon —
+  at tray sizes (12-22 px) the desktop icon's background and detail
+  become unreadable. This silhouette is designed to read clearly at
+  the smallest tray sizes while keeping the same mouse motif as the
+  desktop icon.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Mouse body silhouette. Filled so the host's theme tinting (or
+       lack thereof) renders predictably. Light grey reads well on
+       dark waybar/Plasma panels and is still visible on light ones. -->
+  <path d="M 8 1.4
+           C 4.9 1.4 3.1 3.3 3.1 6.2
+           V 11.4
+           C 3.1 13.8 5.2 14.6 8 14.6
+           C 10.8 14.6 12.9 13.8 12.9 11.4
+           V 6.2
+           C 12.9 3.3 11.1 1.4 8 1.4 Z"
+        fill="#e6e6e6"/>
+  <!-- Scroll-wheel slot: a small dark capsule near the top centre.
+       Doubles as the visual anchor that says "this is a mouse" at
+       sizes where the body outline alone could read as a pill. -->
+  <rect x="7.25" y="3.6" width="1.5" height="2.4" rx="0.75" fill="#2a2a2a"/>
+</svg>

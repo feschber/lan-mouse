@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use futures::FutureExt;
 use input_event::{
-    Event::{Keyboard, Pointer},
+    Event::{self, Keyboard, Pointer},
     KeyboardEvent, PointerEvent,
 };
 
@@ -147,12 +147,18 @@ impl Emulation for DesktopPortalEmulation {
                     }
                 }
             }
+            Event::Clipboard(_) => {
+                // Clipboard injection is handled by the cross-
+                // platform `ClipboardEmulation` sink, not the
+                // desktop portal backend.
+            }
         }
         Ok(())
     }
 
     async fn create(&mut self, _client: EmulationHandle) {}
     async fn destroy(&mut self, _client: EmulationHandle) {}
+
     async fn terminate(&mut self) {
         if let Err(e) = self.session.close().await {
             log::warn!("session.close(): {e}");

@@ -16,7 +16,7 @@ use toml;
 use toml_edit::{self, DocumentMut};
 
 use lan_mouse_cli::CliArgs;
-use lan_mouse_ipc::{DEFAULT_PORT, Position};
+use lan_mouse_ipc::{ClipboardSuppression, DEFAULT_PORT, IncomingPeerConfig, Position};
 
 use input_event::scancode::{
     self,
@@ -26,6 +26,18 @@ use input_event::scancode::{
 use shadow_rs::shadow;
 
 shadow!(build);
+
+/// Local build's 8-byte ASCII short commit hash, suitable for use
+/// in [`lan_mouse_proto::ProtoEvent::Hello`]. Pads with `'?'` if
+/// shadow_rs returns an unexpected length so the field is always
+/// well-formed on the wire.
+pub fn local_commit() -> [u8; 8] {
+    let bytes = build::SHORT_COMMIT.as_bytes();
+    let mut out = [b'?'; 8];
+    let n = bytes.len().min(8);
+    out[..n].copy_from_slice(&bytes[..n]);
+    out
+}
 
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CERT_FILE_NAME: &str = "lan-mouse.pem";
@@ -53,9 +65,28 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    /// pixel threshold for the wall-press auto-release fallback.
+    /// 0 (or absent) disables it; the cursor only releases on the
+    /// release-bind chord or a peer-side `Leave`.
+    release_threshold_px: Option<u32>,
+    /// Advertise (and consume) `_lan-mouse._udp.local.` Bonjour
+    /// service records. The TXT record's `primary=` field tells the
+    /// dialer which interface IP the OS prefers (macOS service order
+    /// / Linux default route), so when a peer is multi-homed the
+    /// dialer biases toward the right interface instead of racing
+    /// blindly. Default true; turn off on networks where mDNS
+    /// multicast (224.0.0.251) is firewalled.
+    mdns_discovery: Option<bool>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
-    authorized_fingerprints: Option<HashMap<String, String>>,
+    authorized_fingerprints: Option<HashMap<String, IncomingPeerConfig>>,
+    /// Per-OS clipboard suppression lists. Each host machine reads
+    /// and writes only its own OS's slot; the rest round-trip
+    /// untouched so a single config can be shared across machines.
+    /// `None` / empty means no suppression — the user list is
+    /// purely additive on top of platform-specific automatic
+    /// detection (e.g. macOS `org.nspasteboard.ConcealedType`).
+    clipboard_suppress_apps: Option<ClipboardSuppression>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -67,6 +98,10 @@ struct TomlClient {
     position: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
+    /// Per-pair clipboard send gate. Absent in legacy configs;
+    /// defaults to `false` so existing pairs don't start
+    /// transmitting clipboard text on upgrade.
+    clipboard_send: Option<bool>,
 }
 
 impl ConfigToml {
@@ -114,6 +149,14 @@ pub enum Command {
     Cli(CliArgs),
     /// run in daemon mode
     Daemon,
+    /// macOS-only: probe Accessibility permission in a fresh process
+    /// (which bypasses the cached TCC trust state in already-running
+    /// processes). Exits with status 0 if granted, 1 if not. Used by
+    /// the daemon's TCC.db watcher to detect "remove from list" cases
+    /// where AXIsProcessTrusted in the parent process keeps reporting
+    /// cached-true even after the entry is removed.
+    #[cfg(target_os = "macos")]
+    AxProbe,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -262,6 +305,7 @@ pub struct ConfigClient {
     pub pos: Position,
     pub active: bool,
     pub enter_hook: Option<String>,
+    pub clipboard_send: bool,
 }
 
 impl From<TomlClient> for ConfigClient {
@@ -272,6 +316,7 @@ impl From<TomlClient> for ConfigClient {
         let ips = HashSet::from_iter(toml.ips.into_iter().flatten());
         let port = toml.port.unwrap_or(DEFAULT_PORT);
         let pos = toml.position.unwrap_or_default();
+        let clipboard_send = toml.clipboard_send.unwrap_or(false);
         Self {
             ips,
             hostname,
@@ -279,6 +324,7 @@ impl From<TomlClient> for ConfigClient {
             pos,
             active,
             enter_hook,
+            clipboard_send,
         }
     }
 }
@@ -298,6 +344,14 @@ impl From<ConfigClient> for TomlClient {
         let position = Some(client.pos);
         let activate_on_startup = if client.active { Some(true) } else { None };
         let enter_hook = client.enter_hook;
+        // Persist `clipboard_send = true` only when the user has
+        // opted in. Default-false stays implicit so configs upgraded
+        // from older builds don't gain a new field on every save.
+        let clipboard_send = if client.clipboard_send {
+            Some(true)
+        } else {
+            None
+        };
         Self {
             hostname,
             host_name,
@@ -306,6 +360,7 @@ impl From<ConfigClient> for TomlClient {
             position,
             activate_on_startup,
             enter_hook,
+            clipboard_send,
         }
     }
 }
@@ -424,8 +479,9 @@ impl Config {
         &self.config_path
     }
 
-    /// public key fingerprints authorized for connection
-    pub fn authorized_fingerprints(&self) -> HashMap<String, String> {
+    /// public key fingerprints authorized for connection, with each
+    /// peer's per-pair receive-side post-processing preferences.
+    pub fn authorized_fingerprints(&self) -> HashMap<String, IncomingPeerConfig> {
         self.config_toml
             .as_ref()
             .and_then(|c| c.authorized_fingerprints.clone())
@@ -479,6 +535,41 @@ impl Config {
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
     }
 
+    /// Pixel threshold for the wall-press auto-release fallback.
+    /// 0 disables it.
+    pub fn release_threshold_px(&self) -> u32 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.release_threshold_px)
+            .unwrap_or(0)
+    }
+
+    pub fn set_release_threshold_px(&mut self, threshold: u32) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .release_threshold_px = Some(threshold);
+    }
+
+    /// Whether mDNS-SD discovery is enabled. Defaults to true when
+    /// the key is absent.
+    pub fn mdns_discovery(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.mdns_discovery)
+            .unwrap_or(true)
+    }
+
+    pub fn set_mdns_discovery(&mut self, enabled: bool) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml.as_mut().expect("config").mdns_discovery = Some(enabled);
+    }
+
     /// set configured clients
     pub fn set_clients(&mut self, clients: Vec<ConfigClient>) {
         if clients.is_empty() {
@@ -492,7 +583,7 @@ impl Config {
     }
 
     /// set authorized keys
-    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, String>) {
+    pub fn set_authorized_keys(&mut self, fingerprints: HashMap<String, IncomingPeerConfig>) {
         if self.config_toml.is_none() {
             self.config_toml = Some(Default::default());
         }
@@ -500,6 +591,31 @@ impl Config {
             .as_mut()
             .expect("config")
             .authorized_fingerprints = Some(fingerprints);
+    }
+
+    /// Snapshot of the persisted per-OS suppression lists.
+    pub fn clipboard_suppression(&self) -> ClipboardSuppression {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.clipboard_suppress_apps.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace the persisted per-OS suppression lists. `None` is
+    /// written when every slot is empty so a fresh config doesn't
+    /// gain a new top-level key on every save.
+    pub fn set_clipboard_suppression(&mut self, suppression: ClipboardSuppression) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml
+            .as_mut()
+            .expect("config")
+            .clipboard_suppress_apps = if suppression.is_empty() {
+            None
+        } else {
+            Some(suppression)
+        };
     }
 
     pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {

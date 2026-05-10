@@ -4,11 +4,15 @@ use adw::subclass::prelude::*;
 use adw::{ActionRow, PreferencesGroup, ToastOverlay, prelude::*};
 use glib::subclass::InitializingObject;
 use gtk::glib::clone;
-use gtk::{Button, CompositeTemplate, Entry, Image, Label, ListBox, gdk, gio, glib};
+use gtk::{
+    Button, CompositeTemplate, Entry, EventControllerScroll, EventControllerScrollFlags, Image,
+    Label, ListBox, PropagationPhase, Scale, ScrolledWindow, Switch, gdk, gio, glib,
+};
 
 use lan_mouse_ipc::{DEFAULT_PORT, FrontendRequestWriter};
 
 use crate::authorization_window::AuthorizationWindow;
+use crate::clipboard_privacy_window::ClipboardPrivacyWindow;
 
 #[derive(CompositeTemplate, Default)]
 #[template(resource = "/de/feschber/LanMouse/window.ui")]
@@ -45,6 +49,20 @@ pub struct Window {
     pub input_capture_button: TemplateChild<Button>,
     #[template_child]
     pub authorized_list: TemplateChild<ListBox>,
+    #[template_child]
+    pub release_threshold_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub release_threshold_scale: TemplateChild<Scale>,
+    #[template_child]
+    pub release_threshold_value: TemplateChild<Label>,
+    #[template_child]
+    pub mdns_discovery_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub mdns_discovery_switch: TemplateChild<Switch>,
+    #[template_child]
+    pub clipboard_privacy_row: TemplateChild<ActionRow>,
+    #[template_child]
+    pub clipboard_privacy_button: TemplateChild<Button>,
     pub clients: RefCell<Option<gio::ListStore>>,
     pub authorized: RefCell<Option<gio::ListStore>>,
     pub frontend_request_writer: RefCell<Option<FrontendRequestWriter>>,
@@ -52,6 +70,20 @@ pub struct Window {
     pub capture_active: Cell<bool>,
     pub emulation_active: Cell<bool>,
     pub authorization_window: RefCell<Option<AuthorizationWindow>>,
+    /// Connected handler for the auto-release-threshold scale's
+    /// value-changed signal, so we can block it when programmatically
+    /// updating the slider in response to a Sync event.
+    pub release_threshold_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Same pattern for the mDNS-discovery switch.
+    pub mdns_discovery_handler: RefCell<Option<glib::SignalHandlerId>>,
+    /// Long-lived clipboard-privacy modal. Kept alive (rather than
+    /// rebuilt on every open) so its `set_apps` calls can run from
+    /// the SuppressedAppsUpdated event handler regardless of
+    /// whether the window is currently presented.
+    pub clipboard_privacy_window: RefCell<Option<ClipboardPrivacyWindow>>,
+    /// Latest server-confirmed host-OS suppression list. Cached so
+    /// the main-window subtitle stays in sync without re-querying.
+    pub suppressed_apps: RefCell<Vec<String>>,
 }
 
 #[glib::object_subclass]
@@ -200,6 +232,92 @@ impl ObjectImpl for Window {
         obj.setup_icon();
         obj.setup_clients();
         obj.setup_authorized();
+
+        // Connect the auto-release threshold slider. Stash the handler
+        // id so set_release_threshold() can block the signal when the
+        // daemon-driven Sync sets the value programmatically.
+        let scale = self.release_threshold_scale.clone();
+        let handler_id = scale.connect_value_changed(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            move |scale| {
+                let value = scale.value().round() as u32;
+                let label = if value == 0 {
+                    "Disabled".to_string()
+                } else {
+                    format!("{value} px")
+                };
+                window.imp().release_threshold_value.set_label(&label);
+                window.request_release_threshold(value);
+            }
+        ));
+        self.release_threshold_handler.replace(Some(handler_id));
+
+        // Pass scroll-wheel events on the threshold slider through to
+        // the ancestor ScrolledWindow instead of letting GtkScale's
+        // default handler treat them as increment / decrement (which
+        // would drift the threshold any time the user scrolls past
+        // the slider). Returning `Stop` from a capture-phase handler
+        // suppresses the scale's own scroll-to-adjust handler, but
+        // also stops propagation to the parent — so we additionally
+        // bump the parent ScrolledWindow's vadjustment by hand to
+        // mimic native scroll-passthrough.
+        let scroll_forward = EventControllerScroll::new(
+            EventControllerScrollFlags::VERTICAL | EventControllerScrollFlags::HORIZONTAL,
+        );
+        scroll_forward.set_propagation_phase(PropagationPhase::Capture);
+        scroll_forward.connect_scroll(clone!(
+            #[weak(rename_to = scale)]
+            self.release_threshold_scale,
+            #[upgrade_or]
+            glib::Propagation::Stop,
+            move |_, _dx, dy| {
+                let mut walker = scale.parent();
+                while let Some(w) = walker {
+                    if let Some(scrolled) = w.downcast_ref::<ScrolledWindow>() {
+                        let vadj = scrolled.vadjustment();
+                        // step_increment is the "wheel tick" unit; if
+                        // unset (rare), fall back to a sensible
+                        // pixel default so a single tick still moves.
+                        let step = if vadj.step_increment() > 0.0 {
+                            vadj.step_increment()
+                        } else {
+                            40.0
+                        };
+                        let target = (vadj.value() + dy * step)
+                            .clamp(vadj.lower(), vadj.upper() - vadj.page_size());
+                        vadj.set_value(target);
+                        break;
+                    }
+                    walker = w.parent();
+                }
+                glib::Propagation::Stop
+            }
+        ));
+        self.release_threshold_scale.add_controller(scroll_forward);
+
+        // mDNS-discovery switch — identical pattern.
+        let mdns_switch = self.mdns_discovery_switch.clone();
+        let mdns_handler = mdns_switch.connect_state_set(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, state| {
+                window.request_mdns_discovery(state);
+                glib::Propagation::Proceed
+            }
+        ));
+        self.mdns_discovery_handler.replace(Some(mdns_handler));
+
+        // Clipboard-privacy "Manage" button → open the modal.
+        self.clipboard_privacy_button.connect_clicked(clone!(
+            #[weak(rename_to = window)]
+            obj,
+            move |_| {
+                window.open_clipboard_privacy_window();
+            }
+        ));
     }
 }
 

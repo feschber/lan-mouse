@@ -415,6 +415,50 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+## Clipboard Sync
+
+Optional bi-directional clipboard text sync between paired peers. Disabled by default; enable per pair from the GUI or by editing `config.toml`.
+
+### Per-pair gates
+
+Each direction is independently gated. Both ends must opt in for clipboard text to flow that way:
+
+- **Outgoing**: `clipboard_send` on each `[[clients]]` entry — when true, copies on this device propagate to that peer.
+- **Incoming**: `clipboard_receive` on each `[authorized_fingerprints]` entry — when true, clipboard text from that peer is applied to this device's clipboard.
+
+Defaults are `false`. Existing pairs see no behavior change on upgrade.
+
+### Limitations
+
+- **Text only**. No images, files, RTF/HTML, or multi-format pasteboard.
+- **4 KiB max payload** (originator fingerprint + content + length prefixes, conservative against typical UDP MTU). Larger copies are dropped at the sender with a debug log; the local clipboard is unaffected.
+- **UTF-8 only**. Invalid byte sequences are rejected.
+- Polling-based change detection (no native pasteboard event API exists on macOS), so very rapid recopies within a single poll tick may be coalesced.
+
+### App-source suppression
+
+A per-OS suppression list lets you mark applications whose clipboard contents must never propagate (password managers, sensitive editors, Apple Messages, etc.). The frontmost app at the moment of copy is checked against the host-OS slot of `clipboard_suppress_apps`:
+
+```toml
+[clipboard_suppress_apps]
+macos = ["com.1password.1password", "com.apple.MobileSMS"]
+windows = ["1Password.exe"]
+linux_wayland = ["org.keepassxc.KeePassXC"]
+linux_x11 = ["KeePassXC"]
+```
+
+Each machine reads/writes only the slot matching its own OS — the others round-trip untouched, so a single config can be shared across machines (dotfiles / Syncthing / etc.) without any one machine bleeding identifiers into the wrong section.
+
+The GUI exposes this via **Clipboard Privacy → Manage**: a searchable picker of the apps currently running on this device (with name + icon), plus a list of currently-suppressed apps with one-click removal.
+
+### Automatic suppression on macOS
+
+In addition to the user list, macOS clipboards stamped with the [`org.nspasteboard.ConcealedType`](https://nspasteboard.org/) UTI (the community convention used by 1Password, Bitwarden, KeePassXC, and most modern password managers) are auto-suppressed without needing a manual entry.
+
+### Loop prevention for 3+ peer fan-out
+
+The wire frame carries the originator's TLS certificate fingerprint. The Service tracks `(originator_fp, content_hash)` for 1 second to prevent rebroadcast cycles in N-peer topologies (A→B→C won't echo back to A).
+
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.
@@ -429,7 +473,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [ ] X11 Input Capture
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization
-- [ ] Clipboard support
+- [x] Clipboard support (text, per-pair, with app-source suppression)
 
 
 ## Detailed OS Support

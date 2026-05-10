@@ -6,9 +6,11 @@
     <file compressed="true" preprocess="xml-stripblanks">fingerprint_window.ui</file>
     <file compressed="true" preprocess="xml-stripblanks">client_row.ui</file>
     <file compressed="true" preprocess="xml-stripblanks">key_row.ui</file>
+    <file compressed="true" preprocess="xml-stripblanks">clipboard_privacy_window.ui</file>
   </gresource>
   <gresource prefix="/de/feschber/LanMouse/icons">
     <file compressed="true" preprocess="xml-stripblanks">de.feschber.LanMouse.svg</file>
+    <file compressed="true" preprocess="xml-stripblanks" alias="lan-mouse-tray.svg">icons/lan-mouse-tray.svg</file>
     <!--
       Bundled Adwaita symbolic icons so the GTK frontend has a complete icon set
       on platforms (notably macOS) where the Adwaita icon theme is not installed.
