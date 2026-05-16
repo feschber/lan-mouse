@@ -222,11 +222,8 @@ fn start_routine(
     }
 
     /* run message loop */
-    loop {
+    while let Some(msg) = get_msg() {
         // mouse / keybrd proc do not actually return a message
-        let Some(msg) = get_msg() else {
-            break;
-        };
         if msg.hwnd.0.is_null() {
             /* messages sent via PostThreadMessage */
             match msg.wParam.0 {
