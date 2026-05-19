@@ -6,16 +6,12 @@ pub enum InputEmulationError {
     Emulate(#[from] EmulationError),
 }
 
-#[cfg(all(
-    unix,
-    any(feature = "remote_desktop_portal", feature = "libei"),
-    not(target_os = "macos")
-))]
+#[cfg(any(libei, rdp))]
 use ashpd::{Error::Response, desktop::ResponseError};
 use std::io;
 use thiserror::Error;
 
-#[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+#[cfg(wlroots)]
 use wayland_client::{
     ConnectError, DispatchError,
     backend::WaylandError,
@@ -26,17 +22,13 @@ use wayland_client::{
 pub enum EmulationError {
     #[error("event stream closed")]
     EndOfStream,
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[cfg(libei)]
     #[error("libei error: `{0}`")]
     Libei(#[from] reis::Error),
-    #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+    #[cfg(wlroots)]
     #[error("wayland error: `{0}`")]
     Wayland(#[from] wayland_client::backend::WaylandError),
-    #[cfg(all(
-        unix,
-        any(feature = "remote_desktop_portal", feature = "libei"),
-        not(target_os = "macos")
-    ))]
+    #[cfg(any(rdp, libei))]
     #[error("xdg-desktop-portal: `{0}`")]
     Ashpd(#[from] ashpd::Error),
     #[error("io error: `{0}`")]
@@ -45,16 +37,16 @@ pub enum EmulationError {
 
 #[derive(Debug, Error)]
 pub enum EmulationCreationError {
-    #[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+    #[cfg(wlroots)]
     #[error("wlroots backend: `{0}`")]
     Wlroots(#[from] WlrootsEmulationCreationError),
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[cfg(libei)]
     #[error("libei backend: `{0}`")]
     Libei(#[from] LibeiEmulationCreationError),
-    #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
+    #[cfg(rdp)]
     #[error("xdg-desktop-portal: `{0}`")]
     Xdp(#[from] XdpEmulationCreationError),
-    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[cfg(x11)]
     #[error("x11: `{0}`")]
     X11(#[from] X11EmulationCreationError),
     #[cfg(target_os = "macos")]
@@ -70,7 +62,7 @@ pub enum EmulationCreationError {
 impl EmulationCreationError {
     /// request was intentionally denied by the user
     pub(crate) fn cancelled_by_user(&self) -> bool {
-        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+        #[cfg(libei)]
         if matches!(
             self,
             EmulationCreationError::Libei(LibeiEmulationCreationError::Ashpd(Response(
@@ -79,7 +71,7 @@ impl EmulationCreationError {
         ) {
             return true;
         }
-        #[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
+        #[cfg(rdp)]
         if matches!(
             self,
             EmulationCreationError::Xdp(XdpEmulationCreationError::Ashpd(Response(
@@ -92,7 +84,7 @@ impl EmulationCreationError {
     }
 }
 
-#[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+#[cfg(wlroots)]
 #[derive(Debug, Error)]
 pub enum WlrootsEmulationCreationError {
     #[error(transparent)]
@@ -109,7 +101,7 @@ pub enum WlrootsEmulationCreationError {
     Io(#[from] std::io::Error),
 }
 
-#[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+#[cfg(wlroots)]
 #[derive(Debug, Error)]
 #[error("wayland protocol \"{protocol}\" not supported: {inner}")]
 pub struct WaylandBindError {
@@ -117,14 +109,14 @@ pub struct WaylandBindError {
     protocol: &'static str,
 }
 
-#[cfg(all(unix, feature = "wlroots", not(target_os = "macos")))]
+#[cfg(wlroots)]
 impl WaylandBindError {
     pub(crate) fn new(inner: BindError, protocol: &'static str) -> Self {
         Self { inner, protocol }
     }
 }
 
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+#[cfg(libei)]
 #[derive(Debug, Error)]
 pub enum LibeiEmulationCreationError {
     #[error(transparent)]
@@ -135,14 +127,14 @@ pub enum LibeiEmulationCreationError {
     Reis(#[from] reis::Error),
 }
 
-#[cfg(all(unix, feature = "remote_desktop_portal", not(target_os = "macos")))]
+#[cfg(rdp)]
 #[derive(Debug, Error)]
 pub enum XdpEmulationCreationError {
     #[error(transparent)]
     Ashpd(#[from] ashpd::Error),
 }
 
-#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+#[cfg(x11)]
 #[derive(Debug, Error)]
 pub enum X11EmulationCreationError {
     #[error("could not open display")]

@@ -15,19 +15,19 @@ pub use error::{CaptureCreationError, CaptureError, InputCaptureError};
 
 pub mod error;
 
-#[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+#[cfg(libei)]
 mod libei;
 
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+#[cfg(layer_shell)]
 mod layer_shell;
 
 #[cfg(windows)]
 mod windows;
 
-#[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+#[cfg(x11)]
 mod x11;
 
 /// fallback input capture (does not produce events)
@@ -85,11 +85,11 @@ impl Display for Position {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
-    #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+    #[cfg(libei)]
     InputCapturePortal,
-    #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+    #[cfg(layer_shell)]
     LayerShell,
-    #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+    #[cfg(x11)]
     X11,
     #[cfg(windows)]
     Windows,
@@ -101,11 +101,11 @@ pub enum Backend {
 impl Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+            #[cfg(libei)]
             Backend::InputCapturePortal => write!(f, "input-capture-portal"),
-            #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+            #[cfg(layer_shell)]
             Backend::LayerShell => write!(f, "layer-shell"),
-            #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+            #[cfg(x11)]
             Backend::X11 => write!(f, "X11"),
             #[cfg(windows)]
             Backend::Windows => write!(f, "windows"),
@@ -298,11 +298,11 @@ async fn create_backend(
     CaptureCreationError,
 > {
     match backend {
-        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+        #[cfg(libei)]
         Backend::InputCapturePortal => Ok(Box::new(libei::LibeiInputCapture::new().await?)),
-        #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+        #[cfg(layer_shell)]
         Backend::LayerShell => Ok(Box::new(layer_shell::LayerShellInputCapture::new()?)),
-        #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+        #[cfg(x11)]
         Backend::X11 => Ok(Box::new(x11::X11InputCapture::new()?)),
         #[cfg(windows)]
         Backend::Windows => Ok(Box::new(windows::WindowsInputCapture::new())),
@@ -327,11 +327,11 @@ async fn create(
     }
 
     for backend in [
-        #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
+        #[cfg(libei)]
         Backend::InputCapturePortal,
-        #[cfg(all(unix, feature = "layer_shell", not(target_os = "macos")))]
+        #[cfg(layer_shell)]
         Backend::LayerShell,
-        #[cfg(all(unix, feature = "x11", not(target_os = "macos")))]
+        #[cfg(x11)]
         Backend::X11,
         #[cfg(windows)]
         Backend::Windows,
