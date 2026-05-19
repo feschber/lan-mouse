@@ -157,6 +157,19 @@ extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
 
+/// Mac virtual key codes for the four arrow keys.
+const MAC_KEY_LEFT: u16 = 0x7B;
+const MAC_KEY_RIGHT: u16 = 0x7C;
+const MAC_KEY_DOWN: u16 = 0x7D;
+const MAC_KEY_UP: u16 = 0x7E;
+
+fn is_arrow_key(key: u16) -> bool {
+    matches!(
+        key,
+        MAC_KEY_LEFT | MAC_KEY_RIGHT | MAC_KEY_DOWN | MAC_KEY_UP
+    )
+}
+
 fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
     let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
         Ok(e) => e,
@@ -165,7 +178,15 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
             return;
         }
     };
-    event.set_flags(to_cgevent_flags(modifiers));
+    let mut flags = to_cgevent_flags(modifiers);
+    // Hardware-generated arrow keys on macOS carry NumericPad + SecondaryFn.
+    // CGEventTap-based hotkey matchers (e.g. tiling window managers) check
+    // these flags to recognize navigation keys; without them synthesized
+    // arrow chords fall through to the focused app.
+    if is_arrow_key(key) {
+        flags |= CGEventFlags::CGEventFlagNumericPad | CGEventFlags::CGEventFlagSecondaryFn;
+    }
+    event.set_flags(flags);
     event.post(CGEventTapLocation::HID);
     log::trace!("key event: {key} {state}");
 }
