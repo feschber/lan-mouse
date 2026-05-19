@@ -106,8 +106,14 @@ impl MacOSEmulation {
                     }
                 }
             }
-            // release key when cancelled
-            update_modifiers(&modifiers, key as u32, 0);
+            // release key when cancelled.
+            // Do NOT call update_modifiers here: `key` is a Mac CGKeyCode but
+            // update_modifiers expects a Linux evdev scancode, and the two
+            // codespaces collide (e.g. Mac LeftShift=56 == Linux KeyLeftAlt=56,
+            // Mac Down=125 == Linux KeyLeftMeta=125), corrupting modifier
+            // state for chords like Shift+Option+X or Cmd+Down. Modifier state
+            // is owned by the main consume() loop, which calls update_modifiers
+            // with the correct Linux scancode on the real release event.
             key_event(event_source.clone(), key, 0, modifiers.get());
         });
         self.repeat_task = Some(repeat_task);
