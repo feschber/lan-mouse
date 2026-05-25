@@ -144,6 +144,10 @@ impl AsRawFd for Inner {
 
 pub struct LayerShellInputCapture(AsyncFd<Inner>);
 
+// A 1px layer can miss edge entry on compositors that clamp cursor
+// coordinates just inside the logical output bounds.
+const EDGE_CAPTURE_THICKNESS: u32 = 4;
+
 struct Window {
     buffer: wl_buffer::WlBuffer,
     surface: WlSurface,
@@ -163,8 +167,8 @@ impl Window {
         let g = &state.globals;
 
         let (width, height) = match pos {
-            Position::Left | Position::Right => (1, size.1 as u32),
-            Position::Top | Position::Bottom => (size.0 as u32, 1),
+            Position::Left | Position::Right => (EDGE_CAPTURE_THICKNESS, size.1 as u32),
+            Position::Top | Position::Bottom => (size.0 as u32, EDGE_CAPTURE_THICKNESS),
         };
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
