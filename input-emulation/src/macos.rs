@@ -458,8 +458,8 @@ impl Emulation for MacOSEmulation {
                     // which do not exist on Apple keyboards.
                     let code: CGKeyCode = match scancode::Linux::try_from(key) {
                         Ok(scancode::Linux::KeySysrq) => 0x69,      // F13
-                        Ok(scancode::Linux::KeyScrollLock) => 0x6B,  // F14
-                        Ok(scancode::Linux::KeyPause) => 0x71,       // F15
+                        Ok(scancode::Linux::KeyScrollLock) => 0x6B, // F14
+                        Ok(scancode::Linux::KeyPause) => 0x71,      // F15
                         _ => match KeyMap::from_key_mapping(KeyMapping::Evdev(key as u16)) {
                             Ok(k) => k.mac as CGKeyCode,
                             Err(_) => {
