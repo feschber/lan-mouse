@@ -217,6 +217,9 @@ impl Service {
             FrontendRequest::UpdateEnterHook(handle, enter_hook) => {
                 self.update_enter_hook(handle, enter_hook)
             }
+            FrontendRequest::UpdateLeaveHook(handle, leave_hook) => {
+                self.update_leave_hook(handle, leave_hook)
+            }
             FrontendRequest::SaveConfiguration => self.save_config(),
         }
     }
@@ -232,6 +235,7 @@ impl Service {
                 pos: c.pos,
                 active: s.active,
                 enter_hook: c.cmd,
+                leave_hook: c.leave_cmd,
             })
             .collect();
         self.config.set_clients(clients);
@@ -342,6 +346,10 @@ impl Service {
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
                 self.spawn_hook_command(handle);
+            }
+            ICaptureEvent::ClientLeft(handle) => {
+                log::info!("leaving client {handle} ...");
+                self.spawn_leave_hook_command(handle);
             }
         }
     }
@@ -565,6 +573,11 @@ impl Service {
         self.broadcast_client(handle);
     }
 
+    fn update_leave_hook(&mut self, handle: ClientHandle, leave_hook: Option<String>) {
+        self.client_manager.set_leave_hook(handle, leave_hook);
+        self.broadcast_client(handle);
+    }
+
     fn broadcast_client(&mut self, handle: ClientHandle) {
         let event = self
             .client_manager
@@ -584,6 +597,32 @@ impl Service {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("could not execute cmd: {e}");
+                    return;
+                }
+            };
+            match child.wait().await {
+                Ok(s) => {
+                    if s.success() {
+                        log::info!("{cmd} exited successfully");
+                    } else {
+                        log::warn!("{cmd} exited with {s}");
+                    }
+                }
+                Err(e) => log::warn!("{cmd}: {e}"),
+            }
+        });
+    }
+
+    fn spawn_leave_hook_command(&self, handle: ClientHandle) {
+        let Some(cmd) = self.client_manager.get_leave_cmd(handle) else {
+            return;
+        };
+        tokio::task::spawn_local(async move {
+            log::info!("spawning leave command!");
+            let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("could not execute leave cmd: {e}");
                     return;
                 }
             };

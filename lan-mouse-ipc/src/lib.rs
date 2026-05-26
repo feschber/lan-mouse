@@ -140,6 +140,8 @@ pub struct ClientConfig {
     pub pos: Position,
     /// enter hook
     pub cmd: Option<String>,
+    /// leave hook
+    pub leave_cmd: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -150,6 +152,7 @@ impl Default for ClientConfig {
             fix_ips: Default::default(),
             pos: Default::default(),
             cmd: None,
+            leave_cmd: None,
         }
     }
 }
@@ -253,6 +256,8 @@ pub enum FrontendRequest {
     RemoveAuthorizedKey(String),
     /// change the hook command
     UpdateEnterHook(u64, Option<String>),
+    /// change the leave hook command
+    UpdateLeaveHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
 }
