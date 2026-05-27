@@ -40,7 +40,6 @@ jobs:
           - test
     steps:
       - uses: actions/checkout@v6
-      - uses: Swatinem/rust-cache@v2
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: |
@@ -49,6 +48,13 @@ jobs:
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install gtk4 libadwaita imagemagick
+      - name: Record macOS native lib versions for cache key
+        if: runner.os == 'macOS'
+        run: |
+          echo "MACOS_LIB_VER=$(brew list --versions glib gtk4 libadwaita | tr '\n' '_')" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ env.MACOS_LIB_VER }}
       - name: Install Windows Dependencies - create gtk dir
         if: runner.os == 'Windows'
         run: mkdir C:\gtk-build\gtk\x64\release
