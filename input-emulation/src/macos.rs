@@ -106,8 +106,19 @@ impl MacOSEmulation {
                     }
                 }
             }
-            // release key when cancelled
-            update_modifiers(&modifiers, key as u32, 0);
+            // Always release the key with the correct CGKeyCode, regardless of
+            // whether the repeat loop ran. This matches @feschber's review
+            // request: "still release the key repeat task but with the correct
+            // code."
+            //
+            // Do NOT call update_modifiers here: `key` is a Mac CGKeyCode but
+            // update_modifiers expects a Linux evdev scancode, and the two
+            // codespaces collide (e.g. Mac LeftShift=56 == Linux KeyLeftAlt=56,
+            // Mac Down=125 == Linux KeyLeftMeta=125), corrupting modifier
+            // state for chords like Shift+Option+X or Cmd+Down. Modifier state
+            // is owned by the main consume() loop, which already calls
+            // update_modifiers with the correct Linux scancode on the real key
+            // release event from the client.
             key_event(event_source.clone(), key, 0, modifiers.get());
         });
         self.repeat_task = Some(repeat_task);
@@ -157,6 +168,19 @@ extern "C" {
     fn AXIsProcessTrusted() -> bool;
 }
 
+/// Mac virtual key codes for the four arrow keys.
+const MAC_KEY_LEFT: u16 = 0x7B;
+const MAC_KEY_RIGHT: u16 = 0x7C;
+const MAC_KEY_DOWN: u16 = 0x7D;
+const MAC_KEY_UP: u16 = 0x7E;
+
+fn is_arrow_key(key: u16) -> bool {
+    matches!(
+        key,
+        MAC_KEY_LEFT | MAC_KEY_RIGHT | MAC_KEY_DOWN | MAC_KEY_UP
+    )
+}
+
 fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
     let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
         Ok(e) => e,
@@ -165,7 +189,15 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
             return;
         }
     };
-    event.set_flags(to_cgevent_flags(modifiers));
+    let mut flags = to_cgevent_flags(modifiers);
+    // Hardware-generated arrow keys on macOS carry NumericPad + SecondaryFn.
+    // CGEventTap-based hotkey matchers (e.g. tiling window managers) check
+    // these flags to recognize navigation keys; without them synthesized
+    // arrow chords fall through to the focused app.
+    if is_arrow_key(key) {
+        flags |= CGEventFlags::CGEventFlagNumericPad | CGEventFlags::CGEventFlagSecondaryFn;
+    }
+    event.set_flags(flags);
     event.post(CGEventTapLocation::HID);
     log::trace!("key event: {key} {state}");
 }
