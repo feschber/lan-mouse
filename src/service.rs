@@ -345,11 +345,11 @@ impl Service {
             }
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
-                self.spawn_hook_command(handle);
+                self.spawn_hook_command(handle, HookKind::Enter);
             }
             ICaptureEvent::ClientLeft(handle) => {
                 log::info!("leaving client {handle} ...");
-                self.spawn_leave_hook_command(handle);
+                self.spawn_hook_command(handle, HookKind::Leave);
             }
         }
     }
@@ -587,55 +587,46 @@ impl Service {
         self.notify_frontend(event);
     }
 
-    fn spawn_hook_command(&self, handle: ClientHandle) {
-        let Some(cmd) = self.client_manager.get_enter_cmd(handle) else {
-            return;
+    fn spawn_hook_command(&self, handle: ClientHandle, kind: HookKind) {
+        let cmd = match kind {
+            HookKind::Enter => self.client_manager.get_enter_cmd(handle),
+            HookKind::Leave => self.client_manager.get_leave_cmd(handle),
         };
+        let Some(cmd) = cmd else { return };
         tokio::task::spawn_local(async move {
-            log::info!("spawning command!");
+            log::info!("spawning {kind} hook for client {handle}");
             let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    log::warn!("could not execute cmd: {e}");
+                    log::warn!("could not execute {kind} hook for client {handle}: {e}");
                     return;
                 }
             };
             match child.wait().await {
                 Ok(s) => {
                     if s.success() {
-                        log::info!("{cmd} exited successfully");
+                        log::info!("{kind} hook for client {handle} ({cmd}) exited successfully");
                     } else {
-                        log::warn!("{cmd} exited with {s}");
+                        log::warn!("{kind} hook for client {handle} ({cmd}) exited with {s}");
                     }
                 }
-                Err(e) => log::warn!("{cmd}: {e}"),
+                Err(e) => log::warn!("{kind} hook for client {handle} ({cmd}): {e}"),
             }
         });
     }
+}
 
-    fn spawn_leave_hook_command(&self, handle: ClientHandle) {
-        let Some(cmd) = self.client_manager.get_leave_cmd(handle) else {
-            return;
-        };
-        tokio::task::spawn_local(async move {
-            log::info!("spawning leave command!");
-            let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("could not execute leave cmd: {e}");
-                    return;
-                }
-            };
-            match child.wait().await {
-                Ok(s) => {
-                    if s.success() {
-                        log::info!("{cmd} exited successfully");
-                    } else {
-                        log::warn!("{cmd} exited with {s}");
-                    }
-                }
-                Err(e) => log::warn!("{cmd}: {e}"),
-            }
-        });
+#[derive(Clone, Copy, Debug)]
+enum HookKind {
+    Enter,
+    Leave,
+}
+
+impl std::fmt::Display for HookKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HookKind::Enter => f.write_str("enter"),
+            HookKind::Leave => f.write_str("leave"),
+        }
     }
 }
