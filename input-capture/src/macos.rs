@@ -357,34 +357,20 @@ fn get_events(
             })))
         }
         CGEventType::ScrollWheel => {
-            // macOS applies the user's "Natural Scrolling" preference to all
-            // scroll delta fields before they reach the event tap. When natural
-            // scrolling is active the deltas represent content-movement
-            // direction, which is the opposite of the hardware (wheel rotation)
-            // direction that Linux and Windows expect.
-            //
-            // CGEvent field 137 corresponds to NSEvent.isDirectionInvertedFromDevice
-            // and is non-zero when the system has inverted the scroll direction.
-            // Not exposed by the core-graphics crate; the value is defined in
-            // Apple's CGEventTypes.h and is widely relied upon by established
-            // macOS input utilities (mac-mouse-fix, iina, Scroll Reverser, etc.).
-            //
-            // We undo that inversion here so the network protocol always carries
-            // device-direction deltas — each receiving OS can then apply its own
-            // scroll preference independently.
+            // macOS scroll deltas use the opposite sign convention
+            // from evdev when Natural Scrolling is OFF. When it is ON
+            // the system already negates the deltas, matching evdev.
+            // Field 137 = isDirectionInvertedFromDevice (non-zero when
+            // Natural Scrolling is active).
             const DIRECTION_INVERTED_FROM_DEVICE: CGEventField = 137;
-            let direction_inverted =
-                ev.get_integer_value_field(DIRECTION_INVERTED_FROM_DEVICE) != 0;
+            let natural = ev.get_integer_value_field(DIRECTION_INVERTED_FROM_DEVICE) != 0;
+            let sign: i64 = if natural { 1 } else { -1 };
 
             if ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_IS_CONTINUOUS) != 0 {
-                let mut v =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
-                let mut h =
-                    ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
-                if direction_inverted {
-                    v = -v;
-                    h = -h;
-                }
+                let v = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1);
+                let h = sign
+                    * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(PointerEvent::Axis {
                         time: 0,
@@ -403,12 +389,10 @@ fn get_events(
                 // line based scrolling
                 const LINES_PER_STEP: i32 = 3;
                 const V120_STEPS_PER_LINE: i32 = 120 / LINES_PER_STEP;
-                let mut v = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
-                let mut h = ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
-                if direction_inverted {
-                    v = -v;
-                    h = -h;
-                }
+                let v =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1);
+                let h =
+                    sign * ev.get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2);
                 if v != 0 {
                     result.push(CaptureEvent::Input(Event::Pointer(
                         PointerEvent::AxisDiscrete120 {
