@@ -174,13 +174,15 @@ jobs:
     steps:
     - name: Download build artifacts
       uses: actions/download-artifact@v4
+    - name: Get short SHA
+      run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
     - name: Create Pre-Release
       if: ${{ !startsWith(github.ref, 'refs/tags/') }}
       uses: softprops/action-gh-release@v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        tag_name: ${{ format('{0}-{1}', github.event.inputs.name || github.ref_name, substring(github.sha, 0, 7)) }}
-        name: ${{ format('{0}-{1}', github.event.inputs.name || github.ref_name, substring(github.sha, 0, 7)) }}
+        tag_name: ${{ format('{0}-{1}', github.event.inputs.name || github.ref_name, steps.vars.outputs.short_sha) }}
+        name: ${{ format('{0}-{1}', github.event.inputs.name || github.ref_name, steps.vars.outputs.short_sha) }}
         prerelease: true
         generate_release_notes: true
         files: |
