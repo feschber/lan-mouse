@@ -12,7 +12,7 @@ members = [
 [package]
 name = "lan-mouse"
 description = "Software KVM Switch / mouse & keyboard sharing software for Local Area Networks"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/feschber/lan-mouse"
@@ -27,13 +27,13 @@ panic = "abort"
 shadow-rs = "1.2.0"
 
 [dependencies]
-input-event = { path = "input-event", version = "0.3.0" }
-input-emulation = { path = "input-emulation", version = "0.3.0", default-features = false }
-input-capture = { path = "input-capture", version = "0.3.0", default-features = false }
-lan-mouse-cli = { path = "lan-mouse-cli", version = "0.2.0" }
-lan-mouse-gtk = { path = "lan-mouse-gtk", version = "0.2.0", optional = true }
-lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.2.0" }
-lan-mouse-proto = { path = "lan-mouse-proto", version = "0.2.0" }
+input-event = { path = "input-event", version = "0.4.0" }
+input-emulation = { path = "input-emulation", version = "0.4.0", default-features = false }
+input-capture = { path = "input-capture", version = "0.4.0", default-features = false }
+lan-mouse-cli = { path = "lan-mouse-cli", version = "0.3.0" }
+lan-mouse-gtk = { path = "lan-mouse-gtk", version = "0.3.0", optional = true }
+lan-mouse-ipc = { path = "lan-mouse-ipc", version = "0.3.0" }
+lan-mouse-proto = { path = "lan-mouse-proto", version = "0.3.0" }
 shadow-rs = { version = "1.2.0", features = ["metadata"] }
 
 hickory-resolver = "0.25.2"
