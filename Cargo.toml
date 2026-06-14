@@ -93,7 +93,8 @@ rdp_emulation = ["input-emulation/remote_desktop_portal"]
 
 [package.metadata.bundle]
 name = "Lan Mouse"
-icon = ["target/icon.icns"]
+icon = ["target/icon.icns", "lan-mouse-gtk/resources/de.feschber.LanMouse.svg"]
 identifier = "de.feschber.LanMouse"
+deb_depends = [ "libadwaita-1-0" ]
 osx_info_plist_exts = ["build-aux/macos-lsui-element.plist"]
 resources = ["target/menubar-template.png"]
