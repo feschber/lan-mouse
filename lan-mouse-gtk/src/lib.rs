@@ -12,6 +12,7 @@ mod window;
 
 use std::{env, process, str, sync::OnceLock};
 
+use gtk::CssProvider;
 use window::Window;
 
 /// Local build's commit hash, set once by [`run`] before the GTK
@@ -85,6 +86,7 @@ fn gtk_main() -> glib::ExitCode {
         .build();
 
     app.connect_startup(|app| {
+        load_css();
         load_icons();
         setup_actions(app);
         setup_menu(app);
@@ -150,6 +152,16 @@ fn configure_macos_bundle_environment() {
     env::set_var(
         "GTK_DATA_PREFIX",
         contents.join("Resources").to_string_lossy().as_ref(),
+    );
+}
+
+fn load_css() {
+    let provider = CssProvider::default();
+    provider.load_from_resource("de/feschber/LanMouse/style.css");
+    gtk::style_context_add_provider_for_display(
+        &Display::default().expect("Could not connect to a display"),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 }
 
