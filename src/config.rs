@@ -1,6 +1,7 @@
 use crate::capture_test::TestCaptureArgs;
 use crate::emulation_test::TestEmulationArgs;
 use clap::{Parser, Subcommand, ValueEnum};
+use notify::event::ModifyKind;
 use notify::{EventKind, RecommendedWatcher, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -406,7 +407,9 @@ impl Config {
             if event.paths.contains(&self.config_path)
                 && matches!(
                     event.kind,
-                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                    EventKind::Create(_)
+                        | EventKind::Modify(ModifyKind::Data(_))
+                        | EventKind::Remove(_)
                 )
                 && self.read_from_disk()?
             {
@@ -524,6 +527,11 @@ impl Config {
             }
             Err(e) => log::warn!("{:?} {e}", self.config_path()),
         };
+        if changed {
+            log::info!("config changed");
+        } else {
+            log::info!("config unchanged");
+        }
         Ok(changed)
     }
 
