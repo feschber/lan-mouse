@@ -1,0 +1,12 @@
+.peer-match > box > list .subtitle {
+    color: @success_color;
+}
+
+.peer-mismatch > box > list .subtitle {
+    font-weight: bold;
+    color: @warning_color;
+}
+
+.peer-unknown > box > list .subtitle {
+    color: @warning_color;
+}

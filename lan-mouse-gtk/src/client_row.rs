@@ -174,15 +174,21 @@ impl ClientRow {
             .and_then(|co| co.property::<Option<String>>("peer-commit"));
         let local = crate::local_commit_str();
         let markup = match peer.as_deref() {
-            None => format!(
-                r##"<span foreground="#ffaa33">Peer version: unknown · Ours: {local}</span>"##
-            ),
+            None => format!("Peer version: unknown · Ours: {local}"),
             Some(p) if p == local.as_str() => {
-                format!(r##"<span foreground="#33cc66">Peer version: {p} · matched</span>"##)
+                format!("Peer version: {p} · matched")
             }
             Some(p) => {
-                format!(r##"<span foreground="#ffaa33">Peer version: {p} · Ours: {local}</span>"##)
+                format!("Peer version: {p} · Ours: {local}")
             }
+        };
+        self.remove_css_class("peer-mismatch");
+        self.remove_css_class("peer-match");
+        self.remove_css_class("peer-unknown");
+        match peer.as_deref() {
+            Some(p) if p == local.as_str() => self.add_css_class("peer-match"),
+            Some(_) => self.add_css_class("peer-mismatch"),
+            None => self.add_css_class("peer-unknown"),
         };
         self.set_subtitle(&markup);
     }
