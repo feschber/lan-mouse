@@ -202,16 +202,81 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
     log::trace!("key event: {key} {state}");
 }
 
-fn modifier_event(event_source: CGEventSource, depressed: XMods) {
-    let Ok(event) = CGEvent::new(event_source) else {
-        log::warn!("could not create CGEvent");
+/// Posts a `FlagsChanged` event for a modifier key.
+///
+/// The event MUST carry the modifier's real virtual keycode. A bare
+/// `CGEvent::new()` defaults to keycode 0 (`kVK_ANSI_A`), so every modifier
+/// change arrived in apps as a phantom "A" key event — holding Ctrl registered
+/// as Ctrl+A and shortcut recorders captured "A" (issue #450).
+///
+/// Carrying the real keycode also matters for consumers that track *physical*
+/// modifier transitions through AppKit's `flagsChanged(with:)` rather than the
+/// flags on the key-down event — notably Apple Virtualization.framework guest
+/// views (`VZVirtualMachineView`), which derive guest modifier state from these
+/// `FlagsChanged` events. The event is built as a key-down so it gets a valid
+/// keycode; the type is then overridden to `FlagsChanged` and the *current*
+/// modifier flags (already updated by the caller) describe the new state.
+fn modifier_key_event(event_source: CGEventSource, key: u16, depressed: XMods) {
+    let Ok(event) = CGEvent::new_keyboard_event(event_source, key, true) else {
+        log::warn!("could not create modifier key event");
         return;
     };
-    let flags = to_cgevent_flags(depressed);
     event.set_type(CGEventType::FlagsChanged);
-    event.set_flags(flags);
+    event.set_flags(modifier_flags_changed_flags(depressed));
     event.post(CGEventTapLocation::HID);
-    log::trace!("modifiers updated: {depressed:?}");
+    log::trace!("modifier key event: {key} {depressed:?}");
+}
+
+/// Builds the flag set for a modifier `FlagsChanged` event.
+///
+/// Combines the device-INDEPENDENT modifier word (what ordinary AppKit apps
+/// read) with the device-DEPENDENT low-word bits (IOKit `NX_DEVICE*KEYMASK` from
+/// `IOKit/hidsystem/IOLLEvent.h`) that a real hardware keyboard sets.
+///
+/// This matters for Apple Virtualization.framework guest views
+/// (`VZVirtualMachineView`, used by UTM's Apple backend, Parallels' macOS
+/// guests, VirtualBuddy, etc.): they derive the guest's modifier state from the
+/// `flagsChanged(with:)` responder method and read the device-dependent low
+/// word, not the per-key flags. macOS does NOT synthesize the low-word bits for
+/// posted (synthetic) events, so until we set them ourselves Cmd/Ctrl/Shift/Opt
+/// chords reached the guest unmodified (Shift+2 → "2", Cmd+C did nothing).
+///
+/// Ordinary apps mask incoming events to the device-independent word
+/// (`deviceIndependentFlagsMask`) and ignore these bits, so emitting them is
+/// hardware-faithful and safe for every app — no VM/bundle-id detection is
+/// required. See issue #450 and https://developer.apple.com/forums/thread/766014
+fn modifier_flags_changed_flags(depressed: XMods) -> CGEventFlags {
+    // Device-dependent left/right modifier bits (IOLLEvent.h). lan-mouse collapses
+    // left and right modifiers into a single mask, so we emit the left-hand device
+    // bit; AltGr (Mod5 / ISO_Level3_Shift) is physically the right Alt, so it maps
+    // to the right Option bit.
+    const NX_DEVICE_L_CTRL: u64 = 0x0000_0001;
+    const NX_DEVICE_L_SHIFT: u64 = 0x0000_0002;
+    const NX_DEVICE_L_CMD: u64 = 0x0000_0008;
+    const NX_DEVICE_L_ALT: u64 = 0x0000_0020;
+    const NX_DEVICE_R_ALT: u64 = 0x0000_0040;
+
+    let mut device_bits: u64 = 0;
+    if depressed.contains(XMods::ShiftMask) {
+        device_bits |= NX_DEVICE_L_SHIFT;
+    }
+    if depressed.contains(XMods::ControlMask) {
+        device_bits |= NX_DEVICE_L_CTRL;
+    }
+    if depressed.contains(XMods::Mod1Mask) {
+        device_bits |= NX_DEVICE_L_ALT;
+    }
+    if depressed.contains(XMods::Mod5Mask) {
+        device_bits |= NX_DEVICE_R_ALT;
+    }
+    if depressed.contains(XMods::Mod4Mask) {
+        device_bits |= NX_DEVICE_L_CMD;
+    }
+
+    // CGEventFlagNonCoalesced is bit 8 (0x100), the marker a real hardware
+    // FlagsChanged carries on both press and release; VZ expects it present.
+    let flags = to_cgevent_flags(depressed) | CGEventFlags::CGEventFlagNonCoalesced;
+    CGEventFlags::from_bits_retain(flags.bits() | device_bits)
 }
 
 fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
@@ -493,12 +558,23 @@ impl Emulation for MacOSEmulation {
                     };
                     let is_modifier = update_modifiers(&self.modifier_state, key, state);
                     if is_modifier {
-                        modifier_event(self.event_source.clone(), self.modifier_state.get());
-                    }
-                    match state {
-                        // pressed
-                        1 => self.spawn_repeat_task(code).await,
-                        _ => self.cancel_repeat_task().await,
+                        // Modifier keys are posted as FlagsChanged events carrying
+                        // their real keycode (see modifier_key_event). They must NOT
+                        // enter the key-repeat machinery: there is only one repeat
+                        // slot, so pressing a second modifier would cancel the first
+                        // modifier's repeat task and post a keyUp while it is still
+                        // physically held, tearing chords apart (issue #450, #357).
+                        modifier_key_event(
+                            self.event_source.clone(),
+                            code,
+                            self.modifier_state.get(),
+                        );
+                    } else {
+                        match state {
+                            // pressed
+                            1 => self.spawn_repeat_task(code).await,
+                            _ => self.cancel_repeat_task().await,
+                        }
                     }
                 }
                 KeyboardEvent::Modifiers {
@@ -507,8 +583,13 @@ impl Emulation for MacOSEmulation {
                     locked,
                     group,
                 } => {
+                    // Only update internal modifier state here. The per-key handler
+                    // above already posts a FlagsChanged event (with the real
+                    // keycode) for each modifier Key event the client sends
+                    // alongside this state update. Posting one here as well would
+                    // duplicate it — and with the old bare CGEvent it injected a
+                    // phantom keycode-0 ("A") key on every modifier change (#450).
                     set_modifiers(&self.modifier_state, depressed, latched, locked, group);
-                    modifier_event(self.event_source.clone(), self.modifier_state.get());
                 }
             },
         }
@@ -576,7 +657,11 @@ fn to_cgevent_flags(depressed: XMods) -> CGEventFlags {
     if depressed.contains(XMods::ControlMask) {
         flags |= CGEventFlags::CGEventFlagControl;
     }
-    if depressed.contains(XMods::Mod1Mask) {
+    // Mod1 is Alt. Mod5 is ISO_Level3_Shift (AltGr), which is how the Alt key is
+    // reported on many xkb keymaps (including COSMIC's default) in the wholesale
+    // Modifiers state events. Map both to Option so Alt/Option chords are not
+    // silently dropped (issue #450).
+    if depressed.contains(XMods::Mod1Mask) || depressed.contains(XMods::Mod5Mask) {
         flags |= CGEventFlags::CGEventFlagAlternate;
     }
     if depressed.contains(XMods::Mod4Mask) {
