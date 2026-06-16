@@ -279,6 +279,60 @@ fn modifier_flags_changed_flags(depressed: XMods) -> CGEventFlags {
     CGEventFlags::from_bits_retain(flags.bits() | device_bits)
 }
 
+/// Reads the global "natural scrolling" preference (`com.apple.swipescrolldirection`).
+///
+/// macOS applies this preference to scroll events from *real* devices but NOT to
+/// synthetic `CGEvent`s, so injected scrolling ignores it and feels backwards on
+/// a Mac whose owner uses the default (natural) setting. We read the preference
+/// ourselves and flip the sign so injected scrolling matches what a physical
+/// trackpad/mouse would do on *this* Mac — i.e. we honour the receiver's own
+/// preference rather than inheriting the sender's scroll convention.
+///
+/// An absent key means `true` (the modern macOS default). A change to the setting
+/// is picked up on the next scroll event.
+fn natural_scroll_enabled() -> bool {
+    use std::ffi::{c_char, c_void};
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+
+    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFStringCreateWithCString(
+            alloc: CFTypeRef,
+            c_str: *const c_char,
+            encoding: u32,
+        ) -> CFStringRef;
+        fn CFPreferencesCopyAppValue(key: CFStringRef, application_id: CFStringRef) -> CFTypeRef;
+        fn CFRelease(cf: CFTypeRef);
+        static kCFPreferencesAnyApplication: CFStringRef;
+        static kCFBooleanTrue: CFTypeRef;
+    }
+
+    unsafe {
+        let key = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"com.apple.swipescrolldirection".as_ptr(),
+            K_CF_STRING_ENCODING_UTF8,
+        );
+        if key.is_null() {
+            return true;
+        }
+        let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
+        CFRelease(key);
+        match value.is_null() {
+            // key not set => modern default is natural scrolling
+            true => true,
+            false => {
+                let enabled = value == kCFBooleanTrue;
+                CFRelease(value);
+                enabled
+            }
+        }
+    }
+}
+
 fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
     let mut displays: [CGDirectDisplayID; 16] = [0; 16];
     let mut display_count: u32 = 0;
@@ -485,7 +539,16 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
+                        // macOS does not apply the "natural scrolling" preference to
+                        // synthetic events, so honour the receiver's own preference
+                        // here (see natural_scroll_enabled) — injected scrolling then
+                        // feels native on this Mac regardless of the sender's OS.
                         let value = value as i32;
+                        let value = if natural_scroll_enabled() {
+                            -value
+                        } else {
+                            value
+                        };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -512,6 +575,13 @@ impl Emulation for MacOSEmulation {
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         const LINES_PER_STEP: i32 = 3;
+                        // honour the receiver's natural-scroll preference (see the
+                        // Axis arm above and natural_scroll_enabled).
+                        let value = if natural_scroll_enabled() {
+                            -value
+                        } else {
+                            value
+                        };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
