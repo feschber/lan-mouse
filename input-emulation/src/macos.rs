@@ -288,48 +288,39 @@ fn modifier_flags_changed_flags(depressed: XMods) -> CGEventFlags {
 /// trackpad/mouse would do on *this* Mac — i.e. we honour the receiver's own
 /// preference rather than inheriting the sender's scroll convention.
 ///
-/// An absent key means `true` (the modern macOS default). A change to the setting
-/// is picked up on the next scroll event.
+/// An absent or non-boolean key means `true` (the modern macOS default). A change
+/// to the setting is picked up on the next scroll event.
 fn natural_scroll_enabled() -> bool {
-    use std::ffi::{c_char, c_void};
-    type CFTypeRef = *const c_void;
-    type CFStringRef = *const c_void;
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+    use core_foundation_sys::base::Boolean;
+    use core_foundation_sys::preferences::{
+        CFPreferencesGetAppBooleanValue, kCFPreferencesAnyApplication,
+    };
 
-    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+    let key = CFString::new("com.apple.swipescrolldirection");
+    let mut exists: Boolean = 0;
+    // SAFETY: `key` outlives the call; kCFPreferencesAnyApplication is a CF constant.
+    let enabled = unsafe {
+        CFPreferencesGetAppBooleanValue(
+            key.as_concrete_TypeRef(),
+            kCFPreferencesAnyApplication,
+            &mut exists,
+        )
+    };
+    // Absent / non-boolean key => modern macOS default is natural scrolling.
+    if exists != 0 { enabled != 0 } else { true }
+}
 
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFStringCreateWithCString(
-            alloc: CFTypeRef,
-            c_str: *const c_char,
-            encoding: u32,
-        ) -> CFStringRef;
-        fn CFPreferencesCopyAppValue(key: CFStringRef, application_id: CFStringRef) -> CFTypeRef;
-        fn CFRelease(cf: CFTypeRef);
-        static kCFPreferencesAnyApplication: CFStringRef;
-        static kCFBooleanTrue: CFTypeRef;
-    }
-
-    unsafe {
-        let key = CFStringCreateWithCString(
-            std::ptr::null(),
-            c"com.apple.swipescrolldirection".as_ptr(),
-            K_CF_STRING_ENCODING_UTF8,
-        );
-        if key.is_null() {
-            return true;
-        }
-        let value = CFPreferencesCopyAppValue(key, kCFPreferencesAnyApplication);
-        CFRelease(key);
-        match value.is_null() {
-            // key not set => modern default is natural scrolling
-            true => true,
-            false => {
-                let enabled = value == kCFBooleanTrue;
-                CFRelease(value);
-                enabled
-            }
-        }
+/// Applies the receiver's natural-scroll preference to a scroll delta.
+///
+/// `saturating_neg` guards against a malformed `i32::MIN` arriving from the wire
+/// (plain negation of `i32::MIN` would overflow).
+fn apply_natural_scroll(value: i32) -> i32 {
+    if natural_scroll_enabled() {
+        value.saturating_neg()
+    } else {
+        value
     }
 }
 
@@ -539,16 +530,9 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
-                        // macOS does not apply the "natural scrolling" preference to
-                        // synthetic events, so honour the receiver's own preference
-                        // here (see natural_scroll_enabled) — injected scrolling then
-                        // feels native on this Mac regardless of the sender's OS.
-                        let value = value as i32;
-                        let value = if natural_scroll_enabled() {
-                            -value
-                        } else {
-                            value
-                        };
+                        // honour the receiver's natural-scroll preference (macOS
+                        // doesn't apply it to synthetic events); see apply_natural_scroll.
+                        let value = apply_natural_scroll(value as i32);
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -575,13 +559,7 @@ impl Emulation for MacOSEmulation {
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         const LINES_PER_STEP: i32 = 3;
-                        // honour the receiver's natural-scroll preference (see the
-                        // Axis arm above and natural_scroll_enabled).
-                        let value = if natural_scroll_enabled() {
-                            -value
-                        } else {
-                            value
-                        };
+                        let value = apply_natural_scroll(value);
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
