@@ -676,9 +676,23 @@ impl Emulation for MacOSEmulation {
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {
     if let Ok(key) = scancode::Linux::try_from(key) {
+        // Caps Lock is a LOCKING modifier: a press toggles a persistent state
+        // rather than being active only while physically held. Toggle on
+        // key-down and ignore key-up, so the AlphaShift flag stays set on every
+        // following keystroke until Caps Lock is pressed again. (A synthetic
+        // CGEvent can't flip the hardware Caps Lock LED, but carrying the flag
+        // produces the correct upper-case output — and, like real Caps Lock,
+        // leaves the number-row symbols unshifted.)
+        if matches!(key, scancode::Linux::KeyCapsLock) {
+            if state == 1 {
+                let mut mods = modifiers.get();
+                mods.toggle(XMods::LockMask);
+                modifiers.set(mods);
+            }
+            return true;
+        }
         let mask = match key {
             scancode::Linux::KeyLeftShift | scancode::Linux::KeyRightShift => XMods::ShiftMask,
-            scancode::Linux::KeyCapsLock => XMods::LockMask,
             scancode::Linux::KeyLeftCtrl | scancode::Linux::KeyRightCtrl => XMods::ControlMask,
             scancode::Linux::KeyLeftAlt | scancode::Linux::KeyRightalt => XMods::Mod1Mask,
             scancode::Linux::KeyLeftMeta | scancode::Linux::KeyRightmeta => XMods::Mod4Mask,
