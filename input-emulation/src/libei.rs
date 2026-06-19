@@ -291,14 +291,12 @@ async fn ei_event_handler(
 ) -> Result<(), EmulationError> {
     loop {
         let event = events.next().await.ok_or(EmulationError::EndOfStream)??;
-        const CAPABILITIES: &[DeviceCapability] = &[
-            DeviceCapability::Pointer,
-            DeviceCapability::PointerAbsolute,
-            DeviceCapability::Keyboard,
-            DeviceCapability::Touch,
-            DeviceCapability::Scroll,
-            DeviceCapability::Button,
-        ];
+        let capabilities = DeviceCapability::Pointer
+            | DeviceCapability::PointerAbsolute
+            | DeviceCapability::Keyboard
+            | DeviceCapability::Touch
+            | DeviceCapability::Scroll
+            | DeviceCapability::Button;
         log::debug!("{event:?}");
         match event {
             EiEvent::Disconnected(e) => {
@@ -306,7 +304,7 @@ async fn ei_event_handler(
                 return Err(EmulationError::EndOfStream);
             }
             EiEvent::SeatAdded(e) => {
-                e.seat().bind_capabilities(CAPABILITIES);
+                e.seat().bind_capabilities(capabilities);
             }
             EiEvent::SeatRemoved(e) => {
                 log::debug!("seat removed: {:?}", e.seat());
@@ -314,7 +312,6 @@ async fn ei_event_handler(
             EiEvent::DeviceAdded(e) => {
                 let device_type = e.device().device_type();
                 log::debug!("device added: {device_type:?}");
-                e.device().device();
                 let device = e.device();
                 if let Some(pointer) = e.device().interface::<Pointer>() {
                     devices
