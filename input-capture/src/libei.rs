@@ -529,15 +529,6 @@ fn distance_to_line(line: ((f32, f32), (f32, f32)), p: (f32, f32)) -> f32 {
     distance
 }
 
-static ALL_CAPABILITIES: &[DeviceCapability] = &[
-    DeviceCapability::Pointer,
-    DeviceCapability::PointerAbsolute,
-    DeviceCapability::Keyboard,
-    DeviceCapability::Touch,
-    DeviceCapability::Scroll,
-    DeviceCapability::Button,
-];
-
 async fn handle_ei_event(
     ei_event: EiEvent,
     current_client: Option<Position>,
@@ -545,9 +536,15 @@ async fn handle_ei_event(
     event_tx: &Sender<(Position, CaptureEvent)>,
     release_session: &Notify,
 ) -> Result<(), CaptureError> {
+    let all_capabilities = DeviceCapability::Pointer
+        | DeviceCapability::PointerAbsolute
+        | DeviceCapability::Keyboard
+        | DeviceCapability::Touch
+        | DeviceCapability::Scroll
+        | DeviceCapability::Button;
     match ei_event {
         EiEvent::SeatAdded(s) => {
-            s.seat.bind_capabilities(ALL_CAPABILITIES);
+            s.seat.bind_capabilities(all_capabilities);
             context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
         EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
