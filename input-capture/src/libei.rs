@@ -413,7 +413,15 @@ async fn do_capture_session(
                     };
 
                     // find client corresponding to barrier
-                    let pos = *pos_for_barrier_id.get(&barrier_id).expect("invalid barrier id");
+                    let pos = match pos_for_barrier_id.get(&barrier_id) {
+                        Some(id) => *id,
+                        None => {
+                            log::warn!("INVALID BARRIER ID: Id {barrier_id} does not exist!");
+                            let id = find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor"));
+                            let pos = *pos_for_barrier_id.get(&id).expect("invalid barrier id");
+                            pos
+                        },
+                    };
                     current_pos.replace(Some(pos));
 
                     // client entered => send event
