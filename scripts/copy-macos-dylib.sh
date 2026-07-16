@@ -57,8 +57,11 @@ share_path="$resources_path/share"
 fix_references() {
   local bin="$1"
 
-  # Get all Homebrew libraries referenced by the binary
+  # Get all Homebrew libraries referenced by the binary (absolute paths)
   libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
+
+  # Also get @rpath references and try to resolve them from Homebrew
+  rpath_libs=$(otool -L "$bin" | awk '$1 ~ /^@rpath\// {print $1}')
 
   echo "$libs" | while IFS= read -r old_path; do
     if [ -z "$old_path" ]; then
@@ -83,6 +86,37 @@ fix_references() {
 
     echo "Updating $bin to reference @rpath/$base_name..."
     install_name_tool -change "$old_path" "@rpath/$base_name" "$bin"
+  done
+
+  # Process @rpath references
+  echo "$rpath_libs" | while IFS= read -r rpath_ref; do
+    if [ -z "$rpath_ref" ]; then
+      continue
+    fi
+
+    local base_name="$(basename "$rpath_ref")"
+    local dest="$fwks_path/$base_name"
+
+    # Skip if already processed
+    if [ -e "$dest" ]; then
+      continue
+    fi
+
+    # Try to find the library in Homebrew
+    local source_path="$homebrew_path/lib/$base_name"
+    if [ -e "$source_path" ]; then
+      echo "Copying @rpath library $source_path -> $dest"
+      cp -f "$source_path" "$dest"
+      chmod 644 "$dest"
+
+      echo "Updating $dest to have install_name of @rpath/$base_name..."
+      install_name_tool -id "@rpath/$base_name" "$dest"
+
+      # Recursively process this dylib
+      fix_references "$dest"
+    else
+      echo "Warning: Could not find @rpath library $base_name in $homebrew_path/lib"
+    fi
   done
 }
 
