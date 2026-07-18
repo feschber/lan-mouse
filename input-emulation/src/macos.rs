@@ -28,6 +28,22 @@ const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Converts a scroll delta from the wire's wl_pointer/libei sign convention
+/// (positive = scroll down / right) into the sign expected by
+/// `CGEventCreateScrollWheelEvent`, which is inverted relative to it. Without
+/// this, scroll from a non-macOS sender is reversed on the receiving Mac.
+///
+/// This is a fixed conversion and is deliberately *not* gated on the receiver's
+/// `com.apple.swipescrolldirection` ("natural scrolling") preference: events
+/// posted at the HID event tap bypass the window server's natural-scroll
+/// transform, so toggling that preference has no effect on emulated scrolling
+/// (verified empirically). The wire protocol is source-agnostic, so a single
+/// fixed sign is correct for every sender. `saturating_neg` guards against a
+/// malformed `i32::MIN` arriving on the wire (plain negation would overflow).
+fn wire_scroll_to_cgevent(value: i32) -> i32 {
+    value.saturating_neg()
+}
+
 pub(crate) struct MacOSEmulation {
     /// global event source for all events
     event_source: CGEventSource,
@@ -420,7 +436,8 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
-                        let value = value as i32;
+                        // wl_pointer/libei uses the opposite scroll sign to CGEvent.
+                        let value = wire_scroll_to_cgevent(value as i32);
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -447,6 +464,8 @@ impl Emulation for MacOSEmulation {
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
                         const LINES_PER_STEP: i32 = 3;
+                        // wl_pointer/libei uses the opposite scroll sign to CGEvent.
+                        let value = wire_scroll_to_cgevent(value);
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
