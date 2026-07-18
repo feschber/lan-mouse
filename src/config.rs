@@ -10,6 +10,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::{collections::HashSet, io};
 use thiserror::Error;
 use toml;
@@ -53,6 +54,8 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    key_repeat_delay: Option<u64>,
+    key_repeat_interval: Option<u64>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -477,6 +480,24 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// key-repeat timing for emulation backends that regenerate repeats
+    /// themselves (macOS and Windows). Values are read in milliseconds; unset
+    /// fields fall back to the [`input_emulation::EmulationOptions`] defaults.
+    pub fn emulation_options(&self) -> input_emulation::EmulationOptions {
+        let defaults = input_emulation::EmulationOptions::default();
+        let config_toml = self.config_toml.as_ref();
+        input_emulation::EmulationOptions {
+            key_repeat_delay: config_toml
+                .and_then(|c| c.key_repeat_delay)
+                .map(Duration::from_millis)
+                .unwrap_or(defaults.key_repeat_delay),
+            key_repeat_interval: config_toml
+                .and_then(|c| c.key_repeat_interval)
+                .map(Duration::from_millis)
+                .unwrap_or(defaults.key_repeat_interval),
+        }
     }
 
     /// set configured clients
