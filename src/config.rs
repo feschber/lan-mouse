@@ -69,6 +69,14 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    input_post_processing: Option<InputConfig>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct InputConfig {
+    // TODO: implement scroll_sensitivity and mouse_acceleration
+    invert_scroll: Option<bool>,
+    mouse_sensitivity: Option<f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -117,7 +125,7 @@ struct Args {
     command: Option<Command>,
 }
 
-#[derive(Subcommand, Clone, Debug, Eq, PartialEq)]
+#[derive(Subcommand, Clone, Debug, PartialEq)]
 pub enum Command {
     /// test input emulation
     TestEmulation(TestEmulationArgs),
@@ -474,6 +482,22 @@ impl Config {
             .unwrap_or(DEFAULT_PORT)
     }
 
+    pub fn invert_scroll(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.invert_scroll)
+            .unwrap_or(false)
+    }
+
+    pub fn mouse_sensitivity(&self) -> f64 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_post_processing.as_ref())
+            .and_then(|i| i.mouse_sensitivity)
+            .unwrap_or(1.0)
+    }
+
     /// list of configured clients
     pub fn clients(&self) -> Vec<ConfigClient> {
         self.config_toml
@@ -518,7 +542,7 @@ impl Config {
     }
 
     pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {
-        log::info!("reading config from {:?}", &self.config_path);
+        log::info!("reading config from {:?}", self.config_path);
 
         let current_config = fs::read_to_string(&self.config_path)?;
         let current_config = match current_config.parse::<DocumentMut>() {
@@ -548,7 +572,7 @@ impl Config {
     }
 
     pub fn write_back(&mut self) -> Result<(), io::Error> {
-        log::info!("writing config to {:?}", &self.config_path);
+        log::info!("writing config to {:?}", self.config_path);
         /* the new config */
         let new_config = self.config_toml.clone().unwrap_or_default();
         let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("config");
