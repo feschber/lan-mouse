@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use core::task::{Context, Poll};
 use event_thread::EventThread;
 use futures::Stream;
+use input_event::scancode;
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use std::task::ready;
@@ -36,6 +38,10 @@ impl Capture for WindowsInputCapture {
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
+    }
+
+    fn set_enter_binds(&mut self, binds: HashMap<Position, Vec<scancode::Linux>>) {
+        self.event_thread.set_enter_binds(binds);
     }
 }
 
