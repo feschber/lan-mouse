@@ -128,10 +128,14 @@ fn start_service() -> Result<Child, io::Error> {
 
 async fn run_service(config: Config) -> Result<(), ServiceError> {
     let release_bind = config.release_bind();
+    let remap_keys = config.remap_keys();
     let config_path = config.config_path().to_owned();
     let mut service = Service::new(config).await?;
     log::info!("using config: {config_path:?}");
     log::info!("Press {release_bind:?} to release the mouse");
+    for (from, to) in &remap_keys {
+        log::info!("sending {from:?} to other devices as {to:?}");
+    }
     service.run().await?;
     log::info!("service exited!");
     Ok(())
