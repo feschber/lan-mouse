@@ -66,9 +66,19 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    /// transformations applied to input events on their way to other
+    /// devices (the counterpart of receive-side post-processing)
+    input_pre_processing: Option<InputPreProcessing>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+struct InputPreProcessing {
+    /// keys to send as a different key, e.g. to reconcile modifier
+    /// layouts between operating systems
+    remap_keys: Option<HashMap<scancode::Linux, scancode::Linux>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -492,6 +502,15 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// keys rewritten on their way to other devices
+    pub fn remap_keys(&self) -> HashMap<scancode::Linux, scancode::Linux> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.remap_keys.clone())
+            .unwrap_or_default()
     }
 
     /// set configured clients

@@ -15,6 +15,7 @@ use tokio::task::{JoinHandle, spawn_local};
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;
+use crate::remap::KeyRemap;
 
 pub(crate) struct Capture {
     cancellation_token: CancellationToken,
@@ -61,6 +62,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the keys rewritten on their way to other devices
+    SetRemap(KeyRemap),
 }
 
 impl Capture {
@@ -68,6 +71,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        remap: KeyRemap,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -81,6 +85,7 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            remap,
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -137,6 +142,10 @@ impl Capture {
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
+
+    pub(crate) fn set_remap(&mut self, remap: KeyRemap) {
+        let _ = self.request_tx.send(CaptureRequest::SetRemap(remap));
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -164,6 +173,7 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    remap: KeyRemap,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
@@ -214,6 +224,7 @@ impl CaptureTask {
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
+                        CaptureRequest::SetRemap(remap) => self.remap = remap,
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -307,6 +318,7 @@ impl CaptureTask {
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
+                    CaptureRequest::SetRemap(remap) => self.remap = remap,
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }
@@ -361,7 +373,7 @@ impl CaptureTask {
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
                 State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
-                State::Sending => ProtoEvent::Input(e),
+                State::Sending => ProtoEvent::Input(self.remap.apply(e)),
             },
         };
 
@@ -387,9 +399,14 @@ impl CaptureTask {
             // mods until its watchdog times out (1+ s) or our Leave
             // arrives — and Leave can be lost over UDP/DTLS.
             for key in capture.take_pressed_keys() {
+                // `pressed_keys` holds the *physical* keys, so these
+                // have to go through the same remap the down events
+                // did — otherwise the peer is released from a key it
+                // was never pressed with and keeps holding the one it
+                // actually got.
                 let key_up = ProtoEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                     time: 0,
-                    key: key as u32,
+                    key: self.remap.key(key) as u32,
                     state: 0,
                 }));
                 if let Err(e) = self.conn.send(key_up, handle).await {

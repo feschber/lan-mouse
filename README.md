@@ -415,6 +415,22 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+### Remapping keys for other operating systems
+
+`[input_pre_processing]` rewrites events on their way to other devices.
+`remap_keys` swaps individual keys, which is mostly useful for reconciling
+modifier layouts — sending Command from a Mac as Control, and Control as
+Super, so that Cmd+C keeps copying on a Windows or Linux peer:
+
+```toml
+[input_pre_processing.remap_keys]
+KeyLeftMeta = "KeyLeftCtrl"
+KeyLeftCtrl = "KeyLeftMeta"
+```
+
+Remapping happens on the *sending* side, so the local machine is unaffected:
+`release_bind` and the host's own shortcuts keep seeing the physical keys.
+
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.
