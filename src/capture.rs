@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;
 use crate::remap::KeyRemap;
+use crate::scroll::ScrollInvert;
 
 pub(crate) struct Capture {
     cancellation_token: CancellationToken,
@@ -64,6 +65,8 @@ enum CaptureRequest {
     SetReleaseBind(Vec<scancode::Linux>),
     /// set the keys rewritten on their way to other devices
     SetRemap(KeyRemap),
+    /// set the scroll axes inverted on their way to other devices
+    SetScrollInvert(ScrollInvert),
 }
 
 impl Capture {
@@ -72,6 +75,7 @@ impl Capture {
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
         remap: KeyRemap,
+        scroll_invert: ScrollInvert,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -86,6 +90,7 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             remap,
+            scroll_invert,
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -146,6 +151,12 @@ impl Capture {
     pub(crate) fn set_remap(&mut self, remap: KeyRemap) {
         let _ = self.request_tx.send(CaptureRequest::SetRemap(remap));
     }
+
+    pub(crate) fn set_scroll_invert(&mut self, scroll_invert: ScrollInvert) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetScrollInvert(scroll_invert));
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -174,6 +185,7 @@ struct CaptureTask {
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     remap: KeyRemap,
+    scroll_invert: ScrollInvert,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
@@ -225,6 +237,9 @@ impl CaptureTask {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
                         CaptureRequest::SetRemap(remap) => self.remap = remap,
+                        CaptureRequest::SetScrollInvert(scroll_invert) => {
+                            self.scroll_invert = scroll_invert
+                        }
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -319,6 +334,9 @@ impl CaptureTask {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
                     CaptureRequest::SetRemap(remap) => self.remap = remap,
+                    CaptureRequest::SetScrollInvert(scroll_invert) => {
+                        self.scroll_invert = scroll_invert
+                    }
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }
@@ -373,7 +391,7 @@ impl CaptureTask {
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
                 State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
-                State::Sending => ProtoEvent::Input(self.remap.apply(e)),
+                State::Sending => ProtoEvent::Input(self.scroll_invert.apply(self.remap.apply(e))),
             },
         };
 

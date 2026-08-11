@@ -431,6 +431,22 @@ KeyLeftCtrl = "KeyLeftMeta"
 Remapping happens on the *sending* side, so the local machine is unaffected:
 `release_bind` and the host's own shortcuts keep seeing the physical keys.
 
+### Inverting scroll direction for other operating systems
+
+`invert_scroll_vertical` and `invert_scroll_horizontal` flip the direction of
+scroll events on their way to other devices. This is mostly useful when
+macOS' "natural scrolling" reaches a Windows or Linux peer that scrolls the
+traditional way, making the wheel feel backwards on the remote machine:
+
+```toml
+[input_pre_processing]
+invert_scroll_vertical = true
+invert_scroll_horizontal = false
+```
+
+Like `remap_keys`, this happens on the *sending* side only, so scrolling on
+the local machine itself is unaffected.
+
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.

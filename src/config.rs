@@ -79,6 +79,11 @@ struct InputPreProcessing {
     /// keys to send as a different key, e.g. to reconcile modifier
     /// layouts between operating systems
     remap_keys: Option<HashMap<scancode::Linux, scancode::Linux>>,
+    /// invert the direction of vertical scroll events, e.g. to
+    /// reconcile "natural" macOS scrolling with a Windows or Linux peer
+    invert_scroll_vertical: Option<bool>,
+    /// invert the direction of horizontal scroll events
+    invert_scroll_horizontal: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -511,6 +516,24 @@ impl Config {
             .and_then(|c| c.input_pre_processing.as_ref())
             .and_then(|p| p.remap_keys.clone())
             .unwrap_or_default()
+    }
+
+    /// whether vertical scroll events are inverted on their way to other devices
+    pub fn invert_scroll_vertical(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.invert_scroll_vertical)
+            .unwrap_or(false)
+    }
+
+    /// whether horizontal scroll events are inverted on their way to other devices
+    pub fn invert_scroll_horizontal(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.invert_scroll_horizontal)
+            .unwrap_or(false)
     }
 
     /// set configured clients
