@@ -635,6 +635,10 @@ impl Capture for LayerShellInputCapture {
         Ok(inner.flush_events()?)
     }
 
+    async fn release_to(&mut self, _t: f64) -> Result<(), CaptureError> {
+        self.release().await
+    }
+
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
@@ -753,7 +757,8 @@ impl Dispatch<WlPointer, ()> for State {
                     .find(|w| w.surface == surface)
                     .map(|w| w.pos)
                     .unwrap();
-                app.pending_events.push_back((pos, CaptureEvent::Begin));
+                app.pending_events
+                    .push_back((pos, CaptureEvent::Begin(0.5)));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in

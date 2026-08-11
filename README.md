@@ -415,6 +415,25 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+Crossing an edge carries the cursor's position along that edge over to the
+peer — leaving near the top of the right edge enters the peer near the top
+of its left edge, scaled to the peer's own display size if the two differ.
+This also applies when handing control back without a matching `[[clients]]`
+entry on the other side (moving the cursor further past the edge it just
+entered at): the side you're leaving reports the spot it saw you reach, so
+the cursor reappears there instead of back at the original entry point.
+
+Support so far:
+
+| | reports its own crossings (sending) | applies an incoming position (receiving) |
+|---|---|---|
+| macOS | yes | yes |
+| Windows | yes | not yet — falls back to the edge's midpoint |
+| X11 / Wayland | not yet — falls back to the edge's midpoint | not yet — falls back to the edge's midpoint |
+
+Falling back just means that side behaves as before this existed; nothing
+breaks, the position simply isn't preserved on that leg of the crossing.
+
 ### Remapping keys for other operating systems
 
 `[input_pre_processing]` rewrites events on their way to other devices.

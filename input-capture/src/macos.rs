@@ -46,6 +46,24 @@ struct Bounds {
     ymax: f64,
 }
 
+/// Normalizes `coord` to `0.0..=1.0` within `min..=max`, clamping if the
+/// raw crossing point briefly ended up just outside the bounds (e.g. a
+/// fast flick past the very corner). Falls back to the midpoint if the
+/// bounds are degenerate, which should not happen in practice — active
+/// displays always have positive size.
+fn normalized_cross_axis(coord: f64, min: f64, max: f64) -> f64 {
+    if max <= min {
+        return 0.5;
+    }
+    ((coord - min) / (max - min)).clamp(0.0, 1.0)
+}
+
+/// Absolute coordinate for a normalized (`0.0..=1.0`) cross-axis
+/// position within `min..=max`. Inverse of [`normalized_cross_axis`].
+fn denormalize(t: f64, min: f64, max: f64) -> f64 {
+    min + t.clamp(0.0, 1.0) * (max - min)
+}
+
 #[derive(Debug)]
 struct InputCaptureState {
     /// active capture positions
@@ -63,6 +81,9 @@ struct InputCaptureState {
 #[derive(Debug)]
 enum ProducerEvent {
     Release,
+    /// release, first warping the cursor to normalized cross-axis
+    /// position `t` along the edge currently captured at
+    ReleaseTo(f64),
     Create(Position),
     Destroy(Position),
     Grab(Position),
@@ -118,8 +139,21 @@ impl InputCaptureState {
     }
 
     /// start the input capture by
-    fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
+    ///
+    /// Returns the normalized (`0.0..=1.0`) position along the crossed
+    /// edge, computed from the raw crossing location *before* it gets
+    /// clamped to the edge below — so the peer can warp its cursor to
+    /// the matching spot instead of a fixed point on the edge.
+    fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<f64, CaptureError> {
         let mut location = event.location();
+        let t = match position {
+            Position::Left | Position::Right => {
+                normalized_cross_axis(location.y, self.bounds.ymin, self.bounds.ymax)
+            }
+            Position::Top | Position::Bottom => {
+                normalized_cross_axis(location.x, self.bounds.xmin, self.bounds.xmax)
+            }
+        };
         let edge_offset = 1.0;
         // move cursor location to display bounds
         match position {
@@ -129,7 +163,8 @@ impl InputCaptureState {
             Position::Bottom => location.y = self.bounds.ymax - edge_offset,
         };
         self.enter_position = Some(location);
-        self.reset_cursor()
+        self.reset_cursor()?;
+        Ok(t)
     }
 
     /// resets the cursor to the position, where the capture started
@@ -137,6 +172,31 @@ impl InputCaptureState {
         let pos = self.enter_position.expect("capture active");
         log::trace!("Resetting cursor position to: {}, {}", pos.x, pos.y);
         CGDisplay::warp_mouse_cursor_position(pos).map_err(CaptureError::WarpCursor)
+    }
+
+    /// point on the currently-captured edge for normalized cross-axis
+    /// position `t`, e.g. so a peer handing control back can place the
+    /// cursor at the spot matching where its own local crossing was.
+    fn release_point(&self, t: f64) -> Option<CGPoint> {
+        let edge_offset = 1.0;
+        Some(match self.current_pos? {
+            Position::Left => CGPoint::new(
+                self.bounds.xmin + edge_offset,
+                denormalize(t, self.bounds.ymin, self.bounds.ymax),
+            ),
+            Position::Right => CGPoint::new(
+                self.bounds.xmax - edge_offset,
+                denormalize(t, self.bounds.ymin, self.bounds.ymax),
+            ),
+            Position::Top => CGPoint::new(
+                denormalize(t, self.bounds.xmin, self.bounds.xmax),
+                self.bounds.ymin + edge_offset,
+            ),
+            Position::Bottom => CGPoint::new(
+                denormalize(t, self.bounds.xmin, self.bounds.xmax),
+                self.bounds.ymax - edge_offset,
+            ),
+        })
     }
 
     fn hide_cursor(&self) -> Result<(), CaptureError> {
@@ -155,6 +215,16 @@ impl InputCaptureState {
         match producer_event {
             ProducerEvent::Release => {
                 if self.current_pos.is_some() {
+                    self.show_cursor()?;
+                    self.current_pos = None;
+                }
+            }
+            ProducerEvent::ReleaseTo(t) => {
+                if self.current_pos.is_some() {
+                    if let Some(point) = self.release_point(t) {
+                        CGDisplay::warp_mouse_cursor_position(point)
+                            .map_err(CaptureError::WarpCursor)?;
+                    }
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
@@ -519,10 +589,11 @@ fn create_event_tap<'a>(
             // Did we cross a barrier?
             if let Some(new_pos) = state.crossed(cg_ev) {
                 capture_position = Some(new_pos);
-                state
-                    .start_capture(cg_ev, new_pos)
-                    .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
+                let t = state.start_capture(cg_ev, new_pos).unwrap_or_else(|e| {
+                    log::warn!("{e}");
+                    0.5
+                });
+                res_events.push(CaptureEvent::Begin(t));
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
                     .expect("Failed to send notification");
@@ -781,6 +852,15 @@ impl Capture for MacOSInputCapture {
         Ok(())
     }
 
+    async fn release_to(&mut self, t: f64) -> Result<(), CaptureError> {
+        let notify_tx = self.notify_tx.clone();
+        tokio::task::spawn_local(async move {
+            log::debug!("notifying ReleaseTo({t:.2})");
+            let _ = notify_tx.send(ProducerEvent::ReleaseTo(t)).await;
+        });
+        Ok(())
+    }
+
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }
@@ -884,5 +964,67 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod cross_axis_test {
+    use super::normalized_cross_axis;
+
+    #[test]
+    fn midpoint_of_range() {
+        assert_eq!(normalized_cross_axis(50.0, 0.0, 100.0), 0.5);
+    }
+
+    #[test]
+    fn start_and_end_of_range() {
+        assert_eq!(normalized_cross_axis(0.0, 0.0, 100.0), 0.0);
+        assert_eq!(normalized_cross_axis(100.0, 0.0, 100.0), 1.0);
+    }
+
+    #[test]
+    fn clamps_outside_bounds() {
+        assert_eq!(normalized_cross_axis(-10.0, 0.0, 100.0), 0.0);
+        assert_eq!(normalized_cross_axis(110.0, 0.0, 100.0), 1.0);
+    }
+
+    #[test]
+    fn offset_bounds() {
+        // a display union that doesn't start at the origin, e.g. a
+        // monitor placed to the left of (0, 0)
+        assert_eq!(normalized_cross_axis(-400.0, -500.0, -300.0), 0.5);
+    }
+
+    #[test]
+    fn degenerate_bounds_fall_back_to_midpoint() {
+        assert_eq!(normalized_cross_axis(5.0, 10.0, 10.0), 0.5);
+        assert_eq!(normalized_cross_axis(5.0, 10.0, 0.0), 0.5);
+    }
+}
+
+#[cfg(test)]
+mod denormalize_test {
+    use super::denormalize;
+
+    #[test]
+    fn midpoint() {
+        assert_eq!(denormalize(0.5, 0.0, 100.0), 50.0);
+    }
+
+    #[test]
+    fn extremes() {
+        assert_eq!(denormalize(0.0, 0.0, 100.0), 0.0);
+        assert_eq!(denormalize(1.0, 0.0, 100.0), 100.0);
+    }
+
+    #[test]
+    fn clamps_out_of_range_t() {
+        assert_eq!(denormalize(-0.5, 0.0, 100.0), 0.0);
+        assert_eq!(denormalize(1.5, 0.0, 100.0), 100.0);
+    }
+
+    #[test]
+    fn offset_bounds() {
+        assert_eq!(denormalize(0.5, -500.0, -300.0), -400.0);
     }
 }

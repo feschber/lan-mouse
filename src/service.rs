@@ -349,11 +349,11 @@ impl Service {
 
     fn handle_capture_event(&mut self, event: ICaptureEvent) {
         match event {
-            ICaptureEvent::CaptureBegin(handle) => {
+            ICaptureEvent::CaptureBegin(handle, t) => {
                 // we entered the capture zone for an incoming connection
                 // => notify it that its capture should be released
                 if let Some(incoming) = self.incoming_conn_info.get(&handle) {
-                    self.emulation.send_leave_event(incoming.addr);
+                    self.emulation.send_leave_event(incoming.addr, t);
                 }
             }
             ICaptureEvent::CaptureDisabled => {
