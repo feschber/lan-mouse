@@ -129,12 +129,20 @@ fn start_service() -> Result<Child, io::Error> {
 async fn run_service(config: Config) -> Result<(), ServiceError> {
     let release_bind = config.release_bind();
     let remap_keys = config.remap_keys();
+    let invert_scroll_vertical = config.invert_scroll_vertical();
+    let invert_scroll_horizontal = config.invert_scroll_horizontal();
     let config_path = config.config_path().to_owned();
     let mut service = Service::new(config).await?;
     log::info!("using config: {config_path:?}");
     log::info!("Press {release_bind:?} to release the mouse");
     for (from, to) in &remap_keys {
         log::info!("sending {from:?} to other devices as {to:?}");
+    }
+    if invert_scroll_vertical {
+        log::info!("inverting vertical scroll direction on its way to other devices");
+    }
+    if invert_scroll_horizontal {
+        log::info!("inverting horizontal scroll direction on its way to other devices");
     }
     service.run().await?;
     log::info!("service exited!");
