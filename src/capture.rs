@@ -65,7 +65,7 @@ enum CaptureRequest {
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
     /// set the keys rewritten on their way to other devices
-    SetRemap(KeyRemap),
+    SetRemap(Box<KeyRemap>),
     /// set the scroll axes inverted on their way to other devices
     SetScrollInvert(ScrollInvert),
 }
@@ -151,7 +151,9 @@ impl Capture {
     }
 
     pub(crate) fn set_remap(&mut self, remap: KeyRemap) {
-        let _ = self.request_tx.send(CaptureRequest::SetRemap(remap));
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetRemap(Box::new(remap)));
     }
 
     pub(crate) fn set_scroll_invert(&mut self, scroll_invert: ScrollInvert) {
@@ -242,7 +244,7 @@ impl CaptureTask {
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
-                        CaptureRequest::SetRemap(remap) => self.remap = remap,
+                        CaptureRequest::SetRemap(remap) => self.remap = *remap,
                         CaptureRequest::SetScrollInvert(scroll_invert) => {
                             self.scroll_invert = scroll_invert
                         }
@@ -339,7 +341,7 @@ impl CaptureTask {
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
-                    CaptureRequest::SetRemap(remap) => self.remap = remap,
+                    CaptureRequest::SetRemap(remap) => self.remap = *remap,
                     CaptureRequest::SetScrollInvert(scroll_invert) => {
                         self.scroll_invert = scroll_invert
                     }
@@ -392,22 +394,33 @@ impl CaptureTask {
 
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
-        let event = match event {
+        let events: Vec<ProtoEvent> = match event {
             CaptureEvent::Begin(t) => {
                 self.enter_t = t;
-                ProtoEvent::Enter(opposite_pos, t)
+                vec![ProtoEvent::Enter(opposite_pos, t)]
             }
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
-                State::WaitingForAck => ProtoEvent::Enter(opposite_pos, self.enter_t),
-                State::Sending => ProtoEvent::Input(self.scroll_invert.apply(self.remap.apply(e))),
+                State::WaitingForAck => vec![ProtoEvent::Enter(opposite_pos, self.enter_t)],
+                // a single physical event can resolve into 0-2 outgoing
+                // events once chord remapping buffers/replays a
+                // modifier (see `KeyRemap::apply`)
+                State::Sending => self
+                    .remap
+                    .apply(e)
+                    .into_iter()
+                    .map(|e| ProtoEvent::Input(self.scroll_invert.apply(e)))
+                    .collect(),
             },
         };
 
-        if let Err(e) = self.conn.send(event, handle).await {
-            const DUR: Duration = Duration::from_millis(500);
-            debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
-            capture.release().await?;
+        for event in events {
+            if let Err(e) = self.conn.send(event, handle).await {
+                const DUR: Duration = Duration::from_millis(500);
+                debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
+                capture.release().await?;
+                break;
+            }
         }
         Ok(())
     }
@@ -439,10 +452,16 @@ impl CaptureTask {
                 // have to go through the same remap the down events
                 // did — otherwise the peer is released from a key it
                 // was never pressed with and keeps holding the one it
-                // actually got.
+                // actually got. A key still `pending` on an unresolved
+                // chord never had a down event sent for it at all —
+                // `release_key` reports `None` for those, and no
+                // key-up should be synthesized either.
+                let Some(target) = self.remap.release_key(key) else {
+                    continue;
+                };
                 let key_up = ProtoEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                     time: 0,
-                    key: self.remap.key(key) as u32,
+                    key: target as u32,
                     state: 0,
                 }));
                 if let Err(e) = self.conn.send(key_up, handle).await {

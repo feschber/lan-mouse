@@ -84,6 +84,10 @@ struct InputPreProcessing {
     invert_scroll_vertical: Option<bool>,
     /// invert the direction of horizontal scroll events
     invert_scroll_horizontal: Option<bool>,
+    /// chord-specific key overrides, e.g. sending Command as Alt only
+    /// when Tab is pressed while it's held (Cmd+Tab → Alt+Tab), without
+    /// disturbing what Command sends as on its own or with anything else
+    remap_chords: Option<Vec<crate::remap::ChordRemap>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -515,6 +519,15 @@ impl Config {
             .as_ref()
             .and_then(|c| c.input_pre_processing.as_ref())
             .and_then(|p| p.remap_keys.clone())
+            .unwrap_or_default()
+    }
+
+    /// chord-specific key overrides applied on their way to other devices
+    pub fn remap_chords(&self) -> Vec<crate::ChordRemap> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.remap_chords.clone())
             .unwrap_or_default()
     }
 

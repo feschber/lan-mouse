@@ -129,6 +129,7 @@ fn start_service() -> Result<Child, io::Error> {
 async fn run_service(config: Config) -> Result<(), ServiceError> {
     let release_bind = config.release_bind();
     let remap_keys = config.remap_keys();
+    let remap_chords = config.remap_chords();
     let invert_scroll_vertical = config.invert_scroll_vertical();
     let invert_scroll_horizontal = config.invert_scroll_horizontal();
     let config_path = config.config_path().to_owned();
@@ -137,6 +138,14 @@ async fn run_service(config: Config) -> Result<(), ServiceError> {
     log::info!("Press {release_bind:?} to release the mouse");
     for (from, to) in &remap_keys {
         log::info!("sending {from:?} to other devices as {to:?}");
+    }
+    for chord in &remap_chords {
+        log::info!(
+            "sending {:?} to other devices as {:?} while {:?} is pressed",
+            chord.modifier,
+            chord.to,
+            chord.trigger
+        );
     }
     if invert_scroll_vertical {
         log::info!("inverting vertical scroll direction on its way to other devices");

@@ -104,7 +104,7 @@ impl Service {
             capture_backend,
             conn,
             config.release_bind(),
-            KeyRemap::new(config.remap_keys()),
+            KeyRemap::new(config.remap_keys(), config.remap_chords()),
             ScrollInvert::new(
                 config.invert_scroll_vertical(),
                 config.invert_scroll_horizontal(),
@@ -266,8 +266,10 @@ impl Service {
         }
         let release_bind = self.config.release_bind();
         self.capture.set_release_bind(release_bind);
-        self.capture
-            .set_remap(KeyRemap::new(self.config.remap_keys()));
+        self.capture.set_remap(KeyRemap::new(
+            self.config.remap_keys(),
+            self.config.remap_chords(),
+        ));
         self.capture.set_scroll_invert(ScrollInvert::new(
             self.config.invert_scroll_vertical(),
             self.config.invert_scroll_horizontal(),
