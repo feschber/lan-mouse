@@ -277,6 +277,27 @@ impl InputCaptureState {
     }
 }
 
+/// Whether `event` came from real keyboard hardware, as opposed to
+/// being synthesized by another process.
+///
+/// Vietnamese (and other) input method engines implement diacritic
+/// composition by deleting the real keystroke from the event stream
+/// and re-injecting a correction: a synthetic Backspace plus a
+/// synthetic "letter" event that carries a placeholder keycode (the
+/// actual composed character rides along in a separate Unicode-string
+/// field this capture never reads). If our tap sees these before the
+/// IME's own tap — tap ordering between two unrelated processes isn't
+/// something either controls — we'd forward that placeholder keycode
+/// to the peer as if it were what the user typed, which is wrong more
+/// often than not. Genuine hardware input reports
+/// [`CGEventSourceStateID::HIDSystemState`]; synthetic events created
+/// via `CGEventSourceCreate` with some other state (IMEs typically use
+/// `Private`) don't.
+fn is_genuine_hardware_event(event: &CGEvent) -> bool {
+    event.get_integer_value_field(EventField::EVENT_SOURCE_STATE_ID)
+        == CGEventSourceStateID::HIDSystemState as i64
+}
+
 fn get_events(
     ev_type: &CGEventType,
     ev: &CGEvent,
@@ -565,15 +586,29 @@ fn create_event_tap<'a>(
         // Are we in a client?
         if let Some(current_pos) = state.current_pos {
             capture_position = Some(current_pos);
-            get_events(
-                &event_type,
-                cg_ev,
-                &mut res_events,
-                &mut state.modifier_state,
-            )
-            .unwrap_or_else(|e| {
-                log::error!("Failed to get events: {e}");
-            });
+
+            let is_keyboard_event = matches!(
+                event_type,
+                CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
+            );
+            if is_keyboard_event && !is_genuine_hardware_event(cg_ev) {
+                // A synthetic correction from something like a
+                // Vietnamese IME composing diacritics — see
+                // `is_genuine_hardware_event`. Consumed below
+                // (CallbackResult::Drop) same as a real key, just never
+                // translated or forwarded to the peer.
+                log::trace!("dropping non-hardware keyboard event: {event_type:?}");
+            } else {
+                get_events(
+                    &event_type,
+                    cg_ev,
+                    &mut res_events,
+                    &mut state.modifier_state,
+                )
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to get events: {e}");
+                });
+            }
 
             // Keep (hidden) cursor at the edge of the screen
             if matches!(
@@ -1026,5 +1061,36 @@ mod denormalize_test {
     #[test]
     fn offset_bounds() {
         assert_eq!(denormalize(0.5, -500.0, -300.0), -400.0);
+    }
+}
+
+#[cfg(test)]
+mod hardware_event_test {
+    use super::is_genuine_hardware_event;
+    use core_graphics::event::CGEvent;
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    #[test]
+    fn real_hid_source_is_genuine() {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).expect("source");
+        let event = CGEvent::new_keyboard_event(source, 0, true).expect("event");
+        assert!(is_genuine_hardware_event(&event));
+    }
+
+    #[test]
+    fn private_source_is_not_genuine() {
+        // the state an IME's own `CGEventSourceCreate` typically uses
+        // for its synthetic composition/correction events
+        let source = CGEventSource::new(CGEventSourceStateID::Private).expect("source");
+        let event = CGEvent::new_keyboard_event(source, 0, true).expect("event");
+        assert!(!is_genuine_hardware_event(&event));
+    }
+
+    #[test]
+    fn combined_session_source_is_not_genuine() {
+        let source =
+            CGEventSource::new(CGEventSourceStateID::CombinedSessionState).expect("source");
+        let event = CGEvent::new_keyboard_event(source, 0, true).expect("event");
+        assert!(!is_genuine_hardware_event(&event));
     }
 }
