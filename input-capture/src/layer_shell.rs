@@ -123,7 +123,6 @@ struct State {
     focused: Option<Arc<Window>>,
     global_list: GlobalList,
     globals: Globals,
-    wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: VecDeque<(Position, CaptureEvent)>,
@@ -138,7 +137,7 @@ struct Inner {
 
 impl AsRawFd for Inner {
     fn as_raw_fd(&self) -> RawFd {
-        self.state.wayland_fd
+        self.queue.as_fd().as_raw_fd()
     }
 }
 
@@ -332,7 +331,6 @@ impl LayerShellInputCapture {
             active_windows: Vec::new(),
             focused: None,
             qh,
-            wayland_fd: queue.as_fd().as_raw_fd(),
             read_guard: None,
             pending_events: VecDeque::new(),
             outputs: vec![],
@@ -563,16 +561,11 @@ impl Inner {
 
     fn prepare_read(&mut self) -> io::Result<()> {
         loop {
-            match self.queue.prepare_read() {
-                None => match self.queue.dispatch_pending(&mut self.state) {
-                    Ok(_) => continue,
-                    Err(DispatchError::Backend(WaylandError::Io(e))) => return Err(e),
-                    Err(e) => panic!("failed to dispatch wayland events: {e}"),
-                },
-                Some(r) => {
-                    self.state.read_guard = Some(r);
-                    break Ok(());
-                }
+            if let Some(guard) = self.queue.prepare_read() {
+                self.state.read_guard = Some(guard);
+                break Ok(());
+            } else {
+                self.dispatch_events();
             }
         }
     }
