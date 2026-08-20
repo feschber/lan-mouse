@@ -548,13 +548,12 @@ impl State {
 }
 
 impl Inner {
-    fn read(&mut self) -> bool {
+    fn read(&mut self) {
         match self.state.read_guard.take().unwrap().read() {
-            Ok(_) => true,
-            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => false,
+            Ok(_) => {}
+            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
             Err(WaylandError::Io(e)) => {
                 log::error!("error reading from wayland socket: {e}");
-                false
             }
             Err(WaylandError::Protocol(e)) => {
                 panic!("wayland protocol violation: {e}")
@@ -655,13 +654,7 @@ impl Stream for LayerShellInputCapture {
                 let inner = guard.get_inner_mut();
 
                 // read events
-                while inner.read() {
-                    // prepare next read
-                    match inner.prepare_read() {
-                        Ok(_) => {}
-                        Err(e) => return Poll::Ready(Some(Err(e.into()))),
-                    }
-                }
+                inner.read();
 
                 // dispatch the events
                 inner.dispatch_events();
