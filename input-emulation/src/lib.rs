@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    time::Duration,
 };
 
 use input_event::{Event, KeyboardEvent};
@@ -31,6 +32,35 @@ mod dummy;
 mod error;
 
 pub type EmulationHandle = u64;
+
+/// Default delay before a held key begins repeating.
+pub const DEFAULT_KEY_REPEAT_DELAY: Duration = Duration::from_millis(500);
+
+/// Default interval between repeats once a held key has started repeating.
+pub const DEFAULT_KEY_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
+
+/// Tunable options for input-emulation backends.
+///
+/// These currently only affect the macOS and Windows backends: on those
+/// platforms synthetic key events are not auto-repeated by the OS, so lan-mouse
+/// regenerates key repeats itself. The other backends leave key repeat to the
+/// receiving compositor / OS and ignore these values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmulationOptions {
+    /// How long a key must be held before it starts repeating.
+    pub key_repeat_delay: Duration,
+    /// The interval between repeats once a key has started repeating.
+    pub key_repeat_interval: Duration,
+}
+
+impl Default for EmulationOptions {
+    fn default() -> Self {
+        Self {
+            key_repeat_delay: DEFAULT_KEY_REPEAT_DELAY,
+            key_repeat_interval: DEFAULT_KEY_REPEAT_INTERVAL,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
@@ -76,7 +106,11 @@ pub struct InputEmulation {
 }
 
 impl InputEmulation {
-    async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(unused_variables))]
+    async fn with_backend(
+        backend: Backend,
+        options: EmulationOptions,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
             #[cfg(wlroots)]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
@@ -87,9 +121,9 @@ impl InputEmulation {
             #[cfg(rdp)]
             Backend::Xdp => Box::new(xdg_desktop_portal::DesktopPortalEmulation::new().await?),
             #[cfg(windows)]
-            Backend::Windows => Box::new(windows::WindowsEmulation::new()?),
+            Backend::Windows => Box::new(windows::WindowsEmulation::new(options)?),
             #[cfg(target_os = "macos")]
-            Backend::MacOs => Box::new(macos::MacOSEmulation::new()?),
+            Backend::MacOs => Box::new(macos::MacOSEmulation::new(options)?),
             Backend::Dummy => Box::new(dummy::DummyEmulation::new()),
         };
         Ok(Self {
@@ -99,9 +133,12 @@ impl InputEmulation {
         })
     }
 
-    pub async fn new(backend: Option<Backend>) -> Result<InputEmulation, EmulationCreationError> {
+    pub async fn new(
+        backend: Option<Backend>,
+        options: EmulationOptions,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         if let Some(backend) = backend {
-            let b = Self::with_backend(backend).await;
+            let b = Self::with_backend(backend, options).await;
             if b.is_ok() {
                 log::info!("using emulation backend: {backend}");
             }
@@ -123,7 +160,7 @@ impl InputEmulation {
             Backend::MacOs,
             Backend::Dummy,
         ] {
-            match Self::with_backend(backend).await {
+            match Self::with_backend(backend, options).await {
                 Ok(b) => {
                     log::info!("using emulation backend: {backend}");
                     return Ok(b);
