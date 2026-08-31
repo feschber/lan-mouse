@@ -157,11 +157,19 @@ impl Window {
             if macos_privacy::accessibility_granted() {
                 // AX granted but the row is still visible => the daemon
                 // subprocess bailed before AX was in place and needs a
-                // fresh process. Quit + relaunch via Launch Services.
+                // fresh process.
                 log::info!("capture row clicked in relaunch-required state");
-                macos_privacy::relaunch_bundle();
-                if let Some(app) = self.obj().application() {
-                    app.quit();
+                let Some(app) = self.obj().application() else {
+                    log::error!("failed to relaunch: window has no application");
+                    self.obj().show_toast("Failed to relaunch Lan Mouse");
+                    return;
+                };
+                match macos_privacy::relaunch_bundle() {
+                    Ok(()) => app.quit(),
+                    Err(error) => {
+                        log::error!("failed to schedule app relaunch: {error}");
+                        self.obj().show_toast("Failed to relaunch Lan Mouse");
+                    }
                 }
                 return;
             }
