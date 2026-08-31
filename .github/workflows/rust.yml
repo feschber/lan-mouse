@@ -83,7 +83,7 @@ jobs:
           py -m venv .venv
           .venv\Scripts\activate.ps1
           py -m pip install gvsbuild
-          gvsbuild build --vs-ver=18 --msys-dir=C:\msys64 gtk4 libadwaita librsvg
+          gvsbuild build --vs-ver=vs2026 --msys-dir=C:\msys64 gtk4 libadwaita librsvg
       - name: cargo build
         if: matrix.job == 'build'
         run: cargo build
