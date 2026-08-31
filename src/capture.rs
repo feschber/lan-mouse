@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -61,6 +62,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the binds that enter a client without an edge crossing
+    SetEnterBinds(HashMap<lan_mouse_ipc::Position, Vec<scancode::Linux>>),
 }
 
 impl Capture {
@@ -68,6 +71,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        enter_binds: HashMap<lan_mouse_ipc::Position, Vec<scancode::Linux>>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -81,6 +85,7 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            enter_binds,
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -137,6 +142,13 @@ impl Capture {
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
+
+    pub(crate) fn set_enter_binds(
+        &mut self,
+        binds: HashMap<lan_mouse_ipc::Position, Vec<scancode::Linux>>,
+    ) {
+        let _ = self.request_tx.send(CaptureRequest::SetEnterBinds(binds));
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -164,6 +176,7 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    enter_binds: HashMap<lan_mouse_ipc::Position, Vec<scancode::Linux>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
@@ -191,6 +204,13 @@ impl CaptureTask {
             .1
     }
 
+    fn capture_enter_binds(&self) -> HashMap<Position, Vec<scancode::Linux>> {
+        self.enter_binds
+            .iter()
+            .map(|(&pos, bind)| (to_capture_pos(pos), bind.clone()))
+            .collect()
+    }
+
     fn get_type(&self, handle: CaptureHandle) -> CaptureType {
         self.captures
             .iter()
@@ -214,6 +234,7 @@ impl CaptureTask {
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
+                        CaptureRequest::SetEnterBinds(binds) => self.enter_binds = binds,
                     },
                     _ = self.cancellation_token.cancelled() => return,
                 }
@@ -227,6 +248,11 @@ impl CaptureTask {
             r = InputCapture::new(self.backend) => r?,
             _ = self.cancellation_token.cancelled() => return Ok(()),
         };
+
+        // the backend is recreated whenever a capture session
+        // restarts, so the binds have to be re-applied here rather
+        // than only when they change
+        capture.set_enter_binds(self.capture_enter_binds());
 
         let _capture_guard = DropGuard::new(
             self.event_tx.clone(),
@@ -306,6 +332,10 @@ impl CaptureTask {
                     }
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
+                    }
+                    CaptureRequest::SetEnterBinds(binds) => {
+                        self.enter_binds = binds;
+                        capture.set_enter_binds(self.capture_enter_binds());
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,

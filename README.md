@@ -385,6 +385,12 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# optional key binds that enter the client(s) at a position without
+# the pointer having to cross that screen edge (see "Entering a client
+# with a key bind" below)
+[enter_binds]
+right = [ "KeyLeftCtrl", "KeyLeftAlt", "KeyRight" ]
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]
@@ -414,6 +420,39 @@ port = 4242
 ```
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
+
+### Entering a client with a key bind
+
+An `[enter_binds]` entry makes a position reachable by holding a
+combination of keys, so the pointer no longer has to be moved into the
+corresponding screen edge:
+
+```toml
+[enter_binds]
+right = [ "KeyLeftCtrl", "KeyLeftAlt", "KeyRight" ]
+top = [ "KeyLeftCtrl", "KeyLeftAlt", "KeyUp" ]
+```
+
+Binds are keyed by position rather than by client because entering is
+position-based: crossing an edge enters *every* client at that edge,
+and a bind is deliberately no different.
+
+The bind takes effect on the machine that *sends* input and behaves
+exactly like the matching edge crossing: capture begins, the pointer is
+warped to that edge and the usual `release_bind` returns control to the
+local machine. Consequently a bind only fires while capture is
+inactive, and only for a position that currently has an active client.
+
+The key combination itself is consumed locally and is not forwarded, so
+the remote machine starts with no keys held — mirroring `release_bind`,
+which releases everything before handing control back. Keep holding the
+bind's modifiers after switching and the remote will not see them as
+held; release and press them again for that.
+
+> [!NOTE]
+> Supported on the macOS and Windows capture backends. The Linux
+> backends observe no input while capture is inactive, so binds are
+> ignored there (see [#260](https://github.com/feschber/lan-mouse/issues/260)).
 
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
