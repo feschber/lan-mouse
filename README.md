@@ -385,6 +385,13 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# optional transformations applied to input received from other devices
+[input_post_processing]
+# scale relative pointer motion (defaults to 1.0)
+mouse_sensitivity = 1.0
+# invert continuous and discrete scrolling (defaults to false)
+invert_scroll = false
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]
@@ -414,6 +421,13 @@ port = 4242
 ```
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
+Input post-processing is configured on the receiving device and applies only to
+events emulated there. Both options can also be changed at runtime:
+
+```sh
+lan-mouse cli set-mouse-sensitivity 1.5
+lan-mouse cli invert-scrolling true
+```
 
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)

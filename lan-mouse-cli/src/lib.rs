@@ -18,7 +18,7 @@ pub enum CliError {
     Ipc(#[from] IpcError),
 }
 
-#[derive(Parser, Clone, Debug, PartialEq, Eq)]
+#[derive(Parser, Clone, Debug, PartialEq)]
 #[command(name = "lan-mouse-cli", about = "LanMouse CLI interface")]
 pub struct CliArgs {
     #[command(subcommand)]
@@ -37,7 +37,7 @@ struct Client {
     enter_hook: Option<String>,
 }
 
-#[derive(Clone, Subcommand, Debug, PartialEq, Eq)]
+#[derive(Clone, Subcommand, Debug, PartialEq)]
 enum CliSubcommand {
     /// add a new client
     AddClient(Client),
@@ -56,6 +56,13 @@ enum CliSubcommand {
     },
     /// change port
     SetPort { id: ClientHandle, port: u16 },
+    /// invert scrolling direction
+    InvertScrolling {
+        #[arg(action = clap::ArgAction::Set)]
+        invert_scroll: bool,
+    },
+    /// set mouse sensitivity
+    SetMouseSensitivity { mouse_sensitivity: f64 },
     /// set position
     SetPosition { id: ClientHandle, pos: Position },
     /// set ips
@@ -142,6 +149,14 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
         CliSubcommand::SetPort { id, port } => {
             tx.request(FrontendRequest::UpdatePort(id, port)).await?
         }
+        CliSubcommand::InvertScrolling { invert_scroll } => {
+            tx.request(FrontendRequest::UpdateScrollingInversion(invert_scroll))
+                .await?
+        }
+        CliSubcommand::SetMouseSensitivity { mouse_sensitivity } => {
+            tx.request(FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity))
+                .await?
+        }
         CliSubcommand::SetPosition { id, pos } => {
             tx.request(FrontendRequest::UpdatePosition(id, pos)).await?
         }
@@ -167,4 +182,35 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
         CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_scroll_inversion_value() {
+        let args = CliArgs::try_parse_from(["lan-mouse-cli", "invert-scrolling", "true"])
+            .expect("valid scroll inversion command");
+
+        assert_eq!(
+            args.command,
+            CliSubcommand::InvertScrolling {
+                invert_scroll: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_mouse_sensitivity_value() {
+        let args = CliArgs::try_parse_from(["lan-mouse-cli", "set-mouse-sensitivity", "1.5"])
+            .expect("valid mouse sensitivity command");
+
+        assert_eq!(
+            args.command,
+            CliSubcommand::SetMouseSensitivity {
+                mouse_sensitivity: 1.5,
+            }
+        );
+    }
 }
