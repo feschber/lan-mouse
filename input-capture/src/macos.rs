@@ -31,6 +31,7 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll, ready},
     thread::{self},
+    time::{Duration, Instant},
 };
 use tokio::sync::{
     Mutex,
@@ -38,12 +39,71 @@ use tokio::sync::{
     oneshot,
 };
 
-#[derive(Debug, Default)]
+const EDGE_OFFSET: f64 = 1.0;
+const BOUNDS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Bounds {
     xmin: f64,
     xmax: f64,
     ymin: f64,
     ymax: f64,
+}
+
+impl Bounds {
+    fn from_rects(rects: impl IntoIterator<Item = (f64, f64, f64, f64)>) -> Option<Self> {
+        let mut bounds = Self {
+            xmin: f64::INFINITY,
+            xmax: f64::NEG_INFINITY,
+            ymin: f64::INFINITY,
+            ymax: f64::NEG_INFINITY,
+        };
+        for (x, y, width, height) in rects {
+            bounds.xmin = bounds.xmin.min(x);
+            bounds.xmax = bounds.xmax.max(x + width);
+            bounds.ymin = bounds.ymin.min(y);
+            bounds.ymax = bounds.ymax.max(y + height);
+        }
+
+        (bounds.xmax > bounds.xmin && bounds.ymax > bounds.ymin).then_some(bounds)
+    }
+
+    fn anchor_at_edge(&self, position: Position, previous: Option<CGPoint>) -> CGPoint {
+        let x = previous.map_or((self.xmin + self.xmax) / 2.0, |pos| pos.x);
+        let y = previous.map_or((self.ymin + self.ymax) / 2.0, |pos| pos.y);
+        let x = x.clamp(self.xmin, self.xmax - EDGE_OFFSET);
+        let y = y.clamp(self.ymin, self.ymax - EDGE_OFFSET);
+
+        match position {
+            Position::Left => CGPoint {
+                x: self.xmin + EDGE_OFFSET,
+                y,
+            },
+            Position::Right => CGPoint {
+                x: self.xmax - EDGE_OFFSET,
+                y,
+            },
+            Position::Top => CGPoint {
+                x,
+                y: self.ymin + EDGE_OFFSET,
+            },
+            Position::Bottom => CGPoint {
+                x,
+                y: self.ymax - EDGE_OFFSET,
+            },
+        }
+    }
+}
+
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            xmin: 0.0,
+            xmax: 0.0,
+            ymin: 0.0,
+            ymax: 0.0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -56,6 +116,8 @@ struct InputCaptureState {
     enter_position: Option<CGPoint>,
     /// bounds of the input capture area
     bounds: Bounds,
+    /// last time display bounds were refreshed from CoreGraphics
+    last_bounds_refresh: Instant,
     /// current state of modifier keys
     modifier_state: XMods,
 }
@@ -77,6 +139,7 @@ impl InputCaptureState {
             current_pos: None,
             enter_position: None,
             bounds: Bounds::default(),
+            last_bounds_refresh: Instant::now(),
             modifier_state: Default::default(),
         };
         res.update_bounds()?;
@@ -84,6 +147,8 @@ impl InputCaptureState {
     }
 
     fn crossed(&mut self, event: &CGEvent) -> Option<Position> {
+        self.refresh_bounds_if_stale("barrier check");
+
         let location = event.location();
         let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
         let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
@@ -101,34 +166,68 @@ impl InputCaptureState {
         None
     }
 
-    // Get the max bounds of all displays
-    fn update_bounds(&mut self) -> Result<(), MacosCaptureCreationError> {
+    fn active_display_bounds() -> Result<Option<Bounds>, MacosCaptureCreationError> {
         let active_ids =
             CGDisplay::active_displays().map_err(MacosCaptureCreationError::ActiveDisplays)?;
-        active_ids.iter().for_each(|d| {
-            let bounds = CGDisplay::new(*d).bounds();
-            self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
-            self.bounds.xmax = self.bounds.xmax.max(bounds.origin.x + bounds.size.width);
-            self.bounds.ymin = self.bounds.ymin.min(bounds.origin.y);
-            self.bounds.ymax = self.bounds.ymax.max(bounds.origin.y + bounds.size.height);
-        });
+        Ok(Bounds::from_rects(active_ids.into_iter().map(|id| {
+            let bounds = CGDisplay::new(id).bounds();
+            (
+                bounds.origin.x,
+                bounds.origin.y,
+                bounds.size.width,
+                bounds.size.height,
+            )
+        })))
+    }
+
+    // Get the union bounds of all displays.
+    fn update_bounds(&mut self) -> Result<bool, MacosCaptureCreationError> {
+        let previous = self.bounds;
+        let refreshed_at = Instant::now();
+        let active_bounds = Self::active_display_bounds();
+        self.last_bounds_refresh = refreshed_at;
+
+        if let Some(bounds) = active_bounds? {
+            self.bounds = bounds;
+        } else {
+            log::warn!("no active display bounds reported; keeping previous bounds");
+        }
 
         log::debug!("Updated displays bounds: {0:?}", self.bounds);
-        Ok(())
+        Ok(self.bounds != previous)
+    }
+
+    fn refresh_bounds_if_stale(&mut self, reason: &str) -> bool {
+        if self.last_bounds_refresh.elapsed() < BOUNDS_REFRESH_INTERVAL {
+            return false;
+        }
+
+        match self.update_bounds() {
+            Ok(changed) => {
+                if changed {
+                    log::info!(
+                        "display bounds refreshed during {reason}: {:?}",
+                        self.bounds
+                    );
+                }
+                changed
+            }
+            Err(e) => {
+                log::warn!("failed to refresh display bounds during {reason}: {e}");
+                false
+            }
+        }
+    }
+
+    fn reanchor_capture_cursor(&mut self, position: Position) -> Result<(), CaptureError> {
+        let previous = self.enter_position;
+        self.enter_position = Some(self.bounds.anchor_at_edge(position, previous));
+        self.reset_cursor()
     }
 
     /// start the input capture by
     fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
-        let mut location = event.location();
-        let edge_offset = 1.0;
-        // move cursor location to display bounds
-        match position {
-            Position::Left => location.x = self.bounds.xmin + edge_offset,
-            Position::Right => location.x = self.bounds.xmax - edge_offset,
-            Position::Top => location.y = self.bounds.ymin + edge_offset,
-            Position::Bottom => location.y = self.bounds.ymax - edge_offset,
-        };
-        self.enter_position = Some(location);
+        self.enter_position = Some(self.bounds.anchor_at_edge(position, Some(event.location())));
         self.reset_cursor()
     }
 
@@ -196,10 +295,18 @@ impl InputCaptureState {
                 // cursor-warp on capture-start use the current
                 // geometry instead of whatever was true at process
                 // start.
-                if let Err(e) = self.update_bounds() {
-                    log::warn!("failed to refresh display bounds: {e}");
-                } else {
-                    log::info!("display reconfigured: {:?}", self.bounds);
+                match self.update_bounds() {
+                    Err(e) => log::warn!("failed to refresh display bounds: {e}"),
+                    Ok(_) => {
+                        log::info!("display reconfigured: {:?}", self.bounds);
+                        if let Some(pos) = self.current_pos {
+                            if let Err(e) = self.reanchor_capture_cursor(pos) {
+                                log::warn!(
+                                    "failed to reanchor captured cursor after display change: {e}"
+                                );
+                            }
+                        }
+                    }
                 }
             }
         };
@@ -513,7 +620,13 @@ fn create_event_tap<'a>(
                     | CGEventType::RightMouseDragged
                     | CGEventType::OtherMouseDragged
             ) {
-                state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
+                if state.refresh_bounds_if_stale("captured pointer motion") {
+                    state
+                        .reanchor_capture_cursor(current_pos)
+                        .unwrap_or_else(|e| log::warn!("{e}"));
+                } else {
+                    state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
+                }
             }
         } else if matches!(event_type, CGEventType::MouseMoved) {
             // Did we cross a barrier?
@@ -794,6 +907,63 @@ impl Stream for MacOSInputCapture {
             None => Poll::Ready(None),
             Some(e) => Poll::Ready(Some(Ok(e))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn point(x: f64, y: f64) -> CGPoint {
+        CGPoint { x, y }
+    }
+
+    #[test]
+    fn bounds_shrink_when_left_display_removed() {
+        let three_displays = Bounds::from_rects([
+            (-1920.0, 0.0, 1920.0, 1080.0),
+            (0.0, 0.0, 1920.0, 1080.0),
+            (1920.0, 0.0, 1512.0, 982.0),
+        ])
+        .expect("valid display bounds");
+        let remaining_displays =
+            Bounds::from_rects([(0.0, 0.0, 1920.0, 1080.0), (1920.0, 0.0, 1512.0, 982.0)])
+                .expect("valid display bounds");
+
+        assert_eq!(three_displays.xmin, -1920.0);
+        assert_eq!(remaining_displays.xmin, 0.0);
+        assert_eq!(remaining_displays.xmax, 3432.0);
+    }
+
+    #[test]
+    fn bounds_expand_when_left_display_added_back() {
+        let without_left =
+            Bounds::from_rects([(0.0, 0.0, 1920.0, 1080.0), (1920.0, 0.0, 1512.0, 982.0)])
+                .expect("valid display bounds");
+        let with_left = Bounds::from_rects([
+            (-1920.0, 0.0, 1920.0, 1080.0),
+            (0.0, 0.0, 1920.0, 1080.0),
+            (1920.0, 0.0, 1512.0, 982.0),
+        ])
+        .expect("valid display bounds");
+
+        assert_eq!(without_left.xmin, 0.0);
+        assert_eq!(with_left.xmin, -1920.0);
+        assert_eq!(with_left.xmax, 3432.0);
+    }
+
+    #[test]
+    fn reanchored_capture_position_moves_to_new_edge_and_clamps_cross_axis() {
+        let bounds =
+            Bounds::from_rects([(0.0, 0.0, 1920.0, 1080.0)]).expect("valid display bounds");
+
+        let left = bounds.anchor_at_edge(Position::Left, Some(point(-1919.0, 1200.0)));
+        assert_eq!(left.x, 1.0);
+        assert_eq!(left.y, 1079.0);
+
+        let right = bounds.anchor_at_edge(Position::Right, Some(point(10.0, -50.0)));
+        assert_eq!(right.x, 1919.0);
+        assert_eq!(right.y, 0.0);
     }
 }
 
