@@ -318,6 +318,23 @@ It is of the form "aa:bb:cc:..."
 Authorized devices can be persisted using the configuration file (see [Configuration](#configuration)).
 
 If the device still can not be entered, make sure you have UDP port `4242` (or the one selected) opened up in your firewall.
+
+#### Tray icon (Linux & macOS)
+
+On macOS and on Linux desktops with a system tray, Lan Mouse runs as a tray icon application:
+Closing the window only hides it and Lan Mouse keeps running in the tray,
+where the icon offers a menu to re-open the window or quit the app entirely.
+Launching `lan-mouse` while it is already running re-presents the window of the running instance.
+Set `LAN_MOUSE_HIDDEN=1` in the environment to start quietly into the tray without opening the window.
+
+On Linux the tray icon uses the StatusNotifierItem specification, which is supported
+out of the box on most desktops (KDE Plasma, XFCE, waybar, ...).
+GNOME requires the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/).
+If no tray is available, Lan Mouse falls back to the previous behavior: closing the window quits the app.
+
+When the GUI connects to an already running daemon (e.g. the [systemd service](#systemd-service)),
+it acts as a plain client window instead: no tray icon is created and closing the window
+only quits the GUI, leaving the daemon running.
 </details>
 
 <details>

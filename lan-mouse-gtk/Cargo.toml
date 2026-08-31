@@ -15,5 +15,8 @@ log = "0.4.20"
 lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.3.0" }
 thiserror = "2.0.0"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.5", features = ["blocking"] }
+
 [build-dependencies]
 glib-build-tools = { version = "0.20.0" }
