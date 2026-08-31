@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use env_logger::Env;
 use input_capture::InputCaptureError;
 use input_emulation::InputEmulationError;
@@ -41,6 +43,9 @@ enum LanMouseError {
 }
 
 fn main() {
+    #[cfg(windows)]
+    attach_parent_console();
+
     // init logging
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
     env_logger::init_from_env(env);
@@ -116,6 +121,26 @@ where
 
     // run async event loop
     Ok(runtime.block_on(LocalSet::new().run_until(f))?)
+}
+
+/// The binary is built for the `windows` subsystem so that a plain GUI
+/// launch neither opens a console window nor dies with it (closing the
+/// console would CTRL_CLOSE_EVENT-terminate the frontend and the
+/// service child alike, bypassing the tray). The cost: the process
+/// starts without a console, which would render the terminal
+/// subcommands (`daemon`, `cli`, `test-*`, `--help`) mute. Any command
+/// line argument implies terminal usage, so attach back to the
+/// parent's console in that case; the call fails silently when there
+/// is none (e.g. the service child spawned by the GUI). Handles
+/// redirected by the shell (pipes, files) are passed via
+/// STARTF_USESTDHANDLES and take precedence over the attached console,
+/// so redirection keeps working.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    if std::env::args_os().len() > 1 {
+        unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
 }
 
 fn start_service() -> Result<Child, io::Error> {

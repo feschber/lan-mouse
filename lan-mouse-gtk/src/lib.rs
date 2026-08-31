@@ -9,6 +9,8 @@ mod macos_privacy;
 #[cfg(target_os = "macos")]
 mod macos_status_item;
 mod window;
+#[cfg(windows)]
+mod windows_status_item;
 
 use std::{env, process, str, sync::OnceLock};
 
@@ -260,6 +262,23 @@ fn build_ui(app: &Application) {
         });
     }
 
+    // Mirror macOS: the daemon is always a child of this process on
+    // Windows (no external-daemon detection), so the tray is set up
+    // unconditionally. Only if tray creation actually fails does the
+    // window keep the default close-means-quit behavior, since a
+    // hidden window would otherwise be unreachable.
+    #[cfg(windows)]
+    let tray_active = {
+        let tray_active = windows_status_item::setup(app, &window);
+        if tray_active {
+            window.connect_close_request(|window| {
+                window.set_visible(false);
+                glib::Propagation::Stop
+            });
+        }
+        tray_active
+    };
+
     glib::spawn_future_local(clone!(
         #[weak]
         window,
@@ -307,7 +326,15 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    #[cfg(not(target_os = "macos"))]
+    // Present on every launch unless
+    // `LAN_MOUSE_HIDDEN=1` requests a quiet start into the tray.
+    // Without a tray the window is always presented.
+    #[cfg(windows)]
+    if !tray_active || env::var_os("LAN_MOUSE_HIDDEN").is_none() {
+        window.present();
+    }
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     window.present();
 
     // On macOS, default to presenting the main window on every launch
