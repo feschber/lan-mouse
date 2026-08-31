@@ -27,6 +27,8 @@ use super::error::MacOSEmulationCreationError;
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+const MAC_KEY_SPACE: u16 = 0x31;
+const MAC_KEY_LEFT_CONTROL: u16 = 0x3B;
 
 pub(crate) struct MacOSEmulation {
     /// global event source for all events
@@ -181,14 +183,13 @@ fn is_arrow_key(key: u16) -> bool {
     )
 }
 
-fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
-    let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
-        Ok(e) => e,
-        Err(_) => {
-            log::warn!("unable to create key event");
-            return;
-        }
-    };
+fn new_key_event(
+    event_source: CGEventSource,
+    key: u16,
+    state: u8,
+    modifiers: XMods,
+) -> Result<CGEvent, ()> {
+    let event = CGEvent::new_keyboard_event(event_source, key, state != 0)?;
     let mut flags = to_cgevent_flags(modifiers);
     // Hardware-generated arrow keys on macOS carry NumericPad + SecondaryFn.
     // CGEventTap-based hotkey matchers (e.g. tiling window managers) check
@@ -198,8 +199,73 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
         flags |= CGEventFlags::CGEventFlagNumericPad | CGEventFlags::CGEventFlagSecondaryFn;
     }
     event.set_flags(flags);
+    Ok(event)
+}
+
+fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
+    let event = match new_key_event(event_source, key, state, modifiers) {
+        Ok(event) => event,
+        Err(_) => {
+            log::warn!("unable to create key event");
+            return;
+        }
+    };
     event.post(CGEventTapLocation::HID);
     log::trace!("key event: {key} {state}");
+}
+
+fn is_hangul_key(key: u32) -> bool {
+    matches!(
+        scancode::Linux::try_from(key),
+        Ok(scancode::Linux::KeyHanguel)
+    )
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum KeyDisposition {
+    Forward,
+    ToggleInputSource,
+    Ignore,
+}
+
+fn key_disposition(key: u32, state: u8) -> KeyDisposition {
+    if !is_hangul_key(key) {
+        KeyDisposition::Forward
+    } else if state == 1 {
+        KeyDisposition::ToggleInputSource
+    } else {
+        KeyDisposition::Ignore
+    }
+}
+
+fn input_source_toggle_events(modifiers: XMods) -> [(u16, u8, XMods); 4] {
+    let control = XMods::ControlMask;
+    [
+        (MAC_KEY_LEFT_CONTROL, 1, control),
+        (MAC_KEY_SPACE, 1, control),
+        (MAC_KEY_SPACE, 0, control),
+        (MAC_KEY_LEFT_CONTROL, 0, modifiers),
+    ]
+}
+
+fn toggle_input_source(event_source: CGEventSource, modifiers: XMods) {
+    // Build the entire chord before posting any part of it. If event creation
+    // fails, this avoids leaving Control or Space stuck in the down state.
+    let events = input_source_toggle_events(modifiers)
+        .into_iter()
+        .map(|(key, state, modifiers)| {
+            new_key_event(event_source.clone(), key, state, modifiers)
+                .map(|event| (event, key, state))
+        })
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(events) = events else {
+        log::warn!("unable to create input source toggle event");
+        return;
+    };
+    for (event, key, state) in events {
+        event.post(CGEventTapLocation::HID);
+        log::trace!("key event: {key} {state}");
+    }
 }
 
 fn modifier_event(event_source: CGEventSource, depressed: XMods) {
@@ -484,6 +550,24 @@ impl Emulation for MacOSEmulation {
                     key,
                     state,
                 } => {
+                    // Chromium's evdev-to-macOS table maps Linux KEY_HANGEUL
+                    // (LANG1) to 0xffff because macOS has no matching virtual
+                    // key code. Reproduce macOS's standard Control-Space input
+                    // source shortcut instead. Only act on the initial press:
+                    // a language toggle must neither repeat nor fire again on
+                    // release.
+                    match key_disposition(key, state) {
+                        KeyDisposition::ToggleInputSource => {
+                            self.cancel_repeat_task().await;
+                            toggle_input_source(
+                                self.event_source.clone(),
+                                self.modifier_state.get(),
+                            );
+                            return Ok(());
+                        }
+                        KeyDisposition::Ignore => return Ok(()),
+                        KeyDisposition::Forward => {}
+                    }
                     let code = match KeyMap::from_key_mapping(KeyMapping::Evdev(key as u16)) {
                         Ok(k) => k.mac as CGKeyCode,
                         Err(_) => {
@@ -598,5 +682,57 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_only_linux_hangul_key() {
+        assert!(is_hangul_key(scancode::Linux::KeyHanguel as u32));
+        assert!(!is_hangul_key(scancode::Linux::KeySpace as u32));
+    }
+
+    #[test]
+    fn hangul_toggles_once_per_press() {
+        let hangul = scancode::Linux::KeyHanguel as u32;
+        assert_eq!(
+            key_disposition(hangul, 1),
+            KeyDisposition::ToggleInputSource
+        );
+        assert_eq!(key_disposition(hangul, 2), KeyDisposition::Ignore);
+        assert_eq!(key_disposition(hangul, 0), KeyDisposition::Ignore);
+        assert_eq!(
+            key_disposition(scancode::Linux::KeySpace as u32, 1),
+            KeyDisposition::Forward
+        );
+    }
+
+    #[test]
+    fn input_source_toggle_emits_balanced_control_space_chord() {
+        assert_eq!(
+            input_source_toggle_events(XMods::empty()),
+            [
+                (MAC_KEY_LEFT_CONTROL, 1, XMods::ControlMask),
+                (MAC_KEY_SPACE, 1, XMods::ControlMask),
+                (MAC_KEY_SPACE, 0, XMods::ControlMask),
+                (MAC_KEY_LEFT_CONTROL, 0, XMods::empty()),
+            ]
+        );
+    }
+
+    #[test]
+    fn input_source_toggle_restores_existing_modifier_flags() {
+        let modifiers = XMods::ShiftMask | XMods::Mod4Mask;
+        let events = input_source_toggle_events(modifiers);
+
+        assert!(
+            events[..3]
+                .iter()
+                .all(|event| event.2 == XMods::ControlMask)
+        );
+        assert_eq!(events[3], (MAC_KEY_LEFT_CONTROL, 0, modifiers));
     }
 }
