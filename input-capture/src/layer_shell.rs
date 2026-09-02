@@ -61,7 +61,10 @@ use wayland_client::{
     },
 };
 
-use input_event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{
+    Event, KeyboardEvent, PointerEvent,
+    screen::{Edge, EdgeSegment, EdgeSegments, Rect},
+};
 
 use crate::{CaptureError, CaptureEvent};
 
@@ -148,6 +151,7 @@ struct Window {
     surface: WlSurface,
     layer_surface: ZwlrLayerSurfaceV1,
     pos: Position,
+    rect: Rect,
 }
 
 impl Window {
@@ -156,14 +160,15 @@ impl Window {
         qh: &QueueHandle<State>,
         output: &WlOutput,
         pos: Position,
-        size: (i32, i32),
+        output_rect: Rect,
+        rect: Rect,
     ) -> Window {
-        log::debug!("creating window output: {output:?}, size: {size:?}");
+        log::debug!("creating window output: {output:?}, rect: {rect:?}");
         let g = &state.globals;
 
         let (width, height) = match pos {
-            Position::Left | Position::Right => (1, size.1 as u32),
-            Position::Top | Position::Bottom => (size.0 as u32, 1),
+            Position::Left | Position::Right => (1, rect.height as u32),
+            Position::Top | Position::Bottom => (rect.width as u32, 1),
         };
         let mut file = tempfile::tempfile().unwrap();
         draw(&mut file, (width, height));
@@ -189,17 +194,29 @@ impl Window {
             qh,
             (),
         );
-        let anchor = match pos {
-            Position::Left => Anchor::Left,
-            Position::Right => Anchor::Right,
-            Position::Top => Anchor::Top,
-            Position::Bottom => Anchor::Bottom,
+        let (anchor, margin) = match pos {
+            Position::Left => (
+                Anchor::Left | Anchor::Top,
+                (rect.y - output_rect.y, 0, 0, 0),
+            ),
+            Position::Right => (
+                Anchor::Right | Anchor::Top,
+                (rect.y - output_rect.y, 0, 0, 0),
+            ),
+            Position::Top => (
+                Anchor::Top | Anchor::Left,
+                (0, 0, 0, rect.x - output_rect.x),
+            ),
+            Position::Bottom => (
+                Anchor::Bottom | Anchor::Left,
+                (0, 0, 0, rect.x - output_rect.x),
+            ),
         };
 
         layer_surface.set_anchor(anchor);
         layer_surface.set_size(width, height);
         layer_surface.set_exclusive_zone(-1);
-        layer_surface.set_margin(0, 0, 0, 0);
+        layer_surface.set_margin(margin.0, margin.1, margin.2, margin.3);
         surface.set_input_region(None);
         surface.commit();
         Window {
@@ -207,6 +224,7 @@ impl Window {
             buffer,
             surface,
             layer_surface,
+            rect,
         }
     }
 }
@@ -220,36 +238,124 @@ impl Drop for Window {
     }
 }
 
-fn get_edges(outputs: &[Output], pos: Position) -> Vec<(Output, i32)> {
-    outputs
-        .iter()
-        .filter_map(|output| {
-            output.info.as_ref().map(|info| {
-                (
-                    output.clone(),
-                    match pos {
-                        Position::Left => info.position.0,
-                        Position::Right => info.position.0 + info.size.0,
-                        Position::Top => info.position.1,
-                        Position::Bottom => info.position.1 + info.size.1,
-                    },
-                )
-            })
-        })
-        .collect()
+fn edge(pos: Position) -> Edge {
+    match pos {
+        Position::Left => Edge::Left,
+        Position::Right => Edge::Right,
+        Position::Top => Edge::Top,
+        Position::Bottom => Edge::Bottom,
+    }
 }
 
-fn get_output_configuration(state: &State, pos: Position) -> Vec<Output> {
-    // get all output edges corresponding to the position
-    let edges = get_edges(&state.outputs, pos);
-    let opposite_edges = get_edges(&state.outputs, pos.opposite());
+fn cursor_cross_axis(
+    window: &Window,
+    rectangles: &[Rect],
+    surface_x: f64,
+    surface_y: f64,
+) -> Option<f32> {
+    let edge = edge(window.pos);
+    let (edge_coordinate, cross_coordinate) = match edge {
+        Edge::Left => (window.rect.x, window.rect.y + surface_y.floor() as i32),
+        Edge::Right => (
+            window.rect.x + window.rect.width - 1,
+            window.rect.y + surface_y.floor() as i32,
+        ),
+        Edge::Top => (window.rect.y, window.rect.x + surface_x.floor() as i32),
+        Edge::Bottom => (
+            window.rect.y + window.rect.height - 1,
+            window.rect.x + surface_x.floor() as i32,
+        ),
+    };
+    EdgeSegments::from_rectangles(edge, rectangles.iter().copied())
+        .normalize(edge_coordinate, cross_coordinate)
+}
 
-    // remove those edges that are at the same position
-    // as an opposite edge of a different output
-    edges
-        .iter()
-        .filter(|(_, edge)| !opposite_edges.iter().map(|(_, e)| *e).any(|e| &e == edge))
-        .map(|(o, _)| o.clone())
+fn segment_rect(edge: Edge, segment: EdgeSegment) -> Rect {
+    match edge {
+        Edge::Left | Edge::Right => Rect {
+            x: segment.edge_coordinate,
+            y: segment.cross_start,
+            width: 1,
+            height: segment.cross_end - segment.cross_start,
+        },
+        Edge::Top | Edge::Bottom => Rect {
+            x: segment.cross_start,
+            y: segment.edge_coordinate,
+            width: segment.cross_end - segment.cross_start,
+            height: 1,
+        },
+    }
+}
+
+fn get_output_configuration(state: &State, pos: Position) -> Vec<(Output, Rect, Rect)> {
+    let edge = edge(pos);
+    let rectangles = state.outputs.iter().filter_map(|output| {
+        output.info.as_ref().map(|info| Rect {
+            x: info.position.0,
+            y: info.position.1,
+            width: info.size.0,
+            height: info.size.1,
+        })
+    });
+    let segments = EdgeSegments::from_rectangles(edge, rectangles)
+        .segments()
+        .collect::<Vec<_>>();
+
+    segments
+        .into_iter()
+        .flat_map(|segment| {
+            state.outputs.iter().filter_map(move |output| {
+                output.info.as_ref().and_then(|info| {
+                    let output_rect = Rect {
+                        x: info.position.0,
+                        y: info.position.1,
+                        width: info.size.0,
+                        height: info.size.1,
+                    };
+                    let (edge_coordinate, cross_start, cross_end) = match edge {
+                        Edge::Left => (
+                            info.position.0,
+                            info.position.1,
+                            info.position.1 + info.size.1,
+                        ),
+                        Edge::Right => (
+                            info.position.0 + info.size.0 - 1,
+                            info.position.1,
+                            info.position.1 + info.size.1,
+                        ),
+                        Edge::Top => (
+                            info.position.1,
+                            info.position.0,
+                            info.position.0 + info.size.0,
+                        ),
+                        Edge::Bottom => (
+                            info.position.1 + info.size.1 - 1,
+                            info.position.0,
+                            info.position.0 + info.size.0,
+                        ),
+                    };
+                    if segment.edge_coordinate != edge_coordinate {
+                        return None;
+                    }
+                    let cross_start = segment.cross_start.max(cross_start);
+                    let cross_end = segment.cross_end.min(cross_end);
+                    (cross_start < cross_end).then(|| {
+                        (
+                            output.clone(),
+                            output_rect,
+                            segment_rect(
+                                edge,
+                                EdgeSegment {
+                                    edge_coordinate,
+                                    cross_start,
+                                    cross_end,
+                                },
+                            ),
+                        )
+                    })
+                })
+            })
+        })
         .collect()
 }
 
@@ -514,19 +620,17 @@ impl State {
             "adding capture for position {pos} - using outputs: {:?}",
             outputs
                 .iter()
-                .map(|o| o
+                .map(|(o, _, _)| o
                     .info
                     .as_ref()
                     .map(|i| i.name.to_owned())
                     .unwrap_or("unknown output".to_owned()))
                 .collect::<Vec<_>>()
         );
-        outputs.iter().for_each(|o| {
-            if let Some(info) = o.info.as_ref() {
-                let window = Window::new(self, &self.qh, &o.wl_output, pos, info.size);
-                let window = Arc::new(window);
-                self.active_windows.push(window);
-            }
+        outputs.iter().for_each(|(output, output_rect, rect)| {
+            let window = Window::new(self, &self.qh, &output.wl_output, pos, *output_rect, *rect);
+            let window = Arc::new(window);
+            self.active_windows.push(window);
         });
     }
 
@@ -721,8 +825,8 @@ impl Dispatch<WlPointer, ()> for State {
             wl_pointer::Event::Enter {
                 serial,
                 surface,
-                surface_x: _,
-                surface_y: _,
+                surface_x,
+                surface_y,
             } => {
                 // get client corresponding to the focused surface
                 {
@@ -733,14 +837,27 @@ impl Dispatch<WlPointer, ()> for State {
                         return;
                     }
                 }
-                let pos = app
+                let window = app
                     .active_windows
                     .iter()
                     .find(|w| w.surface == surface)
-                    .map(|w| w.pos)
+                    .cloned()
                     .unwrap();
+                let rectangles = app
+                    .outputs
+                    .iter()
+                    .filter_map(|output| {
+                        output.info.as_ref().map(|info| Rect {
+                            x: info.position.0,
+                            y: info.position.1,
+                            width: info.size.0,
+                            height: info.size.1,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let cross_axis = cursor_cross_axis(&window, &rectangles, surface_x, surface_y);
                 app.pending_events
-                    .push_back((pos, CaptureEvent::Begin { cross_axis: None }));
+                    .push_back((window.pos, CaptureEvent::Begin { cross_axis }));
             }
             wl_pointer::Event::Leave { .. } => {
                 /* There are rare cases, where when a window is opened in
