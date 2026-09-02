@@ -61,6 +61,8 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the mouse-jail bind
+    SetJailBind(Vec<scancode::Linux>),
 }
 
 impl Capture {
@@ -68,6 +70,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        jail_bind: Vec<scancode::Linux>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -82,6 +85,9 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             state: Default::default(),
+            jail: Cell::new(false),
+            jail_bind: RefCell::new(jail_bind),
+            jail_bind_prev_engaged: Cell::new(false),
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -137,6 +143,12 @@ impl Capture {
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
+
+    pub(crate) fn set_jail_bind(&mut self, bind: Vec<scancode::Linux>) {
+        self.request_tx
+            .send(CaptureRequest::SetJailBind(bind))
+            .expect("channel closed");
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -166,6 +178,11 @@ struct CaptureTask {
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    /// jail the mouse cursor to the local machine
+    jail: Cell<bool>,
+    jail_bind: RefCell<Vec<scancode::Linux>>,
+    /// last observed "jail bind engaged" state, for edge detection
+    jail_bind_prev_engaged: Cell<bool>,
 }
 
 impl CaptureTask {
@@ -213,6 +230,9 @@ impl CaptureTask {
                         CaptureRequest::Release => { /* nothing to do */ }
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
+                        }
+                        CaptureRequest::SetJailBind(bind) => {
+                            *self.jail_bind.borrow_mut() = bind;
                         }
                     },
                     _ = self.cancellation_token.cancelled() => return,
@@ -307,11 +327,37 @@ impl CaptureTask {
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
+                    CaptureRequest::SetJailBind(bind) => {
+                        *self.jail_bind.borrow_mut() = bind;
+                    }
                 },
                 _ = self.cancellation_token.cancelled() => break,
             }
         }
         Ok(())
+    }
+
+    /// Toggle the "mouse jail" whenever the jail bind is engaged, i.e. all
+    /// its keys are currently pressed. This has the caveat of mod keys
+    /// toggling to the programmatic state of the jail, not the
+    /// physical state of the keys. For example, if ScrollLock is the jail
+    /// bind, and it is engaged when the app starts, the jail's state
+    /// will be inverted from the physical state of the key.
+    /// This is a tradeoff to avoid significant overhead and platform-specific code.
+    /// Remembers if the key(s) were already engaged on a previous call, so that
+    /// auto-repeat does not toggle the jail repeatedly.
+    ///
+    /// Returns whether the key(s) of the bind /are currently engaged.
+    fn update_jail_from_bind(&mut self, capture: &InputCapture) -> bool {
+        let bind = self.jail_bind.borrow();
+        if bind.is_empty() {
+            return false;
+        }
+        let engaged = capture.keys_pressed(&bind);
+        let jail = jail_bind_edge(engaged, self.jail_bind_prev_engaged.get(), self.jail.get());
+        self.jail_bind_prev_engaged.replace(engaged);
+        self.jail.replace(jail);
+        engaged
     }
 
     async fn handle_capture_event(
@@ -325,6 +371,15 @@ impl CaptureTask {
         if capture.keys_pressed(&self.release_bind.borrow()) {
             log::info!("releasing capture: release-bind pressed");
             return self.release_capture(capture).await;
+        }
+
+        // arm/disarm the mouse jail whenever the jail bind is engaged (see
+        // update_jail_from_bind).
+        if matches!(event, CaptureEvent::Input(Event::Keyboard(_)))
+            && self.update_jail_from_bind(capture)
+        {
+            // the jail trigger key(s) must not reach the peer
+            return Ok(());
         }
 
         if event == CaptureEvent::Begin {
@@ -342,6 +397,12 @@ impl CaptureTask {
                 capture.release().await?;
             }
             // we dont care about events from incoming handles except for releasing the capture
+            return Ok(());
+        }
+
+        // mouse jail active: confine this machine's input to the local screen,
+        // do not transfer it across an edge to a peer
+        if self.jail.get() {
             return Ok(());
         }
 
@@ -431,6 +492,18 @@ enum State {
     Sending,
 }
 
+/// Whether engaging `bind` (all keys currently pressed) is a *fresh* engagement
+/// given the previous state, returning the resulting jail flag. Edge-triggered
+/// on the false -> true transition, so auto-repeat does not toggle the jail
+/// repeatedly.
+fn jail_bind_edge(engaged: bool, prev_engaged: bool, current_jail: bool) -> bool {
+    if engaged && !prev_engaged {
+        !current_jail
+    } else {
+        current_jail
+    }
+}
+
 fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
     match pos {
         lan_mouse_ipc::Position::Left => input_capture::Position::Left,
@@ -467,5 +540,24 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jail_bind_toggles_only_on_fresh_engagement() {
+        // not engaged => jail unchanged
+        assert!(!jail_bind_edge(false, false, false));
+        // first press => toggles on
+        assert!(jail_bind_edge(true, false, false));
+        // repeat press (auto-repeat) => stays on, no re-toggle
+        assert!(jail_bind_edge(true, true, true));
+        // release => jail stays on
+        assert!(jail_bind_edge(false, true, true));
+        // next press => toggles off
+        assert!(!jail_bind_edge(true, false, true));
     }
 }
