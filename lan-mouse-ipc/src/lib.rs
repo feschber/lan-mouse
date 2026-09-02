@@ -182,6 +182,7 @@ pub struct ClientState {
     /// that predates the Hello event. The frontend uses this to
     /// soft-warn on version mismatch.
     pub peer_commit: Option<[u8; 8]>,
+    pub peer_supports_enter_with_position: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
