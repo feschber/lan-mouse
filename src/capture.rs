@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures::StreamExt;
@@ -82,6 +82,8 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             state: Default::default(),
+            transition_epoch: transition_epoch(),
+            next_transition_serial: 1,
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -166,6 +168,8 @@ struct CaptureTask {
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    transition_epoch: u64,
+    next_transition_serial: u32,
 }
 
 impl CaptureTask {
@@ -281,7 +285,7 @@ impl CaptureTask {
 
                     match event {
                         // connection acknowlegded => set state to Sending
-                        ProtoEvent::Ack(_) => {
+                        ProtoEvent::Ack(serial) if self.state.acknowledges(serial) => {
                             log::info!("client {handle} acknowledged the connection!");
                             self.state = State::Sending;
                         }
@@ -327,7 +331,7 @@ impl CaptureTask {
             return self.release_capture(capture).await;
         }
 
-        if event == CaptureEvent::Begin {
+        if matches!(event, CaptureEvent::Begin { .. }) {
             self.event_tx
                 .send(ICaptureEvent::CaptureBegin(handle))
                 .expect("channel closed");
@@ -346,8 +350,7 @@ impl CaptureTask {
         }
 
         // activated a new client
-        if event == CaptureEvent::Begin && Some(handle) != self.active_client {
-            self.state = State::WaitingForAck;
+        if matches!(event, CaptureEvent::Begin { .. }) && Some(handle) != self.active_client {
             self.active_client.replace(handle);
             self.event_tx
                 .send(ICaptureEvent::ClientEntered(handle))
@@ -357,10 +360,28 @@ impl CaptureTask {
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
         let event = match event {
-            CaptureEvent::Begin => ProtoEvent::Enter(opposite_pos),
+            CaptureEvent::Begin { cross_axis } => {
+                let serial = self.next_transition_serial;
+                self.next_transition_serial = self.next_transition_serial.wrapping_add(1).max(1);
+                let event = if self.conn.supports_enter_with_position(handle) {
+                    ProtoEvent::EnterWithPosition {
+                        pos: opposite_pos,
+                        cross_axis,
+                        epoch: self.transition_epoch,
+                        serial,
+                    }
+                } else {
+                    ProtoEvent::Enter(opposite_pos)
+                };
+                let serial = matches!(event, ProtoEvent::EnterWithPosition { .. })
+                    .then_some(serial)
+                    .unwrap_or(0);
+                self.state = State::WaitingForAck { serial, event };
+                event
+            }
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
-                State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
+                State::WaitingForAck { event, .. } => event,
                 State::Sending => ProtoEvent::Input(e),
             },
         };
@@ -424,11 +445,25 @@ thread_local! {
     static PREV_LOG: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 enum State {
-    #[default]
-    WaitingForAck,
+    WaitingForAck { serial: u32, event: ProtoEvent },
     Sending,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::WaitingForAck {
+            serial: 0,
+            event: ProtoEvent::Enter(lan_mouse_proto::Position::Left),
+        }
+    }
+}
+
+impl State {
+    fn acknowledges(self, serial: u32) -> bool {
+        matches!(self, Self::WaitingForAck { serial: expected, .. } if serial == expected)
+    }
 }
 
 fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
@@ -438,6 +473,13 @@ fn to_capture_pos(pos: lan_mouse_ipc::Position) -> input_capture::Position {
         lan_mouse_ipc::Position::Top => input_capture::Position::Top,
         lan_mouse_ipc::Position::Bottom => input_capture::Position::Bottom,
     }
+}
+
+fn transition_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
 }
 
 fn to_proto_pos(pos: input_capture::Position) -> lan_mouse_proto::Position {
@@ -467,5 +509,27 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::State;
+    use lan_mouse_proto::{Position, ProtoEvent};
+
+    #[test]
+    fn waiting_for_ack_only_accepts_the_pending_transition() {
+        let state = State::WaitingForAck {
+            serial: 9,
+            event: ProtoEvent::EnterWithPosition {
+                pos: Position::Left,
+                cross_axis: Some(0.5),
+                epoch: 1,
+                serial: 9,
+            },
+        };
+
+        assert!(state.acknowledges(9));
+        assert!(!state.acknowledges(8));
     }
 }
