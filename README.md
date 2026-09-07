@@ -376,11 +376,19 @@ To create this file you can copy the following example config:
 > to their names in [input-event/src/scancode.rs#L172](input-event/src/scancode.rs#L176).
 > This is bound to change
 
+> [!TIP]
+> Press the jail bind (*ScrollLock* by default) to toggle the "mouse jail".
+> While enabled, your mouse stays confined on your host and cannot cross a
+> screen edge onto a connected peer — press the bind again to disable.
+
 ```toml
 # example configuration
 
 # configure release bind
 release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
+
+# configure jail bind
+jail_bind = [ "KeyScrollLock" ]
 
 # optional port (defaults to 4242)
 port = 4242

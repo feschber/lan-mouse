@@ -21,7 +21,7 @@ use lan_mouse_ipc::{DEFAULT_PORT, Position};
 
 use input_event::scancode::{
     self,
-    Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift},
+    Linux::{KeyLeftAlt, KeyLeftCtrl, KeyLeftMeta, KeyLeftShift, KeyScrollLock},
 };
 
 use shadow_rs::shadow;
@@ -62,6 +62,7 @@ fn default_path() -> Result<PathBuf, VarError> {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 struct ConfigToml {
+    jail_bind: Option<Vec<scancode::Linux>>,
     capture_backend: Option<CaptureBackend>,
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
@@ -338,6 +339,8 @@ pub enum ConfigError {
 const DEFAULT_RELEASE_KEYS: [scancode::Linux; 4] =
     [KeyLeftCtrl, KeyLeftShift, KeyLeftMeta, KeyLeftAlt];
 
+const DEFAULT_JAIL_KEY: scancode::Linux = KeyScrollLock;
+
 impl Config {
     pub fn new() -> Result<Self, ConfigError> {
         let args = Args::parse();
@@ -492,6 +495,13 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    pub fn jail_bind(&self) -> Vec<scancode::Linux> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.jail_bind.clone())
+            .unwrap_or(vec![DEFAULT_JAIL_KEY])
     }
 
     /// set configured clients
