@@ -1,0 +1,16 @@
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Lan Mouse"
+		   Manufacturer="Ferdinand Schober"
+		   Version="0.10.0.0"
+		   UpgradeCode="{a330cd60-4c35-4a54-8bb6-75b3049b46c6}">
+    <MajorUpgrade DowngradeErrorMessage="!(loc.DowngradeError)" />
+
+    <MediaTemplate EmbedCab="yes"/>
+    <Feature Id="Main">
+	  <ComponentGroupRef Id="GTKBIN"/>
+      <ComponentGroupRef Id="GTKICONS"/>
+	  <ComponentGroupRef Id="GTKLIBS"/>
+      <ComponentGroupRef Id="LanMouseComponents"/>
+    </Feature>
+  </Package>
+</Wix>

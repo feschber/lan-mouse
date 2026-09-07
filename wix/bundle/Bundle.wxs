@@ -1,0 +1,42 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+    xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+    <Bundle
+        Name="Lan Mouse"
+        Version="0.10.0"
+        UpgradeCode="{39A9744D-9D6E-4CD3-A84F-9E034786A7B1}"
+        Compressed="no"
+        SplashScreenSourceFile="icon.ico">
+
+        <BootstrapperApplication>
+            <bal:WixStandardBootstrapperApplication
+                LicenseUrl=""
+                Theme="hyperlinkLicense" />
+        </BootstrapperApplication>
+
+        <Chain>
+            <!-- Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810 -->
+            <ExePackage
+                Id="VC_REDIST_X64"
+                DisplayName="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+                PerMachine="yes"
+                Permanent="yes"
+                Protocol="burn"
+                InstallCondition="VersionNT64 AND (ARCH_NAME = &quot;AMD64&quot;)"
+                DetectCondition="(VCRUNTIME_X64_VER &gt;= VCRUNTIME_VER) AND VersionNT64 AND (ARCH_NAME = &quot;AMD64&quot;)"
+                InstallArguments="/install /quiet /norestart"
+                RepairArguments="/repair /quiet /norestart"
+                UninstallArguments="/uninstall /quiet /norestart">
+                <ExePackagePayload
+                    Name="VC_redist.x64.exe"
+                    ProductName="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+                    Description="Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.40.33810"
+                    Hash="5935B69F5138AC3FBC33813C74DA853269BA079F910936AEFA95E230C6092B92F6225BFFB594E5DD35FF29BF260E4B35F91ADEDE90FDF5F062030D8666FD0104"
+                    Size="25397512"
+                    Version="14.40.33810.0"
+                    DownloadUrl="https://download.visualstudio.microsoft.com/download/pr/1754ea58-11a6-44ab-a262-696e194ce543/3642E3F95D50CC193E4B5A0B0FFBF7FE2C08801517758B4C8AEB7105A091208A/VC_redist.x64.exe" />
+            </ExePackage>
+            <MsiPackage SourceFile="..\lan-mouse\bin\Debug\en-US\LanMouse.msi" Compressed="yes"/>
+        </Chain>
+    </Bundle>
+</Wix>
