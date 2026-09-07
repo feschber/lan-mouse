@@ -100,7 +100,11 @@ impl Service {
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(
+            emulation_backend,
+            listener,
+            (config.invert_scroll(), config.mouse_sensitivity()),
+        );
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -215,6 +219,12 @@ impl Service {
                 self.update_enter_hook(handle, enter_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::UpdateScrollingInversion(invert_scroll) => {
+                self.update_scrolling_inversion(invert_scroll)
+            }
+            FrontendRequest::UpdateMouseSensitivity(mouse_sensitivity) => {
+                self.update_mouse_sensitivity(mouse_sensitivity)
+            }
         }
     }
 
@@ -255,6 +265,8 @@ impl Service {
         }
         let release_bind = self.config.release_bind();
         self.capture.set_release_bind(release_bind);
+        self.update_scrolling_inversion(self.config.invert_scroll());
+        self.update_mouse_sensitivity(self.config.mouse_sensitivity());
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()
@@ -580,6 +592,15 @@ impl Service {
             .map(|(c, s)| FrontendEvent::State(handle, c, s))
             .unwrap_or(FrontendEvent::NoSuchClient(handle));
         self.notify_frontend(event);
+    }
+
+    fn update_scrolling_inversion(&mut self, invert_scroll: bool) {
+        self.emulation.request_scrolling_inversion(invert_scroll);
+    }
+
+    fn update_mouse_sensitivity(&mut self, mouse_sensitivity: f64) {
+        self.emulation
+            .request_mouse_sensitivity_change(mouse_sensitivity);
     }
 
     fn spawn_hook_command(&self, handle: ClientHandle) {
