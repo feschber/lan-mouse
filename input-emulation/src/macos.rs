@@ -10,6 +10,10 @@ use core_graphics::event::{
     ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_foundation::base::{CFTypeRef, TCFType};
+use core_foundation::string::CFString;
+use std::ffi::c_void;
+use std::ptr;
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
     scancode,
@@ -166,6 +170,146 @@ extern "C" {
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
+}
+
+// macOS 27 regression: synthetic content-area clicks no longer focus/raise
+// inactive windows. Raise/focus the AX window under the pointer before
+// posting LeftMouseDown as a compatibility workaround.
+fn raise_window_under_pointer(location: CGPoint) {
+    if !request_accessibility_permission() {
+        return;
+    }
+
+    unsafe {
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return;
+        }
+
+        let mut element: AXUIElementRef = ptr::null_mut();
+        let status = AXUIElementCopyElementAtPosition(
+            system,
+            location.x as f32,
+            location.y as f32,
+            &mut element,
+        );
+        CFRelease(system as CFTypeRef);
+        if status != 0 || element.is_null() {
+            return;
+        }
+
+        // Walk up to nearest window and application.
+        let mut current = element;
+        let mut window: AXUIElementRef = ptr::null_mut();
+        let mut app: AXUIElementRef = ptr::null_mut();
+        let mut owned: Vec<AXUIElementRef> = Vec::new();
+
+        for _ in 0..12 {
+            let role_attr = CFString::new("AXRole");
+            let mut role_ref: CFTypeRef = ptr::null_mut();
+            if AXUIElementCopyAttributeValue(
+                current,
+                role_attr.as_concrete_TypeRef() as CFTypeRef,
+                &mut role_ref,
+            ) == 0
+                && !role_ref.is_null()
+            {
+                let role = CFString::wrap_under_get_rule(role_ref as *const _);
+                let role_str = role.to_string();
+                CFRelease(role_ref);
+                if role_str == "AXWindow" && window.is_null() {
+                    window = current;
+                }
+                if role_str == "AXApplication" {
+                    app = current;
+                    break;
+                }
+            }
+
+            let parent_attr = CFString::new("AXParent");
+            let mut parent_ref: CFTypeRef = ptr::null_mut();
+            if AXUIElementCopyAttributeValue(
+                current,
+                parent_attr.as_concrete_TypeRef() as CFTypeRef,
+                &mut parent_ref,
+            ) != 0
+                || parent_ref.is_null()
+            {
+                break;
+            }
+            let parent = parent_ref as AXUIElementRef;
+            if parent != element {
+                owned.push(parent);
+            }
+            current = parent;
+        }
+
+        let target = if !window.is_null() { window } else { element };
+        let raise = CFString::new("AXRaise");
+        let _ = AXUIElementPerformAction(target, raise.as_concrete_TypeRef() as CFTypeRef);
+
+        if !window.is_null() {
+            let main_attr = CFString::new("AXMain");
+            let focused_attr = CFString::new("AXFocused");
+            let yes = kCFBooleanTrue;
+            let _ = AXUIElementSetAttributeValue(
+                window,
+                main_attr.as_concrete_TypeRef() as CFTypeRef,
+                yes,
+            );
+            let _ = AXUIElementSetAttributeValue(
+                window,
+                focused_attr.as_concrete_TypeRef() as CFTypeRef,
+                yes,
+            );
+        }
+
+        if !app.is_null() {
+            let front_attr = CFString::new("AXFrontmost");
+            let yes = kCFBooleanTrue;
+            let _ = AXUIElementSetAttributeValue(
+                app,
+                front_attr.as_concrete_TypeRef() as CFTypeRef,
+                yes,
+            );
+            let _ = AXUIElementPerformAction(app, raise.as_concrete_TypeRef() as CFTypeRef);
+        }
+
+        // `window` / `app` are aliases into the retained parent chain, so only
+        // release each retained pointer once.
+        for ptr_item in owned {
+            if !ptr_item.is_null() && ptr_item != element {
+                CFRelease(ptr_item as CFTypeRef);
+            }
+        }
+        CFRelease(element as CFTypeRef);
+    }
+}
+
+type AXUIElementRef = *mut c_void;
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+    fn AXUIElementCopyElementAtPosition(
+        application: AXUIElementRef,
+        x: f32,
+        y: f32,
+        element: *mut AXUIElementRef,
+    ) -> i32;
+    fn AXUIElementPerformAction(element: AXUIElementRef, action: CFTypeRef) -> i32;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFTypeRef,
+        value: *mut CFTypeRef,
+    ) -> i32;
+    fn AXUIElementSetAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFTypeRef,
+        value: CFTypeRef,
+    ) -> i32;
+    static kCFBooleanTrue: CFTypeRef;
+    fn CFRelease(cf: CFTypeRef);
 }
 
 /// Mac virtual key codes for the four arrow keys.
@@ -390,6 +534,9 @@ impl Emulation for MacOSEmulation {
 
                         log::debug!("click_state: {}", self.button_click_state);
                         let location = self.get_mouse_location().unwrap();
+                        if button == BTN_LEFT && state == 1 {
+                            raise_window_under_pointer(location);
+                        }
                         let event = match CGEvent::new_mouse_event(
                             self.event_source.clone(),
                             event_type,
