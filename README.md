@@ -55,6 +55,27 @@ Most current desktop environments and operating systems are fully supported, thi
 
 For more detailed information about os support see [Detailed OS Support](#detailed-os-support)
 
+### evdev emulation backend (Linux)
+
+On Linux, Lan Mouse can emulate input through a virtual `evdev`/`uinput` device.
+This backend works independently of the compositor and is useful as a fallback on
+systems without a working remote desktop portal (for example COSMIC).
+
+It requires access to `/dev/uinput`. Rather than running as root, grant your user
+access with a dedicated group and a udev rule:
+
+```sh
+sudo groupadd --system lan-mouse
+sudo usermod -aG lan-mouse <username>
+echo 'KERNEL=="uinput", GROUP="lan-mouse"' | sudo tee /lib/udev/rules.d/05-lan-mouse.rules
+```
+
+Log out and back in (or reboot) for the group change to take effect. When
+`/dev/uinput` is accessible, the `evdev` backend is preferred automatically; if it
+is not accessible, Lan Mouse falls back to the other emulation backends. It can
+also be selected explicitly with `--emulation-backend evdev` or via
+`emulation_backend = "evdev"` in the config.
+
 ### Android & IOS
 
 A proof of concept for an Android / IOS Application by [rohitsangwan01](https://github.com/rohitsangwan01) can be found [here](https://github.com/rohitsangwan01/lan-mouse-mobile).
