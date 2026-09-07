@@ -29,6 +29,10 @@ impl Capture for WindowsInputCapture {
         Ok(())
     }
 
+    async fn set_enter_only(&mut self, _pos: Position, _enabled: bool) -> Result<(), CaptureError> {
+        Ok(())
+    }
+
     async fn release(&mut self) -> Result<(), CaptureError> {
         self.event_thread.release_capture();
         Ok(())

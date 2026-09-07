@@ -38,6 +38,11 @@ use tokio::sync::{
     oneshot,
 };
 
+// Events synthesized by Lan Mouse are posted at the HID event tap and are
+// visible to our session event tap again. Marked motion may signal that an
+// incoming pointer wants to return, but must not start a new outgoing capture.
+const LAN_MOUSE_EVENT_MARKER: i64 = 0x4c41_4e4d_4f55_5345;
+
 #[derive(Debug, Default)]
 struct Bounds {
     xmin: f64,
@@ -50,8 +55,25 @@ struct Bounds {
 struct InputCaptureState {
     /// active capture positions
     active_clients: Lazy<HashSet<Position>>,
+    /// positions used to return an incoming emulated pointer
+    enter_only_clients: HashSet<Position>,
+    /// positions that physical local input may currently enter
+    ///
+    /// A position is disarmed after crossing and is only re-armed once a
+    /// physical pointer produces a separate inward motion.
+    /// This prevents macOS cursor warps at the edge from immediately starting
+    /// the opposite capture after an incoming pointer returns.
+    physical_armed_clients: HashSet<Position>,
+    /// positions that emulated input may currently use as a return signal
+    ///
+    /// Incoming emulation starts with a cursor warp at the entry edge. That
+    /// warp must not immediately signal a return. Emulated input is armed only
+    /// after it moves into the desktop and is disarmed after one return signal.
+    emulated_armed_clients: HashSet<Position>,
     /// the currently entered capture position, if any
     current_pos: Option<Position>,
+    /// provenance of events belonging to the active capture
+    current_source: Option<InputSource>,
     /// position where the cursor was captured
     enter_position: Option<CGPoint>,
     /// bounds of the input capture area
@@ -60,12 +82,19 @@ struct InputCaptureState {
     modifier_state: XMods,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InputSource {
+    Physical,
+    Emulated,
+}
+
 #[derive(Debug)]
 enum ProducerEvent {
     Release,
     Create(Position),
     Destroy(Position),
-    Grab(Position),
+    SetEnterOnly(Position, bool),
+    Grab(Position, InputSource),
     EventTapDisabled,
     DisplayReconfigured,
 }
@@ -74,7 +103,11 @@ impl InputCaptureState {
     fn new() -> Result<Self, MacosCaptureCreationError> {
         let mut res = Self {
             active_clients: Lazy::new(HashSet::new),
+            enter_only_clients: HashSet::new(),
+            physical_armed_clients: HashSet::new(),
+            emulated_armed_clients: HashSet::new(),
             current_pos: None,
+            current_source: None,
             enter_position: None,
             bounds: Bounds::default(),
             modifier_state: Default::default(),
@@ -83,7 +116,22 @@ impl InputCaptureState {
         Ok(res)
     }
 
-    fn crossed(&mut self, event: &CGEvent) -> Option<Position> {
+    fn arm_clients_on_inward_motion(&mut self, event: &CGEvent, emulated: bool) {
+        let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
+        let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
+
+        for &position in self.active_clients.iter() {
+            if is_inward_motion(position, relative_x, relative_y) {
+                if emulated {
+                    self.emulated_armed_clients.insert(position);
+                } else {
+                    self.physical_armed_clients.insert(position);
+                }
+            }
+        }
+    }
+
+    fn crossing_position(&self, event: &CGEvent) -> Option<Position> {
         let location = event.location();
         let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
         let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
@@ -147,10 +195,7 @@ impl InputCaptureState {
         CGDisplay::show_cursor(&CGDisplay::main()).map_err(CaptureError::CoreGraphics)
     }
 
-    async fn handle_producer_event(
-        &mut self,
-        producer_event: ProducerEvent,
-    ) -> Result<(), CaptureError> {
+    fn handle_producer_event(&mut self, producer_event: ProducerEvent) -> Result<(), CaptureError> {
         log::debug!("handling event: {producer_event:?}");
         match producer_event {
             ProducerEvent::Release => {
@@ -158,24 +203,38 @@ impl InputCaptureState {
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
+                self.current_source = None;
             }
-            ProducerEvent::Grab(pos) => {
+            ProducerEvent::Grab(pos, source) => {
                 if self.current_pos.is_none() {
                     self.hide_cursor()?;
                     self.current_pos = Some(pos);
+                    self.current_source = Some(source);
                 }
             }
             ProducerEvent::Create(p) => {
                 self.active_clients.insert(p);
+                self.physical_armed_clients.insert(p);
             }
             ProducerEvent::Destroy(p) => {
+                self.physical_armed_clients.remove(&p);
+                self.emulated_armed_clients.remove(&p);
+                self.enter_only_clients.remove(&p);
                 if let Some(current) = self.current_pos {
                     if current == p {
                         self.show_cursor()?;
                         self.current_pos = None;
+                        self.current_source = None;
                     };
                 }
                 self.active_clients.remove(&p);
+            }
+            ProducerEvent::SetEnterOnly(p, enabled) => {
+                if enabled {
+                    self.enter_only_clients.insert(p);
+                } else {
+                    self.enter_only_clients.remove(&p);
+                }
             }
             ProducerEvent::EventTapDisabled => {
                 // Tap death can happen mid-capture (TCC Accessibility
@@ -186,6 +245,7 @@ impl InputCaptureState {
                     self.show_cursor()?;
                     self.current_pos = None;
                 }
+                self.current_source = None;
                 return Err(CaptureError::EventTapDisabled);
             }
             ProducerEvent::DisplayReconfigured => {
@@ -205,6 +265,25 @@ impl InputCaptureState {
         };
         Ok(())
     }
+}
+
+fn is_inward_motion(position: Position, relative_x: f64, relative_y: f64) -> bool {
+    match position {
+        Position::Left => relative_x > 0.0,
+        Position::Right => relative_x < 0.0,
+        Position::Top => relative_y > 0.0,
+        Position::Bottom => relative_y < 0.0,
+    }
+}
+
+fn is_pointer_motion_event(event_type: CGEventType) -> bool {
+    matches!(
+        event_type,
+        CGEventType::MouseMoved
+            | CGEventType::LeftMouseDragged
+            | CGEventType::RightMouseDragged
+            | CGEventType::OtherMouseDragged
+    )
 }
 
 fn get_events(
@@ -408,7 +487,7 @@ fn get_events(
 fn create_event_tap<'a>(
     client_state: Arc<Mutex<InputCaptureState>>,
     notify_tx: Sender<ProducerEvent>,
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: Sender<(Position, CaptureEvent, bool)>,
 ) -> Result<CGEventTap<'a>, MacosCaptureCreationError> {
     // Shared slot for the tap's mach port pointer. Stored as `usize`
     // because raw pointers aren't `Send`, but the integer
@@ -439,9 +518,22 @@ fn create_event_tap<'a>(
                                    event_type: CGEventType,
                                    cg_ev: &CGEvent| {
         log::trace!("Got event from tap: {event_type:?}");
+
         let mut state = client_state.blocking_lock();
         let mut capture_position = None;
         let mut res_events = vec![];
+        let mut drop_event = false;
+        let mut route_enter_only = false;
+        let source_user_data = cg_ev.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA);
+        let source_pid = cg_ev.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID);
+        let own_pid = i64::from(std::process::id());
+        let is_lan_mouse_event =
+            source_user_data == LAN_MOUSE_EVENT_MARKER || source_pid == own_pid;
+        let input_source = if is_lan_mouse_event {
+            InputSource::Emulated
+        } else {
+            InputSource::Physical
+        };
 
         if matches!(event_type, CGEventType::TapDisabledByTimeout) {
             // The kernel disables the tap when our callback runs
@@ -484,6 +576,7 @@ fn create_event_tap<'a>(
                 let _ = CGDisplay::show_cursor(&CGDisplay::main());
                 state.current_pos = None;
             }
+            state.current_source = None;
             notify_tx
                 .blocking_send(ProducerEvent::EventTapDisabled)
                 .unwrap_or_else(|e| {
@@ -494,7 +587,15 @@ fn create_event_tap<'a>(
 
         // Are we in a client?
         if let Some(current_pos) = state.current_pos {
+            // Do not fold events from the other source into an active capture.
+            // Physical and remotely emulated pointers may both be producing
+            // events in the same session.
+            if state.current_source != Some(input_source) {
+                return CallbackResult::Keep;
+            }
+
             capture_position = Some(current_pos);
+            drop_event = true;
             get_events(
                 &event_type,
                 cg_ev,
@@ -506,39 +607,78 @@ fn create_event_tap<'a>(
             });
 
             // Keep (hidden) cursor at the edge of the screen
-            if matches!(
-                event_type,
-                CGEventType::MouseMoved
-                    | CGEventType::LeftMouseDragged
-                    | CGEventType::RightMouseDragged
-                    | CGEventType::OtherMouseDragged
-            ) {
+            if is_pointer_motion_event(event_type) {
                 state.reset_cursor().unwrap_or_else(|e| log::warn!("{e}"));
             }
-        } else if matches!(event_type, CGEventType::MouseMoved) {
+        } else if is_pointer_motion_event(event_type) {
             // Did we cross a barrier?
-            if let Some(new_pos) = state.crossed(cg_ev) {
-                capture_position = Some(new_pos);
-                state
-                    .start_capture(cg_ev, new_pos)
-                    .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
-                notify_tx
-                    .blocking_send(ProducerEvent::Grab(new_pos))
-                    .expect("Failed to send notification");
+            if let Some(new_pos) = state.crossing_position(cg_ev) {
+                let crossing_is_armed = if input_source == InputSource::Emulated {
+                    state.emulated_armed_clients.remove(&new_pos)
+                } else {
+                    state.physical_armed_clients.remove(&new_pos)
+                };
+                if crossing_is_armed {
+                    log::debug!(
+                        "pointer crossed {new_pos}: source_pid={source_pid}, own_pid={own_pid}, \
+                         source_user_data={source_user_data}, synthesized={is_lan_mouse_event}"
+                    );
+                    capture_position = Some(new_pos);
+                    if input_source == InputSource::Emulated
+                        && state.enter_only_clients.contains(&new_pos)
+                    {
+                        // Let only the EnterOnly handle notify the remote sender
+                        // that its pointer crossed back. Do not grab/hide the
+                        // local cursor and do not drop the synthesized event.
+                        route_enter_only = true;
+                        res_events.push(CaptureEvent::Begin);
+                    } else {
+                        drop_event = true;
+                        state
+                            .start_capture(cg_ev, new_pos)
+                            .unwrap_or_else(|e| log::warn!("{e}"));
+                        res_events.push(CaptureEvent::Begin);
+                        state
+                            .handle_producer_event(ProducerEvent::Grab(new_pos, input_source))
+                            .unwrap_or_else(|e| log::warn!("failed to grab pointer: {e}"));
+                    }
+                } else {
+                    log::debug!(
+                        "ignoring disarmed {} crossing at {new_pos}",
+                        if is_lan_mouse_event {
+                            "emulated"
+                        } else {
+                            "physical"
+                        }
+                    );
+                }
+            } else {
+                // Rearm on the first separate inward motion. The initial
+                // outward crossing stays disarmed while even a short
+                // inward-then-return gesture works.
+                state.arm_clients_on_inward_motion(cg_ev, input_source == InputSource::Emulated);
             }
         }
+
+        // Do not hold the capture-state mutex while waiting for space in the
+        // bounded event channel. The consumer may need this same mutex to
+        // release or reconfigure capture before it can receive another event.
+        drop(state);
 
         if let Some(pos) = capture_position {
             res_events.iter().for_each(|e| {
                 // error must be ignored, since the event channel
                 // may already be closed when the InputCapture instance is dropped.
-                let _ = event_tx.blocking_send((pos, *e));
+                let _ = event_tx.blocking_send((pos, *e, route_enter_only));
             });
-            // Returning Drop should stop the event from being processed
-            // but core fundation still returns the event
-            cg_ev.set_type(CGEventType::Null);
-            CallbackResult::Drop
+            if drop_event {
+                // Returning Drop should stop the event from being processed,
+                // but Core Foundation still returns the event.
+                cg_ev.set_type(CGEventType::Null);
+                CallbackResult::Drop
+            } else {
+                CallbackResult::Keep
+            }
         } else {
             CallbackResult::Keep
         }
@@ -574,7 +714,7 @@ fn create_event_tap<'a>(
 
 fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: Sender<(Position, CaptureEvent, bool)>,
     notify_tx: Sender<ProducerEvent>,
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
@@ -650,9 +790,10 @@ extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_i
 }
 
 pub struct MacOSInputCapture {
-    event_rx: Receiver<(Position, CaptureEvent)>,
-    notify_tx: Sender<ProducerEvent>,
+    event_rx: Receiver<(Position, CaptureEvent, bool)>,
+    last_event_requires_enter_only: bool,
     run_loop: CFRunLoop,
+    state: Arc<Mutex<InputCaptureState>>,
 }
 
 impl MacOSInputCapture {
@@ -685,6 +826,7 @@ impl MacOSInputCapture {
         // wait for event tap creation result
         let run_loop = ready_rx.recv().expect("channel closed")?;
 
+        let control_state = state.clone();
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
             loop {
                 tokio::select! {
@@ -693,7 +835,7 @@ impl MacOSInputCapture {
                             break;
                         };
                         let mut state = state.lock().await;
-                        state.handle_producer_event(producer_event).await.unwrap_or_else(|e| {
+                        state.handle_producer_event(producer_event).unwrap_or_else(|e| {
                             log::error!("Failed to handle producer event: {e}");
                         })
                     }
@@ -706,8 +848,9 @@ impl MacOSInputCapture {
 
         Ok(Self {
             event_rx,
-            notify_tx,
+            last_event_requires_enter_only: false,
             run_loop,
+            state: control_state,
         })
     }
 }
@@ -753,32 +896,42 @@ impl Drop for MacOSInputCapture {
 #[async_trait]
 impl Capture for MacOSInputCapture {
     async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
-        let notify_tx = self.notify_tx.clone();
-        tokio::task::spawn_local(async move {
-            log::debug!("creating capture, {pos}");
-            let _ = notify_tx.send(ProducerEvent::Create(pos)).await;
-            log::debug!("done !");
-        });
+        log::debug!("creating capture, {pos}");
+        self.state
+            .lock()
+            .await
+            .handle_producer_event(ProducerEvent::Create(pos))?;
+        log::debug!("done !");
         Ok(())
     }
 
     async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError> {
-        let notify_tx = self.notify_tx.clone();
-        tokio::task::spawn_local(async move {
-            log::debug!("destroying capture {pos}");
-            let _ = notify_tx.send(ProducerEvent::Destroy(pos)).await;
-            log::debug!("done !");
-        });
+        log::debug!("destroying capture {pos}");
+        self.state
+            .lock()
+            .await
+            .handle_producer_event(ProducerEvent::Destroy(pos))?;
+        log::debug!("done !");
         Ok(())
     }
 
+    async fn set_enter_only(&mut self, pos: Position, enabled: bool) -> Result<(), CaptureError> {
+        self.state
+            .lock()
+            .await
+            .handle_producer_event(ProducerEvent::SetEnterOnly(pos, enabled))
+    }
+
+    fn last_event_requires_enter_only(&self) -> bool {
+        self.last_event_requires_enter_only
+    }
+
     async fn release(&mut self) -> Result<(), CaptureError> {
-        let notify_tx = self.notify_tx.clone();
-        tokio::task::spawn_local(async move {
-            log::debug!("notifying Release");
-            let _ = notify_tx.send(ProducerEvent::Release).await;
-        });
-        Ok(())
+        log::debug!("notifying Release");
+        self.state
+            .lock()
+            .await
+            .handle_producer_event(ProducerEvent::Release)
     }
 
     async fn terminate(&mut self) -> Result<(), CaptureError> {
@@ -792,8 +945,39 @@ impl Stream for MacOSInputCapture {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.event_rx.poll_recv(cx)) {
             None => Poll::Ready(None),
-            Some(e) => Poll::Ready(Some(Ok(e))),
+            Some((pos, event, event_requires_enter_only)) => {
+                self.last_event_requires_enter_only = event_requires_enter_only;
+                Poll::Ready(Some(Ok((pos, event))))
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CGEventType, Position, is_inward_motion, is_pointer_motion_event};
+
+    #[test]
+    fn even_short_inward_motion_rearms_each_edge() {
+        assert!(is_inward_motion(Position::Left, 0.5, 0.0));
+        assert!(is_inward_motion(Position::Right, -0.5, 0.0));
+        assert!(is_inward_motion(Position::Top, 0.0, 0.5));
+        assert!(is_inward_motion(Position::Bottom, 0.0, -0.5));
+
+        assert!(!is_inward_motion(Position::Left, -1.0, 0.0));
+        assert!(!is_inward_motion(Position::Right, 1.0, 0.0));
+        assert!(!is_inward_motion(Position::Top, 0.0, -1.0));
+        assert!(!is_inward_motion(Position::Bottom, 0.0, 1.0));
+        assert!(!is_inward_motion(Position::Left, 0.0, 0.0));
+    }
+
+    #[test]
+    fn dragged_pointer_events_are_motion_events() {
+        assert!(is_pointer_motion_event(CGEventType::MouseMoved));
+        assert!(is_pointer_motion_event(CGEventType::LeftMouseDragged));
+        assert!(is_pointer_motion_event(CGEventType::RightMouseDragged));
+        assert!(is_pointer_motion_event(CGEventType::OtherMouseDragged));
+        assert!(!is_pointer_motion_event(CGEventType::LeftMouseDown));
     }
 }
 
