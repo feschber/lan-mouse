@@ -288,6 +288,23 @@ impl ClientManager {
         }
     }
 
+    pub(crate) fn set_peer_protocol_capabilities(
+        &self,
+        handle: ClientHandle,
+        enter_with_position: bool,
+    ) {
+        if let Some((_, state)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            state.peer_supports_enter_with_position = enter_with_position;
+        }
+    }
+
+    pub(crate) fn supports_enter_with_position(&self, handle: ClientHandle) -> bool {
+        self.clients
+            .borrow()
+            .get(handle as usize)
+            .is_some_and(|(_, state)| state.peer_supports_enter_with_position)
+    }
+
     pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
         self.clients
             .borrow()
@@ -315,5 +332,22 @@ impl ClientManager {
             .borrow()
             .get(handle as usize)
             .map(|(_, s)| s.ips.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientManager;
+
+    #[test]
+    fn reconnect_requires_a_new_capability_advertisement() {
+        let clients = ClientManager::default();
+        let handle = clients.add_client();
+
+        clients.set_peer_protocol_capabilities(handle, true);
+        assert!(clients.supports_enter_with_position(handle));
+
+        clients.set_peer_protocol_capabilities(handle, false);
+        assert!(!clients.supports_enter_with_position(handle));
     }
 }

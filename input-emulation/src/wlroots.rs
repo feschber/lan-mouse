@@ -32,8 +32,8 @@ use wayland_client::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent, scancode};
 
-use super::EmulationHandle;
 use super::error::WaylandBindError;
+use super::{EmulationHandle, WarpPosition};
 
 struct State {
     keymap: Option<(u32, OwnedFd, u32)>,
@@ -173,6 +173,41 @@ impl Emulation for WlrootsEmulation {
     }
     async fn terminate(&mut self) {
         /* nothing to do */
+    }
+
+    async fn warp_cursor(
+        &mut self,
+        handle: EmulationHandle,
+        pos: WarpPosition,
+        cross_axis: f32,
+    ) -> Result<(), EmulationError> {
+        if !cross_axis.is_finite() {
+            return Ok(());
+        }
+
+        const EXTENT: u32 = 1_000_000;
+        const EDGE_INSET: u32 = EXTENT / 200;
+        let cross_axis = (cross_axis.clamp(0.0, 1.0) * (EXTENT - 1) as f32).round() as u32;
+        let (x, y) = match pos {
+            WarpPosition::Left => (EDGE_INSET, cross_axis),
+            WarpPosition::Right => (EXTENT - EDGE_INSET, cross_axis),
+            WarpPosition::Top => (cross_axis, EDGE_INSET),
+            WarpPosition::Bottom => (cross_axis, EXTENT - EDGE_INSET),
+        };
+
+        if let Some(virtual_input) = self.state.input_for_client.get(&handle) {
+            let time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u32;
+            virtual_input
+                .pointer
+                .motion_absolute(time, x, y, EXTENT, EXTENT);
+            virtual_input.pointer.frame();
+            self.queue.flush()?;
+        }
+
+        Ok(())
     }
 }
 

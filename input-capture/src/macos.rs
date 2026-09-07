@@ -522,7 +522,7 @@ fn create_event_tap<'a>(
                 state
                     .start_capture(cg_ev, new_pos)
                     .unwrap_or_else(|e| log::warn!("{e}"));
-                res_events.push(CaptureEvent::Begin);
+                res_events.push(CaptureEvent::Begin { cross_axis: None });
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
                     .expect("Failed to send notification");
