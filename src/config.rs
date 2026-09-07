@@ -66,6 +66,13 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    /// key binds that enter the client(s) at a position without the
+    /// pointer having to cross the corresponding screen edge
+    ///
+    /// Keyed by position rather than by client because entering is
+    /// position-based: crossing an edge enters every client at that
+    /// edge, and a bind is deliberately no different.
+    enter_binds: Option<HashMap<Position, Vec<scancode::Linux>>>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
@@ -492,6 +499,18 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// key binds that enter a client without an edge crossing,
+    /// binds that enter a position without an edge crossing
+    pub fn enter_binds(&self) -> HashMap<Position, Vec<scancode::Linux>> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.enter_binds.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, bind)| !bind.is_empty())
+            .collect()
     }
 
     /// set configured clients

@@ -1,4 +1,7 @@
-use super::{Capture, CaptureError, CaptureEvent, Position, error::MacosCaptureCreationError};
+use super::{
+    Capture, CaptureError, CaptureEvent, Position, enter_bind::EnterBindTracker,
+    error::MacosCaptureCreationError,
+};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_foundation::{
@@ -20,12 +23,13 @@ use core_graphics::{
 use futures_core::Stream;
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
+    scancode,
 };
 use keycode::{KeyMap, KeyMapping};
 use libc::c_void;
 use once_cell::unsync::Lazy;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::{CString, c_char},
     pin::Pin,
     sync::{Arc, OnceLock},
@@ -58,6 +62,10 @@ struct InputCaptureState {
     bounds: Bounds,
     /// current state of modifier keys
     modifier_state: XMods,
+    /// binds that begin capture without an edge crossing, fed from
+    /// the passthrough branch of the tap callback (keys pressed
+    /// *during* capture are tracked by `InputCapture` instead)
+    enter_binds: EnterBindTracker,
 }
 
 #[derive(Debug)]
@@ -68,6 +76,7 @@ enum ProducerEvent {
     Grab(Position),
     EventTapDisabled,
     DisplayReconfigured,
+    SetEnterBinds(HashMap<Position, Vec<scancode::Linux>>),
 }
 
 impl InputCaptureState {
@@ -78,6 +87,7 @@ impl InputCaptureState {
             enter_position: None,
             bounds: Bounds::default(),
             modifier_state: Default::default(),
+            enter_binds: Default::default(),
         };
         res.update_bounds()?;
         Ok(res)
@@ -118,8 +128,16 @@ impl InputCaptureState {
     }
 
     /// start the input capture by
-    fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
-        let mut location = event.location();
+    ///
+    /// `location` is where the pointer currently is: for an edge
+    /// crossing that is the triggering mouse event's location, for an
+    /// enter-bind it has to be queried separately since a key event
+    /// carries no meaningful pointer location.
+    fn start_capture(
+        &mut self,
+        mut location: CGPoint,
+        position: Position,
+    ) -> Result<(), CaptureError> {
         let edge_offset = 1.0;
         // move cursor location to display bounds
         match position {
@@ -164,6 +182,12 @@ impl InputCaptureState {
                     self.hide_cursor()?;
                     self.current_pos = Some(pos);
                 }
+                // Key events stop reaching the passthrough branch for
+                // the duration of the capture, so anything held right
+                // now would otherwise still count as held once we
+                // return to it — including after entering by crossing
+                // an edge, where nothing else clears the set.
+                self.enter_binds.clear();
             }
             ProducerEvent::Create(p) => {
                 self.active_clients.insert(p);
@@ -188,6 +212,7 @@ impl InputCaptureState {
                 }
                 return Err(CaptureError::EventTapDisabled);
             }
+            ProducerEvent::SetEnterBinds(binds) => self.enter_binds.set_binds(binds),
             ProducerEvent::DisplayReconfigured => {
                 // The macOS display configuration changed — a monitor
                 // was plugged in/out, the resolution changed, the
@@ -520,11 +545,73 @@ fn create_event_tap<'a>(
             if let Some(new_pos) = state.crossed(cg_ev) {
                 capture_position = Some(new_pos);
                 state
-                    .start_capture(cg_ev, new_pos)
+                    .start_capture(cg_ev.location(), new_pos)
                     .unwrap_or_else(|e| log::warn!("{e}"));
                 res_events.push(CaptureEvent::Begin);
                 notify_tx
                     .blocking_send(ProducerEvent::Grab(new_pos))
+                    .expect("Failed to send notification");
+            }
+        } else if matches!(
+            event_type,
+            CGEventType::KeyDown | CGEventType::KeyUp | CGEventType::FlagsChanged
+        ) && !state.enter_binds.is_empty()
+        {
+            // Capture is inactive, so these keys belong to the local
+            // machine and are passed through untouched — we only look
+            // at them to see whether an enter-bind became complete.
+            //
+            // `get_events` is reused rather than decoding the event
+            // here so that modifier bookkeeping stays identical to
+            // (and continuous with) the capturing branch: a modifier
+            // held down while capture begins must not be re-reported
+            // as a fresh press afterwards.
+            let mut observed = vec![];
+            let mut entered = None;
+            if let Err(e) = get_events(&event_type, cg_ev, &mut observed, &mut state.modifier_state)
+            {
+                // same as the capturing branch: a key we cannot map is
+                // worth a line, or an enter-bind containing it would
+                // silently never fire
+                log::error!("Failed to get events: {e}");
+            } else {
+                for event in &observed {
+                    let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                        key,
+                        state: key_state,
+                        ..
+                    })) = event
+                    else {
+                        continue;
+                    };
+                    let Ok(key) = scancode::Linux::try_from(*key) else {
+                        continue;
+                    };
+                    let InputCaptureState {
+                        enter_binds,
+                        active_clients,
+                        ..
+                    } = &mut *state;
+                    if let Some(pos) = enter_binds.key_event(key, *key_state == 1, active_clients) {
+                        entered = Some(pos);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(pos) = entered {
+                log::info!("entering client @ {pos}: enter-bind pressed");
+                // A key event carries no useful pointer location, so
+                // ask the window server where the cursor actually is.
+                let location = current_cursor_location().unwrap_or_else(|| cg_ev.location());
+                capture_position = Some(pos);
+                state
+                    .start_capture(location, pos)
+                    .unwrap_or_else(|e| log::warn!("{e}"));
+                state.enter_binds.clear();
+                res_events.push(CaptureEvent::Begin);
+                notify_tx
+                    .blocking_send(ProducerEvent::Grab(pos))
                     .expect("Failed to send notification");
             }
         }
@@ -712,6 +799,16 @@ impl MacOSInputCapture {
     }
 }
 
+/// Current pointer location according to the window server.
+///
+/// Keyboard events report a pointer location of their own, but it is
+/// only meaningful for pointer events, so an enter-bind has to ask
+/// for the real one instead of reading it off the triggering event.
+fn current_cursor_location() -> Option<CGPoint> {
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+    Some(CGEvent::new(source).ok()?.location())
+}
+
 fn request_macos_capture_permissions() -> Result<(), MacosCaptureCreationError> {
     // Call both request functions unconditionally so macOS surfaces both
     // TCC prompts on the very first launch. TCC always returns `false` the
@@ -770,6 +867,13 @@ impl Capture for MacOSInputCapture {
             log::debug!("done !");
         });
         Ok(())
+    }
+
+    fn set_enter_binds(&mut self, binds: HashMap<Position, Vec<scancode::Linux>>) {
+        let notify_tx = self.notify_tx.clone();
+        tokio::task::spawn_local(async move {
+            let _ = notify_tx.send(ProducerEvent::SetEnterBinds(binds)).await;
+        });
     }
 
     async fn release(&mut self) -> Result<(), CaptureError> {
