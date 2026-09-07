@@ -15,6 +15,8 @@ use tokio::task::{JoinHandle, spawn_local};
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;
+use crate::remap::KeyRemap;
+use crate::scroll::ScrollInvert;
 
 pub(crate) struct Capture {
     cancellation_token: CancellationToken,
@@ -24,8 +26,9 @@ pub(crate) struct Capture {
 }
 
 pub(crate) enum ICaptureEvent {
-    /// a client was entered
-    CaptureBegin(CaptureHandle),
+    /// a client was entered, at the given normalized cross-axis
+    /// position along the edge it was entered at
+    CaptureBegin(CaptureHandle, f64),
     /// capture disabled
     CaptureDisabled,
     /// capture disabled
@@ -61,6 +64,10 @@ enum CaptureRequest {
     Reenable,
     /// set release bind
     SetReleaseBind(Vec<scancode::Linux>),
+    /// set the keys rewritten on their way to other devices
+    SetRemap(Box<KeyRemap>),
+    /// set the scroll axes inverted on their way to other devices
+    SetScrollInvert(ScrollInvert),
 }
 
 impl Capture {
@@ -68,6 +75,8 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        remap: KeyRemap,
+        scroll_invert: ScrollInvert,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -81,7 +90,10 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            remap,
+            scroll_invert,
             state: Default::default(),
+            enter_t: 0.5,
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -137,6 +149,18 @@ impl Capture {
     pub(crate) fn set_release_bind(&mut self, bind: Vec<scancode::Linux>) {
         let _ = self.request_tx.send(CaptureRequest::SetReleaseBind(bind));
     }
+
+    pub(crate) fn set_remap(&mut self, remap: KeyRemap) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetRemap(Box::new(remap)));
+    }
+
+    pub(crate) fn set_scroll_invert(&mut self, scroll_invert: ScrollInvert) {
+        let _ = self
+            .request_tx
+            .send(CaptureRequest::SetScrollInvert(scroll_invert));
+    }
 }
 
 /// debounce a statement `$st`, i.e. the statement is executed only if the
@@ -164,8 +188,14 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    remap: KeyRemap,
+    scroll_invert: ScrollInvert,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    /// normalized cross-axis position from the most recent
+    /// [`CaptureEvent::Begin`], reused when [`State::WaitingForAck`]
+    /// re-sends `Enter` — it's the same logical crossing, just retried.
+    enter_t: f64,
 }
 
 impl CaptureTask {
@@ -213,6 +243,10 @@ impl CaptureTask {
                         CaptureRequest::Release => { /* nothing to do */ }
                         CaptureRequest::SetReleaseBind(bind) => {
                             self.release_bind.borrow_mut().clone_from(&bind);
+                        }
+                        CaptureRequest::SetRemap(remap) => self.remap = *remap,
+                        CaptureRequest::SetScrollInvert(scroll_invert) => {
+                            self.scroll_invert = scroll_invert
                         }
                     },
                     _ = self.cancellation_token.cancelled() => return,
@@ -286,16 +320,16 @@ impl CaptureTask {
                             self.state = State::Sending;
                         }
                         // client disconnected
-                        ProtoEvent::Leave(_) => {
+                        ProtoEvent::Leave(_, t) => {
                             log::info!("releasing capture: left remote client device region");
-                            self.release_capture(capture).await?;
+                            self.release_capture(capture, Some(t)).await?;
                         },
                         _ => {}
                     }
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
                     CaptureRequest::Reenable => { /* already active */ },
-                    CaptureRequest::Release => self.release_capture(capture).await?,
+                    CaptureRequest::Release => self.release_capture(capture, None).await?,
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
                         capture.create(h, p).await?;
@@ -306,6 +340,10 @@ impl CaptureTask {
                     }
                     CaptureRequest::SetReleaseBind(bind) => {
                         self.release_bind.borrow_mut().clone_from(&bind);
+                    }
+                    CaptureRequest::SetRemap(remap) => self.remap = *remap,
+                    CaptureRequest::SetScrollInvert(scroll_invert) => {
+                        self.scroll_invert = scroll_invert
                     }
                 },
                 _ = self.cancellation_token.cancelled() => break,
@@ -324,12 +362,12 @@ impl CaptureTask {
 
         if capture.keys_pressed(&self.release_bind.borrow()) {
             log::info!("releasing capture: release-bind pressed");
-            return self.release_capture(capture).await;
+            return self.release_capture(capture, None).await;
         }
 
-        if event == CaptureEvent::Begin {
+        if let CaptureEvent::Begin(t) = event {
             self.event_tx
-                .send(ICaptureEvent::CaptureBegin(handle))
+                .send(ICaptureEvent::CaptureBegin(handle, t))
                 .expect("channel closed");
         }
 
@@ -346,7 +384,7 @@ impl CaptureTask {
         }
 
         // activated a new client
-        if event == CaptureEvent::Begin && Some(handle) != self.active_client {
+        if matches!(event, CaptureEvent::Begin(_)) && Some(handle) != self.active_client {
             self.state = State::WaitingForAck;
             self.active_client.replace(handle);
             self.event_tx
@@ -356,24 +394,47 @@ impl CaptureTask {
 
         let opposite_pos = to_proto_pos(self.get_pos(handle).opposite());
 
-        let event = match event {
-            CaptureEvent::Begin => ProtoEvent::Enter(opposite_pos),
+        let events: Vec<ProtoEvent> = match event {
+            CaptureEvent::Begin(t) => {
+                self.enter_t = t;
+                vec![ProtoEvent::Enter(opposite_pos, t)]
+            }
             CaptureEvent::Input(e) => match self.state {
                 // connection not acknowledged, repeat `Enter` event
-                State::WaitingForAck => ProtoEvent::Enter(opposite_pos),
-                State::Sending => ProtoEvent::Input(e),
+                State::WaitingForAck => vec![ProtoEvent::Enter(opposite_pos, self.enter_t)],
+                // a single physical event can resolve into 0-2 outgoing
+                // events once chord remapping buffers/replays a
+                // modifier (see `KeyRemap::apply`)
+                State::Sending => self
+                    .remap
+                    .apply(e)
+                    .into_iter()
+                    .map(|e| ProtoEvent::Input(self.scroll_invert.apply(e)))
+                    .collect(),
             },
         };
 
-        if let Err(e) = self.conn.send(event, handle).await {
-            const DUR: Duration = Duration::from_millis(500);
-            debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
-            capture.release().await?;
+        for event in events {
+            if let Err(e) = self.conn.send(event, handle).await {
+                const DUR: Duration = Duration::from_millis(500);
+                debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
+                capture.release().await?;
+                break;
+            }
         }
         Ok(())
     }
 
-    async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
+    /// releases the capture, optionally warping the cursor to a
+    /// normalized cross-axis position `warp_to` along the edge it was
+    /// captured at first — set when the peer told us to leave with a
+    /// specific hand-back spot (see [`ProtoEvent::Leave`]), `None` for
+    /// a plain release (release-bind, explicit release request, ...)
+    async fn release_capture(
+        &mut self,
+        capture: &mut InputCapture,
+        warp_to: Option<f64>,
+    ) -> Result<(), CaptureError> {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
             // Synthesize key-up events for every key still held in the
@@ -387,9 +448,20 @@ impl CaptureTask {
             // mods until its watchdog times out (1+ s) or our Leave
             // arrives — and Leave can be lost over UDP/DTLS.
             for key in capture.take_pressed_keys() {
+                // `pressed_keys` holds the *physical* keys, so these
+                // have to go through the same remap the down events
+                // did — otherwise the peer is released from a key it
+                // was never pressed with and keeps holding the one it
+                // actually got. A key still `pending` on an unresolved
+                // chord never had a down event sent for it at all —
+                // `release_key` reports `None` for those, and no
+                // key-up should be synthesized either.
+                let Some(target) = self.remap.release_key(key) else {
+                    continue;
+                };
                 let key_up = ProtoEvent::Input(Event::Keyboard(KeyboardEvent::Key {
                     time: 0,
-                    key: key as u32,
+                    key: target as u32,
                     state: 0,
                 }));
                 if let Err(e) = self.conn.send(key_up, handle).await {
@@ -412,11 +484,16 @@ impl CaptureTask {
             }
 
             log::info!("sending Leave event to client {handle}");
-            if let Err(e) = self.conn.send(ProtoEvent::Leave(0), handle).await {
+            // the peer doesn't act on this `t` — it's *our* Leave,
+            // stopping capture towards them, not a hand-back to us
+            if let Err(e) = self.conn.send(ProtoEvent::Leave(0, 0.5), handle).await {
                 log::warn!("failed to send Leave to client {handle}: {e}");
             }
         }
-        capture.release().await
+        match warp_to {
+            Some(t) => capture.release_to(t).await,
+            None => capture.release().await,
+        }
     }
 }
 

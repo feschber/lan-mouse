@@ -37,8 +37,11 @@ pub type CaptureHandle = u64;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CaptureEvent {
-    /// capture on this capture handle is now active
-    Begin,
+    /// capture on this capture handle is now active. The `f64` is the
+    /// normalized (`0.0..=1.0`) position along the crossed edge, so the
+    /// receiving side can warp its cursor to the matching spot. Backends
+    /// that can't determine it report `0.5` (the edge's midpoint).
+    Begin(f64),
     /// input event coming from capture handle
     Input(Event),
 }
@@ -46,7 +49,7 @@ pub enum CaptureEvent {
 impl Display for CaptureEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CaptureEvent::Begin => write!(f, "begin capture"),
+            CaptureEvent::Begin(t) => write!(f, "begin capture ({t:.2})"),
             CaptureEvent::Input(e) => write!(f, "{e}"),
         }
     }
@@ -171,6 +174,15 @@ impl InputCapture {
         self.capture.release().await
     }
 
+    /// release mouse, first warping the cursor to the normalized
+    /// (`0.0..=1.0`) cross-axis position `t` along the edge it's
+    /// currently captured at — so a peer that detected its own local
+    /// crossing back can hand the cursor back at the matching spot.
+    pub async fn release_to(&mut self, t: f64) -> Result<(), CaptureError> {
+        self.pressed_keys.clear();
+        self.capture.release_to(t).await
+    }
+
     /// Drain and return every key the capture has forwarded as
     /// down-but-not-up. The caller is expected to synthesize key-up
     /// events to the remote peer for each — otherwise the peer
@@ -286,6 +298,12 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
     /// release mouse
     async fn release(&mut self) -> Result<(), CaptureError>;
+
+    /// release, first warping the cursor to normalized cross-axis
+    /// position `t` along the edge currently captured at. Best-effort:
+    /// backends that can't warp just release, same as before this
+    /// existed — the cursor stays wherever it already was.
+    async fn release_to(&mut self, t: f64) -> Result<(), CaptureError>;
 
     /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;

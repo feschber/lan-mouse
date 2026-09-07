@@ -17,9 +17,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
-use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SetCursorPos, XBUTTON1, XBUTTON2,
+};
 
-use super::{Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, Position};
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
@@ -80,6 +83,18 @@ impl Emulation for WindowsEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+
+    async fn warp(&mut self, _handle: EmulationHandle, pos: Position, t: f64) {
+        let Some((x, y)) = warp_target(pos, t) else {
+            log::warn!("could not determine virtual screen bounds for cursor warp");
+            return;
+        };
+        // SAFETY: SetCursorPos with in-bounds screen coordinates is
+        // always safe to call.
+        if let Err(e) = unsafe { SetCursorPos(x, y) } {
+            log::warn!("failed to warp cursor to {pos:?} @ {t:.2}: {e:?}");
+        }
+    }
 }
 
 impl WindowsEmulation {
@@ -192,6 +207,43 @@ fn scroll(axis: u8, value: i32) {
     send_mouse_input(mi);
 }
 
+/// Absolute coordinate for a normalized (`0.0..=1.0`) cross-axis
+/// position within `min..=max`. Inverse of the capture-side
+/// normalization in `input-capture`'s macOS backend.
+fn denormalize(t: f64, min: f64, max: f64) -> f64 {
+    min + t.clamp(0.0, 1.0) * (max - min)
+}
+
+/// The point to warp the cursor to when a peer's cursor enters this
+/// device from `pos` at normalized cross-axis position `t`, in virtual
+/// screen coordinates. `None` if the virtual screen bounds can't be
+/// determined.
+fn warp_target(pos: Position, t: f64) -> Option<(i32, i32)> {
+    // SAFETY: GetSystemMetrics with a valid SYSTEM_METRICS_INDEX is
+    // always safe to call.
+    let (x0, y0, cx, cy) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    if cx <= 0 || cy <= 0 {
+        return None;
+    }
+    let (xmin, xmax) = (x0 as f64, (x0 + cx) as f64);
+    let (ymin, ymax) = (y0 as f64, (y0 + cy) as f64);
+    let edge_offset = 1.0;
+    let (x, y) = match pos {
+        Position::Left => (xmin + edge_offset, denormalize(t, ymin, ymax)),
+        Position::Right => (xmax - edge_offset, denormalize(t, ymin, ymax)),
+        Position::Top => (denormalize(t, xmin, xmax), ymin + edge_offset),
+        Position::Bottom => (denormalize(t, xmin, xmax), ymax - edge_offset),
+    };
+    Some((x as i32, y as i32))
+}
+
 fn key_event(key: u32, state: u8) {
     let scancode = match linux_keycode_to_windows_scancode(key) {
         Some(code) => code,
@@ -234,4 +286,33 @@ fn linux_keycode_to_windows_scancode(linux_keycode: u32) -> Option<u16> {
     };
     log::trace!("windows code: {windows_scancode:?}");
     Some(windows_scancode as u16)
+}
+
+#[cfg(test)]
+mod warp_test {
+    use super::denormalize;
+
+    #[test]
+    fn midpoint() {
+        assert_eq!(denormalize(0.5, 0.0, 100.0), 50.0);
+    }
+
+    #[test]
+    fn extremes() {
+        assert_eq!(denormalize(0.0, 0.0, 100.0), 0.0);
+        assert_eq!(denormalize(1.0, 0.0, 100.0), 100.0);
+    }
+
+    #[test]
+    fn clamps_out_of_range_t() {
+        assert_eq!(denormalize(-0.5, 0.0, 100.0), 0.0);
+        assert_eq!(denormalize(1.5, 0.0, 100.0), 100.0);
+    }
+
+    #[test]
+    fn offset_bounds() {
+        // a virtual screen that doesn't start at the origin, e.g. a
+        // monitor placed to the left of / above the primary display
+        assert_eq!(denormalize(0.5, -500.0, -300.0), -400.0);
+    }
 }
