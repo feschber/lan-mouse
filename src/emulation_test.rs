@@ -22,7 +22,7 @@ pub async fn run(config: Config, _args: TestEmulationArgs) -> Result<(), InputEm
     log::info!("running input emulation test");
 
     let backend = config.emulation_backend().map(|b| b.into());
-    let mut emulation = InputEmulation::new(backend).await?;
+    let mut emulation = InputEmulation::new(backend, config.emulation_options()).await?;
     emulation.create(0).await;
 
     let start = Instant::now();

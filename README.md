@@ -385,6 +385,14 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# optional key-repeat timing for the *receiving* side, in milliseconds. Only the
+# macOS and Windows emulation backends use these (other platforms let the OS
+# generate key repeat): `key_repeat_delay` is how long a key must be held before
+# it starts repeating, `key_repeat_interval` is the time between repeats.
+# Defaults: 500 and 32.
+key_repeat_delay = 500
+key_repeat_interval = 32
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]
