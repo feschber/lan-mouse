@@ -123,7 +123,6 @@ struct State {
     focused: Option<Arc<Window>>,
     global_list: GlobalList,
     globals: Globals,
-    wayland_fd: RawFd,
     read_guard: Option<ReadEventsGuard>,
     qh: QueueHandle<Self>,
     pending_events: VecDeque<(Position, CaptureEvent)>,
@@ -138,7 +137,7 @@ struct Inner {
 
 impl AsRawFd for Inner {
     fn as_raw_fd(&self) -> RawFd {
-        self.state.wayland_fd
+        self.queue.as_fd().as_raw_fd()
     }
 }
 
@@ -332,7 +331,6 @@ impl LayerShellInputCapture {
             active_windows: Vec::new(),
             focused: None,
             qh,
-            wayland_fd: queue.as_fd().as_raw_fd(),
             read_guard: None,
             pending_events: VecDeque::new(),
             outputs: vec![],
@@ -548,13 +546,12 @@ impl State {
 }
 
 impl Inner {
-    fn read(&mut self) -> bool {
+    fn read(&mut self) {
         match self.state.read_guard.take().unwrap().read() {
-            Ok(_) => true,
-            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => false,
+            Ok(_) => {}
+            Err(WaylandError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
             Err(WaylandError::Io(e)) => {
                 log::error!("error reading from wayland socket: {e}");
-                false
             }
             Err(WaylandError::Protocol(e)) => {
                 panic!("wayland protocol violation: {e}")
@@ -564,16 +561,11 @@ impl Inner {
 
     fn prepare_read(&mut self) -> io::Result<()> {
         loop {
-            match self.queue.prepare_read() {
-                None => match self.queue.dispatch_pending(&mut self.state) {
-                    Ok(_) => continue,
-                    Err(DispatchError::Backend(WaylandError::Io(e))) => return Err(e),
-                    Err(e) => panic!("failed to dispatch wayland events: {e}"),
-                },
-                Some(r) => {
-                    self.state.read_guard = Some(r);
-                    break Ok(());
-                }
+            if let Some(guard) = self.queue.prepare_read() {
+                self.state.read_guard = Some(guard);
+                break Ok(());
+            } else {
+                self.dispatch_events();
             }
         }
     }
@@ -655,13 +647,7 @@ impl Stream for LayerShellInputCapture {
                 let inner = guard.get_inner_mut();
 
                 // read events
-                while inner.read() {
-                    // prepare next read
-                    match inner.prepare_read() {
-                        Ok(_) => {}
-                        Err(e) => return Poll::Ready(Some(Err(e.into()))),
-                    }
-                }
+                inner.read();
 
                 // dispatch the events
                 inner.dispatch_events();

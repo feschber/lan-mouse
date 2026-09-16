@@ -31,7 +31,7 @@ rustPlatform.buildRustPackage {
     libadwaita
     librsvg
   ]
-  ++ lib.optionals stdenv.isLinux [
+  ++ lib.optionals stdenv.hostPlatform.isLinux [
     libX11
     libXtst
   ];

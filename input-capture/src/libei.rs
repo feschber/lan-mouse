@@ -18,12 +18,12 @@ use reis::{
 use std::{
     cell::Cell,
     collections::HashMap,
-    io,
+    env, io,
     num::NonZeroU32,
     os::unix::net::UnixStream,
     pin::Pin,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 use tokio::{
@@ -49,6 +49,25 @@ use super::{
 /* there is a bug in xdg-remote-desktop-portal-gnome / mutter that
  * prevents receiving further events after a session has been disabled once.
  * Therefore the session needs to be recreated when the barriers are updated */
+
+/* mutter also kills the session whenever ei devices come and go, so there the
+ * whole session has to be torn down and recreated on every device change.
+ * Elsewhere that is pure overhead: each restart costs a CreateSession +
+ * ConnectToEIS round trip, and compositors that keep per-session state around
+ * (hyprland leaks a keymap fd per eis session, see hyprwm/Hyprland) can be
+ * driven out of file descriptors by the churn.
+ * Set LM_RESTART_SESSION_ON_DEVICE_CHANGE=1/0 to override the default. */
+static RESTART_SESSION_ON_DEVICE_CHANGE: LazyLock<bool> =
+    LazyLock::new(restart_session_on_device_change);
+
+fn restart_session_on_device_change() -> bool {
+    match env::var("LM_RESTART_SESSION_ON_DEVICE_CHANGE").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => env::var("XDG_CURRENT_DESKTOP")
+            .is_ok_and(|desktops| desktops.to_uppercase().split(':').any(|d| d == "GNOME")),
+    }
+}
 
 /// events that necessitate restarting the capture session
 #[derive(Clone, Copy, Debug)]
@@ -555,20 +574,32 @@ async fn handle_ei_event(
             s.seat.bind_capabilities(all_capabilities);
             context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
-        EiEvent::SeatRemoved(_) | /* EiEvent::DeviceAdded(_) | */ EiEvent::DeviceRemoved(_) => {
+        EiEvent::SeatRemoved(_) => {
             log::debug!("releasing session: {ei_event:?}");
             release_session.notify_waiters();
+        }
+        /* EiEvent::DeviceAdded(_) | */
+        EiEvent::DeviceRemoved(_) => {
+            if *RESTART_SESSION_ON_DEVICE_CHANGE {
+                log::debug!("releasing session: {ei_event:?}");
+                release_session.notify_waiters();
+            } else {
+                log::debug!("ignoring device change: {ei_event:?}");
+            }
         }
         EiEvent::DevicePaused(_) | EiEvent::DeviceResumed(_) => {}
         EiEvent::DeviceStartEmulating(_) => log::debug!("START EMULATING"),
         EiEvent::DeviceStopEmulating(_) => log::debug!("STOP EMULATING"),
         EiEvent::Disconnected(d) => {
-            return Err(CaptureError::Disconnected(format!("{:?}", d.reason)))
+            return Err(CaptureError::Disconnected(format!("{:?}", d.reason)));
         }
         _ => {
             if let Some(pos) = current_client {
                 for event in Event::from_ei_event(ei_event) {
-                    event_tx.send((pos, CaptureEvent::Input(event))).await.expect("no channel");
+                    event_tx
+                        .send((pos, CaptureEvent::Input(event)))
+                        .await
+                        .expect("no channel");
                 }
             }
         }
