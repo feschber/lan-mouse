@@ -29,6 +29,7 @@ mod macos;
 /// fallback input emulation (logs events)
 mod dummy;
 mod error;
+mod scroll_accumulator;
 
 pub type EmulationHandle = u64;
 
