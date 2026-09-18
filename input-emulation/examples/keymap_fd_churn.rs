@@ -69,7 +69,14 @@ fn main() {
         let control = std::env::args().any(|a| a == "--control");
 
         let baseline = open_fds().unwrap_or(0);
-        println!("mode: {}", if control { "control (one client, N events)" } else { "churn (N clients)" });
+        println!(
+            "mode: {}",
+            if control {
+                "control (one client, N events)"
+            } else {
+                "churn (N clients)"
+            }
+        );
         println!("baseline open fds: {baseline}");
         println!("running {ITERATIONS} iterations");
 
@@ -95,7 +102,10 @@ fn main() {
             if let Err(e) = emulation.consume(event, handle).await {
                 println!();
                 println!("FAILED at iteration {i}");
-                println!("open fds: {} (baseline {baseline})", fds_display(open_fds()));
+                println!(
+                    "open fds: {} (baseline {baseline})",
+                    fds_display(open_fds())
+                );
                 println!("error: {e}");
                 std::process::exit(1);
             }
@@ -106,7 +116,9 @@ fn main() {
                 println!(
                     "  iteration {i:>5}: open fds {:>6}{}",
                     fds_display(now),
-                    delta.map(|d| format!(" (+{d} over baseline)")).unwrap_or_default(),
+                    delta
+                        .map(|d| format!(" (+{d} over baseline)"))
+                        .unwrap_or_default(),
                 );
             }
         }
@@ -114,10 +126,7 @@ fn main() {
         let final_fds = open_fds();
         println!();
         println!("completed {ITERATIONS} iterations without error");
-        println!(
-            "open fds: {} (baseline {baseline})",
-            fds_display(final_fds)
-        );
+        println!("open fds: {} (baseline {baseline})", fds_display(final_fds));
         emulation.terminate().await;
     });
 }
