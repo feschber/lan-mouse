@@ -24,22 +24,28 @@
 //! Motion events are sent with dx and dy of zero so the example never moves the real
 //! cursor.
 
+#[cfg(wlroots)]
 use input_emulation::{Backend, EmulationHandle, InputEmulation};
+#[cfg(wlroots)]
 use input_event::{Event, PointerEvent};
 
 /// number of simulated peer reconnects
+#[cfg(wlroots)]
 const ITERATIONS: u64 = 2000;
 
 /// how often to sample the descriptor count
+#[cfg(wlroots)]
 const SAMPLE_EVERY: u64 = 100;
 
 /// counts open descriptors of this process.
 /// returns None rather than 0 when the count itself fails for lack of a descriptor,
 /// so an exhausted process is never reported as using none.
+#[cfg(wlroots)]
 fn open_fds() -> Option<usize> {
     std::fs::read_dir("/proc/self/fd").ok().map(|d| d.count())
 }
 
+#[cfg(wlroots)]
 fn fds_display(fds: Option<usize>) -> String {
     match fds {
         Some(n) => n.to_string(),
@@ -47,6 +53,7 @@ fn fds_display(fds: Option<usize>) -> String {
     }
 }
 
+#[cfg(wlroots)]
 fn main() {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -129,4 +136,11 @@ fn main() {
         println!("open fds: {} (baseline {baseline})", fds_display(final_fds));
         emulation.terminate().await;
     });
+}
+
+#[cfg(not(wlroots))]
+fn main() {
+    eprintln!("this example requires the wlroots backend, which is only built on");
+    eprintln!("unix targets other than macos with the `wlroots` feature enabled");
+    std::process::exit(1);
 }

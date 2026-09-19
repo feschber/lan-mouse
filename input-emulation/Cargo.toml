@@ -6,6 +6,10 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/feschber/lan-mouse"
 
+[[example]]
+name = "keymap_fd_churn"
+required-features = ["wlroots"]
+
 [dependencies]
 async-trait = "0.1.80"
 futures = "0.3.28"
