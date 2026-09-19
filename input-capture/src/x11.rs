@@ -27,6 +27,10 @@ impl Capture for X11InputCapture {
         Ok(())
     }
 
+    async fn release_to(&mut self, _t: f64) -> Result<(), CaptureError> {
+        Ok(())
+    }
+
     async fn terminate(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }

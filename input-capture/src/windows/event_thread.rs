@@ -291,15 +291,18 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* update active client and entry point */
     ACTIVE_CLIENT.replace(Some(pos));
-    let entry_point = DISPLAYS.with_borrow(|(displays, _)| {
-        display_util::clamp_to_display_bounds(displays, prev_pos, curr_pos)
+    let (entry_point, t) = DISPLAYS.with_borrow(|(displays, _)| {
+        (
+            display_util::clamp_to_display_bounds(displays, prev_pos, curr_pos),
+            display_util::cross_axis_position(displays, prev_pos, curr_pos, pos),
+        )
     });
     ENTRY_POINT.replace(entry_point);
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
     let active = ACTIVE_CLIENT.get().expect("active client");
-    blocking_send_event(active, CaptureEvent::Begin);
+    blocking_send_event(active, CaptureEvent::Begin(t));
 
     ret
 }

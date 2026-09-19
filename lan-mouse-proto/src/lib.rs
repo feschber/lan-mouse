@@ -48,12 +48,21 @@ impl Display for Position {
 /// main lan-mouse protocol event type
 #[derive(Clone, Copy, Debug)]
 pub enum ProtoEvent {
-    /// notify a client that the cursor entered its region at the given position
+    /// notify a client that the cursor entered its region at the given position.
+    /// The `f64` is the normalized (`0.0..=1.0`) position along the crossed
+    /// edge, e.g. how far down a `Left`/`Right` edge or how far across a
+    /// `Top`/`Bottom` edge, so the receiving side can warp the cursor to
+    /// the matching spot instead of a fixed point on the edge.
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
-    Enter(Position),
-    /// notify a client that the cursor left its region
+    Enter(Position, f64),
+    /// notify a client that the cursor left its region. The `f64` is the
+    /// normalized (`0.0..=1.0`) position along the edge this side's
+    /// cursor should reappear at — set when the *other* side detected
+    /// its own local crossing back (see the `EnterOnly` capture in
+    /// `src/service.rs::add_incoming`), `0.5` for a plain release with
+    /// no such crossing (release-bind, explicit release request, etc).
     /// [`ProtoEvent::Ack`] with the same serial is used for synchronization between devices
-    Leave(u32),
+    Leave(u32, f64),
     /// acknowledge of an [`ProtoEvent::Enter`] or [`ProtoEvent::Leave`] event
     Ack(u32),
     /// Input event
@@ -77,8 +86,8 @@ pub enum ProtoEvent {
 impl Display for ProtoEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProtoEvent::Enter(s) => write!(f, "Enter({s})"),
-            ProtoEvent::Leave(s) => write!(f, "Leave({s})"),
+            ProtoEvent::Enter(s, t) => write!(f, "Enter({s}, {t:.2})"),
+            ProtoEvent::Leave(s, t) => write!(f, "Leave({s}, {t:.2})"),
             ProtoEvent::Ack(s) => write!(f, "Ack({s})"),
             ProtoEvent::Input(e) => write!(f, "{e}"),
             ProtoEvent::Ping => write!(f, "ping"),
@@ -131,8 +140,8 @@ impl ProtoEvent {
             },
             ProtoEvent::Ping => EventType::Ping,
             ProtoEvent::Pong(_) => EventType::Pong,
-            ProtoEvent::Enter(_) => EventType::Enter,
-            ProtoEvent::Leave(_) => EventType::Leave,
+            ProtoEvent::Enter(..) => EventType::Enter,
+            ProtoEvent::Leave(..) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
             ProtoEvent::Hello { .. } => EventType::Hello,
         }
@@ -186,8 +195,11 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
             ))),
             EventType::Ping => Ok(Self::Ping),
             EventType::Pong => Ok(Self::Pong(decode_u8(&mut buf)? != 0)),
-            EventType::Enter => Ok(Self::Enter(decode_u8(&mut buf)?.try_into()?)),
-            EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?)),
+            EventType::Enter => Ok(Self::Enter(
+                decode_u8(&mut buf)?.try_into()?,
+                decode_f64(&mut buf)?,
+            )),
+            EventType::Leave => Ok(Self::Leave(decode_u32(&mut buf)?, decode_f64(&mut buf)?)),
             EventType::Ack => Ok(Self::Ack(decode_u32(&mut buf)?)),
             EventType::Hello => {
                 let mut commit = [0u8; 8];
@@ -257,8 +269,14 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                 },
                 ProtoEvent::Ping => {}
                 ProtoEvent::Pong(alive) => encode_u8(buf, len, alive as u8),
-                ProtoEvent::Enter(pos) => encode_u8(buf, len, pos as u8),
-                ProtoEvent::Leave(serial) => encode_u32(buf, len, serial),
+                ProtoEvent::Enter(pos, t) => {
+                    encode_u8(buf, len, pos as u8);
+                    encode_f64(buf, len, t);
+                }
+                ProtoEvent::Leave(serial, t) => {
+                    encode_u32(buf, len, serial);
+                    encode_f64(buf, len, t);
+                }
                 ProtoEvent::Ack(serial) => encode_u32(buf, len, serial),
                 ProtoEvent::Hello { commit } => {
                     for b in commit.iter() {

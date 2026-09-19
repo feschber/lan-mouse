@@ -415,6 +415,79 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+Crossing an edge carries the cursor's position along that edge over to the
+peer — leaving near the top of the right edge enters the peer near the top
+of its left edge, scaled to the peer's own display size if the two differ.
+This also applies when handing control back without a matching `[[clients]]`
+entry on the other side (moving the cursor further past the edge it just
+entered at): the side you're leaving reports the spot it saw you reach, so
+the cursor reappears there instead of back at the original entry point.
+
+Support so far:
+
+| | reports its own crossings (sending) | applies an incoming position (receiving) |
+|---|---|---|
+| macOS | yes | yes |
+| Windows | yes | not yet — falls back to the edge's midpoint |
+| X11 / Wayland | not yet — falls back to the edge's midpoint | not yet — falls back to the edge's midpoint |
+
+Falling back just means that side behaves as before this existed; nothing
+breaks, the position simply isn't preserved on that leg of the crossing.
+
+### Remapping keys for other operating systems
+
+`[input_pre_processing]` rewrites events on their way to other devices.
+`remap_keys` swaps individual keys, which is mostly useful for reconciling
+modifier layouts — sending Command from a Mac as Control, and Control as
+Super, so that Cmd+C keeps copying on a Windows or Linux peer:
+
+```toml
+[input_pre_processing.remap_keys]
+KeyLeftMeta = "KeyLeftCtrl"
+KeyLeftCtrl = "KeyLeftMeta"
+```
+
+Remapping happens on the *sending* side, so the local machine is unaffected:
+`release_bind` and the host's own shortcuts keep seeing the physical keys.
+
+`remap_keys` is a plain per-key substitution — it can't tell "Command alone"
+from "Command as part of a chord", so it always sends a given key as the
+same thing. `remap_chords` covers that case: a modifier is sent as
+something *else* specifically when a given trigger key is pressed while
+it's held, without changing what it sends as the rest of the time. The
+motivating case is `Cmd+Tab` reaching a Windows peer as `Alt+Tab` (its app
+switcher) instead of `Ctrl+Tab`, while `Cmd+C` still becomes `Ctrl+C`:
+
+```toml
+[[input_pre_processing.remap_chords]]
+modifier = "KeyLeftMeta"
+trigger = "KeyTab"
+to = "KeyLeftAlt"
+```
+
+Holding the modifier and pressing anything *other* than `trigger` — another
+regular key, a click, a scroll — falls back to `remap_keys` as usual.
+Pressing another modifier first (e.g. Shift, for `Cmd+Shift+Tab` to cycle
+backwards) doesn't cancel the chord; only plain cursor motion is ignored
+entirely, so an incidental mouse twitch while holding the modifier can't
+break it either.
+
+### Inverting scroll direction for other operating systems
+
+`invert_scroll_vertical` and `invert_scroll_horizontal` flip the direction of
+scroll events on their way to other devices. This is mostly useful when
+macOS' "natural scrolling" reaches a Windows or Linux peer that scrolls the
+traditional way, making the wheel feel backwards on the remote machine:
+
+```toml
+[input_pre_processing]
+invert_scroll_vertical = true
+invert_scroll_horizontal = false
+```
+
+Like `remap_keys`, this happens on the *sending* side only, so scrolling on
+the local machine itself is unaffected.
+
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.
