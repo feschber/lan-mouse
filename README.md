@@ -110,6 +110,16 @@ dnf install lan-mouse
 
 </details>
 
+<details>
+    <summary>Windows</summary>
+
+Lan Mouse can be installed from the [winget community repositories](https://github.com/microsoft/winget-pkgs/tree/master/manifests/f/feschber/LanMouse):
+
+```sh
+winget install lan-mouse
+```
+
+</details>
 
 <details>
     <summary>Manual Installation</summary>
