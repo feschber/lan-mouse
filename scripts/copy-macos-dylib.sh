@@ -2,7 +2,8 @@
 set -eu
 
 homebrew_path=""
-exec_path="target/debug/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
+default_exec_path="target/debug/bundle/osx/Lan Mouse.app/Contents/MacOS/lan-mouse"
+exec_path="$default_exec_path"
 
 usage() {
     cat <<EOF
@@ -14,7 +15,7 @@ OPTIONS:
   -b            Path to Homebrew installation
                 (default: obtained from 'brew --prefix')
   exec_path     Path to the main executable in the app bundle
-                (default: $exec_path)
+                (default: $default_exec_path)
 
 When macOS apps are linked to dynamic libraries (.dylib files),
 the fully qualified path to the library is embedded in the binary.
@@ -24,6 +25,20 @@ and the libraries must be installed in the same location on the user's machine.
 This script copies all of the Homebrew libraries that an executable links to into the app bundle
 and tells all the binaries in the bundle to look for them there.
 EOF
+}
+
+exec_path_set=0
+
+# Accept the single positional argument, rejecting a second one rather than
+# silently letting it win.
+set_exec_path() {
+    if [ "$exec_path_set" = 1 ]; then
+        echo "$0: unexpected extra argument: $1" >&2
+        usage >&2
+        exit 1
+    fi
+    exec_path="$1"
+    exec_path_set=1
 }
 
 # Gather command-line arguments
@@ -36,14 +51,29 @@ while test $# -gt 0; do
                 exit 1
             fi
             homebrew_path="$2"; shift 2;;
+        -- )
+            # Everything after this is positional, so an exec_path may start
+            # with a dash.
+            shift
+            while test $# -gt 0; do
+                set_exec_path "$1"; shift
+            done;;
         -* ) echo "$0: unknown option: $1" >&2; usage >&2; exit 1;;
-        * ) exec_path="$1"; shift;;
+        * ) set_exec_path "$1"; shift;;
     esac
 done
+
+# `dirname` and friends would read a leading dash as an option of their own.
+case "$exec_path" in
+    -* ) exec_path="./$exec_path";;
+esac
 
 if [ -z "$homebrew_path" ]; then
     homebrew_path="$(brew --prefix)"
 fi
+# Normalise away a trailing slash so the prefix tests below can rely on the
+# separator being present exactly once.
+homebrew_path="${homebrew_path%/}"
 
 # Path to the .app bundle
 bundle_path=$(dirname "$(dirname "$(dirname "$exec_path")")")
@@ -59,6 +89,18 @@ exec_dir="$(cd "$(dirname "$exec_path")" && pwd)"
 # below run in the current shell (via here-strings rather than pipes), so a
 # plain global works even across the recursion.
 unresolved=""
+
+# Records which library each bundled file name came from, as
+# "<base_name> <device>:<inode> <source_path>" lines, to detect collisions.
+bundled_from=""
+
+# Identify a file by device and inode, following symlinks, so that the same
+# library reached through different paths -- $homebrew_path/lib/libfoo.dylib and
+# $homebrew_path/opt/foo/lib/libfoo.dylib are both symlinks into the Cellar --
+# is recognised as one library rather than as a collision.
+file_id() {
+  stat -L -f '%d:%i' "$1"
+}
 
 # Print the LC_RPATH entries of a binary, one per line, deduplicated: a
 # universal binary lists its load commands once per architecture.
@@ -161,16 +203,50 @@ bundle_lib() {
   local base_name="$1"
   local source_path="$2"
   local dest="$fwks_path/$base_name"
+  local source_id previous
 
-  # Already bundled (this also covers a dylib's own install name, which shows
-  # up in its `otool -L` output).
-  if [ -e "$dest" ]; then
-    return 0
-  fi
+  # A reference the bundle already satisfies resolves to the copy itself. This
+  # covers a dylib's own install name, which shows up in its `otool -L` output.
+  case "$source_path" in
+    "$fwks_path"/* ) return 0;;
+  esac
 
   if [ ! -e "$source_path" ]; then
     echo "Warning: Could not find $base_name at $source_path" >&2
     return 1
+  fi
+
+  source_id="$(file_id "$source_path")"
+  previous="$(printf '%s' "$bundled_from" \
+    | awk -v name="$base_name" '$1 == name { print $2; exit }')"
+
+  if [ -n "$previous" ]; then
+    # Frameworks is flat, so a file name identifies a library. Two different
+    # libraries sharing one name cannot both be bundled, and the second
+    # binary's reference would be pointed at the first library instead -- a
+    # mismatch that only shows up as a missing symbol at runtime. Bundling
+    # these would mean giving them distinct names or nesting them, so refuse
+    # rather than produce a bundle that is quietly wrong.
+    if [ "$previous" != "$source_id" ]; then
+      echo >&2
+      echo "$0: two different libraries are both named $base_name:" >&2
+      printf '%s' "$bundled_from" \
+        | awk -v name="$base_name" '$1 == name { print "  " $3 }' >&2
+      echo "  $source_path" >&2
+      exit 1
+    fi
+
+    # Same library, already bundled.
+    return 0
+  fi
+
+  bundled_from="$bundled_from$base_name $source_id $source_path
+"
+
+  # Left over from an earlier run: its references were fixed then, so there is
+  # nothing to copy or walk.
+  if [ -e "$dest" ]; then
+    return 0
   fi
 
   echo "Copying $source_path -> $dest"
@@ -220,7 +296,9 @@ fix_references() {
   local libs relative_libs old_path ref base_name source_path
 
   # Get all Homebrew libraries referenced by the binary (absolute paths)
-  libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" 'index($1, homebrew) == 1 {print $1}')
+  # The trailing slash keeps a prefix of /opt/homebrew from also matching a
+  # path like /opt/homebrew-testing/lib/....
+  libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path/" 'index($1, homebrew) == 1 {print $1}')
 
   # References made through one of dyld's placeholders. These need resolving
   # against the referencing binary before they can be copied.
