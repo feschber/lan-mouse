@@ -53,6 +53,103 @@ mkdir -p "$fwks_path"
 # Path to bundled GTK/GSettings data
 resources_path="$bundle_path/Contents/Resources"
 share_path="$resources_path/share"
+# Directory holding the main executable, used to expand @executable_path
+exec_dir="$(cd "$(dirname "$exec_path")" && pwd)"
+# Accumulates references that could not be found on this machine. The loops
+# below run in the current shell (via here-strings rather than pipes), so a
+# plain global works even across the recursion.
+unresolved=""
+
+# Print the LC_RPATH entries of a binary, one per line, deduplicated: a
+# universal binary lists its load commands once per architecture.
+binary_rpaths() {
+  otool -l "$1" | awk '
+    /^ *cmd LC_RPATH$/ { in_rpath = 1; next }
+    in_rpath && /^ *path / {
+      sub(/^ *path /, "")
+      sub(/ \(offset [0-9]+\)$/, "")
+      print
+      in_rpath = 0
+    }' | sort -u
+}
+
+# Resolve a @rpath/@loader_path/@executable_path reference to a real file on
+# this machine, echoing its path. Returns non-zero if nothing matches.
+#
+# Usage: resolve_ref <reference> <origin_dir> <rpath_source>
+#
+# <origin_dir> is the directory the referencing binary *originally* lived in,
+# not its copy under Frameworks: @loader_path is relative to that, both in a
+# load command and inside an LC_RPATH entry. <rpath_source> is the binary whose
+# LC_RPATH entries are searched, i.e. the copy, whose entries are still intact
+# at the point this is called.
+resolve_ref() {
+  local ref="$1" origin_dir="$2" rpath_source="$3"
+  local rpath candidate
+
+  case "$ref" in
+    @loader_path/* )
+      candidate="$origin_dir/${ref#@loader_path/}"
+      if [ -e "$candidate" ]; then
+        echo "$candidate"
+        return 0
+      fi;;
+    @executable_path/* )
+      candidate="$exec_dir/${ref#@executable_path/}"
+      if [ -e "$candidate" ]; then
+        echo "$candidate"
+        return 0
+      fi;;
+    @rpath/* )
+      # dyld tries each LC_RPATH entry of the loading binary in order.
+      while IFS= read -r rpath; do
+        if [ -z "$rpath" ]; then
+          continue
+        fi
+        case "$rpath" in
+          @loader_path* ) rpath="$origin_dir${rpath#@loader_path}";;
+          @executable_path* ) rpath="$exec_dir${rpath#@executable_path}";;
+        esac
+        candidate="$rpath/${ref#@rpath/}"
+        if [ -e "$candidate" ]; then
+          echo "$candidate"
+          return 0
+        fi
+      done <<< "$(binary_rpaths "$rpath_source")"
+      ;;
+  esac
+
+  # Fall back to the Homebrew library directory, which covers the common case
+  # of a formula that symlinks its dylibs there.
+  candidate="$homebrew_path/lib/$(basename "$ref")"
+  if [ -e "$candidate" ]; then
+    echo "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+# Remove LC_RPATH entries pointing into this machine's Homebrew tree.
+#
+# dyld searches the loading binary's own RPATHs before those of the binaries
+# above it in the load chain, so a leftover Cellar path would win over the
+# bundled copy on a user's machine that happens to have the same formula
+# installed -- exactly what bundling is meant to prevent.
+strip_homebrew_rpaths() {
+  local bin="$1" rpath
+
+  while IFS= read -r rpath; do
+    if [ -z "$rpath" ]; then
+      continue
+    fi
+    case "$rpath" in
+      "$homebrew_path"/* )
+        echo "Removing Homebrew RPATH $rpath from $bin"
+        install_name_tool -delete_rpath "$rpath" "$bin";;
+    esac
+  done <<< "$(binary_rpaths "$bin")"
+}
 
 # Copy a library into the Frameworks directory unless it is already there, give
 # it an install name of @rpath/<base_name> and recursively process its own
@@ -84,8 +181,19 @@ bundle_lib() {
   echo "Updating $dest to have install_name of @rpath/$base_name..."
   install_name_tool -id "@rpath/$base_name" "$dest"
 
-  # Recursively process this dylib
-  fix_references "$dest"
+  # Recursively process this dylib. Pass the directory it came from so that
+  # @loader_path references can still be resolved against it.
+  fix_references "$dest" "$(dirname "$source_path")"
+
+  # Only now that its references have been resolved is it safe to drop the
+  # build machine's Homebrew paths.
+  strip_homebrew_rpaths "$dest"
+
+  # Let the bundled libraries find each other directly, so they resolve even
+  # when loaded outside the main executable's load chain (e.g. via dlopen).
+  if ! binary_rpaths "$dest" | grep -qxF '@loader_path/.'; then
+    install_name_tool -add_rpath '@loader_path/.' "$dest"
+  fi
 
   return 0
 }
@@ -97,64 +205,97 @@ bundle_lib() {
 # - Update the binary to reference the local copy instead
 # - Recursively process the copied dylibs
 #
-# The Frameworks directory is added to the RPATH of the main executable only
-# (see the end of this script); dyld resolves @rpath using the RPATHs of every
-# binary in the load chain, so the bundled dylibs do not need their own.
+# Usage: fix_references <binary> [<origin_dir>]
+#
+# <origin_dir> defaults to the binary's own directory and is only meaningful
+# for a copy under Frameworks, where it names the directory the library came
+# from (see resolve_ref).
+#
+# The Frameworks directory is added to the RPATH of the main executable (see
+# the end of this script) and each bundled dylib gets @loader_path/., so an
+# @rpath reference resolves from anywhere in the bundle.
 fix_references() {
   local bin="$1"
-  local libs rpath_libs loader_libs
+  local origin_dir="${2:-$(dirname "$bin")}"
+  local libs relative_libs old_path ref base_name source_path
 
   # Get all Homebrew libraries referenced by the binary (absolute paths)
   libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" 'index($1, homebrew) == 1 {print $1}')
 
-  # Also get @rpath/@loader_path references and try to resolve them from Homebrew
-  rpath_libs=$(otool -L "$bin" | awk '$1 ~ /^@rpath\// {print $1}')
-  loader_libs=$(otool -L "$bin" | awk '$1 ~ /^@loader_path\// {print $1}')
+  # References made through one of dyld's placeholders. These need resolving
+  # against the referencing binary before they can be copied.
+  relative_libs=$(otool -L "$bin" | awk '$1 ~ /^@(rpath|loader_path|executable_path)\// {print $1}')
 
-  echo "$libs" | while IFS= read -r old_path; do
+  while IFS= read -r old_path; do
     if [ -z "$old_path" ]; then
       continue
     fi
 
-    local base_name="$(basename "$old_path")"
+    base_name="$(basename "$old_path")"
 
-    bundle_lib "$base_name" "$old_path"
+    # On failure, leave the absolute reference alone: rewriting it to @rpath
+    # when nothing was copied to Frameworks would break the binary outright.
+    if ! bundle_lib "$base_name" "$old_path"; then
+      unresolved="$unresolved  $old_path (referenced by $bin)
+"
+      continue
+    fi
 
     echo "Updating $bin to reference @rpath/$base_name..."
     install_name_tool -change "$old_path" "@rpath/$base_name" "$bin"
-  done
+  done <<< "$libs"
 
-  # Process @rpath references. These stay as they are -- they resolve to the
-  # Frameworks directory via the RPATH of the loading binary -- so the library
-  # only needs to be copied there.
-  echo "$rpath_libs" | while IFS= read -r rpath_ref; do
-    if [ -z "$rpath_ref" ]; then
+  while IFS= read -r ref; do
+    if [ -z "$ref" ]; then
       continue
     fi
 
-    local base_name="$(basename "$rpath_ref")"
+    base_name="$(basename "$ref")"
 
-    bundle_lib "$base_name" "$homebrew_path/lib/$base_name" || true
-  done
-
-  # Process @loader_path references. Unlike @rpath, these resolve relative to
-  # the directory of the *loading* binary, which is wrong once the library has
-  # been moved into Frameworks, so rewrite them to @rpath.
-  echo "$loader_libs" | while IFS= read -r loader_ref; do
-    if [ -z "$loader_ref" ]; then
+    if [ -e "$fwks_path/$base_name" ]; then
+      # Already bundled. This also covers a dylib's own install name, which
+      # shows up in its own `otool -L` output.
+      source_path="$fwks_path/$base_name"
+    elif ! source_path="$(resolve_ref "$ref" "$origin_dir" "$bin")"; then
+      echo "Warning: Could not resolve $ref referenced by $bin" >&2
+      unresolved="$unresolved  $ref (referenced by $bin)
+"
       continue
     fi
 
-    local base_name="$(basename "$loader_ref")"
-
-    if bundle_lib "$base_name" "$homebrew_path/lib/$base_name"; then
-      echo "Updating $bin to reference @rpath/$base_name..."
-      install_name_tool -change "$loader_ref" "@rpath/$base_name" "$bin"
+    if ! bundle_lib "$base_name" "$source_path"; then
+      unresolved="$unresolved  $ref (referenced by $bin)
+"
+      continue
     fi
-  done
+
+    # An @rpath reference can stay as it is -- it resolves to the Frameworks
+    # directory through the RPATHs in the load chain. @loader_path and
+    # @executable_path are relative to the loading binary and to the
+    # executable, which is wrong once the library has been moved into
+    # Frameworks, so rewrite those to @rpath.
+    case "$ref" in
+      @rpath/* ) ;;
+      * )
+        echo "Updating $bin to reference @rpath/$base_name..."
+        install_name_tool -change "$ref" "@rpath/$base_name" "$bin";;
+    esac
+  done <<< "$relative_libs"
 }
 
 fix_references "$exec_path"
+strip_homebrew_rpaths "$exec_path"
+
+# A dependency that could not be found is not a warning to scroll past: the
+# bundle would build successfully and then fail to launch on any machine
+# without Homebrew, which is the whole point of this script.
+if [ -n "$unresolved" ]; then
+  echo >&2
+  echo "$0: the following dependencies are missing from the bundle:" >&2
+  printf '%s' "$unresolved" >&2
+  echo "The bundle would fail to launch on a machine without Homebrew." >&2
+  exit 1
+fi
 
 copy_runtime_data() {
   mkdir -p "$share_path"
@@ -200,7 +341,10 @@ fi
 
 # Sign the .app. Nested code has to be signed inside-out: sign the bundled
 # libraries first, then the bundle itself (`codesign --deep` is deprecated).
-find "$fwks_path" -name '*.dylib' -exec codesign --force --sign - {} +
+# Everything under Frameworks was copied there by bundle_lib, so every file is
+# Mach-O nested code and needs a signature -- matching on *.dylib would leave a
+# differently named library (e.g. a .so) unsigned and the bundle seal invalid.
+find "$fwks_path" -type f -exec codesign --force --sign - {} +
 codesign --force --sign - "$bundle_path"
 
 echo "Done!"
