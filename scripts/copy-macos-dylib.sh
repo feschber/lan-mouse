@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -eu
 
 homebrew_path=""
@@ -11,9 +11,10 @@ USAGE: $0 [-h] [-b homebrew_path] [exec_path]
 
 OPTIONS:
   -h, --help    Show this help message and exit
-  -b            Path to Homebrew installation (default: $homebrew_path)
+  -b            Path to Homebrew installation
+                (default: obtained from 'brew --prefix')
   exec_path     Path to the main executable in the app bundle
-                (default: get from `brew --prefix`)
+                (default: $exec_path)
 
 When macOS apps are linked to dynamic libraries (.dylib files),
 the fully qualified path to the library is embedded in the binary.
@@ -29,7 +30,13 @@ EOF
 while test $# -gt 0; do
     case "$1" in
         -h | --help ) usage; exit 0;;
-        -b | --homebrew ) homebrew_path="$1"; shift 2;;
+        -b | --homebrew )
+            if [ $# -lt 2 ]; then
+                echo "$0: $1 requires an argument" >&2
+                exit 1
+            fi
+            homebrew_path="$2"; shift 2;;
+        -* ) echo "$0: unknown option: $1" >&2; usage >&2; exit 1;;
         * ) exec_path="$1"; shift;;
     esac
 done
@@ -47,21 +54,62 @@ mkdir -p "$fwks_path"
 resources_path="$bundle_path/Contents/Resources"
 share_path="$resources_path/share"
 
+# Copy a library into the Frameworks directory unless it is already there, give
+# it an install name of @rpath/<base_name> and recursively process its own
+# dependencies.
+#
+# Usage: bundle_lib <base_name> <source_path>
+# Returns non-zero (after warning) if <source_path> does not exist.
+bundle_lib() {
+  local base_name="$1"
+  local source_path="$2"
+  local dest="$fwks_path/$base_name"
+
+  # Already bundled (this also covers a dylib's own install name, which shows
+  # up in its `otool -L` output).
+  if [ -e "$dest" ]; then
+    return 0
+  fi
+
+  if [ ! -e "$source_path" ]; then
+    echo "Warning: Could not find $base_name at $source_path" >&2
+    return 1
+  fi
+
+  echo "Copying $source_path -> $dest"
+  cp -f "$source_path" "$dest"
+  # Ensure the copied dylib is writable so that xattr -rd /path/to/Lan\ Mouse.app works.
+  chmod 644 "$dest"
+
+  echo "Updating $dest to have install_name of @rpath/$base_name..."
+  install_name_tool -id "@rpath/$base_name" "$dest"
+
+  # Recursively process this dylib
+  fix_references "$dest"
+
+  return 0
+}
+
 # Copy and fix references for a binary (executable or dylib)
 #
 # This function will:
-# - Copy any referenced dylibs from /opt/homebrew to the Frameworks directory
+# - Copy any referenced dylibs from the Homebrew prefix to the Frameworks directory
 # - Update the binary to reference the local copy instead
-# - Add the Frameworks directory to the binary's RPATH
 # - Recursively process the copied dylibs
+#
+# The Frameworks directory is added to the RPATH of the main executable only
+# (see the end of this script); dyld resolves @rpath using the RPATHs of every
+# binary in the load chain, so the bundled dylibs do not need their own.
 fix_references() {
   local bin="$1"
+  local libs rpath_libs loader_libs
 
   # Get all Homebrew libraries referenced by the binary (absolute paths)
-  libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" '$0 ~ homebrew {print $1}')
+  libs=$(otool -L "$bin" | awk -v homebrew="$homebrew_path" 'index($1, homebrew) == 1 {print $1}')
 
-  # Also get @rpath references and try to resolve them from Homebrew
+  # Also get @rpath/@loader_path references and try to resolve them from Homebrew
   rpath_libs=$(otool -L "$bin" | awk '$1 ~ /^@rpath\// {print $1}')
+  loader_libs=$(otool -L "$bin" | awk '$1 ~ /^@loader_path\// {print $1}')
 
   echo "$libs" | while IFS= read -r old_path; do
     if [ -z "$old_path" ]; then
@@ -69,53 +117,39 @@ fix_references() {
     fi
 
     local base_name="$(basename "$old_path")"
-    local dest="$fwks_path/$base_name"
 
-    if [ ! -e "$dest" ]; then
-      echo "Copying $old_path -> $dest"
-      cp -f "$old_path" "$dest"
-      # Ensure the copied dylib is writable so that xattr -rd /path/to/Lan\ Mouse.app works.
-      chmod 644 "$dest"
-
-      echo "Updating $dest to have install_name of @rpath/$base_name..."
-      install_name_tool -id "@rpath/$base_name" "$dest"
-
-      # Recursively process this dylib
-      fix_references "$dest"
-    fi
+    bundle_lib "$base_name" "$old_path"
 
     echo "Updating $bin to reference @rpath/$base_name..."
     install_name_tool -change "$old_path" "@rpath/$base_name" "$bin"
   done
 
-  # Process @rpath references
+  # Process @rpath references. These stay as they are -- they resolve to the
+  # Frameworks directory via the RPATH of the loading binary -- so the library
+  # only needs to be copied there.
   echo "$rpath_libs" | while IFS= read -r rpath_ref; do
     if [ -z "$rpath_ref" ]; then
       continue
     fi
 
     local base_name="$(basename "$rpath_ref")"
-    local dest="$fwks_path/$base_name"
 
-    # Skip if already processed
-    if [ -e "$dest" ]; then
+    bundle_lib "$base_name" "$homebrew_path/lib/$base_name" || true
+  done
+
+  # Process @loader_path references. Unlike @rpath, these resolve relative to
+  # the directory of the *loading* binary, which is wrong once the library has
+  # been moved into Frameworks, so rewrite them to @rpath.
+  echo "$loader_libs" | while IFS= read -r loader_ref; do
+    if [ -z "$loader_ref" ]; then
       continue
     fi
 
-    # Try to find the library in Homebrew
-    local source_path="$homebrew_path/lib/$base_name"
-    if [ -e "$source_path" ]; then
-      echo "Copying @rpath library $source_path -> $dest"
-      cp -f "$source_path" "$dest"
-      chmod 644 "$dest"
+    local base_name="$(basename "$loader_ref")"
 
-      echo "Updating $dest to have install_name of @rpath/$base_name..."
-      install_name_tool -id "@rpath/$base_name" "$dest"
-
-      # Recursively process this dylib
-      fix_references "$dest"
-    else
-      echo "Warning: Could not find @rpath library $base_name in $homebrew_path/lib"
+    if bundle_lib "$base_name" "$homebrew_path/lib/$base_name"; then
+      echo "Updating $bin to reference @rpath/$base_name..."
+      install_name_tool -change "$loader_ref" "@rpath/$base_name" "$bin"
     fi
   done
 }
@@ -159,12 +193,14 @@ if [ -f "$resources_path/target/menubar-template.png" ]; then
 fi
 
 # Ensure the main executable has our Frameworks path in its RPATH
-if ! otool -l "$exec_path" | grep -q "@executable_path/../Frameworks"; then
+if ! otool -l "$exec_path" | grep -qF "@executable_path/../Frameworks"; then
   echo "Adding RPATH to $exec_path"
   install_name_tool -add_rpath "@executable_path/../Frameworks" "$exec_path"
 fi
 
-# Se-sign the .app
-codesign --force --deep --sign - "$bundle_path"
+# Sign the .app. Nested code has to be signed inside-out: sign the bundled
+# libraries first, then the bundle itself (`codesign --deep` is deprecated).
+find "$fwks_path" -name '*.dylib' -exec codesign --force --sign - {} +
+codesign --force --sign - "$bundle_path"
 
 echo "Done!"
