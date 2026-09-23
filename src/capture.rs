@@ -37,6 +37,13 @@ pub(crate) enum ICaptureEvent {
     /// either the remote client leaving its device region,
     /// a new device entering the screen or the release bind.
     ClientEntered(u64),
+    /// The previously active client was left, i.e. capture
+    /// was released for the given handle. Mirrors
+    /// [`ICaptureEvent::ClientEntered`] for the leave side
+    /// and fires on every release path (release-bind chord,
+    /// remote `Leave`, explicit `Release` request, send
+    /// failure, or destroy of the active capture).
+    ClientLeft(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,6 +308,16 @@ impl CaptureTask {
                         capture.create(h, p).await?;
                     }
                     CaptureRequest::Destroy(h) => {
+                        // If the capture we're tearing down is the
+                        // currently-active one, treat this as a
+                        // release for hook purposes. The release_capture
+                        // path also clears active_client and flushes
+                        // pressed-key state to the peer; without this,
+                        // `cli deactivate` (or a hostname change
+                        // re-creating the client) would skip leave_hook.
+                        if self.active_client == Some(h) {
+                            self.release_capture(capture).await?;
+                        }
                         self.remove_capture(h);
                         capture.destroy(h).await?;
                     }
@@ -368,7 +385,11 @@ impl CaptureTask {
         if let Err(e) = self.conn.send(event, handle).await {
             const DUR: Duration = Duration::from_millis(500);
             debounce!(PREV_LOG, DUR, log::warn!("releasing capture: {e}"));
-            capture.release().await?;
+            // Funnel through release_capture so the leave_hook
+            // fires and active_client is cleared (without this the
+            // active_client field would stay stale until the next
+            // Begin from a different handle).
+            self.release_capture(capture).await?;
         }
         Ok(())
     }
@@ -376,6 +397,13 @@ impl CaptureTask {
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
+            // Surface the leave to the service layer so it can fire
+            // the per-client leave_hook. Sent before the network
+            // teardown below so we never race against the peer
+            // disappearing.
+            self.event_tx
+                .send(ICaptureEvent::ClientLeft(handle))
+                .expect("channel closed");
             // Synthesize key-up events for every key still held in the
             // capture's pressed_keys set BEFORE sending Leave. Without
             // this, pressing the release-bind chord (typically all four
