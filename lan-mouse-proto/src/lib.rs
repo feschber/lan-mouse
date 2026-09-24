@@ -21,6 +21,8 @@ pub enum ProtocolError {
     /// position type does not exist
     #[error("invalid event id: `{0}`")]
     InvalidPosition(#[from] TryFromPrimitiveError<Position>),
+    #[error("invalid cross-axis presence: `{0}`")]
+    InvalidCrossAxisPresence(u8),
 }
 
 /// Position of a client
@@ -71,7 +73,21 @@ pub enum ProtoEvent {
     /// `shadow_rs`'s `SHORT_COMMIT`. Old peers that don't
     /// recognize the event type silently skip it per the
     /// forward-compat handling in the receive loop.
-    Hello { commit: [u8; 8] },
+    Hello {
+        commit: [u8; 8],
+    },
+    Capabilities {
+        enter_with_position: bool,
+    },
+    /// Atomically enter a peer and place the cursor on its corresponding
+    /// physical edge. `serial` makes retries idempotent and rejects stale
+    /// transitions.
+    EnterWithPosition {
+        pos: Position,
+        cross_axis: Option<f32>,
+        epoch: u64,
+        serial: u32,
+    },
 }
 
 impl Display for ProtoEvent {
@@ -93,6 +109,22 @@ impl Display for ProtoEvent {
                 let s = std::str::from_utf8(commit).unwrap_or("????????");
                 write!(f, "Hello({s})")
             }
+            ProtoEvent::Capabilities {
+                enter_with_position,
+            } => {
+                write!(f, "Capabilities({enter_with_position})")
+            }
+            ProtoEvent::EnterWithPosition {
+                pos,
+                cross_axis,
+                epoch,
+                serial,
+            } => {
+                write!(
+                    f,
+                    "EnterWithPosition({pos}, {cross_axis:?}, {epoch}, {serial})"
+                )
+            }
         }
     }
 }
@@ -112,6 +144,8 @@ pub enum EventType {
     Leave,
     Ack,
     Hello,
+    Capabilities,
+    EnterWithPosition,
 }
 
 impl ProtoEvent {
@@ -135,6 +169,8 @@ impl ProtoEvent {
             ProtoEvent::Leave(_) => EventType::Leave,
             ProtoEvent::Ack(_) => EventType::Ack,
             ProtoEvent::Hello { .. } => EventType::Hello,
+            ProtoEvent::Capabilities { .. } => EventType::Capabilities,
+            ProtoEvent::EnterWithPosition { .. } => EventType::EnterWithPosition,
         }
     }
 }
@@ -196,6 +232,19 @@ impl TryFrom<[u8; MAX_EVENT_SIZE]> for ProtoEvent {
                 }
                 Ok(Self::Hello { commit })
             }
+            EventType::Capabilities => Ok(Self::Capabilities {
+                enter_with_position: decode_u8(&mut buf)? != 0,
+            }),
+            EventType::EnterWithPosition => Ok(Self::EnterWithPosition {
+                pos: decode_u8(&mut buf)?.try_into()?,
+                cross_axis: match decode_u8(&mut buf)? {
+                    0 => None,
+                    1 => Some(decode_f32(&mut buf)?),
+                    present => return Err(ProtocolError::InvalidCrossAxisPresence(present)),
+                },
+                epoch: decode_u64(&mut buf)?,
+                serial: decode_u32(&mut buf)?,
+            }),
         }
     }
 }
@@ -265,6 +314,23 @@ impl From<ProtoEvent> for ([u8; MAX_EVENT_SIZE], usize) {
                         encode_u8(buf, len, *b);
                     }
                 }
+                ProtoEvent::Capabilities {
+                    enter_with_position,
+                } => encode_u8(buf, len, enter_with_position as u8),
+                ProtoEvent::EnterWithPosition {
+                    pos,
+                    cross_axis,
+                    epoch,
+                    serial,
+                } => {
+                    encode_u8(buf, len, pos as u8);
+                    encode_u8(buf, len, cross_axis.is_some() as u8);
+                    if let Some(cross_axis) = cross_axis {
+                        encode_f32(buf, len, cross_axis);
+                    }
+                    encode_u64(buf, len, epoch);
+                    encode_u32(buf, len, serial);
+                }
             }
         }
         (buf, len)
@@ -285,7 +351,9 @@ macro_rules! decode_impl {
 
 decode_impl!(u8);
 decode_impl!(u32);
+decode_impl!(u64);
 decode_impl!(i32);
+decode_impl!(f32);
 decode_impl!(f64);
 
 macro_rules! encode_impl {
@@ -305,5 +373,78 @@ macro_rules! encode_impl {
 
 encode_impl!(u8);
 encode_impl!(u32);
+encode_impl!(u64);
 encode_impl!(i32);
+encode_impl!(f32);
 encode_impl!(f64);
+
+#[cfg(test)]
+mod tests {
+    use super::{Position, ProtoEvent};
+
+    #[test]
+    fn enter_with_position_round_trips_the_transition() {
+        // Given: a transition near the bottom of the source edge.
+        let event = ProtoEvent::EnterWithPosition {
+            pos: Position::Left,
+            cross_axis: Some(0.73),
+            epoch: 17,
+            serial: 42,
+        };
+
+        // When: the event crosses the protocol serialization boundary.
+        let (encoded, _) = event.into();
+        let decoded = ProtoEvent::try_from(encoded).expect("valid enter-with-position event");
+
+        // Then: the receiving peer sees the same edge and proportion.
+        match decoded {
+            ProtoEvent::EnterWithPosition {
+                pos,
+                cross_axis,
+                epoch,
+                serial,
+            } => {
+                assert!(matches!(pos, Position::Left));
+                assert_eq!(cross_axis, Some(0.73));
+                assert_eq!(epoch, 17);
+                assert_eq!(serial, 42);
+            }
+            _ => panic!("decoded the wrong event type"),
+        }
+    }
+
+    #[test]
+    fn enter_with_position_round_trips_without_a_cross_axis() {
+        let event = ProtoEvent::EnterWithPosition {
+            pos: Position::Right,
+            cross_axis: None,
+            epoch: 17,
+            serial: 43,
+        };
+
+        let (encoded, _) = event.into();
+        let decoded = ProtoEvent::try_from(encoded).expect("valid enter-with-position event");
+
+        match decoded {
+            ProtoEvent::EnterWithPosition { cross_axis, .. } => assert_eq!(cross_axis, None),
+            _ => panic!("decoded the wrong event type"),
+        }
+    }
+
+    #[test]
+    fn capabilities_round_trip_without_changing_hello() {
+        let event = ProtoEvent::Capabilities {
+            enter_with_position: true,
+        };
+
+        let (encoded, _) = event.into();
+        let decoded = ProtoEvent::try_from(encoded).expect("valid capabilities event");
+
+        match decoded {
+            ProtoEvent::Capabilities {
+                enter_with_position,
+            } => assert!(enter_with_position),
+            _ => panic!("decoded the wrong event type"),
+        }
+    }
+}

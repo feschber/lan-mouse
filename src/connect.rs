@@ -120,6 +120,10 @@ impl LanMouseConnection {
         self.recv_rx.recv().await.expect("channel closed")
     }
 
+    pub(crate) fn supports_enter_with_position(&self, handle: ClientHandle) -> bool {
+        self.client_manager.supports_enter_with_position(handle)
+    }
+
     pub(crate) async fn send(
         &self,
         event: ProtoEvent,
@@ -177,6 +181,7 @@ async fn connect_to_handle(
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
 ) -> Result<(), LanMouseConnectionError> {
     log::info!("client {handle} connecting ...");
+    client_manager.set_peer_protocol_capabilities(handle, false);
     // sending did not work, figure out active conn.
     if let Some(addrs) = client_manager.get_ips(handle) {
         let port = client_manager.get_port(handle).unwrap_or(DEFAULT_PORT);
@@ -210,9 +215,22 @@ async fn connect_to_handle(
         if let Err(e) = conn.send(&buf[..len]).await {
             log::debug!("hello send to {addr} failed: {e}");
         }
+        let (buf, len) = ProtoEvent::Capabilities {
+            enter_with_position: true,
+        }
+        .into();
+        if let Err(e) = conn.send(&buf[..len]).await {
+            log::debug!("capabilities send to {addr} failed: {e}");
+        }
 
         // poll connection for active
-        spawn_local(ping_pong(addr, conn.clone(), ping_response.clone()));
+        spawn_local(ping_pong(
+            addr,
+            conn.clone(),
+            ping_response.clone(),
+            client_manager.clone(),
+            handle,
+        ));
 
         // receiver
         spawn_local(receive_loop(
@@ -234,8 +252,21 @@ async fn ping_pong(
     addr: SocketAddr,
     conn: Arc<dyn Conn + Send + Sync>,
     ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
+    client_manager: ClientManager,
+    handle: ClientHandle,
 ) {
     loop {
+        if !client_manager.supports_enter_with_position(handle) {
+            let (buf, len) = ProtoEvent::Capabilities {
+                enter_with_position: true,
+            }
+            .into();
+            if let Err(e) = conn.send(&buf[..len]).await {
+                log::warn!("{addr}: capability send error `{e}`, closing connection");
+                let _ = conn.close().await;
+                return;
+            }
+        }
         let (buf, len) = ProtoEvent::Ping.into();
 
         // send 4 pings, at least one must be answered
@@ -281,6 +312,11 @@ async fn receive_loop(
                     ProtoEvent::Hello { commit } => {
                         client_manager.set_peer_commit(handle, Some(commit));
                     }
+                    ProtoEvent::Capabilities {
+                        enter_with_position,
+                    } => {
+                        client_manager.set_peer_protocol_capabilities(handle, enter_with_position);
+                    }
                     event => tx.send((handle, event)).expect("channel closed"),
                 }
             }
@@ -305,6 +341,7 @@ async fn disconnect(
     conns.lock().await.remove(&addr);
     client_manager.set_active_addr(handle, None);
     client_manager.set_peer_commit(handle, None);
+    client_manager.set_peer_protocol_capabilities(handle, false);
     let active: Vec<SocketAddr> = conns.lock().await.keys().copied().collect();
     log::info!("active connections: {active:?}");
 }

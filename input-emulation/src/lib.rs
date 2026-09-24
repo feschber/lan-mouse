@@ -8,6 +8,15 @@ use input_event::{Event, KeyboardEvent};
 
 pub use self::error::{EmulationCreationError, EmulationError, InputEmulationError};
 
+/// Edge used to place the cursor when a peer enters this device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WarpPosition {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
 #[cfg(windows)]
 mod windows;
 
@@ -178,6 +187,15 @@ impl InputEmulation {
         self.emulation.terminate().await
     }
 
+    pub async fn warp_cursor(
+        &mut self,
+        handle: EmulationHandle,
+        pos: WarpPosition,
+        cross_axis: f32,
+    ) -> Result<(), EmulationError> {
+        self.emulation.warp_cursor(handle, pos, cross_axis).await
+    }
+
     pub async fn release_keys(&mut self, handle: EmulationHandle) -> Result<(), EmulationError> {
         if let Some(keys) = self.pressed_keys.get_mut(&handle) {
             let keys = keys.drain().collect::<Vec<_>>();
@@ -237,4 +255,12 @@ trait Emulation: Send {
     async fn create(&mut self, handle: EmulationHandle);
     async fn destroy(&mut self, handle: EmulationHandle);
     async fn terminate(&mut self);
+    async fn warp_cursor(
+        &mut self,
+        _handle: EmulationHandle,
+        _pos: WarpPosition,
+        _cross_axis: f32,
+    ) -> Result<(), EmulationError> {
+        Ok(())
+    }
 }
