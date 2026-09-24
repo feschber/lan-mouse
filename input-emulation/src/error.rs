@@ -43,6 +43,9 @@ pub enum EmulationCreationError {
     #[cfg(libei)]
     #[error("libei backend: `{0}`")]
     Libei(#[from] LibeiEmulationCreationError),
+    #[cfg(evdev)]
+    #[error("evdev backend: `{0}`")]
+    Evdev(#[from] EvdevEmulationCreationError),
     #[cfg(rdp)]
     #[error("xdg-desktop-portal: `{0}`")]
     Xdp(#[from] XdpEmulationCreationError),
@@ -125,6 +128,13 @@ pub enum LibeiEmulationCreationError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Reis(#[from] reis::Error),
+}
+
+#[cfg(evdev)]
+#[derive(Debug, Error)]
+pub enum EvdevEmulationCreationError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[cfg(rdp)]
