@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ptr::addr_of_mut;
 
 use std::default::Default;
@@ -18,12 +18,13 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::core::{PCWSTR, w};
 
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, DispatchMessageW, EDD_GET_DEVICE_INTERFACE_NAME, GetMessageW,
-    HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PostThreadMessageW,
-    RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
-    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
+    CallNextHookEx, CreateWindowExW, DispatchMessageW, EDD_GET_DEVICE_INTERFACE_NAME, GetCursorPos,
+    GetMessageW, HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT,
+    PostThreadMessageW, RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN,
+    WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
 
 use input_event::{
@@ -32,6 +33,7 @@ use input_event::{
 };
 
 use super::{CaptureEvent, Position, display_util};
+use crate::enter_bind::EnterBindTracker;
 
 pub(crate) struct EventThread {
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
@@ -60,6 +62,10 @@ impl EventThread {
 
     pub(crate) fn destroy(&self, pos: Position) {
         self.client_update(ClientUpdate::Destroy(pos));
+    }
+
+    pub(crate) fn set_enter_binds(&self, binds: HashMap<Position, Vec<scancode::Linux>>) {
+        self.client_update(ClientUpdate::SetEnterBinds(binds));
     }
 
     fn exit(&self) {
@@ -96,6 +102,7 @@ enum RequestType {
 enum ClientUpdate {
     Create(Position),
     Destroy(Position),
+    SetEnterBinds(HashMap<Position, Vec<scancode::Linux>>),
 }
 
 fn blocking_send_event(pos: Position, event: CaptureEvent) {
@@ -122,6 +129,8 @@ thread_local! {
     static PREV_POS: Cell<Option<(i32, i32)>> = const { Cell::new(None) };
     /// displays and generation counter
     static DISPLAYS: RefCell<(Vec<RECT>, i32)> = const { RefCell::new((Vec::new(), 0)) };
+    /// binds that enter a client without crossing a screen edge
+    static ENTER_BINDS: RefCell<EnterBindTracker> = RefCell::new(EnterBindTracker::default());
 }
 
 fn get_msg() -> Option<MSG> {
@@ -295,6 +304,9 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
         display_util::clamp_to_display_bounds(displays, prev_pos, curr_pos)
     });
     ENTRY_POINT.replace(entry_point);
+    /* keys held now stop being observed for the duration of the
+     * capture, so they must not still count as held afterwards */
+    ENTER_BINDS.with_borrow_mut(|binds| binds.clear());
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
@@ -331,9 +343,62 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
     LRESULT(1)
 }
 
+/// Enter a client because its enter-bind was pressed rather than
+/// because the pointer crossed a screen edge.
+///
+/// The pointer is left where it is and simply becomes the reference
+/// for relative motion, the same role [`ENTRY_POINT`] plays after a
+/// barrier crossing.
+fn enter_via_bind(pos: Position) {
+    let mut point = Default::default();
+    let entry_point = match unsafe { GetCursorPos(&mut point) } {
+        Ok(()) => (point.x, point.y),
+        Err(e) => {
+            log::warn!("failed to query cursor position: {e}");
+            PREV_POS.get().unwrap_or((0, 0))
+        }
+    };
+    ACTIVE_CLIENT.replace(Some(pos));
+    ENTRY_POINT.replace(entry_point);
+    PREV_POS.replace(Some(entry_point));
+    log::info!("entering client @ {pos}: enter-bind pressed");
+    blocking_send_event(pos, CaptureEvent::Begin);
+}
+
+/// Feed a key event seen while no client is active into the
+/// enter-bind tracker, entering a client if one of the binds just
+/// completed. Returns whether the key was consumed.
+fn check_enter_bind(wparam: WPARAM, lparam: LPARAM) -> bool {
+    if ENTER_BINDS.with_borrow(|binds| binds.is_empty()) {
+        return false;
+    }
+    let Some(KeyboardEvent::Key { key, state, .. }) = to_key_event(wparam, lparam) else {
+        return false;
+    };
+    let Ok(key) = Linux::try_from(key) else {
+        return false;
+    };
+    let entered = CLIENTS.with_borrow(|clients| {
+        ENTER_BINDS.with_borrow_mut(|binds| binds.key_event(key, state == 1, clients))
+    });
+    let Some(pos) = entered else {
+        return false;
+    };
+    enter_via_bind(pos);
+    // The bind keys stay physically held — see EnterBindTracker::clear
+    ENTER_BINDS.with_borrow_mut(|binds| binds.clear());
+    true
+}
+
 unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     /* get active client if any */
     let Some(client) = ACTIVE_CLIENT.get() else {
+        /* no client active: the keys belong to this machine, unless
+         * they complete an enter-bind */
+        if check_enter_bind(wparam, lparam) {
+            /* swallow the key that triggered the switch */
+            return LRESULT(1);
+        }
         return CallNextHookEx(None, ncode, wparam, lparam);
     };
 
@@ -430,6 +495,9 @@ fn update_clients(request: ClientUpdate) {
                 }
             }
             CLIENTS.with_borrow_mut(|clients| clients.remove(&pos));
+        }
+        ClientUpdate::SetEnterBinds(binds) => {
+            ENTER_BINDS.with_borrow_mut(|tracker| tracker.set_binds(binds));
         }
     }
 }
