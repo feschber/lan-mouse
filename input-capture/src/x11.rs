@@ -23,6 +23,10 @@ impl Capture for X11InputCapture {
         Ok(())
     }
 
+    async fn set_enter_only(&mut self, _pos: Position, _enabled: bool) -> Result<(), CaptureError> {
+        Ok(())
+    }
+
     async fn release(&mut self) -> Result<(), CaptureError> {
         Ok(())
     }

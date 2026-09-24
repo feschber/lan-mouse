@@ -27,6 +27,9 @@ use super::error::MacOSEmulationCreationError;
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+// Tag events posted by Lan Mouse so the capture backend in this process can
+// distinguish them from physical input and avoid bidirectional capture loops.
+const LAN_MOUSE_EVENT_MARKER: i64 = 0x4c41_4e4d_4f55_5345;
 
 pub(crate) struct MacOSEmulation {
     /// global event source for all events
@@ -198,6 +201,7 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
         flags |= CGEventFlags::CGEventFlagNumericPad | CGEventFlags::CGEventFlagSecondaryFn;
     }
     event.set_flags(flags);
+    event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, LAN_MOUSE_EVENT_MARKER);
     event.post(CGEventTapLocation::HID);
     log::trace!("key event: {key} {state}");
 }
@@ -210,6 +214,7 @@ fn modifier_event(event_source: CGEventSource, depressed: XMods) {
     let flags = to_cgevent_flags(depressed);
     event.set_type(CGEventType::FlagsChanged);
     event.set_flags(flags);
+    event.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, LAN_MOUSE_EVENT_MARKER);
     event.post(CGEventTapLocation::HID);
     log::trace!("modifiers updated: {depressed:?}");
 }
@@ -333,6 +338,10 @@ impl Emulation for MacOSEmulation {
                         };
                         event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
                         event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
+                        event.set_integer_value_field(
+                            EventField::EVENT_SOURCE_USER_DATA,
+                            LAN_MOUSE_EVENT_MARKER,
+                        );
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::Button {
@@ -413,6 +422,10 @@ impl Emulation for MacOSEmulation {
                                 btn_num,
                             );
                         }
+                        event.set_integer_value_field(
+                            EventField::EVENT_SOURCE_USER_DATA,
+                            LAN_MOUSE_EVENT_MARKER,
+                        );
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::Axis {
@@ -443,6 +456,10 @@ impl Emulation for MacOSEmulation {
                                 return Ok(());
                             }
                         };
+                        event.set_integer_value_field(
+                            EventField::EVENT_SOURCE_USER_DATA,
+                            LAN_MOUSE_EVENT_MARKER,
+                        );
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
@@ -469,6 +486,10 @@ impl Emulation for MacOSEmulation {
                                 return Ok(());
                             }
                         };
+                        event.set_integer_value_field(
+                            EventField::EVENT_SOURCE_USER_DATA,
+                            LAN_MOUSE_EVENT_MARKER,
+                        );
                         event.post(CGEventTapLocation::HID);
                     }
                 }
