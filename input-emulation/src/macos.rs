@@ -1,6 +1,10 @@
 use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
+use core_foundation::{base::TCFType, string::CFString};
+use core_foundation_sys::preferences::{
+    CFPreferencesGetAppBooleanValue, kCFPreferencesAnyApplication,
+};
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
@@ -45,6 +49,8 @@ pub(crate) struct MacOSEmulation {
     modifier_state: Rc<Cell<XMods>>,
     /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
+    /// cached key for `natural_scroll_enabled`
+    natural_scroll_key: CFString,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -55,6 +61,22 @@ fn drag_event_type(button: u32) -> CGEventType {
         // middle, back, forward, and any other button all use OtherMouseDragged
         _ => CGEventType::OtherMouseDragged,
     }
+}
+
+/// Whether "Natural Scrolling" (`com.apple.swipescrolldirection`) is on. Real HID devices get
+/// this applied before their CGEvent exists; synthetic events bypass it, so we replicate it here
+/// to match what a real mouse would do on this Mac. See lan-mouse#481.
+fn natural_scroll_enabled(key: &CFString) -> bool {
+    let mut key_exists_and_valid = 0;
+    let value = unsafe {
+        CFPreferencesGetAppBooleanValue(
+            key.as_concrete_TypeRef(),
+            kCFPreferencesAnyApplication,
+            &mut key_exists_and_valid,
+        )
+    };
+    // default to enabled (macOS's factory default) if unset/invalid
+    key_exists_and_valid == 0 || value != 0
 }
 
 unsafe impl Send for MacOSEmulation {}
@@ -74,6 +96,7 @@ impl MacOSEmulation {
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
+            natural_scroll_key: CFString::new("com.apple.swipescrolldirection"),
         })
     }
 
@@ -420,7 +443,11 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
-                        let value = value as i32;
+                        let value = if natural_scroll_enabled(&self.natural_scroll_key) {
+                            value as i32
+                        } else {
+                            -value as i32
+                        };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -446,6 +473,11 @@ impl Emulation for MacOSEmulation {
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
+                        let value = if natural_scroll_enabled(&self.natural_scroll_key) {
+                            value
+                        } else {
+                            -value
+                        };
                         const LINES_PER_STEP: i32 = 3;
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
