@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/5.0.0">
+	<PropertyGroup>
+		<OutputType>Bundle</OutputType>
+		<TargetExt>.exe</TargetExt>
+		<Platforms>x64</Platforms>
+		<InstallerPlatform>x64</InstallerPlatform>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="WixToolset.Heat">
+		  <Version>5.0.2</Version>
+		</PackageReference>
+		<PackageReference Include="WixToolset.Bal.wixext">
+		  <Version>5.0.2</Version>
+		</PackageReference>
+	</ItemGroup>
+</Project>
