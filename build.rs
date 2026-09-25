@@ -6,6 +6,8 @@ fn main() {
         .build()
         .expect("shadow build");
 
+    embed_windows_icon();
+
     let unix = cfg!(unix);
     let macos = cfg!(target_os = "macos");
 
@@ -58,4 +60,19 @@ fn main() {
     if x11_emulation {
         println!("cargo::rustc-cfg=x11_emulation");
     }
+}
+
+/// Embed the app icon into the executable so Explorer, the Start menu
+/// and pinned taskbar shortcuts display it. Decided by the TARGET
+/// platform env var, not cfg!(), which describes the build script's
+/// host here.
+fn embed_windows_icon() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    println!("cargo::rerun-if-changed=build-aux/windows/lan-mouse.ico");
+    winresource::WindowsResource::new()
+        .set_icon("build-aux/windows/lan-mouse.ico")
+        .compile()
+        .expect("embed windows icon resource");
 }

@@ -25,6 +25,10 @@ panic = "abort"
 
 [build-dependencies]
 shadow-rs = "1.2.0"
+# compiles everywhere, only does work when targeting windows; kept
+# unconditional because target-gated build-dependencies break when
+# cross-compiling from windows to other platforms
+winresource = "0.1"
 
 [dependencies]
 input-event = { path = "input-event", version = "0.4.0" }
@@ -70,6 +74,9 @@ notify = "8.2.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [features]
 default = [
