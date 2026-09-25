@@ -100,7 +100,7 @@ impl Service {
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(emulation_backend, config.emulation_options(), listener);
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
