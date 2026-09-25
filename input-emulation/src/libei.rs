@@ -30,6 +30,7 @@ use input_event::{Event, KeyboardEvent, PointerEvent};
 
 use crate::error::EmulationError;
 
+use super::scroll_accumulator::Scroll120Accumulator;
 use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 
 #[derive(Clone, Default)]
@@ -41,6 +42,7 @@ struct Devices {
 }
 
 pub(crate) struct LibeiEmulation {
+    scroll_accumulator: Scroll120Accumulator,
     context: ei::Context,
     conn: event::Connection,
     devices: Devices,
@@ -141,6 +143,7 @@ impl LibeiEmulation {
         let ei_task = tokio::task::spawn_local(ei_handler);
 
         Ok(Self {
+            scroll_accumulator: Default::default(),
             context,
             conn,
             devices,
@@ -217,13 +220,21 @@ impl Emulation for LibeiEmulation {
                     }
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
-                    let scroll_device = self.devices.scroll.read().unwrap();
-                    if let Some((d, s)) = scroll_device.as_ref() {
-                        match axis {
-                            0 => s.scroll_discrete(0, value),
-                            _ => s.scroll_discrete(value, 0),
+                    // High-resolution wheels send fractions of a detent (16, 24,
+                    // ...), and a receiver that only acts on whole 120-unit steps
+                    // truncates every one of them to nothing. Accumulate so the
+                    // fractions add up to real steps instead of being discarded.
+                    let steps = self.scroll_accumulator.accumulate(axis, value);
+                    if steps != 0 {
+                        let scroll_device = self.devices.scroll.read().unwrap();
+                        if let Some((d, s)) = scroll_device.as_ref() {
+                            let value = steps * 120;
+                            match axis {
+                                0 => s.scroll_discrete(0, value),
+                                _ => s.scroll_discrete(value, 0),
+                            }
+                            d.frame(self.conn.serial(), now);
                         }
-                        d.frame(self.conn.serial(), now);
                     }
                 }
             },

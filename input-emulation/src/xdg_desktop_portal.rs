@@ -18,11 +18,13 @@ use input_event::{
 
 use crate::error::EmulationError;
 
+use super::scroll_accumulator::Scroll120Accumulator;
 use super::{Emulation, EmulationHandle, error::XdpEmulationCreationError};
 
 pub(crate) struct DesktopPortalEmulation {
     proxy: RemoteDesktop,
     session: Session<RemoteDesktop>,
+    scroll_accumulator: Scroll120Accumulator,
 }
 
 impl DesktopPortalEmulation {
@@ -49,7 +51,11 @@ impl DesktopPortalEmulation {
         log::debug!("started session");
         let session = session;
 
-        Ok(Self { proxy, session })
+        Ok(Self {
+            scroll_accumulator: Default::default(),
+            proxy,
+            session,
+        })
     }
 }
 
@@ -86,18 +92,24 @@ impl Emulation for DesktopPortalEmulation {
                         .await?;
                 }
                 PointerEvent::AxisDiscrete120 { axis, value } => {
-                    let axis = match axis {
-                        0 => Axis::Vertical,
-                        _ => Axis::Horizontal,
-                    };
-                    self.proxy
-                        .notify_pointer_axis_discrete(
-                            &self.session,
-                            axis,
-                            value / 120,
-                            Default::default(),
-                        )
-                        .await?;
+                    // `value / 120` silently rounds a high-resolution wheel's
+                    // sub-detent deltas (16, 24, ...) down to zero, so scrolling
+                    // does nothing at all. Accumulate them into whole steps.
+                    let steps = self.scroll_accumulator.accumulate(axis, value);
+                    if steps != 0 {
+                        let axis = match axis {
+                            0 => Axis::Vertical,
+                            _ => Axis::Horizontal,
+                        };
+                        self.proxy
+                            .notify_pointer_axis_discrete(
+                                &self.session,
+                                axis,
+                                steps,
+                                Default::default(),
+                            )
+                            .await?;
+                    }
                 }
                 PointerEvent::Axis {
                     time: _,
