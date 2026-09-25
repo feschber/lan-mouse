@@ -8,10 +8,19 @@
 //! scenario is "re-toggle Accessibility" — we don't route elsewhere.
 
 use std::ffi::{c_uchar, c_void};
-use std::process::Command;
-use std::sync::Once;
+use std::io;
+use std::os::fd::OwnedFd;
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, Once};
 
 use gtk::glib;
+
+// Launch Services can briefly retain the old registration after process exit;
+// `-n` guarantees the scheduled one-shot starts a fresh process.
+const RELAUNCH_AFTER_EXIT_SCRIPT: &str = "while IFS= read -r _; do :; done; exec \"$1\" -n \"$2\"";
+static RELAUNCH_SIGNAL: Mutex<Option<UnixStream>> = Mutex::new(None);
 
 // Apple declares `AXIsProcessTrusted` as returning `Boolean` (`unsigned char`),
 // NOT C's `bool`. Rust's `bool` has a strict bit pattern (0 or 1) so binding
@@ -118,31 +127,74 @@ pub fn open_accessibility_settings() {
     open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
 }
 
-/// Spawn a fresh instance of the current `.app` bundle via Launch Services
-/// after a 1-second delay, so the new instance starts *after* the current
-/// process has exited — otherwise Launch Services reactivates the existing
-/// process instead of launching a fresh one, and the stale IPC socket
-/// would block the new daemon subprocess. The caller is responsible for
-/// quitting the current process (e.g. `Application::quit()`) after this.
-pub fn relaunch_bundle() {
-    // Resolve the .app bundle path from the current executable: it lives
-    // at <bundle>/Contents/MacOS/lan-mouse, so three parents up is the
-    // bundle root we hand to `open`.
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let Some(bundle) = exe
-        .parent()
-        .and_then(std::path::Path::parent)
-        .and_then(std::path::Path::parent)
-    else {
-        return;
-    };
+/// Schedule a fresh instance of the current `.app` bundle.
+///
+/// The helper waits for this process to exit. When this GUI owns the daemon,
+/// that follows the graceful shutdown and reap performed by `main`, so the
+/// next instance cannot race its IPC socket. Separately managed daemons are
+/// left untouched. The caller should quit only after this returns successfully.
+pub fn relaunch_bundle() -> io::Result<()> {
+    let bundle = bundle_path(&std::env::current_exe()?)?;
+    let mut signal = RELAUNCH_SIGNAL
+        .lock()
+        .map_err(|_| io::Error::other("relaunch state lock poisoned"))?;
+    if signal.is_some() {
+        return Ok(());
+    }
 
-    // Trailing `&` backgrounds the sleep+open so our shell call returns
-    // immediately; the spawned shell is adopted by launchd once we exit.
-    let cmd = format!("(sleep 1 && open {bundle:?}) &");
-    let _ = Command::new("sh").arg("-c").arg(cmd).spawn();
+    // The daemon was spawned before this pair exists, so it cannot keep the
+    // write end alive. The OS closes it when this GUI process exits, which
+    // releases the helper without relying on a delay or a reusable PID.
+    let (read_end, write_end) = UnixStream::pair()?;
+    relaunch_command(&bundle, read_end).spawn().map(drop)?;
+    *signal = Some(write_end);
+    Ok(())
+}
+
+fn bundle_path(executable: &Path) -> io::Result<PathBuf> {
+    let macos = executable
+        .parent()
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "MacOS"))
+        .ok_or_else(invalid_bundle_path)?;
+    let contents = macos
+        .parent()
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "Contents"))
+        .ok_or_else(invalid_bundle_path)?;
+    let bundle = contents
+        .parent()
+        .filter(|directory| {
+            directory
+                .extension()
+                .is_some_and(|extension| extension == "app")
+        })
+        .ok_or_else(invalid_bundle_path)?;
+    Ok(bundle.to_owned())
+}
+
+fn invalid_bundle_path() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "executable is not inside <bundle>.app/Contents/MacOS",
+    )
+}
+
+fn relaunch_command(bundle: &Path, read_end: UnixStream) -> Command {
+    relaunch_command_with_opener(Path::new("/usr/bin/open"), bundle, read_end)
+}
+
+fn relaunch_command_with_opener(opener: &Path, bundle: &Path, read_end: UnixStream) -> Command {
+    let read_end: OwnedFd = read_end.into();
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(RELAUNCH_AFTER_EXIT_SCRIPT)
+        .arg("lan-mouse-relaunch")
+        .arg(opener)
+        .arg(bundle)
+        .stdin(Stdio::from(read_end))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
 }
 
 /// Make sure the app appears in System Settings → Privacy → Input Monitoring.
@@ -252,5 +304,101 @@ fn fire_initial_prompts_inner() {
     log::info!("ensuring Lan Mouse is listed under Accessibility > Post Event");
     unsafe {
         CGRequestPostEventAccess();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn resolves_only_expected_bundle_layout() {
+        let executable = Path::new("/Applications/Lan Mouse.app/Contents/MacOS/lan-mouse");
+        assert_eq!(
+            bundle_path(executable).unwrap(),
+            Path::new("/Applications/Lan Mouse.app")
+        );
+        assert!(bundle_path(Path::new("/usr/local/bin/lan-mouse")).is_err());
+        assert!(
+            bundle_path(Path::new(
+                "/Applications/Lan Mouse.app/Resources/MacOS/lan-mouse"
+            ))
+            .is_err()
+        );
+        assert!(
+            bundle_path(Path::new(
+                "/Applications/Lan Mouse/Contents/MacOS/lan-mouse"
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn relaunch_arguments_preserve_bundle_path() {
+        let bundle = Path::new("/Applications/Lan $Mouse `테스트`.app");
+        let (read_end, _write_end) = UnixStream::pair().unwrap();
+        let command = relaunch_command(bundle, read_end);
+        assert_eq!(command.get_program(), OsStr::new("/bin/sh"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("-c"),
+                OsStr::new(RELAUNCH_AFTER_EXIT_SCRIPT),
+                OsStr::new("lan-mouse-relaunch"),
+                OsStr::new("/usr/bin/open"),
+                bundle.as_os_str(),
+            ]
+        );
+    }
+
+    #[test]
+    fn relaunch_waits_for_exit_signal_past_old_delay() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "lan-mouse relaunch $`테스트`-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+
+        let opener = directory.join("open");
+        let marker = directory.join("opened");
+        fs::write(&opener, "#!/bin/sh\n/usr/bin/touch \"$2\"\n").unwrap();
+        fs::set_permissions(&opener, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let (read_end, write_end) = UnixStream::pair().unwrap();
+        let mut helper = relaunch_command_with_opener(&opener, &marker, read_end)
+            .spawn()
+            .unwrap();
+
+        // The old implementation opened after one second even if this process
+        // was still alive. Keep its exit signal alive past that boundary.
+        thread::sleep(Duration::from_millis(1250));
+        assert!(!marker.exists());
+
+        drop(write_end);
+        let status = (0..40).find_map(|_| {
+            let status = helper.try_wait().unwrap();
+            if status.is_none() {
+                thread::sleep(Duration::from_millis(25));
+            }
+            status
+        });
+        if status.is_none() {
+            let _ = helper.kill();
+            let _ = helper.wait();
+        }
+        assert!(status.is_some_and(|status| status.success()));
+        assert!(marker.exists());
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }
