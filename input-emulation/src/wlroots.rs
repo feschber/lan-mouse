@@ -213,6 +213,7 @@ impl VirtualInput {
                     PointerEvent::Axis { time, axis, value } => {
                         let axis: Axis = (axis as u32).try_into()?;
                         self.pointer.axis(time, axis, value);
+                        self.pointer.axis_source(AxisSource::Continuous);
                         self.pointer.frame();
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
