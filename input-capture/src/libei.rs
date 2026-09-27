@@ -1,9 +1,9 @@
 use ashpd::{
     desktop::{
-        Session,
+        PersistMode, Session,
         input_capture::{
             Activated, ActivatedBarrier, Barrier, BarrierID, Capabilities, CreateSessionOptions,
-            InputCapture, Region, ReleaseOptions, Zones,
+            InputCapture, Region, ReleaseOptions, StartOptions, Zones,
         },
     },
     enumflags2::BitFlags,
@@ -18,12 +18,13 @@ use reis::{
 use std::{
     cell::Cell,
     collections::HashMap,
-    env, io,
+    env, fs, io,
     num::NonZeroU32,
     os::unix::net::UnixStream,
+    path::PathBuf,
     pin::Pin,
     rc::Rc,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Once},
     task::{Context, Poll},
 };
 use tokio::{
@@ -178,16 +179,91 @@ async fn update_barriers(
     Ok((barriers, id_map))
 }
 
+fn capabilities() -> BitFlags<Capabilities> {
+    Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen
+}
+
+/// Get the path to the InputCapture token file
+fn get_token_file_path() -> PathBuf {
+    let cache_dir = env::var("XDG_CACHE_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = env::var("HOME").expect("HOME not set");
+            PathBuf::from(home).join(".cache")
+        });
+
+    cache_dir.join("lan-mouse").join("input-capture.token")
+}
+
+/// Read the InputCapture token from file
+fn read_token() -> Option<String> {
+    let token_path = get_token_file_path();
+    match fs::read_to_string(&token_path) {
+        // an interrupted write leaves the file empty, which is no token at all
+        Ok(token) => Some(token.trim().to_string()).filter(|t| !t.is_empty()),
+        Err(_) => None,
+    }
+}
+
+/// Write the InputCapture token to file
+fn write_token(token: &str) -> io::Result<()> {
+    let token_path = get_token_file_path();
+    if let Some(parent) = token_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(&token_path, token)?;
+    Ok(())
+}
+
 async fn create_session(
     input_capture: &InputCapture,
 ) -> std::result::Result<(Session<InputCapture>, BitFlags<Capabilities>), ashpd::Error> {
     log::debug!("creating input capture session");
-    let create_session_options = CreateSessionOptions::default().set_capabilities(
-        Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
-    );
-    input_capture
-        .create_session(None, create_session_options)
-        .await
+    match input_capture.create_session2(Default::default()).await {
+        Ok(session) => {
+            log::debug!("starting input capture session ...");
+            let options = StartOptions::default()
+                .set_capabilities(capabilities())
+                .set_persist_mode(PersistMode::ExplicitlyRevoked)
+                .set_restore_token(read_token());
+            let response = match input_capture
+                .start(&session, None, options)
+                .await
+                .and_then(|request| request.response())
+            {
+                Ok(response) => response,
+                Err(e) => {
+                    // ashpd's Session has no Drop, so an unclosed one stays on the bus
+                    if let Err(close_err) = session.close().await {
+                        log::warn!("session.close(): {close_err}");
+                    }
+                    return Err(e);
+                }
+            };
+
+            // The restore token is only valid once, we need to re-save it each time
+            if let Some(token_str) = response.restore_token() {
+                if let Err(e) = write_token(token_str) {
+                    log::warn!("failed to save InputCapture token: {e}");
+                }
+            }
+            Ok((session, response.capabilities()))
+        }
+        Err(ashpd::Error::RequiresVersion(required, current)) => {
+            // create_session runs again on every barrier or device change
+            static LOGGED: Once = Once::new();
+            LOGGED.call_once(|| {
+                log::info!(
+                    "InputCapture portal is v{current}, persistence needs v{required}: permission cannot be remembered"
+                )
+            });
+            let options = CreateSessionOptions::default().set_capabilities(capabilities());
+            input_capture.create_session(None, options).await
+        }
+        Err(e) => Err(e),
+    }
 }
 
 async fn connect_to_eis(
