@@ -1,4 +1,4 @@
-use super::{Emulation, EmulationHandle, error::EmulationError};
+use super::{Emulation, EmulationHandle, EmulationOptions, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
 use core_graphics::base::CGFloat;
@@ -24,8 +24,6 @@ use tokio::{sync::Notify, task::JoinHandle};
 
 use super::error::MacOSEmulationCreationError;
 
-const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
-const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct MacOSEmulation {
@@ -45,6 +43,8 @@ pub(crate) struct MacOSEmulation {
     modifier_state: Rc<Cell<XMods>>,
     /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
+    /// key-repeat timing (initial delay + interval between repeats)
+    options: EmulationOptions,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -60,7 +60,7 @@ fn drag_event_type(button: u32) -> CGEventType {
 unsafe impl Send for MacOSEmulation {}
 
 impl MacOSEmulation {
-    pub(crate) fn new() -> Result<Self, MacOSEmulationCreationError> {
+    pub(crate) fn new(options: EmulationOptions) -> Result<Self, MacOSEmulationCreationError> {
         request_macos_emulation_permissions()?;
 
         let event_source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
@@ -74,6 +74,7 @@ impl MacOSEmulation {
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
+            options,
         })
     }
 
@@ -92,16 +93,18 @@ impl MacOSEmulation {
         let event_source = self.event_source.clone();
         let notify = self.notify_repeat_task.clone();
         let modifiers = self.modifier_state.clone();
+        let repeat_delay = self.options.key_repeat_delay;
+        let repeat_interval = self.options.key_repeat_interval;
         let repeat_task = tokio::task::spawn_local(async move {
             let stop = tokio::select! {
-                _ = tokio::time::sleep(DEFAULT_REPEAT_DELAY) => false,
+                _ = tokio::time::sleep(repeat_delay) => false,
                 _ = notify.notified() => true,
             };
             if !stop {
                 loop {
                     key_event(event_source.clone(), key, 1, modifiers.get());
                     tokio::select! {
-                        _ = tokio::time::sleep(DEFAULT_REPEAT_INTERVAL) => {},
+                        _ = tokio::time::sleep(repeat_interval) => {},
                         _ = notify.notified() => break,
                     }
                 }
