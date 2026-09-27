@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Display,
-    mem::swap,
     task::{Poll, ready},
 };
 
@@ -119,6 +118,10 @@ impl Display for Backend {
 pub struct InputCapture {
     /// capture backend
     capture: Box<dyn Capture>,
+    /// handles used only to return an incoming emulated pointer
+    enter_only_handles: HashSet<CaptureHandle>,
+    /// number of enter-only handles at each position
+    enter_only_positions: HashMap<Position, usize>,
     /// keys pressed by active capture
     pressed_keys: HashSet<scancode::Linux>,
     /// map from position to ids
@@ -132,17 +135,46 @@ pub struct InputCapture {
 impl InputCapture {
     /// create a new client with the given id
     pub async fn create(&mut self, id: CaptureHandle, pos: Position) -> Result<(), CaptureError> {
+        self.create_inner(id, pos, false).await
+    }
+
+    /// Create a capture used only to return an incoming emulated pointer.
+    pub async fn create_enter_only(
+        &mut self,
+        id: CaptureHandle,
+        pos: Position,
+    ) -> Result<(), CaptureError> {
+        self.create_inner(id, pos, true).await
+    }
+
+    async fn create_inner(
+        &mut self,
+        id: CaptureHandle,
+        pos: Position,
+        enter_only: bool,
+    ) -> Result<(), CaptureError> {
         assert!(!self.id_map.contains_key(&id));
 
         self.id_map.insert(id, pos);
 
-        if let Some(v) = self.position_map.get_mut(&pos) {
+        let result = if let Some(v) = self.position_map.get_mut(&pos) {
             v.push(id);
             Ok(())
         } else {
             self.position_map.insert(pos, vec![id]);
             self.capture.create(pos).await
+        };
+        result?;
+
+        if enter_only {
+            self.enter_only_handles.insert(id);
+            let count = self.enter_only_positions.entry(pos).or_default();
+            *count += 1;
+            if *count == 1 {
+                self.capture.set_enter_only(pos, true).await?;
+            }
         }
+        Ok(())
     }
 
     /// destroy the client with the given id, if it exists
@@ -151,6 +183,18 @@ impl InputCapture {
             .id_map
             .remove(&id)
             .expect("no position for this handle");
+
+        if self.enter_only_handles.remove(&id) {
+            let count = self
+                .enter_only_positions
+                .get_mut(&pos)
+                .expect("no enter-only count for this handle");
+            *count -= 1;
+            if *count == 0 {
+                self.enter_only_positions.remove(&pos);
+                self.capture.set_enter_only(pos, false).await?;
+            }
+        }
 
         log::debug!("destroying capture {id} @ {pos}");
         let remaining = self.position_map.get_mut(&pos).expect("id vector");
@@ -194,6 +238,8 @@ impl InputCapture {
         let capture = create(backend).await?;
         Ok(Self {
             capture,
+            enter_only_handles: Default::default(),
+            enter_only_positions: Default::default(),
             id_map: Default::default(),
             pending: Default::default(),
             position_map: Default::default(),
@@ -228,49 +274,53 @@ impl Stream for InputCapture {
             return Poll::Ready(Some(Ok(e)));
         }
 
-        // ready
-        let event = ready!(self.capture.poll_next_unpin(cx));
+        loop {
+            // ready
+            let event = ready!(self.capture.poll_next_unpin(cx));
 
-        // stream closed
-        let event = match event {
-            Some(e) => e,
-            None => return Poll::Ready(None),
-        };
+            // stream closed
+            let event = match event {
+                Some(e) => e,
+                None => return Poll::Ready(None),
+            };
 
-        // error occurred
-        let (pos, event) = match event {
-            Ok(e) => e,
-            Err(e) => return Poll::Ready(Some(Err(e))),
-        };
+            // error occurred
+            let (pos, event) = match event {
+                Ok(e) => e,
+                Err(e) => return Poll::Ready(Some(Err(e))),
+            };
+            let event_requires_enter_only = self.capture.last_event_requires_enter_only();
 
-        // handle key presses
-        if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })) = event {
-            self.update_pressed_keys(key, state);
-        }
+            // handle key presses
+            if let CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key { key, state, .. })) =
+                event
+            {
+                self.update_pressed_keys(key, state);
+            }
 
-        let len = self
-            .position_map
-            .get(&pos)
-            .map(|ids| ids.len())
-            .unwrap_or(0);
+            let handles = self
+                .position_map
+                .get(&pos)
+                .map(|ids| {
+                    route_handles(
+                        ids,
+                        &self.enter_only_handles,
+                        event,
+                        event_requires_enter_only,
+                    )
+                })
+                .unwrap_or_default();
 
-        match len {
-            0 => Poll::Pending,
-            1 => Poll::Ready(Some(Ok((
-                self.position_map.get(&pos).expect("no id")[0],
-                event,
-            )))),
-            _ => {
-                let mut position_map = HashMap::new();
-                swap(&mut self.position_map, &mut position_map);
-                {
-                    for &id in position_map.get(&pos).expect("position") {
+            match handles.len() {
+                0 => continue,
+                1 => return Poll::Ready(Some(Ok((handles[0], event)))),
+                _ => {
+                    for id in handles {
                         self.pending.push_back((id, event));
                     }
-                }
-                swap(&mut self.position_map, &mut position_map);
 
-                Poll::Ready(Some(Ok(self.pending.pop_front().expect("event"))))
+                    return Poll::Ready(Some(Ok(self.pending.pop_front().expect("event"))));
+                }
             }
         }
     }
@@ -284,11 +334,36 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
     /// destroy the client with the given id, if it exists
     async fn destroy(&mut self, pos: Position) -> Result<(), CaptureError>;
 
+    /// Mark a position as an incoming-pointer return edge.
+    async fn set_enter_only(&mut self, pos: Position, enabled: bool) -> Result<(), CaptureError>;
+
+    /// Whether the most recently yielded event must go only to enter-only handles.
+    fn last_event_requires_enter_only(&self) -> bool {
+        false
+    }
+
     /// release mouse
     async fn release(&mut self) -> Result<(), CaptureError>;
 
     /// destroy the input capture
     async fn terminate(&mut self) -> Result<(), CaptureError>;
+}
+
+fn route_handles(
+    handles: &[CaptureHandle],
+    enter_only_handles: &HashSet<CaptureHandle>,
+    event: CaptureEvent,
+    event_requires_enter_only: bool,
+) -> Vec<CaptureHandle> {
+    if event == CaptureEvent::Begin && event_requires_enter_only {
+        handles
+            .iter()
+            .copied()
+            .filter(|handle| enter_only_handles.contains(handle))
+            .collect()
+    } else {
+        handles.to_vec()
+    }
 }
 
 async fn create_backend(
@@ -348,4 +423,113 @@ async fn create(
         }
     }
     Err(CaptureCreationError::NoAvailableBackend)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashMap, HashSet, VecDeque},
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use async_trait::async_trait;
+    use futures::task::noop_waker_ref;
+    use futures_core::Stream;
+
+    use super::{Capture, CaptureError, CaptureEvent, InputCapture, Position, route_handles};
+
+    struct QueuedCapture {
+        events: VecDeque<(Position, CaptureEvent, bool)>,
+        last_event_requires_enter_only: bool,
+    }
+
+    impl Stream for QueuedCapture {
+        type Item = Result<(Position, CaptureEvent), CaptureError>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            match self.events.pop_front() {
+                Some((pos, event, requires_enter_only)) => {
+                    self.last_event_requires_enter_only = requires_enter_only;
+                    Poll::Ready(Some(Ok((pos, event))))
+                }
+                None => Poll::Pending,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Capture for QueuedCapture {
+        async fn create(&mut self, _pos: Position) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        async fn destroy(&mut self, _pos: Position) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        async fn set_enter_only(
+            &mut self,
+            _pos: Position,
+            _enabled: bool,
+        ) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn last_event_requires_enter_only(&self) -> bool {
+            self.last_event_requires_enter_only
+        }
+
+        async fn release(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        async fn terminate(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn emulated_begin_is_routed_only_to_enter_only_handles() {
+        let enter_only = HashSet::from([2]);
+        assert_eq!(
+            route_handles(&[1, 2], &enter_only, CaptureEvent::Begin, true),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn physical_begin_is_routed_to_all_handles() {
+        let enter_only = HashSet::from([2]);
+        assert_eq!(
+            route_handles(&[1, 2], &enter_only, CaptureEvent::Begin, false),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn unroutable_event_does_not_stall_the_next_ready_event() {
+        let backend = QueuedCapture {
+            events: VecDeque::from([
+                (Position::Left, CaptureEvent::Begin, true),
+                (Position::Left, CaptureEvent::Begin, false),
+            ]),
+            last_event_requires_enter_only: false,
+        };
+        let mut capture = InputCapture {
+            capture: Box::new(backend),
+            enter_only_handles: HashSet::new(),
+            enter_only_positions: HashMap::new(),
+            pressed_keys: HashSet::new(),
+            id_map: HashMap::from([(7, Position::Left)]),
+            pending: VecDeque::new(),
+            position_map: HashMap::from([(Position::Left, vec![7])]),
+        };
+        let mut context = Context::from_waker(noop_waker_ref());
+
+        match Pin::new(&mut capture).poll_next(&mut context) {
+            Poll::Ready(Some(Ok((7, CaptureEvent::Begin)))) => {}
+            other => panic!("unexpected poll result: {other:?}"),
+        }
+    }
 }
