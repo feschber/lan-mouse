@@ -344,7 +344,7 @@ fn send_pointer_event(pos: Position, event: PointerEvent) {
             let (dx, dy) = (dx + pdx, dy + pdy);
             let motion = PointerEvent::Motion { time, dx, dy };
             if try_send_event(pos, CaptureEvent::Input(Event::Pointer(motion))).is_err() {
-                log::debug!("event channel full, deferring motion ({dx}, {dy})");
+                log::trace!("event channel full, deferring motion ({dx}, {dy})");
                 PENDING_MOTION.set((dx, dy));
             }
             return;
