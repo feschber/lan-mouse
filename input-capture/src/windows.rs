@@ -9,6 +9,7 @@ use tokio::sync::mpsc::{Receiver, channel};
 
 use super::{Capture, CaptureError, CaptureEvent, Position};
 
+mod diag;
 mod display_util;
 mod event_thread;
 

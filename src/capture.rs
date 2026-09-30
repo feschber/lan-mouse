@@ -274,7 +274,11 @@ impl CaptureTask {
         loop {
             tokio::select! {
                 event = capture.next() => match event {
-                    Some(event) => self.handle_capture_event(capture, event?).await?,
+                    Some(event) => {
+                        let started = Instant::now();
+                        self.handle_capture_event(capture, event?).await?;
+                        crate::diag::record_capture_event(started);
+                    }
                     None => return Ok(()),
                 },
                 (handle, event) = self.conn.recv() => {

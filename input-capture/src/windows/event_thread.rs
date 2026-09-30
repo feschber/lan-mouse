@@ -31,7 +31,7 @@ use input_event::{
     scancode::{self, Linux},
 };
 
-use super::{CaptureEvent, Position, display_util};
+use super::{CaptureEvent, Position, diag, display_util};
 
 pub(crate) struct EventThread {
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
@@ -310,8 +310,14 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let active = check_client_activation(wparam, lparam);
 
+    let is_motion = wparam.0 == WM_MOUSEMOVE as usize;
+    let os_time = unsafe { (*(lparam.0 as *const MSLLHOOKSTRUCT)).time };
+
     /* no client was active */
     if !active {
+        if is_motion {
+            diag::record_motion(os_time, diag::Outcome::Passed, None);
+        }
         return CallNextHookEx(None, ncode, wparam, lparam);
     }
 
@@ -327,6 +333,15 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
 
     /* notify mainthread (motion is deferred, other events dropped if sending too fast) */
     send_pointer_event(pos, pointer_event);
+
+    if is_motion {
+        let outcome = if PENDING_MOTION.get() == (0., 0.) {
+            diag::Outcome::Sent
+        } else {
+            diag::Outcome::Deferred
+        };
+        diag::record_motion(os_time, outcome, Some(ENTRY_POINT.get()));
+    }
 
     /* don't pass event to applications */
     LRESULT(1)
