@@ -84,6 +84,7 @@ struct Globals {
 #[derive(Clone, Debug)]
 struct Output {
     wl_output: WlOutput,
+    xdg_output: ZxdgOutputV1,
     global: Global,
     info: Option<OutputInfo>,
     pending_info: OutputInfo,
@@ -377,11 +378,11 @@ impl LayerShellInputCapture {
 
 impl State {
     fn update_output_info(&mut self, name: u32) {
-        let output = self
-            .outputs
-            .iter_mut()
-            .find(|o| o.global.name == name)
-            .expect("output not found");
+        // the output may already have been removed while its events were queued
+        let Some(output) = self.outputs.iter_mut().find(|o| o.global.name == name) else {
+            log::debug!("ignoring info update for removed output {name}");
+            return;
+        };
         if output.has_xdg_info {
             output.info.replace(output.pending_info.clone());
             self.update_windows();
@@ -397,11 +398,13 @@ impl State {
                 &self.qh,
                 global.name,
             );
-            self.globals
-                .xdg_output_manager
-                .get_xdg_output(&wl_output, &self.qh, global.name);
+            let xdg_output =
+                self.globals
+                    .xdg_output_manager
+                    .get_xdg_output(&wl_output, &self.qh, global.name);
             self.outputs.push(Output {
                 wl_output,
+                xdg_output,
                 global,
                 info: None,
                 has_xdg_info: false,
@@ -414,6 +417,7 @@ impl State {
         self.outputs.retain(|o| {
             if o.global.name == name {
                 log::debug!("{o} (global {:?}) removed", o.global);
+                o.xdg_output.destroy();
                 o.wl_output.release();
                 false
             } else {
@@ -954,11 +958,11 @@ impl Dispatch<ZxdgOutputV1, u32> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let output = state
-            .outputs
-            .iter_mut()
-            .find(|o| o.global.name == *name)
-            .expect("output");
+        // events can still arrive for an output whose global was just removed
+        let Some(output) = state.outputs.iter_mut().find(|o| o.global.name == *name) else {
+            log::debug!("ignoring xdg_output event for removed output {name}");
+            return;
+        };
 
         log::debug!("xdg_output {name} - {event:?}");
         match event {
