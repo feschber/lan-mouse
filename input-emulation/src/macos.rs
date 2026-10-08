@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use bitflags::bitflags;
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
-    CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
+    CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
 };
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField,
@@ -252,6 +252,28 @@ fn get_display_bounds(display: CGDirectDisplayID) -> (CGFloat, CGFloat, CGFloat,
     }
 }
 
+/// Returns the active display closest to the given point.
+/// Used when the cursor is not on any display, which can happen
+/// after the display configuration changed (e.g. a display was removed).
+fn get_nearest_display(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
+    let displays = match CGDisplay::active_displays() {
+        Ok(displays) => displays,
+        Err(error) => {
+            log::warn!("error getting active displays: {error}");
+            return None;
+        }
+    };
+    let distance_sq = |display| {
+        let (min_x, min_y, max_x, max_y) = get_display_bounds(display);
+        let dx = (min_x - x).max(x - (max_x - 1.)).max(0.);
+        let dy = (min_y - y).max(y - (max_y - 1.)).max(0.);
+        dx * dx + dy * dy
+    };
+    displays
+        .into_iter()
+        .min_by(|&a, &b| distance_sq(a).total_cmp(&distance_sq(b)))
+}
+
 fn clamp_to_screen_space(
     current_x: CGFloat,
     current_y: CGFloat,
@@ -265,7 +287,9 @@ fn clamp_to_screen_space(
     //   Clamp the mouse to the current display
     // Else If the point is on a display
     //   Clamp the mouse to the new display
-    let current_display = match get_display_at_point(current_x, current_y) {
+    let current_display = match get_display_at_point(current_x, current_y)
+        .or_else(|| get_nearest_display(current_x, current_y))
+    {
         Some(display) => display,
         None => {
             log::warn!("could not get current display!");
