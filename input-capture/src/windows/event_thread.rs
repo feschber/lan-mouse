@@ -6,8 +6,8 @@ use std::default::Default;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::error::SendError;
 use windows::Win32::Foundation::{FALSE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     DEVMODEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
@@ -40,7 +40,7 @@ pub(crate) struct EventThread {
 }
 
 impl EventThread {
-    pub(crate) fn new(event_tx: Sender<(Position, CaptureEvent)>) -> Self {
+    pub(crate) fn new(event_tx: UnboundedSender<(Position, CaptureEvent)>) -> Self {
         let request_buffer = Default::default();
         let (thread, thread_id) = start(event_tx, Arc::clone(&request_buffer));
         Self {
@@ -98,15 +98,13 @@ enum ClientUpdate {
     Destroy(Position),
 }
 
-fn blocking_send_event(pos: Position, event: CaptureEvent) {
-    EVENT_TX.with_borrow_mut(|tx| tx.as_mut().unwrap().blocking_send((pos, event)).unwrap())
-}
-
-fn try_send_event(
+// Hook callbacks must neither block nor drop key/button releases behind mouse motion.
+// ponytail: Coalesce motion if a stalled consumer causes backlog; preserve key/button ordering.
+fn send_event(
     pos: Position,
     event: CaptureEvent,
-) -> Result<(), TrySendError<(Position, CaptureEvent)>> {
-    EVENT_TX.with_borrow_mut(|tx| tx.as_mut().unwrap().try_send((pos, event)))
+) -> Result<(), SendError<(Position, CaptureEvent)>> {
+    EVENT_TX.with_borrow(|tx| tx.as_ref().unwrap().send((pos, event)))
 }
 
 thread_local! {
@@ -115,7 +113,7 @@ thread_local! {
     /// currently active client
     static ACTIVE_CLIENT: Cell<Option<Position>> = const { Cell::new(None) };
     /// input event channel
-    static EVENT_TX: RefCell<Option<Sender<(Position, CaptureEvent)>>> = const { RefCell::new(None) };
+    static EVENT_TX: RefCell<Option<UnboundedSender<(Position, CaptureEvent)>>> = const { RefCell::new(None) };
     /// position of barrier entry
     static ENTRY_POINT: Cell<(i32, i32)> = const { Cell::new((0, 0)) };
     /// previous mouse position
@@ -137,7 +135,7 @@ fn get_msg() -> Option<MSG> {
 }
 
 fn start(
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: UnboundedSender<(Position, CaptureEvent)>,
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
 ) -> (thread::JoinHandle<()>, u32) {
     /* condition variable to wait for thead id */
@@ -157,7 +155,7 @@ fn start(
 
 fn start_routine(
     ready: Arc<(Condvar, Mutex<Option<u32>>)>,
-    event_tx: Sender<(Position, CaptureEvent)>,
+    event_tx: UnboundedSender<(Position, CaptureEvent)>,
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
 ) {
     EVENT_TX.replace(Some(event_tx));
@@ -299,12 +297,18 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
     let active = ACTIVE_CLIENT.get().expect("active client");
-    blocking_send_event(active, CaptureEvent::Begin);
+    if let Err(e) = send_event(active, CaptureEvent::Begin) {
+        log::warn!("e: {e}");
+    }
 
     ret
 }
 
 unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if ncode < 0 {
+        return CallNextHookEx(None, ncode, wparam, lparam);
+    }
+
     let active = check_client_activation(wparam, lparam);
 
     /* no client was active */
@@ -322,8 +326,8 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         return LRESULT(1);
     };
 
-    /* notify mainthread (drop events if sending too fast) */
-    if let Err(e) = try_send_event(pos, CaptureEvent::Input(Event::Pointer(pointer_event))) {
+    /* notify mainthread */
+    if let Err(e) = send_event(pos, CaptureEvent::Input(Event::Pointer(pointer_event))) {
         log::warn!("e: {e}");
     }
 
@@ -332,6 +336,10 @@ unsafe extern "system" fn mouse_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
 }
 
 unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if ncode < 0 {
+        return CallNextHookEx(None, ncode, wparam, lparam);
+    }
+
     /* get active client if any */
     let Some(client) = ACTIVE_CLIENT.get() else {
         return CallNextHookEx(None, ncode, wparam, lparam);
@@ -342,7 +350,7 @@ unsafe extern "system" fn kybrd_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM)
         return LRESULT(1);
     };
 
-    if let Err(e) = try_send_event(client, CaptureEvent::Input(Event::Keyboard(key_event))) {
+    if let Err(e) = send_event(client, CaptureEvent::Input(Event::Keyboard(key_event))) {
         log::warn!("e: {e}");
     }
 
@@ -545,5 +553,49 @@ fn to_mouse_event(wparam: WPARAM, lparam: LPARAM) -> Option<PointerEvent> {
             log::warn!("unknown mouse event: {w:?}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motion_burst_does_not_drop_modifier_release() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        EVENT_TX.replace(Some(tx));
+        let pos = Position::Left;
+        let key = Linux::KeyLeftCtrl as u32;
+        send_event(
+            pos,
+            CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+                time: 0,
+                key,
+                state: 1,
+            })),
+        )
+        .unwrap();
+        for _ in 0..32 {
+            send_event(
+                pos,
+                CaptureEvent::Input(Event::Pointer(PointerEvent::Motion {
+                    time: 0,
+                    dx: 1.0,
+                    dy: 0.0,
+                })),
+            )
+            .unwrap();
+        }
+        let release = CaptureEvent::Input(Event::Keyboard(KeyboardEvent::Key {
+            time: 0,
+            key,
+            state: 0,
+        }));
+        send_event(pos, release).unwrap();
+        for _ in 0..33 {
+            rx.try_recv().unwrap();
+        }
+        assert_eq!(rx.try_recv().unwrap(), (pos, release));
+        EVENT_TX.take();
     }
 }

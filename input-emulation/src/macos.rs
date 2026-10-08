@@ -18,9 +18,8 @@ use keycode::{KeyMap, KeyMapping};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::{sync::Notify, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 use super::error::MacOSEmulationCreationError;
 
@@ -32,7 +31,7 @@ pub(crate) struct MacOSEmulation {
     /// global event source for all events
     event_source: CGEventSource,
     /// task handle for key repeats
-    repeat_task: Option<JoinHandle<()>>,
+    repeat_task: Option<(u16, JoinHandle<()>)>,
     /// current state of the mouse buttons (tracked by evdev button code)
     pressed_buttons: HashSet<u32>,
     /// button previously pressed (evdev button code)
@@ -43,8 +42,6 @@ pub(crate) struct MacOSEmulation {
     button_click_state: i64,
     /// current modifier state
     modifier_state: Rc<Cell<XMods>>,
-    /// notify to cancel key repeats
-    notify_repeat_task: Arc<Notify>,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -72,7 +69,6 @@ impl MacOSEmulation {
             previous_button_click: None,
             button_click_state: 0,
             repeat_task: None,
-            notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
         })
     }
@@ -83,50 +79,23 @@ impl MacOSEmulation {
     }
 
     async fn spawn_repeat_task(&mut self, key: u16) {
-        // there can only be one repeating key and it's
-        // always the last to be pressed
         self.cancel_repeat_task().await;
-        // initial key event
-        key_event(self.event_source.clone(), key, 1, self.modifier_state.get());
-        // repeat task
         let event_source = self.event_source.clone();
-        let notify = self.notify_repeat_task.clone();
         let modifiers = self.modifier_state.clone();
         let repeat_task = tokio::task::spawn_local(async move {
-            let stop = tokio::select! {
-                _ = tokio::time::sleep(DEFAULT_REPEAT_DELAY) => false,
-                _ = notify.notified() => true,
-            };
-            if !stop {
-                loop {
-                    key_event(event_source.clone(), key, 1, modifiers.get());
-                    tokio::select! {
-                        _ = tokio::time::sleep(DEFAULT_REPEAT_INTERVAL) => {},
-                        _ = notify.notified() => break,
-                    }
-                }
+            tokio::time::sleep(DEFAULT_REPEAT_DELAY).await;
+            loop {
+                key_event(event_source.clone(), key, 1, modifiers.get());
+                tokio::time::sleep(DEFAULT_REPEAT_INTERVAL).await;
             }
-            // Always release the key with the correct CGKeyCode, regardless of
-            // whether the repeat loop ran. This matches @feschber's review
-            // request: "still release the key repeat task but with the correct
-            // code."
-            //
-            // Do NOT call update_modifiers here: `key` is a Mac CGKeyCode but
-            // update_modifiers expects a Linux evdev scancode, and the two
-            // codespaces collide (e.g. Mac LeftShift=56 == Linux KeyLeftAlt=56,
-            // Mac Down=125 == Linux KeyLeftMeta=125), corrupting modifier
-            // state for chords like Shift+Option+X or Cmd+Down. Modifier state
-            // is owned by the main consume() loop, which already calls
-            // update_modifiers with the correct Linux scancode on the real key
-            // release event from the client.
-            key_event(event_source.clone(), key, 0, modifiers.get());
         });
-        self.repeat_task = Some(repeat_task);
+        self.repeat_task = Some((key, repeat_task));
     }
 
     async fn cancel_repeat_task(&mut self) {
-        if let Some(task) = self.repeat_task.take() {
-            self.notify_repeat_task.notify_waiters();
+        if let Some((_, task)) = self.repeat_task.take() {
+            // Stopping repeats must not release a key that is still physically held.
+            task.abort();
             let _ = task.await;
         }
     }
@@ -333,6 +302,7 @@ impl Emulation for MacOSEmulation {
                         };
                         event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_X, dx as i64);
                         event.set_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y, dy as i64);
+                        event.set_flags(to_cgevent_flags(self.modifier_state.get()));
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::Button {
@@ -413,6 +383,7 @@ impl Emulation for MacOSEmulation {
                                 btn_num,
                             );
                         }
+                        event.set_flags(to_cgevent_flags(self.modifier_state.get()));
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::Axis {
@@ -443,6 +414,7 @@ impl Emulation for MacOSEmulation {
                                 return Ok(());
                             }
                         };
+                        event.set_flags(to_cgevent_flags(self.modifier_state.get()));
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
@@ -469,6 +441,7 @@ impl Emulation for MacOSEmulation {
                                 return Ok(());
                             }
                         };
+                        event.set_flags(to_cgevent_flags(self.modifier_state.get()));
                         event.post(CGEventTapLocation::HID);
                     }
                 }
@@ -501,13 +474,21 @@ impl Emulation for MacOSEmulation {
                         },
                     };
                     let is_modifier = update_modifiers(&self.modifier_state, key, state);
-                    if is_modifier {
-                        modifier_event(self.event_source.clone(), self.modifier_state.get());
-                    }
-                    match state {
-                        // pressed
-                        1 => self.spawn_repeat_task(code).await,
-                        _ => self.cancel_repeat_task().await,
+                    key_event(
+                        self.event_source.clone(),
+                        code,
+                        state,
+                        self.modifier_state.get(),
+                    );
+                    if !is_modifier && state == 1 {
+                        self.spawn_repeat_task(code).await;
+                    } else if state == 0
+                        && self
+                            .repeat_task
+                            .as_ref()
+                            .is_some_and(|(key, _)| *key == code)
+                    {
+                        self.cancel_repeat_task().await;
                     }
                 }
                 KeyboardEvent::Modifiers {
@@ -527,9 +508,13 @@ impl Emulation for MacOSEmulation {
 
     async fn create(&mut self, _handle: EmulationHandle) {}
 
-    async fn destroy(&mut self, _handle: EmulationHandle) {}
+    async fn destroy(&mut self, _handle: EmulationHandle) {
+        self.cancel_repeat_task().await;
+    }
 
-    async fn terminate(&mut self) {}
+    async fn terminate(&mut self) {
+        self.cancel_repeat_task().await;
+    }
 }
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {
@@ -607,5 +592,84 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn emulation() -> MacOSEmulation {
+        MacOSEmulation {
+            event_source: CGEventSource::new(CGEventSourceStateID::Private).unwrap(),
+            repeat_task: None,
+            pressed_buttons: HashSet::new(),
+            previous_button: None,
+            previous_button_click: None,
+            button_click_state: 0,
+            modifier_state: Rc::new(Cell::new(XMods::empty())),
+        }
+    }
+
+    #[tokio::test]
+    async fn replacing_repeat_does_not_release_held_modifier() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut emulation = emulation();
+                update_modifiers(
+                    &emulation.modifier_state,
+                    scancode::Linux::KeyLeftCtrl as u32,
+                    1,
+                );
+                emulation.spawn_repeat_task(0).await;
+                let first = emulation.repeat_task.as_ref().unwrap().1.abort_handle();
+                emulation.spawn_repeat_task(1).await;
+                assert!(first.is_finished());
+                assert_eq!(emulation.modifier_state.get(), XMods::ControlMask);
+                emulation.cancel_repeat_task().await;
+                assert!(emulation.repeat_task.is_none());
+                assert_eq!(emulation.modifier_state.get(), XMods::ControlMask);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn destroy_and_terminate_stop_repeat_tasks() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut emulation = emulation();
+                emulation.spawn_repeat_task(0).await;
+                let task = emulation.repeat_task.as_ref().unwrap().1.abort_handle();
+                emulation.destroy(0).await;
+                assert!(task.is_finished());
+                assert!(emulation.repeat_task.is_none());
+                emulation.spawn_repeat_task(0).await;
+                let task = emulation.repeat_task.as_ref().unwrap().1.abort_handle();
+                emulation.terminate().await;
+                assert!(task.is_finished());
+                assert!(emulation.repeat_task.is_none());
+            })
+            .await;
+    }
+
+    #[test]
+    fn ctrl_and_command_release_clear_pointer_flags() {
+        let modifiers = Cell::new(XMods::empty());
+        for key in [scancode::Linux::KeyLeftCtrl, scancode::Linux::KeyLeftMeta] {
+            assert!(update_modifiers(&modifiers, key as u32, 1));
+        }
+        assert_eq!(
+            to_cgevent_flags(modifiers.get()),
+            CGEventFlags::CGEventFlagControl | CGEventFlags::CGEventFlagCommand
+        );
+        assert!(!update_modifiers(
+            &modifiers,
+            scancode::Linux::KeyG as u32,
+            0
+        ));
+        for key in [scancode::Linux::KeyLeftMeta, scancode::Linux::KeyLeftCtrl] {
+            assert!(update_modifiers(&modifiers, key as u32, 0));
+        }
+        assert_eq!(to_cgevent_flags(modifiers.get()), CGEventFlags::empty());
     }
 }

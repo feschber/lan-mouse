@@ -50,6 +50,8 @@ Most current desktop environments and operating systems are fully supported, thi
 > - **Wayfire**: If you are using [Wayfire](https://github.com/WayfireWM/wayfire), make sure to use a recent version (must be newer than October 23rd) and **add `shortcuts-inhibit` to the list of plugins in your wayfire config!**
 > Otherwise input capture will not work.
 >
+> - **Windows**: Some system shortcuts, including Win+G (Xbox Game Bar), may still execute on the Windows host while input is captured for a remote device.
+>
 > - **Windows**: The mouse cursor will be invisible when sending input to a Windows system if
 > there is no real mouse connected to the machine.
 
