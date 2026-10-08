@@ -204,6 +204,16 @@ fn is_arrow_key(key: u16) -> bool {
     )
 }
 
+/// Mac virtual key codes for F1 through F20.
+const MAC_FUNCTION_KEYS: [u16; 20] = [
+    0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, // F1-F10
+    0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A, // F11-F20
+];
+
+fn is_function_key(key: u16) -> bool {
+    MAC_FUNCTION_KEYS.contains(&key)
+}
+
 fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods) {
     let event = match CGEvent::new_keyboard_event(event_source, key, state != 0) {
         Ok(e) => e,
@@ -219,6 +229,12 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
     // arrow chords fall through to the focused app.
     if is_arrow_key(key) {
         flags |= CGEventFlags::CGEventFlagNumericPad | CGEventFlags::CGEventFlagSecondaryFn;
+    }
+    // Hardware-generated F-keys carry SecondaryFn, and macOS stores F-key
+    // shortcuts (System Settings > Keyboard Shortcuts) with that flag, so
+    // without it e.g. a screenshot bound to F13 never fires.
+    if is_function_key(key) {
+        flags |= CGEventFlags::CGEventFlagSecondaryFn;
     }
     event.set_flags(flags);
     event.post(CGEventTapLocation::HID);
@@ -639,5 +655,23 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_arrow_key, is_function_key};
+
+    #[test]
+    fn function_keys_are_recognized() {
+        // F1, F12, F13 (Print Screen fallback), F15 (Pause fallback), F20
+        for key in [0x7A, 0x6F, 0x69, 0x71, 0x5A] {
+            assert!(is_function_key(key), "{key:#x}");
+        }
+        // 'a', Return, Escape and the arrow keys are not function keys
+        for key in [0x00, 0x24, 0x35, 0x7B, 0x7E] {
+            assert!(!is_function_key(key), "{key:#x}");
+        }
+        assert!(is_arrow_key(0x7B) && !is_arrow_key(0x69));
     }
 }
