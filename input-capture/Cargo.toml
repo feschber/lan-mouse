@@ -11,7 +11,6 @@ futures = "0.3.28"
 futures-core = "0.3.30"
 log = "0.4.22"
 input-event = { path = "../input-event", version = "0.4.0" }
-memmap = "0.7"
 tempfile = "3.25.0"
 thiserror = "2.0.0"
 tokio = { version = "1.32.0", features = [
