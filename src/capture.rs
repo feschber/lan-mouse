@@ -50,7 +50,7 @@ pub(crate) enum ICaptureEvent {
 pub(crate) enum CaptureType {
     /// a normal input capture
     Default,
-    /// A capture only interested in [`CaptureEvent::Begin`] events.
+    /// A capture interested only in begin/return events.
     /// The capture is released immediately, if there is no
     /// Default capture at the same position.
     EnterOnly,
@@ -206,6 +206,18 @@ impl CaptureTask {
             .2
     }
 
+    async fn create_backend_capture(
+        capture: &mut InputCapture,
+        handle: CaptureHandle,
+        pos: Position,
+        capture_type: CaptureType,
+    ) -> Result<(), CaptureError> {
+        match capture_type {
+            CaptureType::Default => capture.create(handle, pos).await,
+            CaptureType::EnterOnly => capture.create_enter_only(handle, pos).await,
+        }
+    }
+
     async fn run(mut self) {
         loop {
             if let Err(e) = self.do_capture().await {
@@ -258,9 +270,9 @@ impl CaptureTask {
 
     async fn create_captures(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
         let captures = self.captures.clone();
-        for (handle, pos, _type) in captures {
+        for (handle, pos, capture_type) in captures {
             tokio::select! {
-                r = capture.create(handle, pos) => r?,
+                r = Self::create_backend_capture(capture, handle, pos, capture_type) => r?,
                 _ = self.cancellation_token.cancelled() => return Ok(()),
             }
         }
@@ -305,7 +317,7 @@ impl CaptureTask {
                     CaptureRequest::Release => self.release_capture(capture).await?,
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
-                        capture.create(h, p).await?;
+                        Self::create_backend_capture(capture, h, p, t).await?;
                     }
                     CaptureRequest::Destroy(h) => {
                         // If the capture we're tearing down is the
@@ -344,6 +356,9 @@ impl CaptureTask {
             return self.release_capture(capture).await;
         }
 
+        let capture_type = self.get_type(handle);
+        let pos = self.get_pos(handle);
+
         if event == CaptureEvent::Begin {
             self.event_tx
                 .send(ICaptureEvent::CaptureBegin(handle))
@@ -351,10 +366,10 @@ impl CaptureTask {
         }
 
         // enter only capture (for incoming connections)
-        if self.get_type(handle) == CaptureType::EnterOnly {
+        if capture_type == CaptureType::EnterOnly {
             // if there is no active outgoing connection at the current capture,
             // we release the capture
-            if !self.is_default_capture_at(self.get_pos(handle)) {
+            if !self.is_default_capture_at(pos) {
                 log::info!("releasing capture: no active client at this position");
                 capture.release().await?;
             }
