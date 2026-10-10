@@ -20,6 +20,9 @@ use wayland_client::{
 
 #[derive(Debug, Error)]
 pub enum EmulationError {
+    #[cfg(wlroots)]
+    #[error("Wayland input output remained blocked for 500ms")]
+    WaylandOutputBlocked,
     #[error("event stream closed")]
     EndOfStream,
     #[cfg(libei)]
@@ -33,6 +36,17 @@ pub enum EmulationError {
     Ashpd(#[from] ashpd::Error),
     #[error("io error: `{0}`")]
     Io(#[from] io::Error),
+}
+
+impl InputEmulationError {
+    /// Only a bounded output stall is safe to retry without requesting new permissions.
+    pub fn is_recoverable_output_stall(&self) -> bool {
+        #[cfg(wlroots)]
+        if matches!(self, Self::Emulate(EmulationError::WaylandOutputBlocked)) {
+            return true;
+        }
+        false
+    }
 }
 
 #[derive(Debug, Error)]
