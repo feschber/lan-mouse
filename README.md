@@ -31,6 +31,14 @@ There are currently no mitigations in place for timing side-channel attacks.
 
 ## OS Support
 
+On macOS, capture stops and reports Disabled if its state lock cannot be acquired
+promptly, its bounded event queue cannot accept input, the cursor worker fails,
+or the system disables the event tap. Cursor visibility is restored without
+waiting for the capture-state lock. Use the frontend's Reenable action after
+resolving the cause; an external supervisor is not required for this path.
+Synchronous CoreGraphics calls themselves are not bounded. A callback that
+returns after exceeding one second also disables capture.
+
 Most current desktop environments and operating systems are fully supported, this includes
 - GNOME >= 45
 - KDE Plasma >= 6.1
