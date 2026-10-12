@@ -1,12 +1,15 @@
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::IpAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use thiserror::Error;
 
 use lan_mouse_ipc::{
-    ClientHandle, ConnectionError, FrontendEvent, FrontendRequest, IpcError, Position,
-    connect_async,
+    AsyncFrontendEventReader, AsyncFrontendRequestWriter, ClientHandle, ConnectionError,
+    DiscoveredDevice, FrontendEvent, FrontendRequest, IpcError, Position, connect_async,
 };
 
 #[derive(Debug, Error)]
@@ -75,6 +78,20 @@ enum CliSubcommand {
     RemoveAuthorizedKey { sha256_fingerprint: String },
     /// save configuration to file
     SaveConfig,
+    /// list Lan Mouse devices found on the local network
+    Discover,
+    /// add and activate a client for a device listed by `discover`
+    AddDiscovered {
+        /// name, hostname or id of the device
+        device: String,
+        /// side of this screen the device is on
+        pos: Position,
+    },
+    /// allow a device listed by `discover` to control this device
+    AuthorizeDiscovered {
+        /// name, hostname or id of the device
+        device: String,
+    },
 }
 
 pub async fn run(args: CliArgs) -> Result<(), CliError> {
@@ -172,6 +189,114 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
                 .await?
         }
         CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
+        CliSubcommand::Discover => {
+            let devices = discovered(&mut rx, &mut tx).await?;
+            if devices.is_empty() {
+                println!("no devices found");
+            }
+            for device in devices {
+                let os = device.os.as_deref().unwrap_or("unknown");
+                let ips = device
+                    .ips
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "{} ({os}): {}, port {} [{ips}]",
+                    device.name, device.hostname, device.port
+                );
+                if let Some(fingerprint) = device.fingerprint {
+                    println!("    fingerprint: {fingerprint}");
+                }
+                println!("    id: {}", device.id);
+            }
+        }
+        CliSubcommand::AddDiscovered { device, pos } => {
+            let devices = discovered(&mut rx, &mut tx).await?;
+            if let Some(d) = find_device(&devices, &device) {
+                tx.request(FrontendRequest::AddDiscovered(d.id.clone(), pos))
+                    .await?;
+                println!("added {} ({pos})", d.name);
+            }
+        }
+        CliSubcommand::AuthorizeDiscovered { device } => {
+            let devices = discovered(&mut rx, &mut tx).await?;
+            if let Some(d) = find_device(&devices, &device) {
+                match &d.fingerprint {
+                    Some(fingerprint) => {
+                        tx.request(FrontendRequest::AuthorizeKey(
+                            d.name.clone(),
+                            fingerprint.clone(),
+                        ))
+                        .await?;
+                        println!("authorized {} ({fingerprint})", d.name);
+                    }
+                    None => eprintln!("{} did not announce a fingerprint", d.name),
+                }
+            }
+        }
+    }
+    wait_until_handled(&mut rx, &mut tx).await
+}
+
+/// Wait until the service has handled every request sent so far.
+/// Exiting right after a request can lose it: on Windows, closing a
+/// connection with unread data resets it, and the service then drops
+/// the requests it has not read yet.
+async fn wait_until_handled(
+    rx: &mut AsyncFrontendEventReader,
+    tx: &mut AsyncFrontendRequestWriter,
+) -> Result<(), CliError> {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or_default()
+        ^ u64::from(std::process::id());
+    tx.request(FrontendRequest::Ping(token)).await?;
+    while let Some(e) = rx.next().await {
+        if let FrontendEvent::Pong(t) = e? {
+            if t == token {
+                break;
+            }
+        }
     }
     Ok(())
+}
+
+/// the discovered device matching `query` by name, hostname or id
+fn find_device<'a>(devices: &'a [DiscoveredDevice], query: &str) -> Option<&'a DiscoveredDevice> {
+    let found = devices
+        .iter()
+        .filter(|d| {
+            [&d.id, &d.name, &d.hostname]
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(query))
+        })
+        .collect::<Vec<_>>();
+    match found.as_slice() {
+        [d] => Some(d),
+        [] => {
+            eprintln!("no device \"{query}\" found, see `discover`");
+            None
+        }
+        _ => {
+            eprintln!("\"{query}\" matches more than one device, use its id");
+            None
+        }
+    }
+}
+
+/// devices the service currently sees on the local network
+async fn discovered(
+    rx: &mut AsyncFrontendEventReader,
+    tx: &mut AsyncFrontendRequestWriter,
+) -> Result<Vec<DiscoveredDevice>, CliError> {
+    tx.request(FrontendRequest::EnumerateDiscovered).await?;
+    while let Some(e) = rx.next().await {
+        if let FrontendEvent::Discovered(devices) = e? {
+            return Ok(devices);
+        }
+    }
+    Ok(vec![])
 }

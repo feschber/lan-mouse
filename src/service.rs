@@ -4,14 +4,15 @@ use crate::{
     config::{Config, ConfigClient},
     connect::LanMouseConnection,
     crypto,
+    discovery::{self, Discovery, DiscoveryEvent},
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
 };
 use futures::StreamExt;
 use lan_mouse_ipc::{
-    AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
-    IpcListenerCreationError, Position, Status,
+    AsyncFrontendListener, ClientHandle, DiscoveredDevice, FrontendEvent, FrontendRequest,
+    IpcError, IpcListenerCreationError, Position, Status,
 };
 use log;
 use std::{
@@ -44,6 +45,10 @@ pub struct Service {
     emulation: Emulation,
     /// dns resolver
     resolver: DnsResolver,
+    /// mDNS advertisement & discovery (None if disabled or unavailable)
+    discovery: Option<Discovery>,
+    /// devices currently visible on the local network, by id
+    discovered: HashMap<String, DiscoveredDevice>,
     /// frontend listener
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
@@ -106,12 +111,29 @@ impl Service {
         let resolver = DnsResolver::new()?;
 
         let port = config.port();
+
+        // advertise this device and look for others on the local network
+        let discovery = if config.discovery() {
+            match Discovery::new(port, &public_key_fingerprint) {
+                Ok(discovery) => Some(discovery),
+                Err(e) => {
+                    log::warn!("device discovery unavailable: {e}");
+                    None
+                }
+            }
+        } else {
+            log::info!("device discovery disabled");
+            None
+        };
+
         let service = Self {
             config,
             capture,
             emulation,
             frontend_listener,
             resolver,
+            discovery,
+            discovered: Default::default(),
             authorized_keys,
             public_key_fingerprint,
             client_manager,
@@ -147,6 +169,7 @@ impl Service {
                 event = self.emulation.event() => self.handle_emulation_event(event),
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
+                event = next_discovery_event(&mut self.discovery) => self.handle_discovery_event(event),
                 _ = self.config.changed() => self.handle_config_change(),
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
@@ -159,6 +182,10 @@ impl Service {
         self.emulation.terminate().await;
         log::debug!("terminating dns resolver ...");
         self.resolver.terminate().await;
+        if let Some(discovery) = &mut self.discovery {
+            log::debug!("terminating discovery ...");
+            discovery.terminate().await;
+        }
 
         Ok(())
     }
@@ -218,6 +245,12 @@ impl Service {
                 self.update_leave_hook(handle, leave_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::EnumerateDiscovered => self.notify_discovered(),
+            FrontendRequest::AddDiscovered(id, pos) => {
+                self.add_discovered(id, pos);
+                self.save_config();
+            }
+            FrontendRequest::Ping(token) => self.notify_frontend(FrontendEvent::Pong(token)),
         }
     }
 
@@ -250,6 +283,7 @@ impl Service {
         for c in self.config.clients() {
             let handle = self.client_manager.add_with_config(c);
             log::info!("added client {handle}");
+            self.update_discovered_ips(handle);
             let (c, s) = self.client_manager.get_state(handle).unwrap();
             if s.active {
                 self.client_manager.deactivate_client(handle);
@@ -303,6 +337,9 @@ impl Service {
             EmulationEvent::PortChanged(port) => match port {
                 Ok(port) => {
                     self.port = port;
+                    if let Some(discovery) = &mut self.discovery {
+                        discovery.set_port(port);
+                    }
                     self.notify_frontend(FrontendEvent::PortChanged(port, None));
                 }
                 Err(e) => self
@@ -387,6 +424,105 @@ impl Service {
         }
     }
 
+    fn handle_discovery_event(&mut self, event: DiscoveryEvent) {
+        match event {
+            DiscoveryEvent::Resolved(device) => {
+                match self.discovered.get(&device.id) {
+                    Some(known) if *known == device => return,
+                    Some(_) => log::debug!("updated {}: {device:?}", device.name),
+                    None => log::info!(
+                        "discovered {} ({}), port {}",
+                        device.name,
+                        device.hostname,
+                        device.port
+                    ),
+                }
+                self.discovered.insert(device.id.clone(), device);
+            }
+            DiscoveryEvent::Removed(id) => {
+                let Some(device) = self.discovered.remove(&id) else {
+                    return;
+                };
+                log::info!("{} is no longer visible on the network", device.name);
+            }
+        }
+        for handle in self.client_manager.registered_clients() {
+            self.update_discovered_ips(handle);
+        }
+        self.notify_discovered();
+    }
+
+    /// use the addresses a client's device announces via mDNS
+    fn update_discovered_ips(&mut self, handle: ClientHandle) {
+        let Some(hostname) = self.client_manager.get_hostname(handle) else {
+            return;
+        };
+        let mut ips = self
+            .discovered
+            .values()
+            .filter(|device| discovery::matches_hostname(device, &hostname))
+            .flat_map(|device| device.ips.iter().copied())
+            .collect::<Vec<_>>();
+        // keep the last known addresses when a device disappears: mDNS
+        // records can expire on flaky Wi-Fi while the device is still
+        // reachable, and connecting tries all addresses in parallel anyway
+        if ips.is_empty() {
+            return;
+        }
+        ips.sort();
+        ips.dedup();
+        if self.client_manager.set_discovered_ips(handle, ips) {
+            self.broadcast_client(handle);
+        }
+    }
+
+    fn notify_discovered(&mut self) {
+        let mut devices = self.discovered.values().cloned().collect::<Vec<_>>();
+        devices.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        self.notify_frontend(FrontendEvent::Discovered(devices));
+    }
+
+    /// add a client for a discovered device (or reuse the existing one) and activate it
+    fn add_discovered(&mut self, id: String, pos: Position) {
+        let Some(device) = self.discovered.get(&id).cloned() else {
+            log::warn!("no discovered device with id {id}");
+            self.notify_frontend(FrontendEvent::Error(format!(
+                "device is no longer visible on the network: {id}"
+            )));
+            return;
+        };
+        let existing = self
+            .client_manager
+            .registered_clients()
+            .into_iter()
+            .find(|&h| {
+                self.client_manager
+                    .get_hostname(h)
+                    .is_some_and(|hostname| discovery::matches_hostname(&device, &hostname))
+            });
+        let handle = match existing {
+            Some(handle) => {
+                log::info!("client {handle} already refers to {}", device.name);
+                self.update_port(handle, device.port);
+                self.update_pos(handle, pos);
+                handle
+            }
+            None => {
+                let handle = self.client_manager.add_client();
+                self.client_manager
+                    .set_hostname(handle, Some(device.hostname.clone()));
+                self.client_manager.set_port(handle, device.port);
+                self.client_manager.set_pos(handle, pos);
+                self.update_discovered_ips(handle);
+                log::info!("added client {handle} for {} ({pos})", device.name);
+                let (c, s) = self.client_manager.get_state(handle).expect("client");
+                self.notify_frontend(FrontendEvent::Created(handle, c, s));
+                handle
+            }
+        };
+        self.activate_client(handle);
+    }
+
     fn sync_frontend(&mut self) {
         self.enumerate();
         self.notify_frontend(FrontendEvent::EmulationStatus(self.emulation_status));
@@ -397,6 +533,7 @@ impl Service {
         ));
         let keys = self.authorized_keys.read().expect("lock").clone();
         self.notify_frontend(FrontendEvent::AuthorizedUpdated(keys));
+        self.notify_discovered();
     }
 
     const ENTER_HANDLE_BEGIN: u64 = u64::MAX / 2 + 1;
@@ -558,6 +695,7 @@ impl Service {
         log::info!("hostname changed: {hostname:?}");
         if self.client_manager.set_hostname(handle, hostname.clone()) {
             self.resolve(handle);
+            self.update_discovered_ips(handle);
         }
         self.broadcast_client(handle);
     }
@@ -621,6 +759,13 @@ impl Service {
                 Err(e) => log::warn!("{kind} hook for client {handle} ({cmd}): {e}"),
             }
         });
+    }
+}
+
+async fn next_discovery_event(discovery: &mut Option<Discovery>) -> DiscoveryEvent {
+    match discovery {
+        Some(discovery) => discovery.event().await,
+        None => std::future::pending().await,
     }
 }
 

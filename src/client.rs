@@ -174,6 +174,22 @@ impl ClientManager {
         self.update_ips(handle);
     }
 
+    /// update the ips announced by the client via mDNS discovery
+    /// returns true, if the ips changed
+    pub fn set_discovered_ips(&self, handle: ClientHandle, discovered_ips: Vec<IpAddr>) -> bool {
+        let changed = match self.clients.borrow_mut().get_mut(handle as usize) {
+            Some((_, s)) if s.discovered_ips != discovered_ips => {
+                s.discovered_ips = discovered_ips;
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.update_ips(handle);
+        }
+        changed
+    }
+
     fn update_ips(&self, handle: ClientHandle) {
         if let Some((c, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
             s.ips = c
@@ -181,12 +197,13 @@ impl ClientManager {
                 .iter()
                 .cloned()
                 .chain(s.dns_ips.iter().cloned())
+                .chain(s.discovered_ips.iter().cloned())
                 .collect::<HashSet<_>>();
         }
     }
 
     /// update the hostname of the given client
-    /// this automatically clears the active ip address and ips from dns
+    /// this automatically clears the active ip address and ips from dns and discovery
     pub fn set_hostname(&self, handle: ClientHandle, hostname: Option<String>) -> bool {
         let mut clients = self.clients.borrow_mut();
         let Some((c, s)) = clients.get_mut(handle as usize) else {
@@ -198,6 +215,7 @@ impl ClientManager {
             c.hostname = hostname;
             s.active_addr = None;
             s.dns_ips.clear();
+            s.discovered_ips.clear();
             drop(clients);
             self.update_ips(handle);
             true

@@ -171,6 +171,8 @@ pub struct ClientState {
     pub alive: bool,
     /// ips from dns
     pub dns_ips: Vec<IpAddr>,
+    /// ips announced by the client itself via mDNS discovery
+    pub discovered_ips: Vec<IpAddr>,
     /// all ip addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
     /// which have different ip addresses
@@ -185,6 +187,25 @@ pub struct ClientState {
     /// that predates the Hello event. The frontend uses this to
     /// soft-warn on version mismatch.
     pub peer_commit: Option<[u8; 8]>,
+}
+
+/// a Lan Mouse device found on the local network via mDNS
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscoveredDevice {
+    /// unique id of the advertisement (DNS-SD instance name)
+    pub id: String,
+    /// human readable device name
+    pub name: String,
+    /// mDNS hostname, e.g. `my-laptop.local`
+    pub hostname: String,
+    /// addresses the device can be reached at
+    pub ips: Vec<IpAddr>,
+    /// port the device listens on
+    pub port: u16,
+    /// sha256 fingerprint of the device's certificate
+    pub fingerprint: Option<String>,
+    /// operating system of the device, e.g. `windows` or `macos`
+    pub os: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +247,10 @@ pub enum FrontendEvent {
     IncomingDisconnected(SocketAddr),
     /// failed connection attempt (approval for fingerprint required)
     ConnectionAttempt { fingerprint: String },
+    /// devices currently visible on the local network
+    Discovered(Vec<DiscoveredDevice>),
+    /// answer to [`FrontendRequest::Ping`] with the same token
+    Pong(u64),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
@@ -266,6 +291,12 @@ pub enum FrontendRequest {
     UpdateLeaveHook(u64, Option<String>),
     /// save config file
     SaveConfiguration,
+    /// request the list of devices visible on the local network
+    EnumerateDiscovered,
+    /// add and activate a client for the discovered device with the given id
+    AddDiscovered(String, Position),
+    /// answered with [`FrontendEvent::Pong`] once all previous requests are handled
+    Ping(u64),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

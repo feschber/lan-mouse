@@ -5,4 +5,6 @@
   <short>LAN Mouse</short>
   <description>mouse and keyboard sharing via LAN</description>
   <port port="4242" protocol="udp"/>
+  <!-- device discovery -->
+  <include service="mdns"/>
 </service>

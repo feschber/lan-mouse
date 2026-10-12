@@ -324,6 +324,9 @@ fn build_ui(app: &Application) {
                     FrontendEvent::IncomingDisconnected(addr) => {
                         window.show_toast(format!("{addr} disconnected").as_str());
                     }
+                    // nearby devices are not shown in the GUI yet
+                    FrontendEvent::Discovered(_) => {}
+                    FrontendEvent::Pong(_) => {}
                 }
             }
         }

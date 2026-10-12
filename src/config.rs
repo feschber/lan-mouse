@@ -69,6 +69,7 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    discovery: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -478,6 +479,14 @@ impl Config {
             .port
             .or(self.config_toml.as_ref().and_then(|c| c.port))
             .unwrap_or(DEFAULT_PORT)
+    }
+
+    /// whether to advertise this device and discover others via mDNS
+    pub fn discovery(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.discovery)
+            .unwrap_or(true)
     }
 
     /// list of configured clients
