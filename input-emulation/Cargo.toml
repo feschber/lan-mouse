@@ -10,6 +10,10 @@ repository = "https://github.com/feschber/lan-mouse"
 name = "keymap_fd_churn"
 required-features = ["wlroots"]
 
+[[example]]
+name = "double_click"
+required-features = ["wlroots"]
+
 [dependencies]
 async-trait = "0.1.80"
 futures = "0.3.28"
