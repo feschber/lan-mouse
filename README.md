@@ -349,8 +349,10 @@ for information on how to use a specific command.
 <details>
     <summary>Device Discovery</summary>
 
-Lan Mouse advertises itself on the local network via mDNS (Bonjour) and lists
-other Lan Mouse devices it finds, so they can be added without typing a hostname or IP address:
+Lan Mouse advertises itself on the local network and lists other Lan Mouse devices
+it finds, so they can be added without typing a hostname or IP address.
+Devices are found via mDNS (Bonjour) and, for routers that filter multicast
+between Wi-Fi and Ethernet, via broadcast messages on UDP port `4241`:
 
 ```sh
 # list nearby devices
@@ -366,7 +368,7 @@ up to date automatically, e.g. when the device gets a new IP address from DHCP.
 `authorize-discovered` trusts the fingerprint the device announces on the network,
 so only use it on networks you trust (`discover` lists the fingerprints to compare).
 
-Discovery needs UDP port `5353` (mDNS) to be allowed in the firewall.
+Discovery needs UDP ports `5353` (mDNS) and `4241` (broadcast) to be allowed in the firewall.
 It can be turned off with `discovery = false` in the [configuration](#configuration).
 
 </details>
@@ -420,7 +422,7 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
-# advertise this device and discover others via mDNS (defaults to true)
+# advertise this device and discover others via mDNS and broadcast (defaults to true)
 discovery = true
 
 # list of authorized tls certificate fingerprints that
@@ -464,7 +466,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [x] MacOS Input Capture
 - [x] Windows Input Capture
 - [x] Encryption
-- [x] Device discovery via mDNS (cli only for now)
+- [x] Device discovery via mDNS and broadcast (cli only for now)
 - [ ] X11 Input Capture
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization

@@ -174,7 +174,7 @@ impl ClientManager {
         self.update_ips(handle);
     }
 
-    /// update the ips announced by the client via mDNS discovery
+    /// update the ips announced by the client via discovery
     /// returns true, if the ips changed
     pub fn set_discovered_ips(&self, handle: ClientHandle, discovered_ips: Vec<IpAddr>) -> bool {
         let changed = match self.clients.borrow_mut().get_mut(handle as usize) {
@@ -188,6 +188,16 @@ impl ClientManager {
             self.update_ips(handle);
         }
         changed
+    }
+
+    /// ips configured for or resolved from the client's hostname,
+    /// i.e. not including those learned from discovery
+    pub(crate) fn known_ips(&self, handle: ClientHandle) -> Vec<IpAddr> {
+        self.clients
+            .borrow()
+            .get(handle as usize)
+            .map(|(c, s)| c.fix_ips.iter().chain(&s.dns_ips).copied().collect())
+            .unwrap_or_default()
     }
 
     fn update_ips(&self, handle: ClientHandle) {

@@ -412,6 +412,7 @@ impl Service {
                 }
                 let ips = ips.unwrap_or_default();
                 self.client_manager.set_dns_ips(handle, ips);
+                self.update_discovered_ips(handle);
                 handle
             }
         };
@@ -454,17 +455,14 @@ impl Service {
 
     /// use the addresses a client's device announces via mDNS
     fn update_discovered_ips(&mut self, handle: ClientHandle) {
-        let Some(hostname) = self.client_manager.get_hostname(handle) else {
-            return;
-        };
         let mut ips = self
             .discovered
             .values()
-            .filter(|device| discovery::matches_hostname(device, &hostname))
+            .filter(|device| self.is_client_device(handle, device))
             .flat_map(|device| device.ips.iter().copied())
             .collect::<Vec<_>>();
-        // keep the last known addresses when a device disappears: mDNS
-        // records can expire on flaky Wi-Fi while the device is still
+        // keep the last known addresses when a device disappears:
+        // announcements can get lost on flaky Wi-Fi while the device is still
         // reachable, and connecting tries all addresses in parallel anyway
         if ips.is_empty() {
             return;
@@ -474,6 +472,19 @@ impl Service {
         if self.client_manager.set_discovered_ips(handle, ips) {
             self.broadcast_client(handle);
         }
+    }
+
+    /// whether `device` belongs to client `handle`: it has the client's
+    /// hostname or one of its configured or resolved addresses
+    fn is_client_device(&self, handle: ClientHandle, device: &DiscoveredDevice) -> bool {
+        self.client_manager
+            .get_hostname(handle)
+            .is_some_and(|hostname| discovery::matches_hostname(device, &hostname))
+            || self
+                .client_manager
+                .known_ips(handle)
+                .iter()
+                .any(|ip| device.ips.contains(ip))
     }
 
     fn notify_discovered(&mut self) {
@@ -495,11 +506,7 @@ impl Service {
             .client_manager
             .registered_clients()
             .into_iter()
-            .find(|&h| {
-                self.client_manager
-                    .get_hostname(h)
-                    .is_some_and(|hostname| discovery::matches_hostname(&device, &hostname))
-            });
+            .find(|&h| self.is_client_device(h, &device));
         let handle = match existing {
             Some(handle) => {
                 log::info!("client {handle} already refers to {}", device.name);
@@ -688,6 +695,7 @@ impl Service {
 
     fn update_fix_ips(&mut self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
         self.client_manager.set_fix_ips(handle, fix_ips);
+        self.update_discovered_ips(handle);
         self.broadcast_client(handle);
     }
 

@@ -171,7 +171,7 @@ pub struct ClientState {
     pub alive: bool,
     /// ips from dns
     pub dns_ips: Vec<IpAddr>,
-    /// ips announced by the client itself via mDNS discovery
+    /// ips announced by the client itself via discovery
     pub discovered_ips: Vec<IpAddr>,
     /// all ip addresses associated with a particular client
     /// e.g. Laptops usually have at least an ethernet and a wifi port
