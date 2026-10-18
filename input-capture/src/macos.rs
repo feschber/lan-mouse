@@ -88,11 +88,22 @@ impl InputCaptureState {
         let relative_x = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_X);
         let relative_y = event.get_double_value_field(EventField::MOUSE_EVENT_DELTA_Y);
 
+        // The cursor can rest exactly on the left / top bound, so the motion
+        // must also point towards the barrier. Otherwise moving along the
+        // edge would count as crossing it.
         for &position in self.active_clients.iter() {
-            if (position == Position::Left && (location.x + relative_x) <= self.bounds.xmin)
-                || (position == Position::Right && (location.x + relative_x) >= self.bounds.xmax)
-                || (position == Position::Top && (location.y + relative_y) <= self.bounds.ymin)
-                || (position == Position::Bottom && (location.y + relative_y) >= self.bounds.ymax)
+            if (position == Position::Left
+                && relative_x < 0.0
+                && (location.x + relative_x) <= self.bounds.xmin)
+                || (position == Position::Right
+                    && relative_x > 0.0
+                    && (location.x + relative_x) >= self.bounds.xmax)
+                || (position == Position::Top
+                    && relative_y < 0.0
+                    && (location.y + relative_y) <= self.bounds.ymin)
+                || (position == Position::Bottom
+                    && relative_y > 0.0
+                    && (location.y + relative_y) >= self.bounds.ymax)
             {
                 log::debug!("Crossed barrier into position: {position:?}");
                 return Some(position);
