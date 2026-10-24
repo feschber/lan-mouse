@@ -30,6 +30,37 @@ shadow!(build);
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CERT_FILE_NAME: &str = "lan-mouse.pem";
 
+#[cfg(test)]
+mod remap_tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_preserves_left_alt_super_swap() {
+        let text = r#"
+[[clients]]
+hostname = "SkyWalker.local"
+ips = ["192.168.1.199"]
+position = "right"
+
+[input_pre_processing.remap_keys]
+KeyLeftAlt = "KeyLeftMeta"
+KeyLeftMeta = "KeyLeftAlt"
+"#;
+        let config: ConfigToml = toml::from_str(text).unwrap();
+        let keys = config
+            .input_pre_processing
+            .as_ref()
+            .unwrap()
+            .remap_keys
+            .as_ref()
+            .unwrap();
+        assert_eq!(keys.get(&KeyLeftAlt), Some(&KeyLeftMeta));
+        assert_eq!(keys.get(&KeyLeftMeta), Some(&KeyLeftAlt));
+        let serialized = toml::to_string(&config).unwrap();
+        assert_eq!(toml::from_str::<ConfigToml>(&serialized).unwrap(), config);
+    }
+}
+
 fn default_path() -> Result<PathBuf, VarError> {
     #[cfg(unix)]
     let default_path = {

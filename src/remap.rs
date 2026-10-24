@@ -225,4 +225,41 @@ mod test {
         assert_eq!(r.apply(key_event(KeyA, 1)), key_event(KeyLeftCtrl, 1));
         assert_eq!(r.apply(mods(mask::MOD4)), mods(mask::MOD4));
     }
+
+    #[test]
+    fn left_alt_super_swap_preserves_presses_releases_and_right_keys() {
+        use scancode::Linux::{KeyRightalt, KeyRightmeta};
+        let r = KeyRemap::new(HashMap::from([
+            (KeyLeftAlt, KeyLeftMeta),
+            (KeyLeftMeta, KeyLeftAlt),
+        ]));
+        for state in [0, 1] {
+            assert_eq!(
+                r.apply(key_event(KeyLeftAlt, state)),
+                key_event(KeyLeftMeta, state)
+            );
+            assert_eq!(
+                r.apply(key_event(KeyLeftMeta, state)),
+                key_event(KeyLeftAlt, state)
+            );
+            assert_eq!(
+                r.apply(key_event(KeyRightalt, state)),
+                key_event(KeyRightalt, state)
+            );
+            assert_eq!(
+                r.apply(key_event(KeyRightmeta, state)),
+                key_event(KeyRightmeta, state)
+            );
+        }
+        // Capture release uses key() to synthesize key-up events.
+        assert_eq!(r.key(KeyLeftAlt), KeyLeftMeta);
+        assert_eq!(r.key(KeyLeftMeta), KeyLeftAlt);
+        assert_eq!(r.apply(mods(mask::MOD1)), mods(mask::MOD4));
+        assert_eq!(r.apply(mods(mask::MOD4)), mods(mask::MOD1));
+        assert_eq!(
+            r.apply(mods(mask::MOD1 | mask::MOD4)),
+            mods(mask::MOD1 | mask::MOD4)
+        );
+        assert_eq!(r.apply(mods(0)), mods(0));
+    }
 }
