@@ -42,11 +42,18 @@ hostname = "SkyWalker.local"
 ips = ["192.168.1.199"]
 position = "right"
 
+[input_pre_processing]
+invert_scroll_vertical = true
+invert_scroll_horizontal = false
+
 [input_pre_processing.remap_keys]
 KeyLeftAlt = "KeyLeftMeta"
 KeyLeftMeta = "KeyLeftAlt"
 "#;
         let config: ConfigToml = toml::from_str(text).unwrap();
+        let processing = config.input_pre_processing.as_ref().unwrap();
+        assert_eq!(processing.invert_scroll_vertical, Some(true));
+        assert_eq!(processing.invert_scroll_horizontal, Some(false));
         let keys = config
             .input_pre_processing
             .as_ref()
