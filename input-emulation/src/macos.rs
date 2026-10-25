@@ -694,11 +694,10 @@ fn set_modifiers(
 ) {
     let depressed = XMods::from_bits(depressed).unwrap_or_default();
     let _latched = XMods::from_bits(latched).unwrap_or_default();
-    let _locked = XMods::from_bits(locked).unwrap_or_default();
+    let locked = XMods::from_bits_truncate(locked);
     let _group = XMods::from_bits(group).unwrap_or_default();
 
-    // we only care about the depressed modifiers for now
-    active_modifiers.replace(depressed);
+    active_modifiers.replace(depressed | (locked & XMods::LockMask));
 }
 
 fn to_cgevent_flags(depressed: XMods) -> CGEventFlags {
