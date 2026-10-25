@@ -288,27 +288,63 @@ async fn do_capture(
         let cancel_session = CancellationToken::new();
         let cancel_update = CancellationToken::new();
 
-        let mut capture_event_occured: Option<LibeiNotifyEvent> = None;
+        let mut capture_events_occurred = Vec::new();
         let mut zones_have_changed = false;
 
         // kill session if clients need to be updated
         let handle_session_update_request = async {
+            let mut do_debounce = false;
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
-                    log::debug!("cancelled")
+                    log::debug!("cancelled");
                 }, /* exit requested */
                 _ = cancel_update.cancelled() => {
                     log::debug!("update task cancelled");
                 }, /* session exited */
                 _ = zones_changed.next() => {
                     log::debug!("zones changed!");
-                    zones_have_changed = true
+                    zones_have_changed = true;
+                    do_debounce = true;
                 }, /* zones have changed */
                 e = capture_event.recv() => if let Some(e) = e { /* clients changed */
                     log::debug!("capture event: {e:?}");
-                    capture_event_occured.replace(e);
+                    capture_events_occurred.push(e);
+                    do_debounce = true;
                 },
             }
+
+            if do_debounce {
+                let debounce_duration = std::time::Duration::from_millis(50);
+                let sleep = tokio::time::sleep(debounce_duration);
+                tokio::pin!(sleep);
+
+                loop {
+                    tokio::select! {
+                        _ = &mut sleep => {
+                            break;
+                        },
+                        _ = cancellation_token.cancelled() => {
+                            log::debug!("cancelled during debounce");
+                            break;
+                        },
+                        _ = cancel_update.cancelled() => {
+                            log::debug!("update task cancelled during debounce");
+                            break;
+                        },
+                        _ = zones_changed.next() => {
+                            log::debug!("zones changed (coalesced)!");
+                            zones_have_changed = true;
+                        },
+                        e = capture_event.recv() => if let Some(e) = e {
+                            log::debug!("capture event (coalesced): {e:?}");
+                            capture_events_occurred.push(e);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
             // kill session (might already be dead!)
             log::debug!("=> cancelling session");
             cancel_session.cancel();
@@ -350,9 +386,13 @@ async fn do_capture(
         }
 
         // update clients if requested
-        if let Some(event) = capture_event_occured.take() {
+        for event in capture_events_occurred {
             match event {
-                LibeiNotifyEvent::Create(p) => active_clients.push(p),
+                LibeiNotifyEvent::Create(p) => {
+                    if !active_clients.contains(&p) {
+                        active_clients.push(p);
+                    }
+                }
                 LibeiNotifyEvent::Destroy(p) => active_clients.retain(|&pos| pos != p),
             }
         }
