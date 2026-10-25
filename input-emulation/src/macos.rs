@@ -444,9 +444,9 @@ impl Emulation for MacOSEmulation {
                         value,
                     } => {
                         let value = if natural_scroll_enabled(&self.natural_scroll_key) {
-                            value as i32
-                        } else {
                             -value as i32
+                        } else {
+                            value as i32
                         };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
