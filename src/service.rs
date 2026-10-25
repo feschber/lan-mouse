@@ -7,6 +7,8 @@ use crate::{
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
+    remap::KeyRemap,
+    scroll::ScrollInvert,
 };
 use futures::StreamExt;
 use lan_mouse_ipc::{
@@ -98,7 +100,16 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            KeyRemap::new(config.remap_keys()),
+            ScrollInvert::new(
+                config.invert_scroll_vertical(),
+                config.invert_scroll_horizontal(),
+            ),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
 
@@ -259,6 +270,12 @@ impl Service {
         }
         let release_bind = self.config.release_bind();
         self.capture.set_release_bind(release_bind);
+        self.capture
+            .set_remap(KeyRemap::new(self.config.remap_keys()));
+        self.capture.set_scroll_invert(ScrollInvert::new(
+            self.config.invert_scroll_vertical(),
+            self.config.invert_scroll_horizontal(),
+        ));
         let authorized_keys = self.config.authorized_fingerprints();
         self.authorized_keys
             .write()

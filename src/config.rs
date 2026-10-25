@@ -43,6 +43,44 @@ pub fn local_commit() -> [u8; 8] {
 const CONFIG_FILE_NAME: &str = "config.toml";
 const CERT_FILE_NAME: &str = "lan-mouse.pem";
 
+#[cfg(test)]
+mod remap_tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_preserves_left_alt_super_swap() {
+        let text = r#"
+[[clients]]
+hostname = "SkyWalker.local"
+ips = ["192.168.1.199"]
+position = "right"
+
+[input_pre_processing]
+invert_scroll_vertical = true
+invert_scroll_horizontal = false
+
+[input_pre_processing.remap_keys]
+KeyLeftAlt = "KeyLeftMeta"
+KeyLeftMeta = "KeyLeftAlt"
+"#;
+        let config: ConfigToml = toml::from_str(text).unwrap();
+        let processing = config.input_pre_processing.as_ref().unwrap();
+        assert_eq!(processing.invert_scroll_vertical, Some(true));
+        assert_eq!(processing.invert_scroll_horizontal, Some(false));
+        let keys = config
+            .input_pre_processing
+            .as_ref()
+            .unwrap()
+            .remap_keys
+            .as_ref()
+            .unwrap();
+        assert_eq!(keys.get(&KeyLeftAlt), Some(&KeyLeftMeta));
+        assert_eq!(keys.get(&KeyLeftMeta), Some(&KeyLeftAlt));
+        let serialized = toml::to_string(&config).unwrap();
+        assert_eq!(toml::from_str::<ConfigToml>(&serialized).unwrap(), config);
+    }
+}
+
 fn default_path() -> Result<PathBuf, VarError> {
     #[cfg(unix)]
     let default_path = {
@@ -66,9 +104,24 @@ struct ConfigToml {
     emulation_backend: Option<EmulationBackend>,
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
+    /// transformations applied to input events on their way to other
+    /// devices (the counterpart of receive-side post-processing)
+    input_pre_processing: Option<InputPreProcessing>,
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+struct InputPreProcessing {
+    /// keys to send as a different key, e.g. to reconcile modifier
+    /// layouts between operating systems
+    remap_keys: Option<HashMap<scancode::Linux, scancode::Linux>>,
+    /// invert the direction of vertical scroll events, e.g. to
+    /// reconcile "natural" macOS scrolling with a Windows or Linux peer
+    invert_scroll_vertical: Option<bool>,
+    /// invert the direction of horizontal scroll events
+    invert_scroll_horizontal: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -498,6 +551,33 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// keys rewritten on their way to other devices
+    pub fn remap_keys(&self) -> HashMap<scancode::Linux, scancode::Linux> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.remap_keys.clone())
+            .unwrap_or_default()
+    }
+
+    /// whether vertical scroll events are inverted on their way to other devices
+    pub fn invert_scroll_vertical(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.invert_scroll_vertical)
+            .unwrap_or(false)
+    }
+
+    /// whether horizontal scroll events are inverted on their way to other devices
+    pub fn invert_scroll_horizontal(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.input_pre_processing.as_ref())
+            .and_then(|p| p.invert_scroll_horizontal)
+            .unwrap_or(false)
     }
 
     /// set configured clients

@@ -425,6 +425,52 @@ port = 4242
 
 Where `left` can be either `left`, `right`, `top` or `bottom`.
 
+### Remapping keys for other operating systems
+
+`[input_pre_processing]` rewrites events on their way to other devices.
+`remap_keys` swaps individual keys, which is mostly useful for reconciling
+modifier layouts — sending Command from a Mac as Control, and Control as
+Super, so that Cmd+C keeps copying on a Windows or Linux peer:
+
+```toml
+[input_pre_processing.remap_keys]
+KeyLeftMeta = "KeyLeftCtrl"
+KeyLeftCtrl = "KeyLeftMeta"
+```
+
+Remapping happens on the *sending* side, so the local machine is unaffected:
+`release_bind` and the host's own shortcuts keep seeing the physical keys.
+
+For a Linux sender whose left Alt and Super keys are swapped locally, use
+this mapping to send physical left Alt as Command and physical left Super
+as Option on a macOS receiver:
+
+```toml
+[input_pre_processing.remap_keys]
+KeyLeftAlt = "KeyLeftMeta"
+KeyLeftMeta = "KeyLeftAlt"
+```
+
+This setting applies to every outgoing client. Incoming events are unchanged.
+Changing the mapping releases an active capture using the previous mapping
+before applying the new one, so held keys are not released as different keys.
+
+### Inverting scroll direction for other operating systems
+
+`invert_scroll_vertical` and `invert_scroll_horizontal` flip the direction of
+scroll events on their way to other devices. This is mostly useful when
+macOS' "natural scrolling" reaches a Windows or Linux peer that scrolls the
+traditional way, making the wheel feel backwards on the remote machine:
+
+```toml
+[input_pre_processing]
+invert_scroll_vertical = true
+invert_scroll_horizontal = false
+```
+
+Like `remap_keys`, this happens on the *sending* side only, so scrolling on
+the local machine itself is unaffected.
+
 ## Roadmap
 - [x] Graphical frontend (gtk + libadwaita)
 - [x] respect xdg-config-home for config file location.
