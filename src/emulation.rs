@@ -1,7 +1,7 @@
 use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{EmulationError, EmulationHandle, InputEmulation, InputEmulationError};
 use input_event::Event;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -319,20 +319,39 @@ struct EmulationTask {
 impl EmulationTask {
     async fn run(mut self) {
         loop {
-            if let Err(e) = self.do_emulation().await {
+            let result = self.do_emulation().await;
+            if let Err(e) = &result {
                 log::warn!("input emulation exited: {e}");
             }
-            if self.exit_requested.get() {
+            if self.exit_requested.get() || !self.wait_for_recovery(result.err()).await {
                 break;
             }
-            // wait for reenable request
-            loop {
-                match self.request_rx.recv().await.expect("channel closed") {
-                    ProxyRequest::Reenable => break,
-                    ProxyRequest::Terminate => return,
-                    ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
-                    ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
-                }
+        }
+    }
+
+    async fn wait_for_recovery(&mut self, error: Option<InputEmulationError>) -> bool {
+        // A closed established session can be restored after unlocking. Creation
+        // failures (including denied permission) still require explicit consent.
+        let session_closed = matches!(
+            error,
+            Some(InputEmulationError::Emulate(EmulationError::EndOfStream))
+        );
+        let retry = tokio::time::sleep(Duration::from_secs(1));
+        tokio::pin!(retry);
+        loop {
+            select! {
+                request = self.request_rx.recv() => match request.expect("channel closed") {
+                    ProxyRequest::Reenable => return true,
+                    ProxyRequest::Terminate => return false,
+                    ProxyRequest::Input(..) => { /* do not replay input from an expired session */ }
+                    ProxyRequest::Remove(addr) => {
+                        self.handles.remove(&addr);
+                    }
+                },
+                _ = &mut retry, if session_closed => {
+                    log::info!("recreating input emulation after session stream closed");
+                    return true;
+                },
             }
         }
     }
@@ -448,5 +467,93 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+    use input_emulation::EmulationCreationError;
+
+    fn recovery_task() -> (EmulationTask, Sender<ProxyRequest>) {
+        let (request_tx, request_rx) = channel();
+        let (event_tx, _) = channel();
+        (
+            EmulationTask {
+                backend: Some(input_emulation::Backend::Dummy),
+                exit_requested: Rc::new(Cell::new(false)),
+                request_rx,
+                event_tx,
+                handles: HashMap::new(),
+                next_id: 0,
+            },
+            request_tx,
+        )
+    }
+
+    fn closed_session() -> Option<InputEmulationError> {
+        Some(EmulationError::EndOfStream.into())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closed_session_recovers_without_manual_reenable() {
+        let (mut task, _tx) = recovery_task();
+        let recover = tokio::time::timeout(
+            Duration::from_secs(2),
+            task.wait_for_recovery(closed_session()),
+        )
+        .await
+        .expect("closed session was not recovered");
+        assert!(recover);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn creation_failure_waits_for_manual_reenable() {
+        let (mut task, tx) = recovery_task();
+        let error = EmulationCreationError::NoAvailableBackend.into();
+        let recovery = task.wait_for_recovery(Some(error));
+        tokio::pin!(recovery);
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tx.send(ProxyRequest::Reenable)
+            .expect("recovery receiver closed");
+        assert!(recovery.await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn other_runtime_errors_do_not_trigger_automatic_recovery() {
+        let (mut task, tx) = recovery_task();
+        let error = EmulationError::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        let recovery = task.wait_for_recovery(Some(error.into()));
+        tokio::pin!(recovery);
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tx.send(ProxyRequest::Terminate)
+            .expect("recovery receiver closed");
+        assert!(!recovery.await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn termination_cancels_pending_session_recovery() {
+        let (mut task, tx) = recovery_task();
+        tx.send(ProxyRequest::Terminate)
+            .expect("recovery receiver closed");
+        assert!(!task.wait_for_recovery(closed_session()).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn disconnected_peer_is_not_restored_with_the_session() {
+        let (mut task, tx) = recovery_task();
+        let addr = SocketAddr::from(([127, 0, 0, 1], 4242));
+        task.handles.insert(addr, 7);
+        tx.send(ProxyRequest::Remove(addr))
+            .expect("recovery receiver closed");
+        tx.send(ProxyRequest::Reenable)
+            .expect("recovery receiver closed");
+        assert!(task.wait_for_recovery(closed_session()).await);
+        assert!(!task.handles.contains_key(&addr));
     }
 }
