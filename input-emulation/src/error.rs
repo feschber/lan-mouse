@@ -9,6 +9,8 @@ pub enum InputEmulationError {
 #[cfg(any(libei, rdp))]
 use ashpd::{Error::Response, desktop::ResponseError};
 use std::io;
+#[cfg(libei)]
+use std::time::Duration;
 use thiserror::Error;
 
 #[cfg(wlroots)]
@@ -33,6 +35,9 @@ pub enum EmulationError {
     Ashpd(#[from] ashpd::Error),
     #[error("io error: `{0}`")]
     Io(#[from] io::Error),
+    #[cfg(libei)]
+    #[error("libei socket did not accept data for {0:?}")]
+    LibeiStalled(Duration),
 }
 
 #[derive(Debug, Error)]
