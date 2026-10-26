@@ -88,6 +88,7 @@ impl Capture {
             event_tx,
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
+            released_at: None,
             state: Default::default(),
         };
         let task = spawn_local(capture_task.run());
@@ -171,9 +172,15 @@ struct CaptureTask {
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
+    released_at: Option<Instant>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
 }
+
+/// After control is handed over, the cursor rests on the edge it just
+/// crossed, so any jitter would hit the barrier and bounce control straight
+/// back. Barrier hits within this time after a release are ignored.
+const HANDOVER_GRACE: Duration = Duration::from_millis(300);
 
 impl CaptureTask {
     fn add_capture(&mut self, handle: CaptureHandle, pos: Position, capture_type: CaptureType) {
@@ -344,6 +351,15 @@ impl CaptureTask {
             return self.release_capture(capture).await;
         }
 
+        if Some(handle) != self.active_client
+            && self
+                .released_at
+                .is_some_and(|t| t.elapsed() < HANDOVER_GRACE)
+        {
+            log::debug!("releasing capture: within handover grace period");
+            return capture.release().await;
+        }
+
         if event == CaptureEvent::Begin {
             self.event_tx
                 .send(ICaptureEvent::CaptureBegin(handle))
@@ -395,6 +411,7 @@ impl CaptureTask {
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
+        self.released_at = Some(Instant::now());
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
             // Surface the leave to the service layer so it can fire
