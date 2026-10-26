@@ -388,13 +388,23 @@ impl CaptureTask {
             // Funnel through release_capture so the leave_hook
             // fires and active_client is cleared (without this the
             // active_client field would stay stale until the next
-            // Begin from a different handle).
-            self.release_capture(capture).await?;
+            // Begin from a different handle). The send just failed, so
+            // skip the key-up/Leave messages: they fail the same way and
+            // each logs a warning on every edge crossing.
+            self.release_capture_with(capture, false).await?;
         }
         Ok(())
     }
 
     async fn release_capture(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
+        self.release_capture_with(capture, true).await
+    }
+
+    async fn release_capture_with(
+        &mut self,
+        capture: &mut InputCapture,
+        notify_peer: bool,
+    ) -> Result<(), CaptureError> {
         // If we have an active client, notify them we're leaving
         if let Some(handle) = self.active_client.take() {
             // Surface the leave to the service layer so it can fire
@@ -404,6 +414,10 @@ impl CaptureTask {
             self.event_tx
                 .send(ICaptureEvent::ClientLeft(handle))
                 .expect("channel closed");
+            if !notify_peer {
+                capture.take_pressed_keys();
+                return capture.release().await;
+            }
             // Synthesize key-up events for every key still held in the
             // capture's pressed_keys set BEFORE sending Leave. Without
             // this, pressing the release-bind chord (typically all four
