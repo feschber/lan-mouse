@@ -353,6 +353,13 @@ impl Service {
             }
             ICaptureEvent::ClientEntered(handle) => {
                 log::info!("entering client {handle} ...");
+                // the startup lookup may have failed (e.g. network / mDNS
+                // not ready yet) => retry instead of staying unreachable
+                if let Some((_, s)) = self.client_manager.get_state(handle) {
+                    if s.ips.is_empty() && !s.resolving {
+                        self.resolve(handle);
+                    }
+                }
                 self.spawn_hook_command(handle, HookKind::Enter);
             }
             ICaptureEvent::ClientLeft(handle) => {
