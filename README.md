@@ -52,6 +52,10 @@ Most current desktop environments and operating systems are fully supported, thi
 >
 > - **Windows**: The mouse cursor will be invisible when sending input to a Windows system if
 > there is no real mouse connected to the machine.
+>
+> - **Windows**: Input cannot be sent to windows that run with higher privileges than lan-mouse,
+> e.g. applications started as administrator. While such a window has focus, input emulation
+> stops and has to be enabled again. Keys that were held at that moment can stay pressed.
 
 For more detailed information about os support see [Detailed OS Support](#detailed-os-support)
 
