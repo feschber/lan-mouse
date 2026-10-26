@@ -1,7 +1,14 @@
 use futures::{StreamExt, future};
 use std::{
-    env, fs, io,
-    os::{fd::OwnedFd, unix::net::UnixStream},
+    env, fs,
+    io::{self, Write},
+    os::{
+        fd::OwnedFd,
+        unix::{
+            fs::{OpenOptionsExt, PermissionsExt},
+            net::UnixStream,
+        },
+    },
     path::PathBuf,
     sync::{
         Arc, Mutex, RwLock,
@@ -80,7 +87,20 @@ fn write_token(token: &str) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(&token_path, token)?;
+    // the token lets its holder skip the consent dialog, so keep it private;
+    // mode() only applies on create, hence set_permissions for older files,
+    // and only best-effort: some filesystems refuse chmod, and the file is
+    // already truncated by then
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&token_path)?;
+    if let Err(e) = file.set_permissions(fs::Permissions::from_mode(0o600)) {
+        log::warn!("could not restrict {}: {e}", token_path.display());
+    }
+    file.write_all(token.as_bytes())?;
     Ok(())
 }
 
