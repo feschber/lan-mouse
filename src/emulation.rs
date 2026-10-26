@@ -316,23 +316,94 @@ struct EmulationTask {
     next_id: EmulationHandle,
 }
 
+/// Delays before input emulation is started again after it failed.
+///
+/// Once they are used up, emulation stays off until it is enabled again by hand.
+const RESTART_DELAYS: [Duration; 7] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
+
+/// A session that ran at least this long starts the restart delays over.
+const STABLE_SESSION: Duration = Duration::from_secs(10);
+
+/// Tracks how many times input emulation was restarted in a row.
+#[derive(Default)]
+struct Restarts {
+    attempts: usize,
+}
+
+impl Restarts {
+    /// The delay before the next restart, or `None` once they are used up.
+    fn next_delay(&mut self) -> Option<Duration> {
+        let delay = RESTART_DELAYS.get(self.attempts).copied()?;
+        self.attempts += 1;
+        Some(delay)
+    }
+
+    fn reset(&mut self) {
+        self.attempts = 0;
+    }
+}
+
+/// What ended the wait before input emulation is started again.
+#[derive(Debug, PartialEq)]
+enum Wait {
+    Restart,
+    Terminate,
+}
+
 impl EmulationTask {
     async fn run(mut self) {
+        let mut restarts = Restarts::default();
         loop {
-            if let Err(e) = self.do_emulation().await {
+            let started = Instant::now();
+            let result = self.do_emulation().await;
+            if let Err(e) = &result {
                 log::warn!("input emulation exited: {e}");
             }
             if self.exit_requested.get() {
                 break;
             }
+            if started.elapsed() >= STABLE_SESSION {
+                restarts.reset();
+            }
+            // Do not restart on its own after the user cancelled the permission
+            // prompt, the prompt would come back every time.
+            let retry = matches!(&result, Err(e) if !e.cancelled_by_user());
+            if let Some(delay) = retry.then(|| restarts.next_delay()).flatten() {
+                log::info!("restarting input emulation in {delay:?}");
+                match self.wait_to_restart(delay).await {
+                    Wait::Restart => continue,
+                    Wait::Terminate => return,
+                }
+            }
             // wait for reenable request
-            loop {
-                match self.request_rx.recv().await.expect("channel closed") {
-                    ProxyRequest::Reenable => break,
-                    ProxyRequest::Terminate => return,
+            match self.wait_to_restart(Duration::MAX).await {
+                Wait::Restart => restarts.reset(),
+                Wait::Terminate => return,
+            }
+        }
+    }
+
+    /// Waits for `delay`, or until emulation is enabled again by hand.
+    async fn wait_to_restart(&mut self, delay: Duration) -> Wait {
+        let sleep = tokio::time::sleep(delay);
+        tokio::pin!(sleep);
+        loop {
+            select! {
+                _ = &mut sleep => return Wait::Restart,
+                request = self.request_rx.recv() => match request.expect("channel closed") {
+                    ProxyRequest::Reenable => return Wait::Restart,
+                    ProxyRequest::Terminate => return Wait::Terminate,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
-                }
+                },
             }
         }
     }
@@ -448,5 +519,85 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task() -> (EmulationTask, Sender<ProxyRequest>) {
+        let (request_tx, request_rx) = channel();
+        let (event_tx, _event_rx) = channel();
+        let task = EmulationTask {
+            backend: None,
+            exit_requested: Default::default(),
+            request_rx,
+            event_tx,
+            handles: Default::default(),
+            next_id: 0,
+        };
+        (task, request_tx)
+    }
+
+    #[test]
+    fn restart_delays_grow_and_run_out() {
+        let mut restarts = Restarts::default();
+        let delays: Vec<_> = std::iter::from_fn(|| restarts.next_delay()).collect();
+        assert_eq!(delays, RESTART_DELAYS);
+        assert_eq!(restarts.next_delay(), None);
+        assert!(delays.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn restart_delays_start_over_after_reset() {
+        let mut restarts = Restarts::default();
+        restarts.next_delay();
+        restarts.next_delay();
+        restarts.reset();
+        assert_eq!(restarts.next_delay(), Some(RESTART_DELAYS[0]));
+    }
+
+    #[tokio::test]
+    async fn wait_ends_after_the_delay() {
+        let (mut task, _tx) = task();
+        let wait = task.wait_to_restart(Duration::from_millis(20)).await;
+        assert_eq!(wait, Wait::Restart);
+    }
+
+    #[tokio::test]
+    async fn reenable_request_ends_the_wait_early() {
+        let (mut task, tx) = task();
+        tx.send(ProxyRequest::Reenable).unwrap();
+        let wait = tokio::time::timeout(
+            Duration::from_secs(5),
+            task.wait_to_restart(Duration::from_secs(3600)),
+        )
+        .await
+        .expect("wait was not cut short");
+        assert_eq!(wait, Wait::Restart);
+    }
+
+    #[tokio::test]
+    async fn terminate_request_ends_the_wait() {
+        let (mut task, tx) = task();
+        tx.send(ProxyRequest::Terminate).unwrap();
+        let wait = tokio::time::timeout(
+            Duration::from_secs(5),
+            task.wait_to_restart(Duration::from_secs(3600)),
+        )
+        .await
+        .expect("wait was not cut short");
+        assert_eq!(wait, Wait::Terminate);
+    }
+
+    #[tokio::test]
+    async fn events_are_ignored_while_waiting() {
+        let (mut task, tx) = task();
+        let addr: SocketAddr = "127.0.0.1:4242".parse().unwrap();
+        tx.send(ProxyRequest::Remove(addr)).unwrap();
+        tx.send(ProxyRequest::Reenable).unwrap();
+        let wait = task.wait_to_restart(Duration::MAX).await;
+        assert_eq!(wait, Wait::Restart);
     }
 }

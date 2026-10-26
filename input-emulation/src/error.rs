@@ -6,6 +6,13 @@ pub enum InputEmulationError {
     Emulate(#[from] EmulationError),
 }
 
+impl InputEmulationError {
+    /// the user intentionally denied the request for input emulation
+    pub fn cancelled_by_user(&self) -> bool {
+        matches!(self, Self::Create(e) if e.cancelled_by_user())
+    }
+}
+
 #[cfg(any(libei, rdp))]
 use ashpd::{Error::Response, desktop::ResponseError};
 use std::io;
