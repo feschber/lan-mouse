@@ -1,3 +1,5 @@
+use crate::scroll_accumulator::Scroll120Accumulator;
+
 use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
@@ -51,6 +53,8 @@ pub(crate) struct MacOSEmulation {
     notify_repeat_task: Arc<Notify>,
     /// cached key for `natural_scroll_enabled`
     natural_scroll_key: CFString,
+    /// scroll accumulator
+    scroll_accumulator: Scroll120Accumulator,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -97,6 +101,7 @@ impl MacOSEmulation {
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
             natural_scroll_key: CFString::new("com.apple.swipescrolldirection"),
+            scroll_accumulator: Scroll120Accumulator::default(),
         })
     }
 
@@ -544,9 +549,10 @@ impl Emulation for MacOSEmulation {
                             -value
                         };
                         const LINES_PER_STEP: i32 = 3;
+                        let steps = self.scroll_accumulator.accumulate(axis, value);
                         let (count, wheel1, wheel2, wheel3) = match axis {
-                            0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
-                            1 => (2, 0, value / (120 / LINES_PER_STEP), 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
+                            0 => (1, steps * LINES_PER_STEP, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
+                            1 => (2, 0, steps * LINES_PER_STEP, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
                             _ => {
                                 log::warn!("invalid scroll event: {axis}, {value}");
                                 return Ok(());
