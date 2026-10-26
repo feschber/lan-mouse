@@ -3,7 +3,7 @@ use ashpd::{
         Session,
         input_capture::{
             Activated, ActivatedBarrier, Barrier, BarrierID, Capabilities, CreateSessionOptions,
-            InputCapture, Region, ReleaseOptions, Zones,
+            InputCapture, ReleaseOptions,
         },
     },
     enumflags2::BitFlags,
@@ -37,7 +37,10 @@ use tokio_util::sync::CancellationToken;
 
 use futures_core::Stream;
 
-use input_event::Event;
+use input_event::{
+    Event,
+    screen::{Edge, EdgeSegment, EdgeSegments, Rect},
+};
 
 use crate::CaptureEvent;
 
@@ -87,15 +90,41 @@ pub struct LibeiInputCapture {
     terminated: bool,
 }
 
-/// returns (start pos, end pos), inclusive
-fn pos_to_barrier(r: &Region, pos: Position) -> (i32, i32, i32, i32) {
-    let (x, y) = (r.x_offset(), r.y_offset());
-    let (w, h) = (r.width() as i32, r.height() as i32);
+fn edge(pos: Position) -> Edge {
     match pos {
-        Position::Left => (x, y, x, y + h - 1),
-        Position::Right => (x + w, y, x + w, y + h - 1),
-        Position::Top => (x, y, x + w - 1, y),
-        Position::Bottom => (x, y + h, x + w - 1, y + h),
+        Position::Left => Edge::Left,
+        Position::Right => Edge::Right,
+        Position::Top => Edge::Top,
+        Position::Bottom => Edge::Bottom,
+    }
+}
+
+fn segment_to_barrier(segment: EdgeSegment, pos: Position) -> (i32, i32, i32, i32) {
+    match pos {
+        Position::Left => (
+            segment.edge_coordinate,
+            segment.cross_start,
+            segment.edge_coordinate,
+            segment.cross_end - 1,
+        ),
+        Position::Right => (
+            segment.edge_coordinate + 1,
+            segment.cross_start,
+            segment.edge_coordinate + 1,
+            segment.cross_end - 1,
+        ),
+        Position::Top => (
+            segment.cross_start,
+            segment.edge_coordinate,
+            segment.cross_end - 1,
+            segment.edge_coordinate,
+        ),
+        Position::Bottom => (
+            segment.cross_start,
+            segment.edge_coordinate + 1,
+            segment.cross_end - 1,
+            segment.edge_coordinate + 1,
+        ),
     }
 }
 
@@ -122,7 +151,7 @@ impl From<ICBarrier> for Barrier {
 }
 
 fn select_barriers(
-    zones: &Zones,
+    rectangles: &[Rect],
     clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
 ) -> (Vec<ICBarrier>, HashMap<BarrierID, Position>) {
@@ -130,19 +159,19 @@ fn select_barriers(
     let mut barriers: Vec<ICBarrier> = vec![];
 
     for pos in clients {
-        let mut client_barriers = zones
-            .regions()
-            .iter()
-            .map(|r| {
-                let id = *next_barrier_id;
-                *next_barrier_id = next_barrier_id
-                    .checked_add(1)
-                    .expect("barrier id out of range");
-                let position = pos_to_barrier(r, *pos);
-                pos_for_barrier.insert(id, *pos);
-                ICBarrier::new(id, position)
-            })
-            .collect();
+        let mut client_barriers =
+            EdgeSegments::from_rectangles(edge(*pos), rectangles.iter().copied())
+                .segments()
+                .map(|segment| {
+                    let id = *next_barrier_id;
+                    *next_barrier_id = next_barrier_id
+                        .checked_add(1)
+                        .expect("barrier id out of range");
+                    let position = segment_to_barrier(segment, *pos);
+                    pos_for_barrier.insert(id, *pos);
+                    ICBarrier::new(id, position)
+                })
+                .collect();
         barriers.append(&mut client_barriers);
     }
     (barriers, pos_for_barrier)
@@ -153,14 +182,24 @@ async fn update_barriers(
     session: &Session<InputCapture>,
     active_clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
-) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, Position>), ashpd::Error> {
+) -> Result<(Vec<Rect>, Vec<ICBarrier>, HashMap<BarrierID, Position>), ashpd::Error> {
     let zones = input_capture
         .zones(session, Default::default())
         .await?
         .response()?;
     log::debug!("zones: {zones:?}");
+    let rectangles: Vec<Rect> = zones
+        .regions()
+        .iter()
+        .map(|region| Rect {
+            x: region.x_offset(),
+            y: region.y_offset(),
+            width: region.width() as i32,
+            height: region.height() as i32,
+        })
+        .collect();
 
-    let (barriers, id_map) = select_barriers(&zones, active_clients, next_barrier_id);
+    let (barriers, id_map) = select_barriers(&rectangles, active_clients, next_barrier_id);
     log::debug!("barriers: {barriers:?}");
     log::debug!("client for barrier id: {id_map:?}");
 
@@ -175,7 +214,7 @@ async fn update_barriers(
         .await?;
     let response = response.response()?;
     log::debug!("{response:?}");
-    Ok((barriers, id_map))
+    Ok((rectangles, barriers, id_map))
 }
 
 async fn create_session(
@@ -381,7 +420,7 @@ async fn do_capture_session(
     let (context, _conn, ei_event_stream) = connect_to_eis(input_capture, session).await?;
 
     // set barriers
-    let (barriers, pos_for_barrier_id) =
+    let (rectangles, barriers, pos_for_barrier_id) =
         update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
 
     log::debug!("enabling session");
@@ -425,26 +464,32 @@ async fn do_capture_session(
                     log::debug!("activated: {activated:?}");
 
                     // get barrier id from activation
-                    let barrier_id = match activated.barrier_id() {
+                    let activated_barrier_id = match activated.barrier_id() {
                         Some(ActivatedBarrier::Barrier(id)) => id,
                         // workaround for KDE plasma not reporting barrier ids
                         Some(ActivatedBarrier::UnknownBarrier) | None => find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor")),
                     };
 
                     // find client corresponding to barrier
-                    let pos = match pos_for_barrier_id.get(&barrier_id) {
-                        Some(id) => *id,
+                    let pos = match pos_for_barrier_id.get(&activated_barrier_id) {
+                        Some(pos) => *pos,
                         None => {
-                            log::warn!("INVALID BARRIER ID: Id {barrier_id} does not exist!");
+                            log::warn!("INVALID BARRIER ID: Id {activated_barrier_id} does not exist!");
                             let id = find_corresponding_client(&barriers, activated.cursor_position().expect("no cursor position reported by compositor"));
-                            let pos = *pos_for_barrier_id.get(&id).expect("invalid barrier id");
-                            pos
+                            *pos_for_barrier_id.get(&id).expect("invalid barrier id")
                         },
                     };
                     current_pos.replace(Some(pos));
 
+                    let cross_axis = activated.cursor_position().and_then(|cursor| {
+                        normalized_cross_axis(pos, &rectangles, cursor)
+                    });
+
                     // client entered => send event
-                    event_tx.send((pos, CaptureEvent::Begin)).await.expect("no channel");
+                    event_tx
+                        .send((pos, CaptureEvent::Begin { cross_axis }))
+                        .await
+                        .expect("no channel");
 
                     tokio::select! {
                         _ = notify_release.notified() => { /* capture release */
@@ -499,6 +544,18 @@ async fn do_capture_session(
     Ok(())
 }
 
+fn normalized_cross_axis(pos: Position, rectangles: &[Rect], cursor: (f32, f32)) -> Option<f32> {
+    let edge = edge(pos);
+    let (edge_coordinate, cross_coordinate) = match edge {
+        Edge::Left => (cursor.0.floor() as i32, cursor.1.floor() as i32),
+        Edge::Right => (cursor.0.floor() as i32 - 1, cursor.1.floor() as i32),
+        Edge::Top => (cursor.1.floor() as i32, cursor.0.floor() as i32),
+        Edge::Bottom => (cursor.1.floor() as i32 - 1, cursor.0.floor() as i32),
+    };
+    EdgeSegments::from_rectangles(edge, rectangles.iter().copied())
+        .normalize(edge_coordinate, cross_coordinate)
+}
+
 async fn release_capture(
     input_capture: &InputCapture,
     session: &Session<InputCapture>,
@@ -532,28 +589,27 @@ fn find_corresponding_client(barriers: &[ICBarrier], pos: (f32, f32)) -> Barrier
     barriers
         .iter()
         .copied()
-        .min_by_key(|b| {
-            let (x1, y1, x2, y2) = b.position;
-            let (x1, y1, x2, y2) = (x1 as f32, y1 as f32, x2 as f32, y2 as f32);
-            distance_to_line(((x1, y1), (x2, y2)), pos) as i32
+        .min_by(|left, right| {
+            let distance = |barrier: &ICBarrier| {
+                let (x1, y1, x2, y2) = barrier.position;
+                distance_to_segment(((x1 as f32, y1 as f32), (x2 as f32, y2 as f32)), pos)
+            };
+            distance(left).total_cmp(&distance(right))
         })
         .expect("could not find barrier corresponding to client")
         .barrier_id
 }
 
-fn distance_to_line(line: ((f32, f32), (f32, f32)), p: (f32, f32)) -> f32 {
+fn distance_to_segment(line: ((f32, f32), (f32, f32)), p: (f32, f32)) -> f32 {
     let ((x1, y1), (x2, y2)) = line;
     let (x0, y0) = p;
-    /*
-     * we use the fact that for the triangle spanned by the line and p,
-     * the height of the triangle is the desired distance and can be calculated by
-     * h = 2A / b with b being the line_length and
-     */
-    let double_triangle_area = ((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1).abs();
-    let line_length = ((y2 - y1).powf(2.0) + (x2 - x1).powf(2.0)).sqrt();
-    let distance = double_triangle_area / line_length;
-    log::debug!("distance to line({line:?}, {p:?}) = {distance}");
-    distance
+    let (dx, dy) = (x2 - x1, y2 - y1);
+    let length_squared = dx.mul_add(dx, dy * dy);
+    if length_squared == 0.0 {
+        return (x0 - x1).hypot(y0 - y1);
+    }
+    let t = ((x0 - x1).mul_add(dx, (y0 - y1) * dy) / length_squared).clamp(0.0, 1.0);
+    (x0 - (x1 + t * dx)).hypot(y0 - (y1 + t * dy))
 }
 
 async fn handle_ei_event(
@@ -665,5 +721,104 @@ impl Stream for LibeiInputCapture {
             },
             Poll::Pending => self.event_rx.poll_recv(cx).map(|e| e.map(Result::Ok)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU32;
+
+    use super::{
+        ICBarrier, Position, Rect, distance_to_segment, find_corresponding_client,
+        normalized_cross_axis, select_barriers,
+    };
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn left_geometry_ignores_right_barriers() {
+        let rectangles = [rect(0, 0, 1920, 1080), rect(1920, 0, 1920, 1080)];
+        assert_eq!(
+            normalized_cross_axis(Position::Left, &rectangles, (0.0, 1079.0)),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn multi_monitor_geometry_uses_the_exposed_edge() {
+        let rectangles = [rect(100, 0, 1920, 100), rect(0, 100, 1920, 100)];
+        assert_eq!(
+            normalized_cross_axis(Position::Left, &rectangles, (0.0, 150.0)),
+            Some(150.0 / 199.0)
+        );
+    }
+
+    #[test]
+    fn barriers_cover_only_exposed_left_and_right_segments() {
+        let rectangles = [rect(0, 0, 1920, 100), rect(1920, 100, 1920, 100)];
+        let mut next_id = NonZeroU32::new(1).unwrap();
+        let (barriers, positions) = select_barriers(
+            &rectangles,
+            &[Position::Left, Position::Right],
+            &mut next_id,
+        );
+
+        assert_eq!(barriers.len(), 4);
+        assert_eq!(positions.len(), 4);
+    }
+
+    #[test]
+    fn distance_to_segment_clamps_to_the_nearest_endpoint() {
+        assert_eq!(
+            distance_to_segment(((0.0, 0.0), (0.0, 10.0)), (0.0, 15.0)),
+            5.0
+        );
+        assert_eq!(
+            distance_to_segment(((0.0, 0.0), (10.0, 0.0)), (5.0, 3.0)),
+            3.0
+        );
+    }
+
+    #[test]
+    fn distance_to_segment_distinguishes_separated_collinear_barriers() {
+        assert_eq!(
+            distance_to_segment(((0.0, 0.0), (0.0, 5.0)), (0.0, 9.0)),
+            4.0
+        );
+        assert_eq!(
+            distance_to_segment(((0.0, 7.0), (0.0, 12.0)), (0.0, 9.0)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn corresponding_barrier_keeps_subpixel_precision() {
+        let farther = ICBarrier::new(NonZeroU32::new(1).unwrap(), (0, 0, 10, 0));
+        let nearer = ICBarrier::new(NonZeroU32::new(2).unwrap(), (0, 1, 10, 1));
+        assert_eq!(
+            find_corresponding_client(&[farther, nearer], (5.0, 0.9)),
+            nearer.barrier_id
+        );
+        assert_eq!(
+            find_corresponding_client(&[nearer, farther], (5.0, 0.9)),
+            nearer.barrier_id
+        );
+    }
+
+    #[test]
+    fn corresponding_barrier_breaks_equal_distances_by_input_order() {
+        let first = ICBarrier::new(NonZeroU32::new(1).unwrap(), (0, 0, 10, 0));
+        let second = ICBarrier::new(NonZeroU32::new(2).unwrap(), (0, 2, 10, 2));
+        assert_eq!(
+            find_corresponding_client(&[first, second], (5.0, 1.0)),
+            first.barrier_id
+        );
     }
 }

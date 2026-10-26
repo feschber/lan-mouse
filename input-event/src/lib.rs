@@ -2,6 +2,7 @@ use std::fmt::{self, Display};
 
 pub mod error;
 pub mod scancode;
+pub mod screen;
 
 #[cfg(all(unix, feature = "libei", not(target_os = "macos")))]
 mod libei;

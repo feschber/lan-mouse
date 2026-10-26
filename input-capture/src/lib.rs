@@ -38,7 +38,7 @@ pub type CaptureHandle = u64;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CaptureEvent {
     /// capture on this capture handle is now active
-    Begin,
+    Begin { cross_axis: Option<f32> },
     /// input event coming from capture handle
     Input(Event),
 }
@@ -46,7 +46,9 @@ pub enum CaptureEvent {
 impl Display for CaptureEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CaptureEvent::Begin => write!(f, "begin capture"),
+            CaptureEvent::Begin { cross_axis } => {
+                write!(f, "begin capture ({cross_axis:?})")
+            }
             CaptureEvent::Input(e) => write!(f, "{e}"),
         }
     }

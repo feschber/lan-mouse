@@ -1,7 +1,7 @@
 use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError, WarpPosition};
 use input_event::Event;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
@@ -86,6 +86,7 @@ impl Emulation {
             emulation_proxy,
             request_rx,
             event_tx,
+            transitions: Default::default(),
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -134,6 +135,25 @@ struct ListenTask {
     emulation_proxy: EmulationProxy,
     request_rx: Receiver<EmulationRequest>,
     event_tx: Sender<EmulationEvent>,
+    transitions: HashMap<SocketAddr, IncomingTransition>,
+}
+
+#[derive(Clone, Copy)]
+enum IncomingTransition {
+    Legacy,
+    Modern { epoch: u64, serial: u32 },
+}
+
+impl IncomingTransition {
+    fn accepts(self, epoch: u64, serial: u32) -> bool {
+        match self {
+            Self::Legacy => true,
+            Self::Modern {
+                epoch: current_epoch,
+                serial: current_serial,
+            } => epoch > current_epoch || (epoch == current_epoch && serial > current_serial),
+        }
+    }
 }
 
 impl ListenTask {
@@ -149,11 +169,39 @@ impl ListenTask {
                         last_response.insert(addr, Instant::now());
                         match event {
                             ProtoEvent::Enter(pos) => {
+                                if matches!(self.transitions.get(&addr), Some(IncomingTransition::Modern { .. })) {
+                                    self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                    continue;
+                                }
                                 if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
                                     log::info!("releasing capture: {addr} entered this device");
                                     self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
                                     self.listener.reply(addr, ProtoEvent::Ack(0)).await;
+                                    self.transitions.insert(addr, IncomingTransition::Legacy);
                                     self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
+                                }
+                            }
+                            ProtoEvent::EnterWithPosition { pos, cross_axis, epoch, serial } => {
+                                match self.transitions.get(&addr).copied() {
+                                    Some(current) if !current.accepts(epoch, serial) => {
+                                        self.listener.reply(addr, ProtoEvent::Ack(serial)).await;
+                                    }
+                                    _ => {
+                                        if let Some(fingerprint) = self.listener.get_certificate_fingerprint(addr).await {
+                                            log::info!("releasing capture: {addr} entered this device");
+                                            self.event_tx.send(EmulationEvent::ReleaseNotify).expect("channel closed");
+                                            if let Some(cross_axis) = cross_axis {
+                                                self.emulation_proxy.warp_cursor(
+                                                    to_warp_position(pos),
+                                                    cross_axis,
+                                                    addr,
+                                                );
+                                            }
+                                            self.listener.reply(addr, ProtoEvent::Ack(serial)).await;
+                                            self.transitions.insert(addr, IncomingTransition::Modern { epoch, serial });
+                                            self.event_tx.send(EmulationEvent::Entered{addr, pos: to_ipc_pos(pos), fingerprint}).expect("channel closed");
+                                        }
+                                    }
                                 }
                             }
                             ProtoEvent::Leave(_) => {
@@ -177,10 +225,14 @@ impl ListenTask {
                                 self.listener.reply(addr, ProtoEvent::Hello { commit: local_commit() }).await;
                                 self.event_tx.send(EmulationEvent::PeerHello { addr, commit }).expect("channel closed");
                             }
+                            ProtoEvent::Capabilities { .. } => {
+                                self.listener.reply(addr, ProtoEvent::Capabilities { enter_with_position: true }).await;
+                            }
                             _ => {}
                         }
                     }
                     Some(ListenEvent::Accept { addr, fingerprint }) => {
+                        self.transitions.remove(&addr);
                         self.event_tx.send(EmulationEvent::Connected { addr, fingerprint }).expect("channel closed");
                     }
                     Some(ListenEvent::Rejected { fingerprint }) => {
@@ -212,6 +264,7 @@ impl ListenTask {
                             log::warn!("releasing keys: {addr} not responding!");
                             self.emulation_proxy.remove(addr);
                             self.event_tx.send(EmulationEvent::Disconnected { addr }).expect("channel closed");
+                            self.transitions.remove(&addr);
                             false
                         } else {
                             true
@@ -237,6 +290,7 @@ pub(crate) struct EmulationProxy {
 
 enum ProxyRequest {
     Input(Event, SocketAddr),
+    WarpCursor(WarpPosition, f32, SocketAddr),
     Remove(SocketAddr),
     Terminate,
     Reenable,
@@ -286,6 +340,14 @@ impl EmulationProxy {
         }
     }
 
+    fn warp_cursor(&self, pos: WarpPosition, cross_axis: f32, addr: SocketAddr) {
+        if self.emulation_active.get() {
+            self.request_tx
+                .send(ProxyRequest::WarpCursor(pos, cross_axis, addr))
+                .expect("channel closed");
+        }
+    }
+
     fn remove(&self, addr: SocketAddr) {
         self.request_tx
             .send(ProxyRequest::Remove(addr))
@@ -331,6 +393,7 @@ impl EmulationTask {
                     ProxyRequest::Reenable => break,
                     ProxyRequest::Terminate => return,
                     ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
+                    ProxyRequest::WarpCursor(..) => {}
                     ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
                 }
             }
@@ -397,6 +460,15 @@ impl EmulationTask {
                         };
                         emulation.consume(event, handle).await?;
                     },
+                    ProxyRequest::WarpCursor(pos, cross_axis, addr) => {
+                        if !self.handles.contains_key(&addr) {
+                            let handle = self.next_id;
+                            self.next_id += 1;
+                            emulation.create(handle).await;
+                            self.handles.insert(addr, handle);
+                        }
+                        emulation.warp_cursor(self.handles[&addr], pos, cross_axis).await?;
+                    }
                     ProxyRequest::Remove(addr) => {
                         if let Some(handle) = self.handles.remove(&addr) {
                             emulation.destroy(handle).await;
@@ -407,6 +479,15 @@ impl EmulationTask {
                 },
             }
         }
+    }
+}
+
+fn to_warp_position(pos: Position) -> WarpPosition {
+    match pos {
+        Position::Left => WarpPosition::Left,
+        Position::Right => WarpPosition::Right,
+        Position::Top => WarpPosition::Top,
+        Position::Bottom => WarpPosition::Bottom,
     }
 }
 
@@ -424,6 +505,7 @@ async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
         match rx.recv().await.expect("channel closed") {
             ProxyRequest::Terminate => return,
             ProxyRequest::Input(_, _) => continue,
+            ProxyRequest::WarpCursor(_, _, _) => continue,
             ProxyRequest::Remove(_) => continue,
             ProxyRequest::Reenable => continue,
         }
@@ -448,5 +530,64 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IncomingTransition;
+
+    #[test]
+    fn transition_accepts_a_new_serial_after_a_retry() {
+        assert!(
+            IncomingTransition::Modern {
+                epoch: 1,
+                serial: 7
+            }
+            .accepts(1, 8)
+        );
+    }
+
+    #[test]
+    fn transition_rejects_a_duplicate_serial() {
+        assert!(
+            !IncomingTransition::Modern {
+                epoch: 1,
+                serial: 7
+            }
+            .accepts(1, 7)
+        );
+    }
+
+    #[test]
+    fn transition_rejects_a_stale_serial() {
+        assert!(
+            !IncomingTransition::Modern {
+                epoch: 1,
+                serial: 7
+            }
+            .accepts(1, 6)
+        );
+    }
+
+    #[test]
+    fn transition_rejects_packets_from_a_previous_session() {
+        assert!(
+            !IncomingTransition::Modern {
+                epoch: 2,
+                serial: 1
+            }
+            .accepts(1, 99)
+        );
+    }
+
+    #[test]
+    fn transition_accepts_the_first_packet_after_a_reconnect() {
+        assert!(IncomingTransition::Legacy.accepts(1, 1));
+    }
+
+    #[test]
+    fn legacy_transition_accepts_the_first_modern_serial() {
+        assert!(IncomingTransition::Legacy.accepts(1, 1));
     }
 }

@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
     scancode::{self, Linux},
+    screen::{Edge, EdgeSegments, Rect},
 };
 
 use super::{CaptureEvent, Position, display_util};
@@ -280,7 +281,7 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
         display_util::entered_barrier(prev_pos, curr_pos, displays)
     });
 
-    let Some(pos) = entered else {
+    let Some((pos, entry_point)) = entered else {
         return ret;
     };
 
@@ -291,15 +292,31 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
 
     /* update active client and entry point */
     ACTIVE_CLIENT.replace(Some(pos));
-    let entry_point = DISPLAYS.with_borrow(|(displays, _)| {
-        display_util::clamp_to_display_bounds(displays, prev_pos, curr_pos)
-    });
     ENTRY_POINT.replace(entry_point);
 
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
     let active = ACTIVE_CLIENT.get().expect("active client");
-    blocking_send_event(active, CaptureEvent::Begin);
+    let cross_axis = DISPLAYS.with_borrow(|(displays, _)| {
+        let edge = match active {
+            Position::Left => Edge::Left,
+            Position::Right => Edge::Right,
+            Position::Top => Edge::Top,
+            Position::Bottom => Edge::Bottom,
+        };
+        let rectangles = displays.iter().map(|display| Rect {
+            x: display.left,
+            y: display.top,
+            width: display.right.saturating_sub(display.left),
+            height: display.bottom.saturating_sub(display.top),
+        });
+        let (edge_coordinate, cross_coordinate) = match edge {
+            Edge::Left | Edge::Right => (entry_point.0, entry_point.1),
+            Edge::Top | Edge::Bottom => (entry_point.1, entry_point.0),
+        };
+        EdgeSegments::from_rectangles(edge, rectangles).normalize(edge_coordinate, cross_coordinate)
+    });
+    blocking_send_event(active, CaptureEvent::Begin { cross_axis });
 
     ret
 }

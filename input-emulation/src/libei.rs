@@ -19,22 +19,26 @@ use async_trait::async_trait;
 
 use reis::{
     ei::{
-        self, Button, Keyboard, Pointer, Scroll, button::ButtonState, handshake::ContextType,
-        keyboard::KeyState,
+        self, Button, Keyboard, Pointer, PointerAbsolute, Scroll, button::ButtonState,
+        handshake::ContextType, keyboard::KeyState,
     },
     event::{self, Connection, DeviceCapability, DeviceEvent, EiEvent, SeatEvent},
     tokio::EiConvertEventStream,
 };
 
-use input_event::{Event, KeyboardEvent, PointerEvent};
+use input_event::{
+    Event, KeyboardEvent, PointerEvent,
+    screen::{Edge, EdgeSegments, Rect},
+};
 
 use crate::error::EmulationError;
 
-use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
+use super::{Emulation, EmulationHandle, WarpPosition, error::LibeiEmulationCreationError};
 
 #[derive(Clone, Default)]
 struct Devices {
     pointer: Arc<RwLock<Option<(ei::Device, ei::Pointer)>>>,
+    pointer_absolute: Arc<RwLock<Vec<(event::Device, ei::PointerAbsolute)>>>,
     scroll: Arc<RwLock<Option<(ei::Device, ei::Scroll)>>>,
     button: Arc<RwLock<Option<(ei::Device, ei::Button)>>>,
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
@@ -261,6 +265,69 @@ impl Emulation for LibeiEmulation {
         let _ = self.session.close().await;
         self.ei_task.abort();
     }
+
+    async fn warp_cursor(
+        &mut self,
+        _handle: EmulationHandle,
+        pos: WarpPosition,
+        cross_axis: f32,
+    ) -> Result<(), EmulationError> {
+        if !cross_axis.is_finite() {
+            return Ok(());
+        }
+        let pointer_absolute = self.devices.pointer_absolute.read().unwrap();
+        let rectangles = pointer_absolute
+            .iter()
+            .flat_map(|(device, _)| device.regions())
+            .filter_map(|region| {
+                Some(Rect {
+                    x: i32::try_from(region.x).ok()?,
+                    y: i32::try_from(region.y).ok()?,
+                    width: i32::try_from(region.width).ok()?,
+                    height: i32::try_from(region.height).ok()?,
+                })
+            })
+            .collect::<Vec<_>>();
+        let edge = match pos {
+            WarpPosition::Left => Edge::Left,
+            WarpPosition::Right => Edge::Right,
+            WarpPosition::Top => Edge::Top,
+            WarpPosition::Bottom => Edge::Bottom,
+        };
+        let Some((edge_coordinate, cross_coordinate)) =
+            EdgeSegments::from_rectangles(edge, rectangles).denormalize(cross_axis)
+        else {
+            return Ok(());
+        };
+        let (x, y) = match edge {
+            Edge::Left | Edge::Right => (edge_coordinate, cross_coordinate),
+            Edge::Top | Edge::Bottom => (cross_coordinate, edge_coordinate),
+        };
+        let (x, y) = match (u32::try_from(x), u32::try_from(y)) {
+            (Ok(x), Ok(y)) => (x, y),
+            _ => return Ok(()),
+        };
+        let Some((device, pointer_absolute)) = pointer_absolute.iter().find(|(device, _)| {
+            device.regions().iter().any(|region| {
+                x >= region.x
+                    && x < region.x + region.width
+                    && y >= region.y
+                    && y < region.y + region.height
+            })
+        }) else {
+            return Ok(());
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        pointer_absolute.motion_absolute(x as f32, y as f32);
+        device.device().frame(self.conn.serial(), now);
+        self.context
+            .flush()
+            .map_err(|e| io::Error::new(e.kind(), e))?;
+        Ok(())
+    }
 }
 
 async fn ei_task(
@@ -282,6 +349,10 @@ async fn ei_task(
             }
         }
     }
+}
+
+fn remove_device<D: PartialEq, T>(devices: &mut Vec<(D, T)>, removed_device: &D) {
+    devices.retain(|(device, _)| device != removed_device);
 }
 
 async fn ei_event_handler(
@@ -320,6 +391,13 @@ async fn ei_event_handler(
                         .unwrap()
                         .replace((device.device().clone(), pointer));
                 }
+                if let Some(pointer_absolute) = e.device().interface::<PointerAbsolute>() {
+                    devices
+                        .pointer_absolute
+                        .write()
+                        .unwrap()
+                        .push((device.clone(), pointer_absolute));
+                }
                 if let Some(keyboard) = e.device().interface::<Keyboard>() {
                     devices
                         .keyboard
@@ -344,6 +422,7 @@ async fn ei_event_handler(
             }
             EiEvent::DeviceRemoved(e) => {
                 log::debug!("device removed: {:?}", e.device().device_type());
+                remove_device(&mut devices.pointer_absolute.write().unwrap(), e.device());
             }
             EiEvent::DevicePaused(e) => {
                 log::debug!("device paused: {:?}", e.device().device_type());
@@ -373,5 +452,20 @@ async fn ei_event_handler(
             _ => unreachable!("unexpected ei event"),
         }
         context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_device;
+
+    #[test]
+    fn removing_a_device_discards_only_its_absolute_pointer() {
+        let removed_device = 1;
+        let mut pointers = vec![(1, "removed"), (2, "retained")];
+
+        remove_device(&mut pointers, &removed_device);
+
+        assert_eq!(pointers, vec![(2, "retained")]);
     }
 }

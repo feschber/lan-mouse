@@ -2,12 +2,18 @@ use super::error::{EmulationError, WindowsEmulationCreationError};
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
     scancode,
+    screen::{Edge, EdgeSegments, Rect},
 };
 
 use async_trait::async_trait;
 use std::ops::BitOrAssign;
 use std::time::Duration;
 use tokio::task::AbortHandle;
+use windows::Win32::Foundation::{FALSE, RECT};
+use windows::Win32::Graphics::Gdi::{
+    DEVMODEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
     MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
@@ -17,9 +23,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT_0, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, SendInput,
 };
-use windows::Win32::UI::WindowsAndMessaging::{XBUTTON1, XBUTTON2};
+use windows::Win32::UI::WindowsAndMessaging::{SetCursorPos, XBUTTON1, XBUTTON2};
+use windows::core::PCWSTR;
 
-use super::{Emulation, EmulationHandle};
+use super::{Emulation, EmulationHandle, WarpPosition};
 
 const DEFAULT_REPEAT_DELAY: Duration = Duration::from_millis(500);
 const DEFAULT_REPEAT_INTERVAL: Duration = Duration::from_millis(32);
@@ -80,6 +87,87 @@ impl Emulation for WindowsEmulation {
     async fn destroy(&mut self, _handle: EmulationHandle) {}
 
     async fn terminate(&mut self) {}
+
+    async fn warp_cursor(
+        &mut self,
+        _handle: EmulationHandle,
+        pos: WarpPosition,
+        cross_axis: f32,
+    ) -> Result<(), EmulationError> {
+        if !cross_axis.is_finite() {
+            return Ok(());
+        }
+        let edge = edge_for_position(pos);
+        let Some((edge_coordinate, cross_coordinate)) =
+            EdgeSegments::from_rectangles(edge, display_rectangles()).denormalize(cross_axis)
+        else {
+            return Ok(());
+        };
+        let (x, y) = match edge {
+            Edge::Left | Edge::Right => (edge_coordinate, cross_coordinate),
+            Edge::Top | Edge::Bottom => (cross_coordinate, edge_coordinate),
+        };
+        unsafe {
+            let _ = SetCursorPos(x, y);
+        }
+        Ok(())
+    }
+}
+
+fn edge_for_position(pos: WarpPosition) -> Edge {
+    match pos {
+        WarpPosition::Left => Edge::Left,
+        WarpPosition::Right => Edge::Right,
+        WarpPosition::Top => Edge::Top,
+        WarpPosition::Bottom => Edge::Bottom,
+    }
+}
+
+fn display_rectangles() -> Vec<Rect> {
+    let mut display_rects = Vec::<RECT>::new();
+    unsafe {
+        let mut devices = Vec::new();
+        for index in 0.. {
+            let mut device: DISPLAY_DEVICEW = std::mem::zeroed();
+            device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+            if EnumDisplayDevicesW(None, index, &mut device, Default::default()) == FALSE {
+                break;
+            }
+            if device
+                .StateFlags
+                .contains(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
+            {
+                devices.push(device.DeviceName);
+            }
+        }
+        for device in devices {
+            let mut mode: DEVMODEW = std::mem::zeroed();
+            mode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+            if EnumDisplaySettingsW(
+                PCWSTR::from_raw(&device as *const _),
+                ENUM_CURRENT_SETTINGS,
+                &mut mode,
+            ) != FALSE
+            {
+                let position = mode.Anonymous1.Anonymous2.dmPosition;
+                display_rects.push(RECT {
+                    left: position.x,
+                    top: position.y,
+                    right: position.x.saturating_add(mode.dmPelsWidth as i32),
+                    bottom: position.y.saturating_add(mode.dmPelsHeight as i32),
+                });
+            }
+        }
+    }
+    display_rects
+        .into_iter()
+        .map(|display| Rect {
+            x: display.left,
+            y: display.top,
+            width: display.right.saturating_sub(display.left),
+            height: display.bottom.saturating_sub(display.top),
+        })
+        .collect()
 }
 
 impl WindowsEmulation {
