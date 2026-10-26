@@ -238,3 +238,86 @@ trait Emulation: Send {
     async fn destroy(&mut self, handle: EmulationHandle);
     async fn terminate(&mut self);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug)]
+    enum Recorded {
+        Input(Event),
+        Destroy,
+        Terminate,
+    }
+
+    struct RecordingEmulation(Arc<Mutex<Vec<Recorded>>>);
+
+    #[async_trait]
+    impl Emulation for RecordingEmulation {
+        async fn consume(
+            &mut self,
+            event: Event,
+            _: EmulationHandle,
+        ) -> Result<(), EmulationError> {
+            self.0.lock().unwrap().push(Recorded::Input(event));
+            Ok(())
+        }
+        async fn create(&mut self, _: EmulationHandle) {}
+        async fn destroy(&mut self, _: EmulationHandle) {
+            self.0.lock().unwrap().push(Recorded::Destroy);
+        }
+        async fn terminate(&mut self) {
+            self.0.lock().unwrap().push(Recorded::Terminate);
+        }
+    }
+
+    #[tokio::test]
+    async fn termination_releases_pressed_keys_and_modifiers_before_destroying_devices() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut emulation = InputEmulation {
+            emulation: Box::new(RecordingEmulation(events.clone())),
+            handles: HashSet::new(),
+            pressed_keys: HashMap::new(),
+        };
+        emulation.create(1).await;
+        emulation
+            .consume(
+                Event::Keyboard(KeyboardEvent::Key {
+                    time: 0,
+                    key: 29,
+                    state: 1,
+                }),
+                1,
+            )
+            .await
+            .unwrap();
+        emulation.terminate().await;
+        assert!(emulation.handles.is_empty());
+        assert!(emulation.pressed_keys.is_empty());
+        let events = events.lock().unwrap();
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Recorded::Input(Event::Keyboard(KeyboardEvent::Key {
+                    key: 29,
+                    state: 1,
+                    ..
+                })),
+                Recorded::Input(Event::Keyboard(KeyboardEvent::Key {
+                    key: 29,
+                    state: 0,
+                    ..
+                })),
+                Recorded::Input(Event::Keyboard(KeyboardEvent::Modifiers {
+                    depressed: 0,
+                    latched: 0,
+                    locked: 0,
+                    group: 0,
+                })),
+                Recorded::Destroy,
+                Recorded::Terminate,
+            ]
+        ));
+    }
+}

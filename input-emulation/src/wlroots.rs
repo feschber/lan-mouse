@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wayland_client::WEnum;
 use wayland_client::backend::WaylandError;
 
@@ -48,12 +48,57 @@ struct State {
 
 // App State, implements Dispatch event handlers
 pub(crate) struct WlrootsEmulation {
-    last_flush_failed: bool,
     state: State,
     queue: EventQueue<State>,
 }
 
 impl WlrootsEmulation {
+    fn dispatch_incoming(&mut self) -> Result<(), EmulationError> {
+        self.queue
+            .dispatch_pending(&mut self.state)
+            .map_err(io::Error::other)?;
+        if let Some(guard) = self.queue.prepare_read() {
+            match guard.read() {
+                Ok(_) => {}
+                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        self.queue
+            .dispatch_pending(&mut self.state)
+            .map_err(io::Error::other)?;
+        Ok(())
+    }
+
+    async fn flush_pending(&mut self) -> Result<(), EmulationError> {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(500);
+        let mut retried = false;
+        loop {
+            self.dispatch_incoming()?;
+            match self.queue.flush() {
+                Ok(()) => {
+                    if retried && started.elapsed() >= Duration::from_millis(50) {
+                        log::warn!(
+                            "Wayland input output recovered after {}ms",
+                            started.elapsed().as_millis()
+                        );
+                    }
+                    return Ok(());
+                }
+                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
+                    retried = true;
+                    if Instant::now() >= deadline {
+                        return Err(EmulationError::WaylandOutputBlocked);
+                    }
+                    // Yield to the runtime while the compositor drains the socket.
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
     pub(crate) fn new() -> Result<Self, WlrootsEmulationCreationError> {
         let conn = Connection::connect_to_env()?;
         let (globals, queue) = registry_queue_init::<State>(&conn)?;
@@ -73,7 +118,6 @@ impl WlrootsEmulation {
         let input_for_client: HashMap<EmulationHandle, VirtualInput> = HashMap::new();
 
         let mut emulate = WlrootsEmulation {
-            last_flush_failed: false,
             state: State {
                 keymap: None,
                 keyboard: None,
@@ -137,46 +181,28 @@ impl Emulation for WlrootsEmulation {
         event: Event,
         handle: EmulationHandle,
     ) -> Result<(), EmulationError> {
+        // Drain compositor replies as well as flushing requests. Otherwise the
+        // unread socket can backpressure the compositor until it stops reading
+        // our input requests. This backend is the connection's only reader.
+        self.dispatch_incoming()?;
         if let Some(virtual_input) = self.state.input_for_client.get(&handle) {
-            if self.last_flush_failed {
-                match self.queue.flush() {
-                    Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-                        /*
-                         * outgoing buffer is full - sending more events
-                         * will overwhelm the output buffer and leave the
-                         * wayland connection in a broken state
-                         */
-                        log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-            }
             virtual_input
                 .consume_event(event)
                 .unwrap_or_else(|_| panic!("failed to convert event: {event:?}"));
-            match self.queue.flush() {
-                Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
-                    self.last_flush_failed = true;
-                    log::warn!("can't keep up, discarding event: ({handle}) - {event:?}");
-                }
-                Err(WaylandError::Protocol(e)) => panic!("wayland protocol violation: {e}"),
-                Ok(()) => self.last_flush_failed = false,
-                Err(e) => Err(e)?,
-            }
+            self.flush_pending().await?;
         }
         Ok(())
     }
 
     async fn create(&mut self, handle: EmulationHandle) {
         self.state.add_client(handle);
-        if let Err(e) = self.queue.flush() {
+        if let Err(e) = self.flush_pending().await {
             log::error!("{e}");
         }
     }
     async fn destroy(&mut self, handle: EmulationHandle) {
         self.state.destroy_client(handle);
-        if let Err(e) = self.queue.flush() {
+        if let Err(e) = self.flush_pending().await {
             log::error!("{e}");
         }
     }

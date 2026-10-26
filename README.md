@@ -31,6 +31,11 @@ There are currently no mitigations in place for timing side-channel attacks.
 
 ## OS Support
 
+On wlroots, an output stall lasting 500ms disables input emulation and releases
+the sending peer. The backend is rebuilt after two seconds, at most three times
+per minute. Input queued before recovery is discarded rather than replayed.
+Other backend failures require explicit re-enabling.
+
 Most current desktop environments and operating systems are fully supported, this includes
 - GNOME >= 45
 - KDE Plasma >= 6.1

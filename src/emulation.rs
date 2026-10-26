@@ -7,7 +7,7 @@ use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::SocketAddr,
     rc::Rc,
     time::{Duration, Instant},
@@ -192,6 +192,13 @@ impl ListenTask {
                     None => break
                 }}
                 event = self.emulation_proxy.event() => {
+                    if matches!(&event, EmulationEvent::EmulationDisabled) {
+                        // Release the source immediately; ping state also keeps
+                        // it from entering while the backend is being rebuilt.
+                        for &addr in last_response.keys() {
+                            self.listener.reply(addr, ProtoEvent::Leave(0)).await;
+                        }
+                    }
                     self.event_tx.send(event).expect("channel closed");
                 }
                 request = self.request_rx.recv() => match request.expect("channel closed") {
@@ -318,21 +325,34 @@ struct EmulationTask {
 
 impl EmulationTask {
     async fn run(mut self) {
+        let mut recoveries = VecDeque::new();
         loop {
-            if let Err(e) = self.do_emulation().await {
+            let result = self.do_emulation().await;
+            if let Err(e) = &result {
                 log::warn!("input emulation exited: {e}");
             }
             if self.exit_requested.get() {
                 break;
             }
-            // wait for reenable request
-            loop {
-                match self.request_rx.recv().await.expect("channel closed") {
-                    ProxyRequest::Reenable => break,
-                    ProxyRequest::Terminate => return,
-                    ProxyRequest::Input(..) => { /* emulation inactive => ignore */ }
-                    ProxyRequest::Remove(..) => { /* emulation inactive => ignore */ }
-                }
+            // Old devices have been destroyed. Do not recreate their handles or
+            // replay input that arrived before the source released its capture.
+            self.handles.clear();
+            let retry = result.as_ref().err().is_some_and(|e| {
+                e.is_recoverable_output_stall()
+                    && allow_output_recovery(&mut recoveries, Instant::now())
+            });
+            let delay = retry.then_some(Duration::from_secs(2));
+            if retry {
+                log::warn!(
+                    "Wayland output stalled; releasing input and rebuilding emulation after 2s"
+                );
+            }
+            if !wait_for_restart(&mut self.request_rx, delay).await {
+                return;
+            }
+            if !retry {
+                // An explicit reenable starts a fresh recovery budget.
+                recoveries.clear();
             }
         }
     }
@@ -410,6 +430,44 @@ impl EmulationTask {
     }
 }
 
+fn allow_output_recovery(attempts: &mut VecDeque<Instant>, now: Instant) -> bool {
+    while attempts
+        .front()
+        .is_some_and(|last| now.duration_since(*last) >= Duration::from_secs(60))
+    {
+        attempts.pop_front();
+    }
+    if attempts.len() >= 3 {
+        return false;
+    }
+    attempts.push_back(now);
+    true
+}
+
+async fn wait_for_restart(rx: &mut Receiver<ProxyRequest>, delay: Option<Duration>) -> bool {
+    let resume = async {
+        match delay {
+            Some(delay) => tokio::time::sleep(delay).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(resume);
+    let mut explicitly_requested = false;
+    loop {
+        tokio::select! {
+            // Drain stale input even when the retry timer has already expired.
+            biased;
+            request = rx.recv() => match request {
+                Some(ProxyRequest::Terminate) | None => return false,
+                Some(ProxyRequest::Reenable) => explicitly_requested = true,
+                Some(ProxyRequest::Input(..) | ProxyRequest::Remove(..)) => {},
+            },
+            _ = &mut resume => return true,
+            _ = std::future::ready(()), if explicitly_requested => return true,
+        }
+    }
+}
+
 fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
     match pos {
         Position::Left => lan_mouse_ipc::Position::Left,
@@ -448,5 +506,110 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recovery_discards_buffered_input_before_restart() {
+        let (tx, mut rx) = channel();
+        let addr = "127.0.0.1:4242".parse().unwrap();
+        let press = Event::Keyboard(input_event::KeyboardEvent::Key {
+            time: 0,
+            key: 30,
+            state: 1,
+        });
+        tx.send(ProxyRequest::Input(press, addr)).unwrap();
+        tx.send(ProxyRequest::Reenable).unwrap();
+        tx.send(ProxyRequest::Input(press, addr)).unwrap();
+        tx.send(ProxyRequest::Remove(addr)).unwrap();
+        assert!(wait_for_restart(&mut rx, Some(Duration::ZERO)).await);
+        // A replayed key would be delivered before this termination request.
+        tx.send(ProxyRequest::Terminate).unwrap();
+        assert!(matches!(rx.recv().await, Some(ProxyRequest::Terminate)));
+    }
+
+    #[tokio::test]
+    async fn termination_interrupts_recovery_wait() {
+        let (tx, mut rx) = channel();
+        tx.send(ProxyRequest::Terminate).unwrap();
+        assert!(
+            !tokio::time::timeout(
+                Duration::from_millis(100),
+                wait_for_restart(&mut rx, Some(Duration::from_secs(60)))
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn repeated_stalls_have_a_bounded_recovery_budget() {
+        let now = Instant::now();
+        let mut attempts = VecDeque::new();
+        for _ in 0..3 {
+            assert!(allow_output_recovery(&mut attempts, now));
+        }
+        assert!(!allow_output_recovery(
+            &mut attempts,
+            now + Duration::from_secs(59)
+        ));
+        assert!(allow_output_recovery(
+            &mut attempts,
+            now + Duration::from_secs(60)
+        ));
+    }
+
+    #[cfg(wlroots_emulation)]
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "requires a real Wayland compositor and isolated Wayland stall proxy"]
+    async fn real_wayland_stall_disables_then_rebuilds_emulation() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let flag =
+                    std::env::var("LAN_MOUSE_STALL_FLAG").expect("isolated injector flag required");
+                let mut proxy = EmulationProxy::new(Some(input_emulation::Backend::Wlroots));
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(3), proxy.event())
+                        .await
+                        .unwrap(),
+                    EmulationEvent::EmulationEnabled
+                ));
+                std::fs::write(&flag, b"once").unwrap();
+                let addr = "127.0.0.1:4242".parse().unwrap();
+                let motion = Event::Pointer(input_event::PointerEvent::Motion {
+                    time: 0,
+                    dx: 0.0,
+                    dy: 0.0,
+                });
+                for _ in 0..2000 {
+                    proxy.consume(motion, addr);
+                }
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(3), proxy.event())
+                        .await
+                        .unwrap(),
+                    EmulationEvent::EmulationDisabled
+                ));
+                assert!(matches!(
+                    tokio::time::timeout(Duration::from_secs(5), proxy.event())
+                        .await
+                        .unwrap(),
+                    EmulationEvent::EmulationEnabled
+                ));
+                proxy.consume(motion, addr);
+                // The rebuilt backend must accept new input, not immediately disable again.
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(800), proxy.event())
+                        .await
+                        .is_err()
+                );
+                proxy.terminate().await;
+                assert!(!std::path::Path::new(&flag).exists());
+            })
+            .await;
     }
 }
