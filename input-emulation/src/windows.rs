@@ -190,15 +190,16 @@ fn mouse_button(button: u32, state: u32) -> Result<(), EmulationError> {
 }
 
 fn scroll(axis: u8, value: i32) -> Result<(), EmulationError> {
-    let event_type = match axis {
-        0 => MOUSEEVENTF_WHEEL,
-        1 => MOUSEEVENTF_HWHEEL,
+    // WHEEL is positive up but HWHEEL positive right, like lan-mouse's horizontal axis
+    let (event_type, value) = match axis {
+        0 => (MOUSEEVENTF_WHEEL, value.saturating_neg()),
+        1 => (MOUSEEVENTF_HWHEEL, value),
         _ => return Ok(()),
     };
     let mi = MOUSEINPUT {
         dx: 0,
         dy: 0,
-        mouseData: -value as u32,
+        mouseData: value as u32,
         dwFlags: event_type,
         time: 0,
         dwExtraInfo: 0,
