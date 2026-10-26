@@ -13,6 +13,7 @@ use lan_mouse_ipc::{
     AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
     IpcListenerCreationError, Position, Status,
 };
+use local_channel::mpsc::{Receiver, channel};
 use log;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -67,6 +68,8 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    /// fingerprints of peers we refused to connect to
+    rejected_peers: Receiver<String>,
 }
 
 #[derive(Debug)]
@@ -94,7 +97,13 @@ impl Service {
         // listener + connection
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
-        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let (rejected_tx, rejected_peers) = channel();
+        let conn = LanMouseConnection::new(
+            cert.clone(),
+            client_manager.clone(),
+            authorized_keys.clone(),
+            rejected_tx,
+        );
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
@@ -123,6 +132,7 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            rejected_peers,
         };
         Ok(service)
     }
@@ -147,6 +157,10 @@ impl Service {
                 event = self.emulation.event() => self.handle_emulation_event(event),
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
+                fingerprint = self.rejected_peers.recv() => {
+                    let fingerprint = fingerprint.expect("channel closed");
+                    self.notify_frontend(FrontendEvent::ConnectionAttempt { fingerprint });
+                }
                 _ = self.config.changed() => self.handle_config_change(),
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }

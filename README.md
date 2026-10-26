@@ -325,6 +325,10 @@ under the "Incoming Connections" section.
 The fingerprint for authorization can be found under the general section of your *local* device.
 It is of the form "aa:bb:cc:..."
 
+Likewise, authorize the *remote* device on your *local* device, so that input is only ever sent
+to a device you have verified. If its fingerprint is not authorized yet, the local device asks
+for authorization on the first connection attempt.
+
 Authorized devices can be persisted using the configuration file (see [Configuration](#configuration)).
 
 If the device still can not be entered, make sure you have UDP port `4242` (or the one selected) opened up in your firewall.
@@ -396,7 +400,8 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 port = 4242
 
 # list of authorized tls certificate fingerprints that
-# are accepted for incoming traffic
+# are accepted for incoming traffic and required of
+# devices input is sent to
 [authorized_fingerprints]
 "bc:05:ab:7a:a4:de:88:8c:2f:92:ac:bc:b8:49:b8:24:0d:44:b3:e6:a4:ef:d7:0b:6c:69:6d:77:53:0b:14:80" = "iridium"
 
