@@ -7,7 +7,7 @@ use core_foundation_sys::preferences::{
 };
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
-    CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
+    CGDirectDisplayID, CGDisplay, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
 };
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGKeyCode, CGMouseButton, EventField,
@@ -340,6 +340,44 @@ fn get_display_bounds(display: CGDirectDisplayID) -> (CGFloat, CGFloat, CGFloat,
     }
 }
 
+/// Returns the active display closest to the given point.
+/// Used when the cursor is not on any display, which can happen
+/// after the display configuration changed (e.g. a display was removed).
+fn get_nearest_display(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
+    let displays = match CGDisplay::active_displays() {
+        Ok(displays) => displays,
+        Err(error) => {
+            log::warn!("error getting active displays: {error}");
+            return None;
+        }
+    };
+    nearest_display(
+        x,
+        y,
+        displays
+            .into_iter()
+            .map(|display| (display, get_display_bounds(display))),
+    )
+}
+
+/// Returns the display whose bounds `(min_x, min_y, max_x, max_y)` are closest
+/// to the given point. `max_x` / `max_y` are exclusive.
+fn nearest_display(
+    x: CGFloat,
+    y: CGFloat,
+    displays: impl IntoIterator<Item = (CGDirectDisplayID, (CGFloat, CGFloat, CGFloat, CGFloat))>,
+) -> Option<CGDirectDisplayID> {
+    let distance_sq = |(min_x, min_y, max_x, max_y): (CGFloat, CGFloat, CGFloat, CGFloat)| {
+        let dx: CGFloat = (min_x - x).max(x - (max_x - 1.)).max(0.);
+        let dy: CGFloat = (min_y - y).max(y - (max_y - 1.)).max(0.);
+        dx * dx + dy * dy
+    };
+    displays
+        .into_iter()
+        .min_by(|(_, a), (_, b)| distance_sq(*a).total_cmp(&distance_sq(*b)))
+        .map(|(display, _)| display)
+}
+
 fn clamp_to_screen_space(
     current_x: CGFloat,
     current_y: CGFloat,
@@ -353,7 +391,9 @@ fn clamp_to_screen_space(
     //   Clamp the mouse to the current display
     // Else If the point is on a display
     //   Clamp the mouse to the new display
-    let current_display = match get_display_at_point(current_x, current_y) {
+    let current_display = match get_display_at_point(current_x, current_y)
+        .or_else(|| get_nearest_display(current_x, current_y))
+    {
         Some(display) => display,
         None => {
             log::warn!("could not get current display!");
@@ -737,5 +777,46 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::nearest_display;
+
+    const LEFT: (u32, (f64, f64, f64, f64)) = (1, (0., 0., 1920., 1080.));
+    const RIGHT: (u32, (f64, f64, f64, f64)) = (2, (1920., 0., 3840., 1080.));
+
+    #[test]
+    fn nearest_display_no_displays() {
+        assert_eq!(nearest_display(0., 0., []), None);
+    }
+
+    #[test]
+    fn nearest_display_point_on_display() {
+        assert_eq!(nearest_display(100., 100., [LEFT, RIGHT]), Some(1));
+        assert_eq!(nearest_display(2000., 100., [LEFT, RIGHT]), Some(2));
+    }
+
+    #[test]
+    fn nearest_display_max_edge_is_exclusive() {
+        assert_eq!(nearest_display(1919., 500., [LEFT, RIGHT]), Some(1));
+        assert_eq!(nearest_display(1920., 500., [LEFT, RIGHT]), Some(2));
+    }
+
+    #[test]
+    fn nearest_display_cursor_on_removed_display() {
+        // cursor was on the right display, which has been disconnected
+        assert_eq!(nearest_display(3000., 500., [LEFT]), Some(1));
+        // a display remains on the other side, further away
+        let far_left = (3, (-1440., 0., 0., 900.));
+        assert_eq!(nearest_display(3000., 500., [far_left, LEFT]), Some(1));
+    }
+
+    #[test]
+    fn nearest_display_point_off_corner() {
+        let below_right = (3, (1920., 1080., 3840., 2160.));
+        assert_eq!(nearest_display(-50., -50., [below_right, LEFT]), Some(1));
+        assert_eq!(nearest_display(4000., 2500., [LEFT, below_right]), Some(3));
     }
 }
