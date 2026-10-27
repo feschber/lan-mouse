@@ -6,6 +6,7 @@ Each instance of lan-mouse can emit and receive events, where
 an event is either a mouse or keyboard event for now.
 
 The general Architecture is shown in the following flow chart:
+
 ```mermaid
 graph TD
     A[Wayland Backend] -->|WaylandEvent| D{Input}
@@ -20,21 +21,24 @@ graph TD
 ```
 
 ### Input
+
 The input component is responsible for translating inputs from a given backend
 to a standardized format and passing them to the event emitter.
 
 ### Emitter
+
 The event emitter serializes events and sends them over the network
 to the correct client.
 
 ### Receiver
+
 The receiver receives events over the network and deserializes them into
 the standardized event format.
 
 ### Dispatcher
+
 The dispatcher component takes events from the event receiver and passes them
 to the correct backend corresponding to the type of client.
-
 
 ## Requests
 
@@ -52,6 +56,7 @@ sequenceDiagram
 ```
 
 ## Problems
+
 The general Idea is to have a bidirectional connection by default, meaning
 any connected device can not only receive events but also send events back.
 
@@ -66,12 +71,26 @@ To keep the implementation of input backends simple this needs to be handled
 on the server level.
 
 ## Device State - Active and Inactive
+
 To solve this problem, each device can be in exactly two states:
 
 Either events are sent or received.
 
 This ensures that
-- a) Events can never result in a feedback loop.
-- b) As soon as a virtual input enters another client, lan-mouse will stop receiving events,
-which ensures clients can only be controlled directly and not indirectly through other clients.
 
+- a) Events can never result in a feedback loop.
+- b) As soon as a virtual input enters another client, lan-mouse will stop
+  receiving events, which ensures clients can only be controlled directly and
+  not indirectly through other clients.
+
+## macOS Display Layout Changes
+
+The macOS capture backend refreshes the active CoreGraphics display snapshot
+once per second and on native display-change notifications. Bounds are rebuilt
+from the current snapshot, so removing a display shrinks the capture area.
+An active capture anchor is moved inside a remaining display when necessary,
+including rearrangements that leave the outer bounds unchanged.
+
+Client positions refer to the outer edge of the entire desktop, not an
+individual monitor. With a client configured above the Mac, use the top edge of
+the topmost display; a display below that edge does not provide another exit.

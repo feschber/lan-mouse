@@ -9,8 +9,8 @@ use core_foundation::{
     string::{CFStringCreateWithCString, CFStringRef, kCFStringEncodingUTF8},
 };
 use core_graphics::{
-    base::{CGError, kCGErrorSuccess},
-    display::{CGDisplay, CGPoint},
+    base::{CGError, kCGErrorFailure, kCGErrorSuccess},
+    display::{CGDirectDisplayID, CGDisplay, CGPoint, CGRect},
     event::{
         CGEvent, CGEventField, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
         CGEventTapPlacement, CGEventTapProxy, CGEventType, CallbackResult, EventField,
@@ -31,6 +31,7 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll, ready},
     thread::{self},
+    time::Duration,
 };
 use tokio::sync::{
     Mutex,
@@ -38,12 +39,72 @@ use tokio::sync::{
     oneshot,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct Bounds {
     xmin: f64,
     xmax: f64,
     ymin: f64,
     ymax: f64,
+}
+
+impl Bounds {
+    fn from_displays(displays: impl Iterator<Item = CGRect>) -> Option<Self> {
+        let mut displays = displays.filter(|rect| rect.size.width > 0.0 && rect.size.height > 0.0);
+        let first = displays.next()?;
+        let mut bounds = Self {
+            xmin: first.origin.x,
+            xmax: first.origin.x + first.size.width,
+            ymin: first.origin.y,
+            ymax: first.origin.y + first.size.height,
+        };
+        for rect in displays {
+            bounds.xmin = bounds.xmin.min(rect.origin.x);
+            bounds.xmax = bounds.xmax.max(rect.origin.x + rect.size.width);
+            bounds.ymin = bounds.ymin.min(rect.origin.y);
+            bounds.ymax = bounds.ymax.max(rect.origin.y + rect.size.height);
+        }
+        Some(bounds)
+    }
+
+    fn capture_anchor(
+        &self,
+        displays: impl Iterator<Item = CGRect>,
+        position: Position,
+        point: CGPoint,
+    ) -> Option<CGPoint> {
+        displays
+            .filter(|rect| rect.size.width >= 2.0 && rect.size.height >= 2.0)
+            .filter_map(|rect| {
+                let (xmin, ymin) = (rect.origin.x, rect.origin.y);
+                let (xmax, ymax) = (xmin + rect.size.width, ymin + rect.size.height);
+                match position {
+                    Position::Left if xmin == self.xmin => Some(CGPoint::new(
+                        xmin + 1.0,
+                        point.y.clamp(ymin + 1.0, ymax - 1.0),
+                    )),
+                    Position::Right if xmax == self.xmax => Some(CGPoint::new(
+                        xmax - 1.0,
+                        point.y.clamp(ymin + 1.0, ymax - 1.0),
+                    )),
+                    Position::Top if ymin == self.ymin => Some(CGPoint::new(
+                        point.x.clamp(xmin + 1.0, xmax - 1.0),
+                        ymin + 1.0,
+                    )),
+                    Position::Bottom if ymax == self.ymax => Some(CGPoint::new(
+                        point.x.clamp(xmin + 1.0, xmax - 1.0),
+                        ymax - 1.0,
+                    )),
+                    _ => None,
+                }
+            })
+            .min_by(|a, b| {
+                let distance = |p: &CGPoint| {
+                    let (dx, dy) = (p.x - point.x, p.y - point.y);
+                    dx * dx + dy * dy
+                };
+                distance(a).total_cmp(&distance(b))
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -56,6 +117,8 @@ struct InputCaptureState {
     enter_position: Option<CGPoint>,
     /// bounds of the input capture area
     bounds: Bounds,
+    /// Reused scratch space for querying displays without allocating on each refresh.
+    display_ids: Vec<CGDirectDisplayID>,
     /// current state of modifier keys
     modifier_state: XMods,
 }
@@ -77,6 +140,7 @@ impl InputCaptureState {
             current_pos: None,
             enter_position: None,
             bounds: Bounds::default(),
+            display_ids: Vec::new(),
             modifier_state: Default::default(),
         };
         res.update_bounds()?;
@@ -101,35 +165,69 @@ impl InputCaptureState {
         None
     }
 
-    // Get the max bounds of all displays
     fn update_bounds(&mut self) -> Result<(), MacosCaptureCreationError> {
-        let active_ids =
-            CGDisplay::active_displays().map_err(MacosCaptureCreationError::ActiveDisplays)?;
-        active_ids.iter().for_each(|d| {
-            let bounds = CGDisplay::new(*d).bounds();
-            self.bounds.xmin = self.bounds.xmin.min(bounds.origin.x);
-            self.bounds.xmax = self.bounds.xmax.max(bounds.origin.x + bounds.size.width);
-            self.bounds.ymin = self.bounds.ymin.min(bounds.origin.y);
-            self.bounds.ymax = self.bounds.ymax.max(bounds.origin.y + bounds.size.height);
-        });
+        let mut count = 0;
+        let result = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) };
+        if result != kCGErrorSuccess {
+            return Err(MacosCaptureCreationError::ActiveDisplays(result));
+        }
+        self.display_ids.resize(count as usize, 0);
+        let result =
+            unsafe { CGGetActiveDisplayList(count, self.display_ids.as_mut_ptr(), &mut count) };
+        if result != kCGErrorSuccess {
+            return Err(MacosCaptureCreationError::ActiveDisplays(result));
+        }
+        self.display_ids.truncate(count as usize);
+        let bounds = Bounds::from_displays(
+            self.display_ids
+                .iter()
+                .map(|&id| CGDisplay::new(id).bounds()),
+        )
+        .ok_or(MacosCaptureCreationError::ActiveDisplays(kCGErrorFailure))?;
+        if self.bounds != bounds {
+            log::info!("Updated displays bounds: {bounds:?}");
+        }
+        self.bounds = bounds;
 
-        log::debug!("Updated displays bounds: {0:?}", self.bounds);
+        // A removed or rearranged display can invalidate the hidden cursor's
+        // anchor even when the desktop's overall bounding rectangle is unchanged.
+        if let (Some(position), Some(old_anchor)) = (self.current_pos, self.enter_position) {
+            let anchor = self.bounds.capture_anchor(
+                self.display_ids
+                    .iter()
+                    .map(|&id| CGDisplay::new(id).bounds()),
+                position,
+                old_anchor,
+            );
+            if let Some(anchor) = anchor {
+                if anchor.x != old_anchor.x || anchor.y != old_anchor.y {
+                    match CGDisplay::warp_mouse_cursor_position(anchor) {
+                        Ok(()) => self.enter_position = Some(anchor),
+                        Err(e) => {
+                            log::warn!("failed to move capture anchor after display change: {e:?}")
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
     /// start the input capture by
     fn start_capture(&mut self, event: &CGEvent, position: Position) -> Result<(), CaptureError> {
-        let mut location = event.location();
-        let edge_offset = 1.0;
-        // move cursor location to display bounds
-        match position {
-            Position::Left => location.x = self.bounds.xmin + edge_offset,
-            Position::Right => location.x = self.bounds.xmax - edge_offset,
-            Position::Top => location.y = self.bounds.ymin + edge_offset,
-            Position::Bottom => location.y = self.bounds.ymax - edge_offset,
-        };
-        self.enter_position = Some(location);
-        self.reset_cursor()
+        let anchor = self
+            .bounds
+            .capture_anchor(
+                self.display_ids
+                    .iter()
+                    .map(|&id| CGDisplay::new(id).bounds()),
+                position,
+                event.location(),
+            )
+            .ok_or(CaptureError::CoreGraphics(kCGErrorFailure))?;
+        CGDisplay::warp_mouse_cursor_position(anchor).map_err(CaptureError::WarpCursor)?;
+        self.enter_position = Some(anchor);
+        Ok(())
     }
 
     /// resets the cursor to the position, where the capture started
@@ -605,17 +703,18 @@ fn event_tap_thread(
         }
     };
 
-    // Register a Quartz display-reconfiguration callback so the
-    // capture state's bounds get refreshed when the user plugs in a
-    // monitor, changes resolution, or rearranges displays. The
-    // callback runs on this thread's CFRunLoop. Box-leak the sender
-    // so the C side has a stable user_info pointer; reclaim it after
-    // the run loop exits.
+    // Quartz notifications are best-effort in the headless daemon. The producer
+    // task also reconciles the layout periodically, without restarting capture.
     let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
-    unsafe {
+    let registration = unsafe {
         CGDisplayRegisterReconfigurationCallback(
             display_reconfiguration_callback,
             display_user_info,
+        )
+    };
+    if registration != kCGErrorSuccess {
+        log::warn!(
+            "display callback registration failed: {registration:?}; using periodic refresh"
         );
     }
 
@@ -624,7 +723,12 @@ fn event_tap_thread(
     log::debug!("event tap thread exiting!...");
 
     unsafe {
-        CGDisplayRemoveReconfigurationCallback(display_reconfiguration_callback, display_user_info);
+        if registration == kCGErrorSuccess {
+            CGDisplayRemoveReconfigurationCallback(
+                display_reconfiguration_callback,
+                display_user_info,
+            );
+        }
         // Reclaim the leaked sender Box so we don't leak a tokio
         // channel sender on every capture create/destroy cycle.
         drop(Box::from_raw(
@@ -649,15 +753,11 @@ extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_i
     if user_info.is_null() {
         return;
     }
-    // SAFETY: user_info is a Box::into_raw of Sender<ProducerEvent>
-    // owned by `event_tap_thread`. It's valid for the lifetime of
-    // that thread; the registration is removed before the box is
-    // freed. The callback only fires while the run loop is running
-    // on that thread, so we know the box is live here.
+    // SAFETY: the sender is owned by event_tap_thread and remains valid until
+    // callback registration is removed. Never block an OS callback; a full
+    // queue is covered by the periodic layout reconciliation.
     let sender = unsafe { &*(user_info as *const Sender<ProducerEvent>) };
-    if let Err(e) = sender.blocking_send(ProducerEvent::DisplayReconfigured) {
-        log::warn!("failed to notify display reconfiguration: {e}");
-    }
+    let _ = sender.try_send(ProducerEvent::DisplayReconfigured);
 }
 
 pub struct MacOSInputCapture {
@@ -697,6 +797,10 @@ impl MacOSInputCapture {
         let run_loop = ready_rx.recv().expect("channel closed")?;
 
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
+            let period = Duration::from_secs(1);
+            let mut refresh =
+                tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
                     producer_event = notify_rx.recv() => {
@@ -709,6 +813,11 @@ impl MacOSInputCapture {
                         })
                     }
                     _ = &mut tap_exit_rx => break,
+                    _ = refresh.tick() => {
+                        if let Err(e) = state.lock().await.update_bounds() {
+                            log::warn!("failed to refresh display layout: {e}");
+                        }
+                    },
                 }
             }
             // show cursor
@@ -822,6 +931,11 @@ extern "C" {
 }
 
 extern "C" {
+    fn CGGetActiveDisplayList(
+        max_displays: u32,
+        active_displays: *mut CGDirectDisplayID,
+        display_count: *mut u32,
+    ) -> CGError;
     fn CGEventSourceSetLocalEventsSuppressionInterval(
         event_source: CGEventSource,
         seconds: CFTimeInterval,
@@ -895,5 +1009,140 @@ bitflags! {
         const Mod3Mask = (1<<5);
         const Mod4Mask = (1<<6);
         const Mod5Mask = (1<<7);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_graphics::display::CGSize;
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
+        CGRect::new(&CGPoint::new(x, y), &CGSize::new(width, height))
+    }
+
+    #[test]
+    fn bounds_include_displays_on_both_sides_and_above() {
+        let displays = [
+            rect(0.0, 0.0, 1800.0, 1169.0),
+            rect(-1280.0, 369.0, 1280.0, 800.0),
+            rect(520.0, -800.0, 1280.0, 800.0),
+            rect(1800.0, 369.0, 1280.0, 800.0),
+        ];
+        assert_eq!(
+            Bounds::from_displays(displays.into_iter()),
+            Some(Bounds {
+                xmin: -1280.0,
+                xmax: 3080.0,
+                ymin: -800.0,
+                ymax: 1169.0
+            })
+        );
+    }
+
+    #[test]
+    fn single_display_bounds_do_not_include_the_origin_or_old_displays() {
+        assert_eq!(
+            Bounds::from_displays([rect(500.0, 200.0, 800.0, 600.0)].into_iter()),
+            Some(Bounds {
+                xmin: 500.0,
+                xmax: 1300.0,
+                ymin: 200.0,
+                ymax: 800.0
+            })
+        );
+    }
+
+    #[test]
+    fn empty_or_inactive_display_snapshots_have_no_bounds() {
+        assert_eq!(
+            Bounds::from_displays([rect(0.0, 0.0, 0.0, 0.0)].into_iter()),
+            None
+        );
+    }
+
+    #[test]
+    fn top_anchor_avoids_the_gap_beside_an_upper_display() {
+        let displays = [
+            rect(0.0, 0.0, 1800.0, 1169.0),
+            rect(520.0, -800.0, 1280.0, 800.0),
+        ];
+        let bounds = Bounds::from_displays(displays.into_iter()).unwrap();
+        let anchor = bounds
+            .capture_anchor(
+                displays.into_iter(),
+                Position::Top,
+                CGPoint::new(100.0, 1.0),
+            )
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (521.0, -799.0));
+    }
+
+    #[test]
+    fn removed_display_anchor_moves_back_to_a_remaining_screen() {
+        let displays = [rect(0.0, 0.0, 1800.0, 1169.0)];
+        let bounds = Bounds::from_displays(displays.into_iter()).unwrap();
+        let anchor = bounds
+            .capture_anchor(
+                displays.into_iter(),
+                Position::Right,
+                CGPoint::new(3079.0, 700.0),
+            )
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (1799.0, 700.0));
+    }
+
+    #[test]
+    fn rearrangement_with_unchanged_outer_bounds_relocates_the_anchor() {
+        let before = [
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(-100.0, -100.0, 100.0, 100.0),
+            rect(100.0, 0.0, 100.0, 100.0),
+        ];
+        let after = [
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(-100.0, 0.0, 100.0, 100.0),
+            rect(100.0, -100.0, 100.0, 100.0),
+        ];
+        let bounds = Bounds::from_displays(before.into_iter()).unwrap();
+        assert_eq!(Some(bounds), Bounds::from_displays(after.into_iter()));
+        let anchor = bounds
+            .capture_anchor(after.into_iter(), Position::Top, CGPoint::new(-50.0, -99.0))
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (101.0, -99.0));
+    }
+
+    #[test]
+    fn left_anchor_clamps_to_the_display_on_the_outer_edge() {
+        let displays = [
+            rect(0.0, 0.0, 1800.0, 1169.0),
+            rect(-1280.0, 369.0, 1280.0, 800.0),
+        ];
+        let bounds = Bounds::from_displays(displays.into_iter()).unwrap();
+        let anchor = bounds
+            .capture_anchor(
+                displays.into_iter(),
+                Position::Left,
+                CGPoint::new(0.0, 100.0),
+            )
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (-1279.0, 370.0));
+    }
+
+    #[test]
+    fn bottom_anchor_uses_the_nearest_matching_screen() {
+        let displays = [
+            rect(0.0, 0.0, 1800.0, 1169.0),
+            rect(1800.0, 369.0, 1280.0, 800.0),
+        ];
+        let bounds = Bounds::from_displays(displays.into_iter()).unwrap();
+        let anchor = bounds
+            .capture_anchor(
+                displays.into_iter(),
+                Position::Bottom,
+                CGPoint::new(2500.0, 1000.0),
+            )
+            .unwrap();
+        assert_eq!((anchor.x, anchor.y), (2500.0, 1168.0));
     }
 }
