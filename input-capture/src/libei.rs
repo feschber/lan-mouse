@@ -16,7 +16,7 @@ use reis::{
     tokio::EiConvertEventStream,
 };
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::HashMap,
     env, io,
     num::NonZeroU32,
@@ -64,9 +64,104 @@ fn restart_session_on_device_change() -> bool {
     match env::var("LM_RESTART_SESSION_ON_DEVICE_CHANGE").as_deref() {
         Ok("1") => true,
         Ok("0") => false,
-        _ => env::var("XDG_CURRENT_DESKTOP")
-            .is_ok_and(|desktops| desktops.to_uppercase().split(':').any(|d| d == "GNOME")),
+        _ => is_gnome(),
     }
+}
+
+/* Alternative to the GNOME restart rule above: when the EI devices change
+ * (mutter disables the session then -- e.g. on a monitor replug, such as a TV
+ * switching to another input and back), re-apply the barriers and re-enable
+ * the SAME session instead of creating a new one. A new session makes GNOME
+ * ask the user for permission again, every time, because the portal has no
+ * restore token for input capture.
+ * On by default under GNOME; set LM_REENABLE_ON_DEVICE_CHANGE=1/0 to override. */
+static REENABLE_ON_DEVICE_CHANGE: LazyLock<bool> = LazyLock::new(reenable_on_device_change);
+
+fn reenable_on_device_change() -> bool {
+    match env::var("LM_REENABLE_ON_DEVICE_CHANGE").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => is_gnome(),
+    }
+}
+
+fn is_gnome() -> bool {
+    env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|desktops| desktops.to_uppercase().split(':').any(|d| d == "GNOME"))
+}
+
+/// GNOME only: Mutter's DisplayConfig.MonitorsChanged, the one signal that
+/// reliably fires on every monitor change (the portal's own Disabled /
+/// ZonesChanged / EI device events were seen to fire only sometimes).
+async fn mutter_monitors_changed() -> Option<Pin<Box<zbus::MessageStream>>> {
+    if !*REENABLE_ON_DEVICE_CHANGE {
+        return None;
+    }
+    let conn = zbus::Connection::session().await.ok()?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface("org.gnome.Mutter.DisplayConfig")
+        .ok()?
+        .member("MonitorsChanged")
+        .ok()?
+        .build();
+    match zbus::MessageStream::for_match_rule(rule, &conn, Some(64)).await {
+        Ok(stream) => {
+            log::info!("watching Mutter MonitorsChanged");
+            Some(Box::pin(stream))
+        }
+        Err(e) => {
+            log::warn!("cannot watch Mutter MonitorsChanged: {e}");
+            None
+        }
+    }
+}
+
+async fn next_monitors_changed(stream: &mut Option<Pin<Box<zbus::MessageStream>>>) {
+    match stream {
+        Some(s) => {
+            if s.next().await.is_none() {
+                std::future::pending::<()>().await
+            }
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// A TV switching inputs arrives as a burst of MonitorsChanged (2 pulses
+/// ~0.6 s apart): wait until there has been none for 750 ms.
+async fn settle_monitors(stream: &mut Option<Pin<Box<zbus::MessageStream>>>) {
+    if let Some(s) = stream {
+        while tokio::time::timeout(std::time::Duration::from_millis(750), s.next())
+            .await
+            .is_ok()
+        {}
+    }
+}
+
+/// Re-apply barriers on the current zones and re-enable `session` (see
+/// REENABLE_ON_DEVICE_CHANGE). Waits briefly first so a monitor change that
+/// arrives as several hot-plug pulses has settled.
+async fn reapply_and_enable(
+    input_capture: &InputCapture,
+    session: &Session<InputCapture>,
+    active_clients: &[Position],
+    next_barrier_id: &mut NonZeroU32,
+) -> Result<
+    (
+        Vec<ICBarrier>,
+        HashMap<BarrierID, Position>,
+        Vec<ZoneGeometry>,
+    ),
+    ashpd::Error,
+> {
+    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+    let r = update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
+    if let Err(e) = input_capture.enable(session, Default::default()).await {
+        // e.g. the session was never disabled: barriers are re-applied, keep going
+        log::info!("enable after re-applying barriers: {e} (keeping the session)");
+    }
+    Ok(r)
 }
 
 /// events that necessitate restarting the capture session
@@ -121,6 +216,187 @@ impl From<ICBarrier> for Barrier {
     }
 }
 
+/// Geometry of one zone: (width, height, x_offset, y_offset).
+type ZoneGeometry = (u32, u32, i32, i32);
+
+fn zone_geometry(zones: &Zones) -> Vec<ZoneGeometry> {
+    zones
+        .regions()
+        .iter()
+        .map(|r| (r.width(), r.height(), r.x_offset(), r.y_offset()))
+        .collect()
+}
+
+/// The zones and barriers the running capture session was set up with.
+type ActiveBarriers = RefCell<Option<(Vec<ZoneGeometry>, Vec<ICBarrier>)>>;
+
+/// What ended the wait for a session update.
+enum SessionUpdate {
+    /// exit requested, the session ended by itself, or nothing to apply
+    None,
+    /// zones changed in a way the running session can't absorb
+    ZonesChanged,
+    /// clients were added / removed
+    Clients(LibeiNotifyEvent),
+}
+
+/// Set `barriers`, and report the ids that still failed.
+///
+/// Mutter only adds barriers to a *disabled* session ("Session already
+/// enabled"), while the portal clears the old barriers before adding the new
+/// ones: setting barriers on an enabled session leaves it with none, and
+/// nothing in the reply says why. This happens when a monitor returns: the
+/// device-change path re-applies while mutter has the session disabled (ok),
+/// then the MonitorsChanged path re-applies on the re-enabled session, which
+/// would leave the edge dead. So on any failure, disable the session (it
+/// keeps its permission: no new prompt) and set them again. Returns
+/// `(failed, disabled)`; if `disabled`, the caller must enable the session
+/// again.
+async fn set_barriers(
+    input_capture: &InputCapture,
+    session: &Session<InputCapture>,
+    barriers: &[Barrier],
+    zone_set: u32,
+) -> Result<(Vec<BarrierID>, bool), ashpd::Error> {
+    let response = input_capture
+        .set_pointer_barriers(session, barriers, zone_set, Default::default())
+        .await?
+        .response()?;
+    log::debug!("{response:?}");
+    if response.failed_barriers().is_empty() {
+        return Ok((vec![], false));
+    }
+    log::info!(
+        "barriers {:?} refused (session enabled?) -- disabling the session and setting them again",
+        response.failed_barriers()
+    );
+    if let Err(e) = input_capture.disable(session, Default::default()).await {
+        log::info!("disable before re-setting barriers: {e}");
+    }
+    let response = input_capture
+        .set_pointer_barriers(session, barriers, zone_set, Default::default())
+        .await?
+        .response()?;
+    log::debug!("{response:?}");
+    Ok((response.failed_barriers().to_vec(), true))
+}
+
+/// "Zones changed" without the geometry changing is common under GNOME: a
+/// monitor that briefly drops hot-plug -- e.g. a TV switched to another input
+/// and back -- makes mutter re-announce identical zones. Tearing the session
+/// down for that is expensive *visibly*: on GNOME every new InputCapture
+/// session asks the user for permission again (the portal has no restore
+/// token for capture). So if the geometry is unchanged, re-apply the very same
+/// barriers (same ids, so the activation -> client mapping still holds)
+/// against the new zone set and keep the session.
+///
+/// No zones at all means the only monitor went away (a TV turned off drops
+/// hot-plug for as long as it is off): keep the session and wait for the
+/// monitor to return, which arrives as another zones change.
+///
+/// Returns true if the session was kept; false means "recreate as before".
+async fn reapply_if_zones_unchanged(
+    input_capture: &InputCapture,
+    session: &Session<InputCapture>,
+    active: &ActiveBarriers,
+) -> bool {
+    let Some((geometry, barriers)) = active.borrow().clone() else {
+        log::info!("zones changed with no barriers recorded -- recreating session");
+        return false;
+    };
+    let zones = match input_capture
+        .zones(session, Default::default())
+        .await
+        .and_then(|r| r.response())
+    {
+        Ok(zones) => zones,
+        Err(e) => {
+            log::warn!("zones changed; could not re-read zones ({e}) -- recreating session");
+            return false;
+        }
+    };
+    let new_geometry = zone_geometry(&zones);
+    if new_geometry.is_empty() {
+        log::info!(
+            "zones changed to none (no monitor, e.g. the TV is off) -- keeping capture session"
+        );
+        return true;
+    }
+    if new_geometry != geometry {
+        log::info!(
+            "zones changed (new geometry {geometry:?} -> {new_geometry:?}) -- recreating capture session"
+        );
+        return false;
+    }
+    let ashpd_barriers: Vec<Barrier> = barriers.iter().copied().map(|b| b.into()).collect();
+    match set_barriers(input_capture, session, &ashpd_barriers, zones.zone_set()).await {
+        Ok((failed, disabled)) if failed.is_empty() => {
+            if disabled {
+                if let Err(e) = input_capture.enable(session, Default::default()).await {
+                    log::warn!(
+                        "re-enabling after re-setting barriers failed ({e}) -- recreating session"
+                    );
+                    return false;
+                }
+            }
+            log::info!(
+                "zones changed but geometry is identical -- re-applied barriers, kept capture session"
+            );
+            true
+        }
+        Ok((failed, _)) => {
+            log::warn!("re-applying barriers failed for {failed:?} -- recreating session");
+            false
+        }
+        Err(e) => {
+            log::warn!("re-applying barriers failed ({e}) -- recreating session");
+            false
+        }
+    }
+}
+
+/// Wait for a reason to update (or end) the capture session.
+async fn wait_for_session_update(
+    input_capture: &InputCapture,
+    session: Option<&Session<InputCapture>>,
+    active: &ActiveBarriers,
+    cancellation_token: &CancellationToken,
+    cancel_update: &CancellationToken,
+    zones_changed: &mut (impl Stream<Item = ashpd::desktop::input_capture::ZonesChanged> + Unpin),
+    capture_event: &mut Receiver<LibeiNotifyEvent>,
+) -> SessionUpdate {
+    loop {
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                log::debug!("cancelled");
+                return SessionUpdate::None;
+            } /* exit requested */
+            _ = cancel_update.cancelled() => {
+                log::debug!("update task cancelled");
+                return SessionUpdate::None;
+            } /* session exited */
+            _ = zones_changed.next() => {
+                log::info!("zones changed (session {})", if session.is_some() { "active" } else { "idle" });
+                if let Some(session) = session {
+                    if reapply_if_zones_unchanged(input_capture, session, active).await {
+                        continue;
+                    }
+                }
+                return SessionUpdate::ZonesChanged;
+            } /* zones have changed */
+            e = capture_event.recv() => { /* clients changed */
+                return match e {
+                    Some(e) => {
+                        log::debug!("capture event: {e:?}");
+                        SessionUpdate::Clients(e)
+                    }
+                    None => SessionUpdate::None,
+                };
+            }
+        }
+    }
+}
+
 fn select_barriers(
     zones: &Zones,
     clients: &[Position],
@@ -153,7 +429,14 @@ async fn update_barriers(
     session: &Session<InputCapture>,
     active_clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
-) -> Result<(Vec<ICBarrier>, HashMap<BarrierID, Position>), ashpd::Error> {
+) -> Result<
+    (
+        Vec<ICBarrier>,
+        HashMap<BarrierID, Position>,
+        Vec<ZoneGeometry>,
+    ),
+    ashpd::Error,
+> {
     let zones = input_capture
         .zones(session, Default::default())
         .await?
@@ -165,23 +448,19 @@ async fn update_barriers(
     log::debug!("client for barrier id: {id_map:?}");
 
     let ashpd_barriers: Vec<Barrier> = barriers.iter().copied().map(|b| b.into()).collect();
-    let response = input_capture
-        .set_pointer_barriers(
-            session,
-            &ashpd_barriers,
-            zones.zone_set(),
-            Default::default(),
-        )
-        .await?;
-    let response = response.response()?;
-    log::debug!("{response:?}");
-    Ok((barriers, id_map))
+    /* a session left disabled is fine here: every caller enables it next */
+    let (failed, _) =
+        set_barriers(input_capture, session, &ashpd_barriers, zones.zone_set()).await?;
+    if !failed.is_empty() {
+        log::warn!("barriers {failed:?} refused even with the session disabled");
+    }
+    Ok((barriers, id_map, zone_geometry(&zones)))
 }
 
 async fn create_session(
     input_capture: &InputCapture,
 ) -> std::result::Result<(Session<InputCapture>, BitFlags<Capabilities>), ashpd::Error> {
-    log::debug!("creating input capture session");
+    log::info!("creating input capture session (GNOME will ask for permission)");
     let create_session_options = CreateSessionOptions::default().set_capabilities(
         Capabilities::Keyboard | Capabilities::Pointer | Capabilities::Touchscreen,
     );
@@ -283,56 +562,54 @@ async fn do_capture(
 
     let mut zones_changed = input_capture.receive_zones_changed().await?;
 
+    let active_barriers: ActiveBarriers = RefCell::new(None);
+
     loop {
         // do capture session
         let cancel_session = CancellationToken::new();
         let cancel_update = CancellationToken::new();
 
-        let mut capture_event_occured: Option<LibeiNotifyEvent> = None;
-        let mut zones_have_changed = false;
-
-        // kill session if clients need to be updated
-        let handle_session_update_request = async {
-            tokio::select! {
-                _ = cancellation_token.cancelled() => {
-                    log::debug!("cancelled")
-                }, /* exit requested */
-                _ = cancel_update.cancelled() => {
-                    log::debug!("update task cancelled");
-                }, /* session exited */
-                _ = zones_changed.next() => {
-                    log::debug!("zones changed!");
-                    zones_have_changed = true
-                }, /* zones have changed */
-                e = capture_event.recv() => if let Some(e) = e { /* clients changed */
-                    log::debug!("capture event: {e:?}");
-                    capture_event_occured.replace(e);
-                },
-            }
-            // kill session (might already be dead!)
-            log::debug!("=> cancelling session");
-            cancel_session.cancel();
-        };
-
-        if !active_clients.is_empty() {
+        let update = if !active_clients.is_empty() {
             // create session
-            let mut session = match session.take() {
+            let session = match session.take() {
                 Some(s) => s,
                 None => create_session(input_capture).await?.0,
             };
 
             let capture_session = do_capture_session(
                 input_capture,
-                &mut session,
+                &session,
                 &event_tx,
                 &active_clients,
                 &mut next_barrier_id,
                 &notify_release,
+                &active_barriers,
                 (cancel_session.clone(), cancel_update.clone()),
             );
 
-            let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
+            // kill session if clients need to be updated (zone changes with
+            // unchanged geometry are absorbed without killing it)
+            let handle_session_update_request = async {
+                let update = wait_for_session_update(
+                    input_capture,
+                    Some(&session),
+                    &active_barriers,
+                    &cancellation_token,
+                    &cancel_update,
+                    &mut zones_changed,
+                    &mut capture_event,
+                )
+                .await;
+                // kill session (might already be dead!)
+                log::debug!("=> cancelling session");
+                cancel_session.cancel();
+                update
+            };
+
+            let (capture_result, update) =
+                tokio::join!(capture_session, handle_session_update_request);
             log::debug!("capture session + session_update task done!");
+            active_barriers.replace(None);
 
             // disable capture
             log::debug!("disabling input capture");
@@ -345,12 +622,25 @@ async fn do_capture(
 
             // propagate error from capture session
             capture_result?;
+            update
         } else {
-            handle_session_update_request.await;
+            wait_for_session_update(
+                input_capture,
+                None,
+                &active_barriers,
+                &cancellation_token,
+                &cancel_update,
+                &mut zones_changed,
+                &mut capture_event,
+            )
+            .await
+        };
+        if let SessionUpdate::ZonesChanged = update {
+            log::debug!("zones changed: session will be recreated");
         }
 
         // update clients if requested
-        if let Some(event) = capture_event_occured.take() {
+        if let SessionUpdate::Clients(event) = update {
             match event {
                 LibeiNotifyEvent::Create(p) => active_clients.push(p),
                 LibeiNotifyEvent::Destroy(p) => active_clients.retain(|&pos| pos != p),
@@ -364,13 +654,15 @@ async fn do_capture(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_capture_session(
     input_capture: &InputCapture,
-    session: &mut Session<InputCapture>,
+    session: &Session<InputCapture>,
     event_tx: &Sender<(Position, CaptureEvent)>,
     active_clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
     notify_release: &Notify,
+    active_barriers: &ActiveBarriers,
     cancel: (CancellationToken, CancellationToken),
 ) -> Result<(), CaptureError> {
     let (cancel_session, cancel_update) = cancel;
@@ -381,8 +673,9 @@ async fn do_capture_session(
     let (context, _conn, ei_event_stream) = connect_to_eis(input_capture, session).await?;
 
     // set barriers
-    let (barriers, pos_for_barrier_id) =
+    let (mut barriers, mut pos_for_barrier_id, geometry) =
         update_barriers(input_capture, session, active_clients, next_barrier_id).await?;
+    active_barriers.replace(Some((geometry, barriers.clone())));
 
     log::debug!("enabling session");
     input_capture.enable(session, Default::default()).await?;
@@ -406,7 +699,7 @@ async fn do_capture_session(
                 release_session_clone,
                 pos,
             ) => {
-                log::debug!("libei exited: {r:?} cancelling session task");
+                log::info!("session end: libei event stream exited ({r:?})");
                 cancel_session_clone.cancel();
             }
             _ = cancel_ei_handler_clone.cancelled() => {},
@@ -417,11 +710,21 @@ async fn do_capture_session(
     let capture_session_task = async {
         // receiver for activation tokens
         let mut activated = input_capture.receive_activated().await?;
+        // the compositor disabling the session (we only disable it ourselves
+        // after this loop): GNOME does this on monitor changes
+        let mut disabled = input_capture.receive_disabled().await?;
+        let session_dbg = format!("{session:?}"); // Session::path() is crate-private
+        let mut monitors = mutter_monitors_changed().await;
         let mut ei_devices_changed = false;
+        let mut compositor_disabled = false;
+        let mut monitors_changed = false;
         loop {
             tokio::select! {
                 activated = activated.next() => {
-                    let activated = activated.ok_or(CaptureError::ActivationClosed)?;
+                    let activated = activated.ok_or_else(|| {
+                        log::info!("session end: activation stream closed");
+                        CaptureError::ActivationClosed
+                    })?;
                     log::debug!("activated: {activated:?}");
 
                     // get barrier id from activation
@@ -451,31 +754,108 @@ async fn do_capture_session(
                             log::debug!("release session requested");
                         },
                         _ = release_session.notified() => { /* release session */
-                            log::debug!("ei devices changed");
+                            log::info!("session end: ei devices changed (while capturing)");
                             ei_devices_changed = true;
                         },
                         _ = cancel_session.cancelled() => { /* kill session notify */
-                            log::debug!("session cancel requested");
+                            log::info!("session end: cancel requested (while capturing)");
                             break
+                        },
+                        d = disabled.next() => {
+                            if let Some(d) = d {
+                                let ours = session_dbg.contains(d.session_handle().as_str());
+                                log::info!("Disabled signal (while capturing) for {} -- ours: {ours} ({session_dbg})", d.session_handle().as_str());
+                                compositor_disabled |= ours;
+                            }
+                        },
+                        _ = next_monitors_changed(&mut monitors) => {
+                            log::info!("Mutter MonitorsChanged (while capturing)");
+                            monitors_changed = true;
                         },
                     }
 
-                    release_capture(input_capture, session, activated, pos).await?;
+                    // a disabled session has nothing to release; after a
+                    // monitor change releasing may fail -- not fatal then
+                    if !compositor_disabled {
+                        if let Err(e) = release_capture(input_capture, session, activated, pos).await {
+                            if monitors_changed {
+                                log::info!("release after monitor change failed: {e}");
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    }
 
                 }
                 _ = notify_release.notified() => { /* capture release -> we are not capturing anyway, so ignore */
                     log::debug!("release session requested");
                 },
                 _ = release_session.notified() => { /* release session */
-                    log::debug!("ei devices changed");
+                    log::info!("session end: ei devices changed");
                     ei_devices_changed = true;
                 },
                 _ = cancel_session.cancelled() => { /* kill session notify */
-                    log::debug!("session cancel requested");
+                    log::info!("session end: cancel requested");
                     break
                 },
+                d = disabled.next() => {
+                    if let Some(d) = d {
+                        let ours = session_dbg.contains(d.session_handle().as_str());
+                        log::info!("Disabled signal for {} -- ours: {ours} ({session_dbg})", d.session_handle().as_str());
+                        compositor_disabled |= ours;
+                    }
+                },
+                _ = next_monitors_changed(&mut monitors) => {
+                    log::info!("Mutter MonitorsChanged");
+                    monitors_changed = true;
+                },
             }
-            if ei_devices_changed {
+            if monitors_changed {
+                settle_monitors(&mut monitors).await;
+            }
+            if ei_devices_changed || compositor_disabled || monitors_changed {
+                let why = if compositor_disabled {
+                    "compositor disabled the session"
+                } else if ei_devices_changed {
+                    "ei devices changed"
+                } else {
+                    "monitors changed"
+                };
+                monitors_changed = false;
+                if *REENABLE_ON_DEVICE_CHANGE {
+                    ei_devices_changed = false;
+                    compositor_disabled = false;
+                    match reapply_and_enable(
+                        input_capture,
+                        session,
+                        active_clients,
+                        next_barrier_id,
+                    )
+                    .await
+                    {
+                        Ok((b, m, geometry)) => {
+                            /* no zones (the monitor is gone): keep the
+                             * barriers recorded for the real geometry, the
+                             * zones-changed path re-applies them on return */
+                            if !geometry.is_empty() {
+                                active_barriers.replace(Some((geometry, b.clone())));
+                                barriers = b;
+                                pos_for_barrier_id = m;
+                            }
+                            log::info!(
+                                "{why} -- re-applied barriers and re-enabled the same session (no new permission prompt)"
+                            );
+                            continue;
+                        }
+                        Err(e) => {
+                            log::warn!("{why}; re-enabling failed ({e}) -- recreating the session")
+                        }
+                    }
+                } else if !ei_devices_changed {
+                    // without the re-enable option, a disabled session is dead:
+                    // recreate it (this is what used to fail silently)
+                    log::info!("{why} -- recreating the session");
+                }
                 /* for whatever reason, GNOME seems to kill the session
                  * as soon as devices are added or removed, so we need
                  * to cancel */
@@ -571,17 +951,18 @@ async fn handle_ei_event(
         | DeviceCapability::Button;
     match ei_event {
         EiEvent::SeatAdded(s) => {
+            log::info!("ei seat added");
             s.seat.bind_capabilities(all_capabilities);
             context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
         }
         EiEvent::SeatRemoved(_) => {
-            log::debug!("releasing session: {ei_event:?}");
+            log::info!("ei seat removed -> releasing session");
             release_session.notify_waiters();
         }
-        /* EiEvent::DeviceAdded(_) | */
+        EiEvent::DeviceAdded(_) => log::info!("ei device added"),
         EiEvent::DeviceRemoved(_) => {
             if *RESTART_SESSION_ON_DEVICE_CHANGE {
-                log::debug!("releasing session: {ei_event:?}");
+                log::info!("ei device removed -> releasing session (GNOME restart rule)");
                 release_session.notify_waiters();
             } else {
                 log::debug!("ignoring device change: {ei_event:?}");
@@ -591,6 +972,7 @@ async fn handle_ei_event(
         EiEvent::DeviceStartEmulating(_) => log::debug!("START EMULATING"),
         EiEvent::DeviceStopEmulating(_) => log::debug!("STOP EMULATING"),
         EiEvent::Disconnected(d) => {
+            log::info!("ei disconnected: {:?}", d.reason);
             return Err(CaptureError::Disconnected(format!("{:?}", d.reason)));
         }
         _ => {

@@ -45,6 +45,9 @@ ashpd = { version = "0.13.9", default-features = false, features = [
     "tokio",
 ], optional = true }
 reis = { version = "0.7.0", features = ["tokio"], optional = true }
+zbus = { version = "5.14.0", default-features = false, features = [
+    "tokio",
+], optional = true }
 
 [target.'cfg(target_os="macos")'.dependencies]
 core-graphics = { version = "0.25.0", features = ["highsierra"] }
@@ -73,4 +76,4 @@ layer_shell = [
     "dep:wayland-protocols-wlr",
 ]
 x11 = ["dep:x11"]
-libei = ["dep:reis", "dep:ashpd"]
+libei = ["dep:reis", "dep:ashpd", "dep:zbus"]

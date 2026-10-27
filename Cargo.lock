@@ -1589,6 +1589,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "windows",
  "x11",
+ "zbus",
 ]
 
 [[package]]
