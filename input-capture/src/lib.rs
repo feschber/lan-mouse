@@ -145,12 +145,13 @@ impl InputCapture {
         }
     }
 
-    /// destroy the client with the given id, if it exists
+    /// Destroy an existing capture handle and discard its queued events.
     pub async fn destroy(&mut self, id: CaptureHandle) -> Result<(), CaptureError> {
         let pos = self
             .id_map
             .remove(&id)
             .expect("no position for this handle");
+        self.pending.retain(|&(handle, _)| handle != id);
 
         log::debug!("destroying capture {id} @ {pos}");
         let remaining = self.position_map.get_mut(&pos).expect("id vector");
@@ -348,4 +349,94 @@ async fn create(
         }
     }
     Err(CaptureCreationError::NoAvailableBackend)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+    use std::{pin::Pin, task::Context};
+
+    struct ScriptedCapture {
+        events: VecDeque<(Position, CaptureEvent)>,
+    }
+
+    impl Stream for ScriptedCapture {
+        type Item = Result<(Position, CaptureEvent), CaptureError>;
+
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            match self.events.pop_front() {
+                Some(event) => Poll::Ready(Some(Ok(event))),
+                None => Poll::Pending,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Capture for ScriptedCapture {
+        async fn create(&mut self, _: Position) -> Result<(), CaptureError> {
+            Ok(())
+        }
+        async fn destroy(&mut self, _: Position) -> Result<(), CaptureError> {
+            Ok(())
+        }
+        async fn release(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+        async fn terminate(&mut self) -> Result<(), CaptureError> {
+            Ok(())
+        }
+    }
+
+    async fn shared_edge_capture() -> InputCapture {
+        let mut capture = InputCapture::new(Some(Backend::Dummy))
+            .await
+            .expect("dummy capture");
+        capture.capture = Box::new(ScriptedCapture {
+            events: [(Position::Top, CaptureEvent::Begin)].into(),
+        });
+        capture
+            .create(0, Position::Top)
+            .await
+            .expect("first handle");
+        capture
+            .create(1, Position::Top)
+            .await
+            .expect("second handle");
+        capture
+    }
+
+    #[tokio::test]
+    async fn destroy_discards_queued_events_for_removed_handles() {
+        let mut capture = shared_edge_capture().await;
+        assert_eq!(
+            capture
+                .next()
+                .await
+                .expect("capture event")
+                .expect("capture"),
+            (0, CaptureEvent::Begin)
+        );
+        capture.destroy(1).await.expect("destroy queued handle");
+        assert!(capture.next().now_or_never().is_none());
+    }
+
+    #[tokio::test]
+    async fn destroy_preserves_queued_events_for_remaining_handles() {
+        let mut capture = shared_edge_capture().await;
+        let _ = capture
+            .next()
+            .await
+            .expect("capture event")
+            .expect("capture");
+        capture.destroy(0).await.expect("destroy first handle");
+        assert_eq!(
+            capture
+                .next()
+                .await
+                .expect("capture event")
+                .expect("capture"),
+            (1, CaptureEvent::Begin)
+        );
+    }
 }

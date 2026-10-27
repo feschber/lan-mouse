@@ -71,6 +71,9 @@ notify = "8.2.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
+[dev-dependencies]
+tokio = { version = "1.32.0", features = ["test-util"] }
+
 [features]
 default = [
     "gtk",

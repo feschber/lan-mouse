@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 
 use ashpd::desktop::{
     PersistMode, Session,
+    inhibit::InhibitProxy,
     remote_desktop::{DeviceType, RemoteDesktop, SelectDevicesOptions},
 };
 use async_trait::async_trait;
@@ -118,8 +119,45 @@ async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd),
     Ok((remote_desktop, session, fd))
 }
 
+async fn wait_until_unlocked(
+    mut states: impl futures::Stream<Item = bool> + Unpin,
+) -> Result<(), ashpd::Error> {
+    while let Some(screensaver_active) = states.next().await {
+        if !screensaver_active {
+            return Ok(());
+        }
+        log::info!("waiting for desktop unlock before creating libei input emulation");
+    }
+    Err(ashpd::Error::NoResponse)
+}
+
+async fn wait_for_session_unlock() -> Result<(), ashpd::Error> {
+    let proxy = InhibitProxy::new().await?;
+    // Subscribe before creating the monitor so its initial state is not lost.
+    let states = proxy.receive_state_changed().await?;
+    let monitor = proxy.create_monitor(None, Default::default()).await?;
+    let result = async {
+        let mut closed = monitor.receive_closed().await?;
+        tokio::select! {
+            biased;
+            _ = closed.next() => Err(ashpd::Error::NoResponse),
+            result = wait_until_unlocked(states.map(|state| state.screensaver_active())) => result,
+        }
+    }
+    .await;
+    if let Err(error) = monitor.close().await {
+        log::debug!("failed to close session state monitor: {error}");
+    }
+    result
+}
+
 impl LibeiEmulation {
     pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
+        if let Err(error) = wait_for_session_unlock().await {
+            // Not every portal implements session monitoring. Keep the existing
+            // creation behavior there instead of making it a new requirement.
+            log::warn!("could not monitor desktop lock state before libei creation: {error}");
+        }
         let (_remote_desktop, session, eifd) = get_ei_fd().await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
@@ -250,7 +288,7 @@ impl Emulation for LibeiEmulation {
         }
         self.context
             .flush()
-            .map_err(|e| io::Error::new(e.kind(), e))?;
+            .map_err(|error| libei_io_error(error.into()))?;
         Ok(())
     }
 
@@ -260,6 +298,28 @@ impl Emulation for LibeiEmulation {
     async fn terminate(&mut self) {
         let _ = self.session.close().await;
         self.ei_task.abort();
+    }
+}
+
+fn libei_io_error(error: io::Error) -> EmulationError {
+    match error.kind() {
+        // A compositor can reset EIS on lock instead of sending Disconnected.
+        io::ErrorKind::ConnectionReset
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::BrokenPipe
+        | io::ErrorKind::NotConnected
+        | io::ErrorKind::UnexpectedEof => {
+            log::debug!("libei transport closed: {error}");
+            EmulationError::EndOfStream
+        }
+        _ => error.into(),
+    }
+}
+
+fn libei_stream_error(error: reis::Error) -> EmulationError {
+    match error {
+        reis::Error::Io(error) => libei_io_error(error),
+        error => error.into(),
     }
 }
 
@@ -290,7 +350,11 @@ async fn ei_event_handler(
     devices: &Devices,
 ) -> Result<(), EmulationError> {
     loop {
-        let event = events.next().await.ok_or(EmulationError::EndOfStream)??;
+        let event = events
+            .next()
+            .await
+            .ok_or(EmulationError::EndOfStream)?
+            .map_err(libei_stream_error)?;
         let capabilities = DeviceCapability::Pointer
             | DeviceCapability::PointerAbsolute
             | DeviceCapability::Keyboard
@@ -372,6 +436,87 @@ async fn ei_event_handler(
             // EiEvent::TouchMotion(_) => { },
             _ => unreachable!("unexpected ei event"),
         }
-        context.flush().map_err(|e| io::Error::new(e.kind(), e))?;
+        context
+            .flush()
+            .map_err(|error| libei_io_error(error.into()))?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+    use std::io::{ErrorKind, Read, Write};
+
+    #[test]
+    fn reset_eis_socket_is_reported_as_session_end() {
+        let (mut client, server) = UnixStream::pair().expect("local EIS transport");
+        client.write_all(b"unread").expect("queue data for peer");
+        drop(server);
+        let error = client
+            .read(&mut [0])
+            .expect_err("closing a peer with unread data resets the socket");
+        assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+        assert!(matches!(
+            libei_stream_error(reis::Error::Io(error)),
+            EmulationError::EndOfStream
+        ));
+    }
+
+    #[test]
+    fn closed_write_transports_are_reported_as_session_end() {
+        for kind in [
+            ErrorKind::ConnectionAborted,
+            ErrorKind::BrokenPipe,
+            ErrorKind::NotConnected,
+            ErrorKind::UnexpectedEof,
+        ] {
+            assert!(
+                matches!(libei_io_error(kind.into()), EmulationError::EndOfStream),
+                "{kind:?} should trigger session recovery"
+            );
+        }
+    }
+
+    #[test]
+    fn transport_permission_errors_are_not_treated_as_session_loss() {
+        let error = libei_stream_error(reis::Error::Io(ErrorKind::PermissionDenied.into()));
+        assert!(matches!(
+            error,
+            EmulationError::Io(error) if error.kind() == ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn protocol_errors_are_not_treated_as_session_loss() {
+        assert!(matches!(
+            libei_stream_error(reis::Error::UnexpectedHandshakeEvent),
+            EmulationError::Libei(reis::Error::UnexpectedHandshakeEvent)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unlocked_desktop_allows_immediate_session_creation() {
+        let waiting = wait_until_unlocked(futures::stream::iter([false]));
+        assert!(matches!(waiting.now_or_never(), Some(Ok(()))));
+    }
+
+    #[tokio::test]
+    async fn locked_desktop_defers_creation_until_unlock() {
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        let waiting = wait_until_unlocked(rx);
+        tokio::pin!(waiting);
+        tx.unbounded_send(true).expect("state receiver");
+        assert!(waiting.as_mut().now_or_never().is_none());
+        tx.unbounded_send(false).expect("state receiver");
+        assert!(matches!(waiting.as_mut().now_or_never(), Some(Ok(()))));
+    }
+
+    #[tokio::test]
+    async fn closed_monitor_does_not_report_a_locked_desktop_as_unlocked() {
+        assert!(matches!(
+            wait_until_unlocked(futures::stream::iter([true])).await,
+            Err(ashpd::Error::NoResponse)
+        ));
     }
 }
