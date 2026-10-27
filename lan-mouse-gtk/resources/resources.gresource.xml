@@ -11,6 +11,21 @@
   <gresource prefix="/de/feschber/LanMouse/icons">
     <file compressed="true" preprocess="xml-stripblanks">de.feschber.LanMouse.svg</file>
     <!--
+      Pre-rendered rasters of the app icon in hicolor layout, so that
+      the icon name "de.feschber.LanMouse" set on the window resolves
+      through IconTheme::add_resource_path on platforms without a
+      system-installed icon theme (Windows, AppImage). Deliberately
+      PNG: its decoder is built into gdk-pixbuf, while SVG needs the
+      external librsvg loader module, which distributed builds may
+      lack.
+    -->
+    <file alias="16x16/apps/de.feschber.LanMouse.png">icons/16x16/apps/de.feschber.LanMouse.png</file>
+    <file alias="32x32/apps/de.feschber.LanMouse.png">icons/32x32/apps/de.feschber.LanMouse.png</file>
+    <file alias="48x48/apps/de.feschber.LanMouse.png">icons/48x48/apps/de.feschber.LanMouse.png</file>
+    <file alias="64x64/apps/de.feschber.LanMouse.png">icons/64x64/apps/de.feschber.LanMouse.png</file>
+    <file alias="128x128/apps/de.feschber.LanMouse.png">icons/128x128/apps/de.feschber.LanMouse.png</file>
+    <file alias="256x256/apps/de.feschber.LanMouse.png">icons/256x256/apps/de.feschber.LanMouse.png</file>
+    <!--
       Bundled Adwaita symbolic icons so the GTK frontend has a complete icon set
       on platforms (notably macOS) where the Adwaita icon theme is not installed.
       Registered via IconTheme::add_resource_path("/de/feschber/LanMouse/icons").

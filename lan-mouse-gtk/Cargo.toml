@@ -15,5 +15,10 @@ log = "0.4.20"
 lan-mouse-ipc = { path = "../lan-mouse-ipc", version = "0.3.0" }
 thiserror = "2.0.0"
 
+[target.'cfg(windows)'.dependencies]
+# default features (gtk, libxdo) only apply to the linux backend, which
+# is unreachable behind this windows-only target dependency
+tray-icon = { version = "0.24.1", default-features = false }
+
 [build-dependencies]
 glib-build-tools = { version = "0.20.0" }
