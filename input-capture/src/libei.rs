@@ -648,8 +648,12 @@ impl LanMouseInputCapture for LibeiInputCapture {
 impl Drop for LibeiInputCapture {
     fn drop(&mut self) {
         if !self.terminated {
-            /* this workaround is needed until async drop is stabilized */
-            panic!("LibeiInputCapture dropped without being terminated!");
+            // async drop not stabilized; a panic here takes down the daemon on suspend/resume
+            // / compositor EIS restarts, upstream issue #386
+            log::error!(
+                "LibeiInputCapture dropped without being terminated! Cancelling capture task."
+            );
+            self.cancellation_token.cancel();
         }
     }
 }

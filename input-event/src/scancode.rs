@@ -200,7 +200,11 @@ pub enum Linux {
     KeyI = 23,
     KeyO = 24,
     KeyP = 25,
+    // serde aliases: upstream variant naming is inconsistent (feschber/lan-mouse#403);
+    // accept the "expected" capitalized spellings for the affected variants
+    #[serde(alias = "KeyLeftBrace")]
     KeyLeftbrace = 26,
+    #[serde(alias = "KeyRightBrace")]
     KeyRightbrace = 27,
     KeyEnter = 28,
     KeyLeftCtrl = 29,
@@ -243,6 +247,7 @@ pub enum Linux {
     KeyF8 = 66,
     KeyF9 = 67,
     KeyF10 = 68,
+    #[serde(alias = "KeyNumLock")]
     KeyNumlock = 69,
     KeyScrollLock = 70,
     KeyKp7 = 71,
@@ -273,16 +278,20 @@ pub enum Linux {
     KeyKpEnter = 96,
     KeyRightCtrl = 97,
     KeyKpslash = 98,
+    #[serde(alias = "KeySysRq")]
     KeySysrq = 99,
+    #[serde(alias = "KeyRightAlt")]
     KeyRightalt = 100,
     KeyLinefeed = 101,
     KeyHome = 102,
     KeyUp = 103,
+    #[serde(alias = "KeyPageUp")]
     KeyPageup = 104,
     KeyLeft = 105,
     KeyRight = 106,
     KeyEnd = 107,
     KeyDown = 108,
+    #[serde(alias = "KeyPageDown")]
     KeyPagedown = 109,
     KeyInsert = 110,
     KeyDelete = 111,
@@ -301,6 +310,7 @@ pub enum Linux {
     KeyHanja = 123,
     KeyYen = 124,
     KeyLeftMeta = 125,
+    #[serde(alias = "KeyRightMeta")]
     KeyRightmeta = 126,
     KeyCompose = 127,
     KeyStop = 128, /* AC Stop */
@@ -846,6 +856,35 @@ impl TryFrom<Windows> for Linux {
             Windows::ACStop => Ok(Self::KeyStop),
             Windows::ACRefresh => Ok(Self::KeyRefresh),
             Windows::ACBookmarks => Ok(Self::KeyBookmarks),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Linux;
+
+    /// upstream variant naming is inconsistent (feschber/lan-mouse#403);
+    /// the capitalized spellings users naturally write must deserialize
+    #[test]
+    fn serde_accepts_capitalized_aliases() {
+        for name in [
+            "KeyLeftBrace",
+            "KeyRightBrace",
+            "KeyNumLock",
+            "KeyRightAlt",
+            "KeyRightMeta",
+            "KeyPageUp",
+            "KeyPageDown",
+            "KeySysRq",
+        ] {
+            let parsed: Linux = serde_json::from_str(&format!("\"{name}\""))
+                .unwrap_or_else(|e| panic!("failed to deserialize {name}: {e}"));
+            // canonical (lowercase-infix) spelling must still parse
+            let canonical: Linux =
+                serde_json::from_str(&serde_json::to_string(&parsed).expect("serialize"))
+                    .expect("canonical roundtrip");
+            assert_eq!(parsed, canonical, "alias {name} maps to wrong variant");
         }
     }
 }
