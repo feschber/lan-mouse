@@ -9,7 +9,7 @@ use ashpd::{
     enumflags2::BitFlags,
 };
 use async_trait::async_trait;
-use futures::{FutureExt, StreamExt};
+use futures::{Future, FutureExt, StreamExt};
 use reis::{
     ei::{self, handshake::ContextType},
     event::{Connection, DeviceCapability, EiEvent},
@@ -266,6 +266,27 @@ impl LibeiInputCapture {
     }
 }
 
+async fn capture_until_closed(
+    capture: impl Future<Output = Result<(), CaptureError>>,
+    closed: impl Future,
+    cancel_update: &CancellationToken,
+) -> (Result<(), CaptureError>, bool) {
+    let result = tokio::select! {
+        // A closed session takes precedence over a concurrent InvalidSession
+        // response, so the expired session is not released or reused.
+        biased;
+        _ = closed => {
+            log::info!("input capture portal session closed; recreating session");
+            (Err(CaptureError::ActivationClosed), true)
+        },
+        result = capture => (result, false),
+    };
+    // Also wake the barrier-update task when cancellation drops capture's
+    // future before its usual cleanup path can run.
+    cancel_update.cancel();
+    result
+}
+
 async fn do_capture(
     input_capture: *const InputCapture,
     mut capture_event: Receiver<LibeiNotifyEvent>,
@@ -316,31 +337,38 @@ async fn do_capture(
 
         if !active_clients.is_empty() {
             // create session
-            let mut session = match session.take() {
+            let session = match session.take() {
                 Some(s) => s,
                 None => create_session(input_capture).await?.0,
             };
 
-            let capture_session = do_capture_session(
-                input_capture,
-                &mut session,
-                &event_tx,
-                &active_clients,
-                &mut next_barrier_id,
-                &notify_release,
-                (cancel_session.clone(), cancel_update.clone()),
+            let mut closed = session.receive_closed().await?;
+            let capture_session = capture_until_closed(
+                do_capture_session(
+                    input_capture,
+                    &session,
+                    &event_tx,
+                    &active_clients,
+                    &mut next_barrier_id,
+                    &notify_release,
+                    (cancel_session.clone(), cancel_update.clone()),
+                ),
+                closed.next(),
+                &cancel_update,
             );
 
-            let (capture_result, ()) = tokio::join!(capture_session, handle_session_update_request);
+            let ((capture_result, closed_by_portal), ()) =
+                tokio::join!(capture_session, handle_session_update_request);
             log::debug!("capture session + session_update task done!");
 
-            // disable capture
-            log::debug!("disabling input capture");
-            if let Err(e) = input_capture.disable(&session, Default::default()).await {
-                log::warn!("input_capture.disable(&session) {e}");
-            }
-            if let Err(e) = session.close().await {
-                log::warn!("session.close(): {e}");
+            if !closed_by_portal {
+                log::debug!("disabling input capture");
+                if let Err(e) = input_capture.disable(&session, Default::default()).await {
+                    log::warn!("input_capture.disable(&session) {e}");
+                }
+                if let Err(e) = session.close().await {
+                    log::warn!("session.close(): {e}");
+                }
             }
 
             // propagate error from capture session
@@ -366,7 +394,7 @@ async fn do_capture(
 
 async fn do_capture_session(
     input_capture: &InputCapture,
-    session: &mut Session<InputCapture>,
+    session: &Session<InputCapture>,
     event_tx: &Sender<(Position, CaptureEvent)>,
     active_clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
@@ -665,5 +693,63 @@ impl Stream for LibeiInputCapture {
             },
             Poll::Pending => self.event_rx.poll_recv(cx).map(|e| e.map(Result::Ok)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        future::{pending, ready},
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    struct CaptureResource(Arc<AtomicBool>);
+
+    impl Drop for CaptureResource {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn closed_session_cancels_capture_and_unblocks_barrier_updates() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let resource = CaptureResource(dropped.clone());
+        let capture = async move {
+            let _resource = resource;
+            pending::<Result<(), CaptureError>>().await
+        };
+        let cancel_update = CancellationToken::new();
+        let (result, closed) = capture_until_closed(capture, ready(()), &cancel_update).await;
+        assert!(matches!(result, Err(CaptureError::ActivationClosed)) && closed);
+        assert!(dropped.load(Ordering::SeqCst));
+        assert!(cancel_update.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn closure_wins_over_a_concurrent_stale_session_error() {
+        let cancel_update = CancellationToken::new();
+        let stale_session = CaptureError::Portal(ashpd::Error::NoResponse);
+        let (result, closed) =
+            capture_until_closed(ready(Err(stale_session)), ready(()), &cancel_update).await;
+        assert!(matches!(result, Err(CaptureError::ActivationClosed)) && closed);
+    }
+
+    #[tokio::test]
+    async fn denied_authorization_is_propagated_without_recreating_the_session() {
+        let cancel_update = CancellationToken::new();
+        let denied = CaptureError::Portal(ashpd::Error::Response(
+            ashpd::desktop::ResponseError::Cancelled,
+        ));
+        let (result, closed) =
+            capture_until_closed(ready(Err(denied)), pending::<()>(), &cancel_update).await;
+        assert!(!closed);
+        assert!(matches!(
+            result,
+            Err(CaptureError::Portal(ashpd::Error::Response(
+                ashpd::desktop::ResponseError::Cancelled
+            )))
+        ));
     }
 }

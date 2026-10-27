@@ -4,8 +4,16 @@
 
 If an established input-emulation stream closes, for example after a Wayland
 desktop session is interrupted, the daemon cleans up the old backend and
-attempts to create a new session after one second. This allows the libei backend
-to reuse its saved RemoteDesktop restore token.
+attempts to create a new session after one second. An EIS socket reset, broken
+pipe, or other closed-connection I/O error is treated as session termination,
+just like an explicit disconnect or EOF. The libei backend can reuse its saved
+RemoteDesktop restore token.
+
+When supported, the libei backend uses the portal's session-state monitor to
+wait for desktop unlock before opening a RemoteDesktop session. This avoids
+requesting a replacement while the compositor still rejects remote access.
+Monitoring does not inhibit screen locking. Portals without session monitoring
+retain the existing creation behavior, with a warning.
 
 Input received while recovery is pending is discarded rather than replayed.
 Disconnected peers are removed before restoring client handles. Shutdown cancels
@@ -16,6 +24,23 @@ Creation failures, rejected authorization, and other runtime errors still
 require manually enabling Input Emulation; they do not trigger repeated
 authorization requests. This does not change InputCapture authorization: the
 version 1 portal can still require consent for a new capture session.
+
+## Input Capture Session Recovery
+
+The libei capture backend monitors the InputCapture portal's `Session.Closed`
+signal. When an established session closes, it stops using that session and
+unblocks any pending barrier updates. The daemon releases captured keys and
+leaves the remote client before recreating the backend after one second.
+Client removals and release-binding changes are preserved during recovery;
+shutdown cancels the pending retry.
+
+Removing a capture handle also discards its queued events. This prevents a
+late event from referring to a removed client during peer disconnect or
+recovery, while preserving queued events for other clients on the same edge.
+
+Creation failures, rejected authorization, and unrelated runtime errors still
+require manually enabling Input Capture. InputCapture portal version 1 cannot
+persist permission, so a replacement session can still require user consent.
 
 ## Events
 

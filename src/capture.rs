@@ -208,22 +208,38 @@ impl CaptureTask {
 
     async fn run(mut self) {
         loop {
-            if let Err(e) = self.do_capture().await {
+            let result = self.do_capture().await;
+            if let Err(e) = &result {
                 log::warn!("input capture exited: {e}");
             }
-            loop {
-                tokio::select! {
-                    r = self.request_rx.recv() => match r.expect("channel closed") {
-                        CaptureRequest::Reenable => break,
-                        CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
-                        CaptureRequest::Destroy(h) => self.remove_capture(h),
-                        CaptureRequest::Release => { /* nothing to do */ }
-                        CaptureRequest::SetReleaseBind(bind) => {
-                            self.release_bind.borrow_mut().clone_from(&bind);
-                        }
-                    },
-                    _ = self.cancellation_token.cancelled() => return,
-                }
+            if !self.wait_for_recovery(result.err()).await {
+                return;
+            }
+        }
+    }
+
+    async fn wait_for_recovery(&mut self, error: Option<InputCaptureError>) -> bool {
+        let session_closed = matches!(
+            error,
+            Some(InputCaptureError::Capture(
+                CaptureError::ActivationClosed | CaptureError::EndOfStream
+            ))
+        );
+        let retry = tokio::time::sleep(Duration::from_secs(1));
+        tokio::pin!(retry);
+        loop {
+            tokio::select! {
+                r = self.request_rx.recv() => match r.expect("channel closed") {
+                    CaptureRequest::Reenable => return true,
+                    CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
+                    CaptureRequest::Destroy(h) => self.remove_capture(h),
+                    CaptureRequest::Release => {}
+                    CaptureRequest::SetReleaseBind(bind) => {
+                        self.release_bind.borrow_mut().clone_from(&bind);
+                    }
+                },
+                _ = self.cancellation_token.cancelled() => return false,
+                _ = &mut retry, if session_closed => return true,
             }
         }
     }
@@ -249,6 +265,11 @@ impl CaptureTask {
         }
 
         let r = self.do_capture_session(&mut capture).await;
+        if r.is_err() {
+            if let Err(e) = self.release_capture(&mut capture).await {
+                log::warn!("failed to release capture after session loss: {e}");
+            }
+        }
 
         // FIXME replace with async drop when stabilized
         capture.terminate().await?;
@@ -495,5 +516,79 @@ impl<T> Drop for DropGuard<T> {
         self.tx
             .send(self.on_drop.take().expect("item"))
             .expect("channel closed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt;
+    use webrtc_dtls::crypto::Certificate;
+
+    fn recovery_task() -> (CaptureTask, Sender<CaptureRequest>) {
+        let (request_tx, request_rx) = channel();
+        let (event_tx, _event_rx) = channel();
+        let cert = Certificate::generate_self_signed(Vec::new()).expect("test certificate");
+        let task = CaptureTask {
+            active_client: None,
+            backend: None,
+            cancellation_token: CancellationToken::new(),
+            captures: Vec::new(),
+            conn: LanMouseConnection::new(cert, crate::client::ClientManager::default()),
+            event_tx,
+            release_bind: Default::default(),
+            request_rx,
+            state: State::default(),
+        };
+        (task, request_tx)
+    }
+
+    fn closed_session() -> Option<InputCaptureError> {
+        Some(CaptureError::ActivationClosed.into())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closed_capture_session_is_retried_after_a_delay() {
+        let (mut task, _tx) = recovery_task();
+        let recovery = task.wait_for_recovery(closed_session());
+        tokio::pin!(recovery);
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tokio::time::advance(Duration::from_millis(999)).await;
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(recovery.await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn permission_errors_wait_for_manual_reenable() {
+        let (mut task, tx) = recovery_task();
+        let denied = CaptureError::Io(std::io::ErrorKind::PermissionDenied.into());
+        let recovery = task.wait_for_recovery(Some(denied.into()));
+        tokio::pin!(recovery);
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(recovery.as_mut().now_or_never().is_none());
+        tx.send(CaptureRequest::Reenable)
+            .expect("recovery receiver");
+        assert!(recovery.await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_stops_pending_capture_recovery() {
+        let (mut task, _tx) = recovery_task();
+        task.cancellation_token.cancel();
+        assert!(!task.wait_for_recovery(closed_session()).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn removed_capture_is_not_restored_after_session_loss() {
+        let (mut task, tx) = recovery_task();
+        task.add_capture(7, Position::Left, CaptureType::Default);
+        tx.send(CaptureRequest::Destroy(7))
+            .expect("recovery receiver");
+        tx.send(CaptureRequest::Reenable)
+            .expect("recovery receiver");
+        assert!(task.wait_for_recovery(closed_session()).await);
+        assert!(task.captures.is_empty());
     }
 }
