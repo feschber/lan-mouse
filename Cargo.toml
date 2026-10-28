@@ -68,6 +68,23 @@ rcgen = "0.13.1"
 sha2 = "0.10.8"
 notify = "8.2.0"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSEvent",
+    "NSGraphicsContext",
+    "NSResponder",
+    "NSRunningApplication",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSGeometry",
+    "NSThread",
+] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
