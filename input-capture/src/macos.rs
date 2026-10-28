@@ -31,10 +31,9 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll, ready},
     thread::{self},
-    time::Duration,
 };
 use tokio::sync::{
-    Mutex,
+    Mutex, Notify,
     mpsc::{self, Receiver, Sender},
     oneshot,
 };
@@ -130,21 +129,18 @@ enum ProducerEvent {
     Destroy(Position),
     Grab(Position),
     EventTapDisabled,
-    DisplayReconfigured,
 }
 
 impl InputCaptureState {
-    fn new() -> Result<Self, MacosCaptureCreationError> {
-        let mut res = Self {
+    fn new() -> Self {
+        Self {
             active_clients: Lazy::new(HashSet::new),
             current_pos: None,
             enter_position: None,
             bounds: Bounds::default(),
             display_ids: Vec::new(),
             modifier_state: Default::default(),
-        };
-        res.update_bounds()?;
-        Ok(res)
+        }
     }
 
     fn crossed(&mut self, event: &CGEvent) -> Option<Position> {
@@ -285,20 +281,6 @@ impl InputCaptureState {
                     self.current_pos = None;
                 }
                 return Err(CaptureError::EventTapDisabled);
-            }
-            ProducerEvent::DisplayReconfigured => {
-                // The macOS display configuration changed — a monitor
-                // was plugged in/out, the resolution changed, the
-                // arrangement was rearranged, etc. Re-fetch the
-                // active-display bounds so barrier crossings and the
-                // cursor-warp on capture-start use the current
-                // geometry instead of whatever was true at process
-                // start.
-                if let Err(e) = self.update_bounds() {
-                    log::warn!("failed to refresh display bounds: {e}");
-                } else {
-                    log::info!("display reconfigured: {:?}", self.bounds);
-                }
             }
         };
         Ok(())
@@ -681,70 +663,81 @@ fn create_event_tap<'a>(
     Ok(tap)
 }
 
+struct DisplayChangeRegistration {
+    notify: Arc<Notify>,
+}
+
+impl DisplayChangeRegistration {
+    fn new(notify: Arc<Notify>) -> Result<Self, MacosCaptureCreationError> {
+        let result = unsafe {
+            CGDisplayRegisterReconfigurationCallback(
+                display_reconfiguration_callback,
+                Arc::as_ptr(&notify).cast_mut().cast(),
+            )
+        };
+        if result != kCGErrorSuccess {
+            return Err(MacosCaptureCreationError::DisplayCallback(result));
+        }
+        Ok(Self { notify })
+    }
+}
+
+impl Drop for DisplayChangeRegistration {
+    fn drop(&mut self) {
+        let result = unsafe {
+            CGDisplayRemoveReconfigurationCallback(
+                display_reconfiguration_callback,
+                Arc::as_ptr(&self.notify).cast_mut().cast(),
+            )
+        };
+        if result != kCGErrorSuccess {
+            log::error!("failed to unregister display callback: {result:?}");
+            // Keep the callback context alive if Quartz still holds its pointer.
+            std::mem::forget(Arc::clone(&self.notify));
+        }
+    }
+}
+
 fn event_tap_thread(
     client_state: Arc<Mutex<InputCaptureState>>,
     event_tx: Sender<(Position, CaptureEvent)>,
     notify_tx: Sender<ProducerEvent>,
+    display_changed: Arc<Notify>,
     ready: std::sync::mpsc::Sender<Result<CFRunLoop, MacosCaptureCreationError>>,
     exit: oneshot::Sender<()>,
 ) {
-    // Clone now: create_event_tap consumes notify_tx into its closure.
-    let display_notify_tx = notify_tx.clone();
-
-    let _tap = match create_event_tap(client_state, notify_tx, event_tx) {
+    let _tap = match create_event_tap(client_state.clone(), notify_tx, event_tx) {
         Err(e) => {
-            ready.send(Err(e)).expect("channel closed");
+            let _ = ready.send(Err(e));
             return;
         }
-        Ok(tap) => {
-            let run_loop = CFRunLoop::get_current();
-            ready.send(Ok(run_loop)).expect("channel closed");
-            tap
+        Ok(tap) => tap,
+    };
+    let display_changes = match DisplayChangeRegistration::new(display_changed) {
+        Ok(registration) => registration,
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return;
         }
     };
-
-    // Quartz notifications are best-effort in the headless daemon. The producer
-    // task also reconciles the layout periodically, without restarting capture.
-    let display_user_info = Box::into_raw(Box::new(display_notify_tx)) as *mut c_void;
-    let registration = unsafe {
-        CGDisplayRegisterReconfigurationCallback(
-            display_reconfiguration_callback,
-            display_user_info,
-        )
-    };
-    if registration != kCGErrorSuccess {
-        log::warn!(
-            "display callback registration failed: {registration:?}; using periodic refresh"
-        );
+    // Subscribe before the initial snapshot so startup changes remain pending.
+    if let Err(e) = client_state.blocking_lock().update_bounds() {
+        let _ = ready.send(Err(e));
+        return;
+    }
+    if ready.send(Ok(CFRunLoop::get_current())).is_err() {
+        return;
     }
 
-    log::debug!("running CFRunLoop...");
+    log::debug!("running CFRunLoop with display-change notifications");
     CFRunLoop::run_current();
     log::debug!("event tap thread exiting!...");
-
-    unsafe {
-        if registration == kCGErrorSuccess {
-            CGDisplayRemoveReconfigurationCallback(
-                display_reconfiguration_callback,
-                display_user_info,
-            );
-        }
-        // Reclaim the leaked sender Box so we don't leak a tokio
-        // channel sender on every capture create/destroy cycle.
-        drop(Box::from_raw(
-            display_user_info as *mut Sender<ProducerEvent>,
-        ));
-    }
-
+    drop(display_changes);
     let _ = exit.send(());
 }
 
-/// Quartz display-reconfiguration callback. Fires twice per change:
-/// once with `kCGDisplayBeginConfigurationFlag` set (BEFORE the
-/// change is applied — the bounds are still stale at this point),
-/// then again afterwards with the actual change flags (Add, Remove,
-/// Mode, DesktopShapeChanged, etc.). Skip the begin phase; on the
-/// real notification, kick the producer task to refresh bounds.
+/// Ignore the begin phase: CoreGraphics reports the updated layout in the
+/// completion callback. Only signal here; query the layout in the producer task.
 extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_info: *mut c_void) {
     const K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG: u32 = 1 << 0;
     if flags & K_CG_DISPLAY_BEGIN_CONFIGURATION_FLAG != 0 {
@@ -753,11 +746,10 @@ extern "C" fn display_reconfiguration_callback(_display: u32, flags: u32, user_i
     if user_info.is_null() {
         return;
     }
-    // SAFETY: the sender is owned by event_tap_thread and remains valid until
-    // callback registration is removed. Never block an OS callback; a full
-    // queue is covered by the periodic layout reconciliation.
-    let sender = unsafe { &*(user_info as *const Sender<ProducerEvent>) };
-    let _ = sender.try_send(ProducerEvent::DisplayReconfigured);
+    // SAFETY: DisplayChangeRegistration owns this Notify until after the callback
+    // is unregistered. notify_one is nonblocking and retains a pending permit.
+    let notify = unsafe { &*user_info.cast::<Notify>() };
+    notify.notify_one();
 }
 
 pub struct MacOSInputCapture {
@@ -770,11 +762,12 @@ impl MacOSInputCapture {
     pub async fn new() -> Result<Self, MacosCaptureCreationError> {
         request_macos_capture_permissions()?;
 
-        let state = Arc::new(Mutex::new(InputCaptureState::new()?));
+        let state = Arc::new(Mutex::new(InputCaptureState::new()));
         let (event_tx, event_rx) = mpsc::channel(32);
         let (notify_tx, mut notify_rx) = mpsc::channel(32);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (tap_exit_tx, mut tap_exit_rx) = oneshot::channel();
+        let display_changed = Arc::new(Notify::new());
 
         unsafe {
             configure_cf_settings()?;
@@ -783,11 +776,13 @@ impl MacOSInputCapture {
         log::info!("Enabling CGEvent tap");
         let event_tap_thread_state = state.clone();
         let event_tap_notify = notify_tx.clone();
+        let event_tap_display_changed = Arc::clone(&display_changed);
         thread::spawn(move || {
             event_tap_thread(
                 event_tap_thread_state,
                 event_tx,
                 event_tap_notify,
+                event_tap_display_changed,
                 ready_tx,
                 tap_exit_tx,
             )
@@ -797,10 +792,6 @@ impl MacOSInputCapture {
         let run_loop = ready_rx.recv().expect("channel closed")?;
 
         let _tap_task: tokio::task::JoinHandle<()> = tokio::task::spawn_local(async move {
-            let period = Duration::from_secs(1);
-            let mut refresh =
-                tokio::time::interval_at(tokio::time::Instant::now() + period, period);
-            refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
                     producer_event = notify_rx.recv() => {
@@ -813,9 +804,11 @@ impl MacOSInputCapture {
                         })
                     }
                     _ = &mut tap_exit_rx => break,
-                    _ = refresh.tick() => {
-                        if let Err(e) = state.lock().await.update_bounds() {
-                            log::warn!("failed to refresh display layout: {e}");
+                    _ = display_changed.notified() => {
+                        let mut state = state.lock().await;
+                        match state.update_bounds() {
+                            Ok(()) => log::info!("display reconfigured: {:?}", state.bounds),
+                            Err(e) => log::warn!("failed to refresh display layout: {e}"),
                         }
                     },
                 }

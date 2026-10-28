@@ -85,11 +85,22 @@ This ensures that
 
 ## macOS Display Layout Changes
 
+On macOS, asynchronous commands construct their Tokio runtime and local tasks
+on a worker while the main thread dispatches AppKit events. This is required
+to receive display changes from System Settings and other processes; the
+event-tap thread's CoreFoundation run loop alone is insufficient. Runtime
+completion or failure stops and wakes the AppKit loop before returning.
+
 The macOS capture backend refreshes the active CoreGraphics display snapshot
-once per second and on native display-change notifications. Bounds are rebuilt
-from the current snapshot, so removing a display shrinks the capture area.
-An active capture anchor is moved inside a remaining display when necessary,
-including rearrangements that leave the outer bounds unchanged.
+after native display-reconfiguration completion notifications. The callback
+only wakes an asynchronous task, coalescing pending refresh requests without
+periodic polling or querying displays in the mouse-event callback.
+Notification registration precedes the initial snapshot; registration failure
+prevents capture creation instead of silently leaving stale geometry.
+
+Bounds are rebuilt from the current snapshot, so removing a display shrinks
+the capture area. An active capture anchor is moved inside a remaining display
+when necessary, including rearrangements that leave the outer bounds unchanged.
 
 Client positions refer to the outer edge of the entire desktop, not an
 individual monitor. With a client configured above the Mac, use the top edge of

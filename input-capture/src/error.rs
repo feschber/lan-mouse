@@ -158,4 +158,6 @@ pub enum MacosCaptureCreationError {
     #[cfg(target_os = "macos")]
     #[error("failed to get display ids: {0}")]
     ActiveDisplays(CGError),
+    #[error("failed to register display reconfiguration callback: {0}")]
+    DisplayCallback(CGError),
 }
