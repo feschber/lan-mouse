@@ -19,6 +19,9 @@ use std::{
 use thiserror::Error;
 use tokio::task::LocalSet;
 
+#[cfg(target_os = "macos")]
+mod macos_event_loop;
+
 #[derive(Debug, Error)]
 enum LanMouseError {
     #[error(transparent)]
@@ -55,12 +58,12 @@ fn run() -> Result<(), LanMouseError> {
     let config = config::Config::new()?;
     match config.command() {
         Some(command) => match command {
-            Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
-            Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
-            Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
+            Command::TestEmulation(args) => run_async(move || emulation_test::run(config, args))?,
+            Command::TestCapture(args) => run_async(move || capture_test::run(config, args))?,
+            Command::Cli(cli_args) => run_async(move || lan_mouse_cli::run(cli_args))?,
             Command::Daemon => {
                 // if daemon is specified we run the service
-                match run_async(run_service(config)) {
+                match run_async(move || run_service(config)) {
                     Err(LanMouseError::Service(ServiceError::IpcListen(
                         IpcListenerCreationError::AlreadyRunning,
                     ))) => log::info!("service already running!"),
@@ -98,7 +101,7 @@ fn run() -> Result<(), LanMouseError> {
             #[cfg(not(feature = "gtk"))]
             {
                 // run daemon if gtk is diabled
-                match run_async(run_service(config)) {
+                match run_async(move || run_service(config)) {
                     Err(LanMouseError::Service(ServiceError::IpcListen(
                         IpcListenerCreationError::AlreadyRunning,
                     ))) => log::info!("service already running!"),
@@ -111,7 +114,22 @@ fn run() -> Result<(), LanMouseError> {
     Ok(())
 }
 
-fn run_async<F, E>(f: F) -> Result<(), LanMouseError>
+fn run_async<F, E>(make_future: impl FnOnce() -> F + Send) -> Result<(), LanMouseError>
+where
+    F: Future<Output = Result<(), E>>,
+    LanMouseError: From<E>,
+{
+    #[cfg(target_os = "macos")]
+    {
+        macos_event_loop::run(move || run_async_local(make_future()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        run_async_local(make_future())
+    }
+}
+
+fn run_async_local<F, E>(future: F) -> Result<(), LanMouseError>
 where
     F: Future<Output = Result<(), E>>,
     LanMouseError: From<E>,
@@ -123,7 +141,7 @@ where
         .build()?;
 
     // run async event loop
-    Ok(runtime.block_on(LocalSet::new().run_until(f))?)
+    Ok(runtime.block_on(LocalSet::new().run_until(future))?)
 }
 
 fn start_service() -> Result<Child, io::Error> {
