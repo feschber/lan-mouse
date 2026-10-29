@@ -23,12 +23,12 @@ in {
     };
     systemd = mkOption {
       type = types.bool;
-      default = pkgs.stdenv.isLinux;
+      default = pkgs.stdenv.hostPlatform.isLinux;
       description = "Whether to enable to systemd service for lan-mouse on linux.";
     };
     launchd = mkOption {
       type = types.bool;
-      default = pkgs.stdenv.isDarwin;
+      default = pkgs.stdenv.hostPlatform.isDarwin;
       description = "Whether to enable to launchd service for lan-mouse on macOS.";
     };
     settings = lib.mkOption {

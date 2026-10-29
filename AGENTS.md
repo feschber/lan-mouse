@@ -45,7 +45,7 @@ cargo build --workspace                                    # full build
 cargo build -p <crate>                                     # single crate
 cargo test --workspace                                     # all tests
 cargo fmt && cargo clippy --workspace --all-targets --all-features  # lint
-RUST_LOG=lan_mouse=debug cargo run                         # debug logging
+LAN_MOUSE_LOG_LEVEL=debug cargo run                        # debug logging
 ```
 
 Run from repo root—no `cd` in scripts.

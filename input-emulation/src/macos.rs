@@ -1,6 +1,10 @@
 use super::{Emulation, EmulationHandle, error::EmulationError};
 use async_trait::async_trait;
 use bitflags::bitflags;
+use core_foundation::{base::TCFType, string::CFString};
+use core_foundation_sys::preferences::{
+    CFPreferencesGetAppBooleanValue, kCFPreferencesAnyApplication,
+};
 use core_graphics::base::CGFloat;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplayBounds, CGGetDisplaysWithRect, CGPoint, CGRect, CGSize,
@@ -45,6 +49,8 @@ pub(crate) struct MacOSEmulation {
     modifier_state: Rc<Cell<XMods>>,
     /// notify to cancel key repeats
     notify_repeat_task: Arc<Notify>,
+    /// cached key for `natural_scroll_enabled`
+    natural_scroll_key: CFString,
 }
 
 /// Maps an evdev button code to the CGEventType used for drag events.
@@ -55,6 +61,22 @@ fn drag_event_type(button: u32) -> CGEventType {
         // middle, back, forward, and any other button all use OtherMouseDragged
         _ => CGEventType::OtherMouseDragged,
     }
+}
+
+/// Whether "Natural Scrolling" (`com.apple.swipescrolldirection`) is on. Real HID devices get
+/// this applied before their CGEvent exists; synthetic events bypass it, so we replicate it here
+/// to match what a real mouse would do on this Mac. See lan-mouse#481.
+fn natural_scroll_enabled(key: &CFString) -> bool {
+    let mut key_exists_and_valid = 0;
+    let value = unsafe {
+        CFPreferencesGetAppBooleanValue(
+            key.as_concrete_TypeRef(),
+            kCFPreferencesAnyApplication,
+            &mut key_exists_and_valid,
+        )
+    };
+    // default to enabled (macOS's factory default) if unset/invalid
+    key_exists_and_valid == 0 || value != 0
 }
 
 unsafe impl Send for MacOSEmulation {}
@@ -74,6 +96,7 @@ impl MacOSEmulation {
             repeat_task: None,
             notify_repeat_task: Arc::new(Notify::new()),
             modifier_state: Rc::new(Cell::new(XMods::empty())),
+            natural_scroll_key: CFString::new("com.apple.swipescrolldirection"),
         })
     }
 
@@ -202,16 +225,81 @@ fn key_event(event_source: CGEventSource, key: u16, state: u8, modifiers: XMods)
     log::trace!("key event: {key} {state}");
 }
 
-fn modifier_event(event_source: CGEventSource, depressed: XMods) {
-    let Ok(event) = CGEvent::new(event_source) else {
-        log::warn!("could not create CGEvent");
+/// Posts a `FlagsChanged` event for a modifier key.
+///
+/// The event MUST carry the modifier's real virtual keycode. A bare
+/// `CGEvent::new()` defaults to keycode 0 (`kVK_ANSI_A`), so every modifier
+/// change arrived in apps as a phantom "A" key event — holding Ctrl registered
+/// as Ctrl+A and shortcut recorders captured "A" (issue #450).
+///
+/// Carrying the real keycode also matters for consumers that track *physical*
+/// modifier transitions through AppKit's `flagsChanged(with:)` rather than the
+/// flags on the key-down event — notably Apple Virtualization.framework guest
+/// views (`VZVirtualMachineView`), which derive guest modifier state from these
+/// `FlagsChanged` events. The event is built as a key-down so it gets a valid
+/// keycode; the type is then overridden to `FlagsChanged` and the *current*
+/// modifier flags (already updated by the caller) describe the new state.
+fn modifier_key_event(event_source: CGEventSource, key: u16, depressed: XMods) {
+    let Ok(event) = CGEvent::new_keyboard_event(event_source, key, true) else {
+        log::warn!("could not create modifier key event");
         return;
     };
-    let flags = to_cgevent_flags(depressed);
     event.set_type(CGEventType::FlagsChanged);
-    event.set_flags(flags);
+    event.set_flags(modifier_flags_changed_flags(depressed));
     event.post(CGEventTapLocation::HID);
-    log::trace!("modifiers updated: {depressed:?}");
+    log::trace!("modifier key event: {key} {depressed:?}");
+}
+
+/// Builds the flag set for a modifier `FlagsChanged` event.
+///
+/// Combines the device-INDEPENDENT modifier word (what ordinary AppKit apps
+/// read) with the device-DEPENDENT low-word bits (IOKit `NX_DEVICE*KEYMASK` from
+/// `IOKit/hidsystem/IOLLEvent.h`) that a real hardware keyboard sets.
+///
+/// This matters for Apple Virtualization.framework guest views
+/// (`VZVirtualMachineView`, used by UTM's Apple backend, Parallels' macOS
+/// guests, VirtualBuddy, etc.): they derive the guest's modifier state from the
+/// `flagsChanged(with:)` responder method and read the device-dependent low
+/// word, not the per-key flags. macOS does NOT synthesize the low-word bits for
+/// posted (synthetic) events, so until we set them ourselves Cmd/Ctrl/Shift/Opt
+/// chords reached the guest unmodified (Shift+2 → "2", Cmd+C did nothing).
+///
+/// Ordinary apps mask incoming events to the device-independent word
+/// (`deviceIndependentFlagsMask`) and ignore these bits, so emitting them is
+/// hardware-faithful and safe for every app — no VM/bundle-id detection is
+/// required. See issue #450 and https://developer.apple.com/forums/thread/766014
+fn modifier_flags_changed_flags(depressed: XMods) -> CGEventFlags {
+    // Device-dependent left/right modifier bits (IOLLEvent.h). lan-mouse collapses
+    // left and right modifiers into a single mask, so we emit the left-hand device
+    // bit; AltGr (Mod5 / ISO_Level3_Shift) is physically the right Alt, so it maps
+    // to the right Option bit.
+    const NX_DEVICE_L_CTRL: u64 = 0x0000_0001;
+    const NX_DEVICE_L_SHIFT: u64 = 0x0000_0002;
+    const NX_DEVICE_L_CMD: u64 = 0x0000_0008;
+    const NX_DEVICE_L_ALT: u64 = 0x0000_0020;
+    const NX_DEVICE_R_ALT: u64 = 0x0000_0040;
+
+    let mut device_bits: u64 = 0;
+    if depressed.contains(XMods::ShiftMask) {
+        device_bits |= NX_DEVICE_L_SHIFT;
+    }
+    if depressed.contains(XMods::ControlMask) {
+        device_bits |= NX_DEVICE_L_CTRL;
+    }
+    if depressed.contains(XMods::Mod1Mask) {
+        device_bits |= NX_DEVICE_L_ALT;
+    }
+    if depressed.contains(XMods::Mod5Mask) {
+        device_bits |= NX_DEVICE_R_ALT;
+    }
+    if depressed.contains(XMods::Mod4Mask) {
+        device_bits |= NX_DEVICE_L_CMD;
+    }
+
+    // CGEventFlagNonCoalesced is bit 8 (0x100), the marker a real hardware
+    // FlagsChanged carries on both press and release; VZ expects it present.
+    let flags = to_cgevent_flags(depressed) | CGEventFlags::CGEventFlagNonCoalesced;
+    CGEventFlags::from_bits_retain(flags.bits() | device_bits)
 }
 
 fn get_display_at_point(x: CGFloat, y: CGFloat) -> Option<CGDirectDisplayID> {
@@ -420,7 +508,11 @@ impl Emulation for MacOSEmulation {
                         axis,
                         value,
                     } => {
-                        let value = value as i32;
+                        let value = if natural_scroll_enabled(&self.natural_scroll_key) {
+                            -value as i32
+                        } else {
+                            value as i32
+                        };
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value, 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
                             1 => (2, 0, value, 0), // 1 = horizontal => 2 scroll wheel devices (y, x) -> (0, x)
@@ -446,6 +538,11 @@ impl Emulation for MacOSEmulation {
                         event.post(CGEventTapLocation::HID);
                     }
                     PointerEvent::AxisDiscrete120 { axis, value } => {
+                        let value = if natural_scroll_enabled(&self.natural_scroll_key) {
+                            value
+                        } else {
+                            -value
+                        };
                         const LINES_PER_STEP: i32 = 3;
                         let (count, wheel1, wheel2, wheel3) = match axis {
                             0 => (1, value / (120 / LINES_PER_STEP), 0, 0), // 0 = vertical => 1 scroll wheel device (y axis)
@@ -484,21 +581,41 @@ impl Emulation for MacOSEmulation {
                     key,
                     state,
                 } => {
-                    let code = match KeyMap::from_key_mapping(KeyMapping::Evdev(key as u16)) {
-                        Ok(k) => k.mac as CGKeyCode,
-                        Err(_) => {
-                            log::warn!("unable to map key event");
-                            return Ok(());
-                        }
+                    // Fallback table for Linux evdev keys that have no macOS CGKeyCode in
+                    // the keycode crate's Chromium-derived table. F13/F14/F15 are the
+                    // conventional macOS stand-ins for Print Screen / Scroll Lock / Pause,
+                    // which do not exist on Apple keyboards.
+                    let code: CGKeyCode = match scancode::Linux::try_from(key) {
+                        Ok(scancode::Linux::KeySysrq) => 0x69,      // F13
+                        Ok(scancode::Linux::KeyScrollLock) => 0x6B, // F14
+                        Ok(scancode::Linux::KeyPause) => 0x71,      // F15
+                        _ => match KeyMap::from_key_mapping(KeyMapping::Evdev(key as u16)) {
+                            Ok(k) => k.mac as CGKeyCode,
+                            Err(_) => {
+                                log::warn!("unable to map key event");
+                                return Ok(());
+                            }
+                        },
                     };
                     let is_modifier = update_modifiers(&self.modifier_state, key, state);
                     if is_modifier {
-                        modifier_event(self.event_source.clone(), self.modifier_state.get());
-                    }
-                    match state {
-                        // pressed
-                        1 => self.spawn_repeat_task(code).await,
-                        _ => self.cancel_repeat_task().await,
+                        // Modifier keys are posted as FlagsChanged events carrying
+                        // their real keycode (see modifier_key_event). They must NOT
+                        // enter the key-repeat machinery: there is only one repeat
+                        // slot, so pressing a second modifier would cancel the first
+                        // modifier's repeat task and post a keyUp while it is still
+                        // physically held, tearing chords apart (issue #450, #357).
+                        modifier_key_event(
+                            self.event_source.clone(),
+                            code,
+                            self.modifier_state.get(),
+                        );
+                    } else {
+                        match state {
+                            // pressed
+                            1 => self.spawn_repeat_task(code).await,
+                            _ => self.cancel_repeat_task().await,
+                        }
                     }
                 }
                 KeyboardEvent::Modifiers {
@@ -507,8 +624,13 @@ impl Emulation for MacOSEmulation {
                     locked,
                     group,
                 } => {
+                    // Only update internal modifier state here. The per-key handler
+                    // above already posts a FlagsChanged event (with the real
+                    // keycode) for each modifier Key event the client sends
+                    // alongside this state update. Posting one here as well would
+                    // duplicate it — and with the old bare CGEvent it injected a
+                    // phantom keycode-0 ("A") key on every modifier change (#450).
                     set_modifiers(&self.modifier_state, depressed, latched, locked, group);
-                    modifier_event(self.event_source.clone(), self.modifier_state.get());
                 }
             },
         }
@@ -525,9 +647,23 @@ impl Emulation for MacOSEmulation {
 
 fn update_modifiers(modifiers: &Cell<XMods>, key: u32, state: u8) -> bool {
     if let Ok(key) = scancode::Linux::try_from(key) {
+        // Caps Lock is a LOCKING modifier: a press toggles a persistent state
+        // rather than being active only while physically held. Toggle on
+        // key-down and ignore key-up, so the AlphaShift flag stays set on every
+        // following keystroke until Caps Lock is pressed again. (A synthetic
+        // CGEvent can't flip the hardware Caps Lock LED, but carrying the flag
+        // produces the correct upper-case output — and, like real Caps Lock,
+        // leaves the number-row symbols unshifted.)
+        if matches!(key, scancode::Linux::KeyCapsLock) {
+            if state == 1 {
+                let mut mods = modifiers.get();
+                mods.toggle(XMods::LockMask);
+                modifiers.set(mods);
+            }
+            return true;
+        }
         let mask = match key {
             scancode::Linux::KeyLeftShift | scancode::Linux::KeyRightShift => XMods::ShiftMask,
-            scancode::Linux::KeyCapsLock => XMods::LockMask,
             scancode::Linux::KeyLeftCtrl | scancode::Linux::KeyRightCtrl => XMods::ControlMask,
             scancode::Linux::KeyLeftAlt | scancode::Linux::KeyRightalt => XMods::Mod1Mask,
             scancode::Linux::KeyLeftMeta | scancode::Linux::KeyRightmeta => XMods::Mod4Mask,
@@ -558,11 +694,10 @@ fn set_modifiers(
 ) {
     let depressed = XMods::from_bits(depressed).unwrap_or_default();
     let _latched = XMods::from_bits(latched).unwrap_or_default();
-    let _locked = XMods::from_bits(locked).unwrap_or_default();
+    let locked = XMods::from_bits_truncate(locked);
     let _group = XMods::from_bits(group).unwrap_or_default();
 
-    // we only care about the depressed modifiers for now
-    active_modifiers.replace(depressed);
+    active_modifiers.replace(depressed | (locked & XMods::LockMask));
 }
 
 fn to_cgevent_flags(depressed: XMods) -> CGEventFlags {
@@ -576,7 +711,11 @@ fn to_cgevent_flags(depressed: XMods) -> CGEventFlags {
     if depressed.contains(XMods::ControlMask) {
         flags |= CGEventFlags::CGEventFlagControl;
     }
-    if depressed.contains(XMods::Mod1Mask) {
+    // Mod1 is Alt. Mod5 is ISO_Level3_Shift (AltGr), which is how the Alt key is
+    // reported on many xkb keymaps (including COSMIC's default) in the wholesale
+    // Modifiers state events. Map both to Option so Alt/Option chords are not
+    // silently dropped (issue #450).
+    if depressed.contains(XMods::Mod1Mask) || depressed.contains(XMods::Mod5Mask) {
         flags |= CGEventFlags::CGEventFlagAlternate;
     }
     if depressed.contains(XMods::Mod4Mask) {

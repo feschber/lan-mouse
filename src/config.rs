@@ -80,6 +80,7 @@ struct TomlClient {
     position: Option<Position>,
     activate_on_startup: Option<bool>,
     enter_hook: Option<String>,
+    leave_hook: Option<String>,
 }
 
 impl ConfigToml {
@@ -282,12 +283,14 @@ pub struct ConfigClient {
     pub pos: Position,
     pub active: bool,
     pub enter_hook: Option<String>,
+    pub leave_hook: Option<String>,
 }
 
 impl From<TomlClient> for ConfigClient {
     fn from(toml: TomlClient) -> Self {
         let active = toml.activate_on_startup.unwrap_or(false);
         let enter_hook = toml.enter_hook;
+        let leave_hook = toml.leave_hook;
         let hostname = toml.hostname;
         let ips = HashSet::from_iter(toml.ips.into_iter().flatten());
         let port = toml.port.unwrap_or(DEFAULT_PORT);
@@ -299,6 +302,7 @@ impl From<TomlClient> for ConfigClient {
             pos,
             active,
             enter_hook,
+            leave_hook,
         }
     }
 }
@@ -318,6 +322,7 @@ impl From<ConfigClient> for TomlClient {
         let position = Some(client.pos);
         let activate_on_startup = if client.active { Some(true) } else { None };
         let enter_hook = client.enter_hook;
+        let leave_hook = client.leave_hook;
         Self {
             hostname,
             host_name,
@@ -326,6 +331,7 @@ impl From<ConfigClient> for TomlClient {
             position,
             activate_on_startup,
             enter_hook,
+            leave_hook,
         }
     }
 }
@@ -525,7 +531,7 @@ impl Config {
     }
 
     pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {
-        log::info!("reading config from {:?}", &self.config_path);
+        log::info!("reading config from {:?}", self.config_path);
 
         let current_config = fs::read_to_string(&self.config_path)?;
         let current_config = match current_config.parse::<DocumentMut>() {
@@ -555,7 +561,7 @@ impl Config {
     }
 
     pub fn write_back(&mut self) -> Result<(), io::Error> {
-        log::info!("writing config to {:?}", &self.config_path);
+        log::info!("writing config to {:?}", self.config_path);
         /* the new config */
         let new_config = self.config_toml.clone().unwrap_or_default();
         let new_config = toml_edit::ser::to_string_pretty(&new_config).expect("config");

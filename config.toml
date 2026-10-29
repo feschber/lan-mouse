@@ -32,3 +32,8 @@ hostname = "thorium"
 ips = ["192.168.178.189", "192.168.178.172"]
 # optional port
 port = 4242
+# optional shell command run via `sh -c` when the cursor enters this client
+enter_hook = "notify-send 'entered thorium'"
+# optional shell command run via `sh -c` when capture for this client is
+# released (release_bind chord, peer Leave, or `cli deactivate`)
+leave_hook = "notify-send 'left thorium'"
