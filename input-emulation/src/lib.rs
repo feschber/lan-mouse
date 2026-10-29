@@ -23,6 +23,9 @@ mod xdg_desktop_portal;
 #[cfg(libei)]
 mod libei;
 
+#[cfg(evdev)]
+mod evdev;
+
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -34,6 +37,8 @@ pub type EmulationHandle = u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
+    #[cfg(evdev)]
+    Evdev,
     #[cfg(wlroots)]
     Wlroots,
     #[cfg(libei)]
@@ -52,6 +57,8 @@ pub enum Backend {
 impl Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            #[cfg(evdev)]
+            Backend::Evdev => write!(f, "evdev"),
             #[cfg(wlroots)]
             Backend::Wlroots => write!(f, "wlroots"),
             #[cfg(libei)]
@@ -78,6 +85,8 @@ pub struct InputEmulation {
 impl InputEmulation {
     async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
+            #[cfg(evdev)]
+            Backend::Evdev => Box::new(evdev::EvdevEmulation::new()?),
             #[cfg(wlroots)]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(libei)]
@@ -109,6 +118,8 @@ impl InputEmulation {
         }
 
         for backend in [
+            #[cfg(evdev)]
+            Backend::Evdev,
             #[cfg(wlroots)]
             Backend::Wlroots,
             #[cfg(libei)]
