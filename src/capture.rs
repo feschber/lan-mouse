@@ -209,6 +209,9 @@ impl CaptureTask {
     async fn run(mut self) {
         loop {
             let result = self.do_capture().await;
+            if matches!(result, Ok(true)) {
+                continue;
+            }
             if let Err(e) = &result {
                 log::warn!("input capture exited: {e}");
             }
@@ -244,18 +247,17 @@ impl CaptureTask {
         }
     }
 
-    async fn do_capture(&mut self) -> Result<(), InputCaptureError> {
-        /* allow cancelling capture request */
-        let mut capture = tokio::select! {
-            r = InputCapture::new(self.backend) => r?,
-            _ = self.cancellation_token.cancelled() => return Ok(()),
+    async fn do_capture(&mut self) -> Result<bool, InputCaptureError> {
+        let _capture_guard = DropGuard {
+            tx: self.event_tx.clone(),
+            on_drop: Some(ICaptureEvent::CaptureDisabled),
         };
-
-        let _capture_guard = DropGuard::new(
-            self.event_tx.clone(),
-            ICaptureEvent::CaptureEnabled,
-            ICaptureEvent::CaptureDisabled,
-        );
+        self.event_tx
+            .send(ICaptureEvent::CaptureDisabled)
+            .expect("channel closed");
+        let Some(mut capture) = self.create_backend().await? else {
+            return Ok(false);
+        };
 
         /* create barriers for active clients */
         let r = self.create_captures(&mut capture).await;
@@ -277,6 +279,30 @@ impl CaptureTask {
         r
     }
 
+    async fn create_backend(&mut self) -> Result<Option<InputCapture>, InputCaptureError> {
+        loop {
+            let create = InputCapture::new(self.backend);
+            tokio::pin!(create);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = self.cancellation_token.cancelled() => return Ok(None),
+                    request = self.request_rx.recv() => match request.expect("channel closed") {
+                        CaptureRequest::Reenable => break,
+                        CaptureRequest::Create(h, p, t) => self.add_capture(h, p, t),
+                        CaptureRequest::Destroy(h) => self.remove_capture(h),
+                        CaptureRequest::Release => {}
+                        CaptureRequest::SetReleaseBind(bind) => {
+                            self.release_bind.borrow_mut().clone_from(&bind);
+                        }
+                    },
+                    result = &mut create => return result.map(Some).map_err(Into::into),
+                }
+            }
+            log::info!("restarting pending input capture authorization");
+        }
+    }
+
     async fn create_captures(&mut self, capture: &mut InputCapture) -> Result<(), CaptureError> {
         let captures = self.captures.clone();
         for (handle, pos, _type) in captures {
@@ -291,12 +317,22 @@ impl CaptureTask {
     async fn do_capture_session(
         &mut self,
         capture: &mut InputCapture,
-    ) -> Result<(), InputCaptureError> {
+    ) -> Result<bool, InputCaptureError> {
+        let mut availability = capture.availability();
+        self.report_availability(
+            availability
+                .as_mut()
+                .is_none_or(|state| *state.borrow_and_update()),
+        );
         loop {
             tokio::select! {
-                event = capture.next() => match event {
-                    Some(event) => self.handle_capture_event(capture, event?).await?,
-                    None => return Ok(()),
+                biased;
+                _ = self.cancellation_token.cancelled() => break,
+                ready = availability_changed(&mut availability) => {
+                    // A watch update can coalesce unavailable -> available.
+                    // Release the previous capture before accepting new input.
+                    self.release_capture(capture).await?;
+                    self.report_availability(ready);
                 },
                 (handle, event) = self.conn.recv() => {
                     if let Some(active) = self.active_client {
@@ -322,7 +358,10 @@ impl CaptureTask {
                     }
                 },
                 e = self.request_rx.recv() => match e.expect("channel closed") {
-                    CaptureRequest::Reenable => { /* already active */ },
+                    CaptureRequest::Reenable => {
+                        self.release_capture(capture).await?;
+                        return Ok(true);
+                    },
                     CaptureRequest::Release => self.release_capture(capture).await?,
                     CaptureRequest::Create(h, p, t) => {
                         self.add_capture(h, p, t);
@@ -346,10 +385,23 @@ impl CaptureTask {
                         self.release_bind.borrow_mut().clone_from(&bind);
                     }
                 },
-                _ = self.cancellation_token.cancelled() => break,
+                event = capture.next() => match event {
+                    Some(event) => self.handle_capture_event(capture, event?).await?,
+                    None => return Err(CaptureError::EndOfStream.into()),
+                },
             }
         }
-        Ok(())
+        Ok(false)
+    }
+
+    fn report_availability(&self, ready: bool) {
+        self.event_tx
+            .send(if ready {
+                ICaptureEvent::CaptureEnabled
+            } else {
+                ICaptureEvent::CaptureDisabled
+            })
+            .expect("channel closed");
     }
 
     async fn handle_capture_event(
@@ -469,6 +521,19 @@ impl CaptureTask {
     }
 }
 
+async fn availability_changed(
+    availability: &mut Option<tokio::sync::watch::Receiver<bool>>,
+) -> bool {
+    if let Some(state) = availability {
+        if state.changed().await.is_ok() {
+            return *state.borrow_and_update();
+        }
+        *availability = None;
+        return false;
+    }
+    futures::future::pending().await
+}
+
 thread_local! {
     static PREV_LOG: Cell<Option<Instant>> = const { Cell::new(None) };
 }
@@ -501,14 +566,6 @@ fn to_proto_pos(pos: input_capture::Position) -> lan_mouse_proto::Position {
 struct DropGuard<T> {
     tx: Sender<T>,
     on_drop: Option<T>,
-}
-
-impl<T> DropGuard<T> {
-    fn new(tx: Sender<T>, on_new: T, on_drop: T) -> Self {
-        tx.send(on_new).expect("channel closed");
-        let on_drop = Some(on_drop);
-        Self { tx, on_drop }
-    }
 }
 
 impl<T> Drop for DropGuard<T> {
@@ -590,5 +647,30 @@ mod tests {
             .expect("recovery receiver");
         assert!(task.wait_for_recovery(closed_session()).await);
         assert!(task.captures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manual_reenable_exits_the_existing_backend_for_recreation() {
+        let (mut task, requests) = recovery_task();
+        let (events, mut status) = channel();
+        task.event_tx = events;
+        task.backend = Some(input_capture::Backend::Dummy);
+        let capture = task.do_capture();
+        tokio::pin!(capture);
+        assert!(capture.as_mut().now_or_never().is_none());
+        assert!(matches!(
+            status.recv().await,
+            Some(ICaptureEvent::CaptureDisabled)
+        ));
+        assert!(matches!(
+            status.recv().await,
+            Some(ICaptureEvent::CaptureEnabled)
+        ));
+        requests.send(CaptureRequest::Reenable).unwrap();
+        assert!(capture.await.unwrap());
+        assert!(matches!(
+            status.recv().await,
+            Some(ICaptureEvent::CaptureDisabled)
+        ));
     }
 }

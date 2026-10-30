@@ -30,6 +30,7 @@ use tokio::{
     sync::{
         Notify,
         mpsc::{self, Receiver, Sender},
+        watch,
     },
     task::JoinHandle,
 };
@@ -81,6 +82,7 @@ pub struct LibeiInputCapture {
     input_capture: Pin<Box<InputCapture>>,
     capture_task: JoinHandle<Result<(), CaptureError>>,
     event_rx: Receiver<(Position, CaptureEvent)>,
+    availability: watch::Receiver<bool>,
     notify_capture: Sender<LibeiNotifyEvent>,
     notify_release: Arc<Notify>,
     cancellation_token: CancellationToken,
@@ -212,6 +214,25 @@ async fn connect_to_eis(
     Ok((context, conn, event_stream))
 }
 
+fn libei_stream_error(error: reis::Error) -> CaptureError {
+    match error {
+        reis::Error::Io(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::NotConnected
+                    | io::ErrorKind::UnexpectedEof
+            ) =>
+        {
+            log::debug!("libei transport closed: {error}");
+            CaptureError::EndOfStream
+        }
+        error => error.into(),
+    }
+}
+
 async fn libei_event_handler(
     mut ei_event_stream: EiConvertEventStream,
     context: ei::Context,
@@ -223,18 +244,31 @@ async fn libei_event_handler(
         let ei_event = ei_event_stream
             .next()
             .await
-            .ok_or(CaptureError::EndOfStream)??;
+            .ok_or(CaptureError::EndOfStream)?
+            .map_err(libei_stream_error)?;
         log::trace!("from ei: {ei_event:?}");
         let client = current_pos.get();
-        handle_ei_event(ei_event, client, &context, &event_tx, &release_session).await?;
+        match handle_ei_event(ei_event, client, &context, &event_tx, &release_session).await {
+            Err(CaptureError::Disconnected(reason)) => {
+                log::debug!("libei disconnected: {reason}");
+                return Err(CaptureError::EndOfStream);
+            }
+            result => result?,
+        }
     }
 }
 
 impl LibeiInputCapture {
     pub async fn new() -> std::result::Result<Self, LibeiCaptureCreationError> {
-        let input_capture = Box::pin(InputCapture::new().await?);
+        // A dedicated connection lets dropping a cancelled authorization close
+        // its portal requests without disturbing RemoteDesktop emulation.
+        let connection = ashpd::zbus::Connection::session()
+            .await
+            .map_err(ashpd::Error::from)?;
+        let input_capture = Box::pin(InputCapture::with_connection(connection).await?);
         let input_capture_ptr = input_capture.as_ref().get_ref() as *const InputCapture;
         let first_session = Some(create_session(unsafe { &*input_capture_ptr }).await?);
+        let (availability_tx, availability) = watch::channel(false);
 
         let (event_tx, event_rx) = mpsc::channel(1);
         let (notify_capture, notify_rx) = mpsc::channel(1);
@@ -249,6 +283,7 @@ impl LibeiInputCapture {
             first_session,
             event_tx,
             cancellation_token.clone(),
+            availability_tx,
         );
         let capture_task = tokio::task::spawn_local(capture);
 
@@ -256,6 +291,7 @@ impl LibeiInputCapture {
             input_capture,
             event_rx,
             capture_task,
+            availability,
             notify_capture,
             notify_release,
             cancellation_token,
@@ -266,10 +302,45 @@ impl LibeiInputCapture {
     }
 }
 
+async fn await_session<T>(
+    create: impl Future<Output = Result<T, ashpd::Error>>,
+    updates: &mut Receiver<LibeiNotifyEvent>,
+    clients: &mut Vec<Position>,
+    zones_changed: &mut (impl Stream<Item = ()> + Unpin),
+    cancel: &CancellationToken,
+) -> Result<Option<T>, CaptureError> {
+    tokio::pin!(create);
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(None),
+            update = updates.recv() => match update {
+                Some(update) => update_clients(clients, update),
+                None => return Ok(None),
+            },
+            zone = zones_changed.next() => {
+                if zone.is_none() {
+                    return Err(CaptureError::EndOfStream);
+                }
+                // A new session will query the current zones before enabling.
+            },
+            result = &mut create => return Ok(Some(result?)),
+        }
+    }
+}
+
+fn update_clients(clients: &mut Vec<Position>, event: LibeiNotifyEvent) {
+    match event {
+        LibeiNotifyEvent::Create(pos) => clients.push(pos),
+        LibeiNotifyEvent::Destroy(pos) => clients.retain(|&client| client != pos),
+    }
+}
+
 async fn capture_until_closed(
     capture: impl Future<Output = Result<(), CaptureError>>,
     closed: impl Future,
     cancel_update: &CancellationToken,
+    cancel_session: &CancellationToken,
 ) -> (Result<(), CaptureError>, bool) {
     let result = tokio::select! {
         // A closed session takes precedence over a concurrent InvalidSession
@@ -280,6 +351,7 @@ async fn capture_until_closed(
             (Err(CaptureError::ActivationClosed), true)
         },
         result = capture => (result, false),
+        _ = cancel_session.cancelled() => (Ok(()), false),
     };
     // Also wake the barrier-update task when cancellation drops capture's
     // future before its usual cleanup path can run.
@@ -294,6 +366,7 @@ async fn do_capture(
     session: Option<(Session<InputCapture>, BitFlags<Capabilities>)>,
     event_tx: Sender<(Position, CaptureEvent)>,
     cancellation_token: CancellationToken,
+    availability: watch::Sender<bool>,
 ) -> Result<(), CaptureError> {
     let mut session = session.map(|s| s.0);
 
@@ -302,15 +375,30 @@ async fn do_capture(
     let mut active_clients: Vec<Position> = vec![];
     let mut next_barrier_id = NonZeroU32::new(1).expect("id must be non-zero");
 
-    let mut zones_changed = input_capture.receive_zones_changed().await?;
+    let mut zones_changed = input_capture.receive_zones_changed().await?.map(|_| ());
 
     loop {
+        if !active_clients.is_empty() && session.is_none() {
+            availability.send_replace(false);
+            session = match await_session(
+                create_session(input_capture),
+                &mut capture_event,
+                &mut active_clients,
+                &mut zones_changed,
+                &cancellation_token,
+            )
+            .await?
+            {
+                Some((session, _)) => Some(session),
+                None => return Ok(()),
+            };
+        }
         // do capture session
         let cancel_session = CancellationToken::new();
         let cancel_update = CancellationToken::new();
 
         let mut capture_event_occured: Option<LibeiNotifyEvent> = None;
-        let mut zones_have_changed = false;
+        // A zone change cancels the current session; the next one queries zones.
 
         // kill session if clients need to be updated
         let handle_session_update_request = async {
@@ -323,8 +411,7 @@ async fn do_capture(
                 }, /* session exited */
                 _ = zones_changed.next() => {
                     log::debug!("zones changed!");
-                    zones_have_changed = true
-                }, /* zones have changed */
+                },
                 e = capture_event.recv() => if let Some(e) = e { /* clients changed */
                     log::debug!("capture event: {e:?}");
                     capture_event_occured.replace(e);
@@ -336,10 +423,10 @@ async fn do_capture(
         };
 
         if !active_clients.is_empty() {
-            // create session
+            availability.send_replace(false);
             let session = match session.take() {
-                Some(s) => s,
-                None => create_session(input_capture).await?.0,
+                Some(session) => session,
+                None => return Err(CaptureError::EndOfStream),
             };
 
             let mut closed = session.receive_closed().await?;
@@ -351,15 +438,21 @@ async fn do_capture(
                     &active_clients,
                     &mut next_barrier_id,
                     &notify_release,
-                    (cancel_session.clone(), cancel_update.clone()),
+                    CaptureSessionControl {
+                        cancel_session: &cancel_session,
+                        cancel_update: &cancel_update,
+                        availability: &availability,
+                    },
                 ),
                 closed.next(),
                 &cancel_update,
+                &cancel_session,
             );
 
             let ((capture_result, closed_by_portal), ()) =
                 tokio::join!(capture_session, handle_session_update_request);
             log::debug!("capture session + session_update task done!");
+            availability.send_replace(false);
 
             if !closed_by_portal {
                 log::debug!("disabling input capture");
@@ -374,15 +467,13 @@ async fn do_capture(
             // propagate error from capture session
             capture_result?;
         } else {
+            availability.send_replace(true);
             handle_session_update_request.await;
         }
 
         // update clients if requested
         if let Some(event) = capture_event_occured.take() {
-            match event {
-                LibeiNotifyEvent::Create(p) => active_clients.push(p),
-                LibeiNotifyEvent::Destroy(p) => active_clients.retain(|&pos| pos != p),
-            }
+            update_clients(&mut active_clients, event);
         }
 
         // break
@@ -392,6 +483,12 @@ async fn do_capture(
     }
 }
 
+struct CaptureSessionControl<'a> {
+    cancel_session: &'a CancellationToken,
+    cancel_update: &'a CancellationToken,
+    availability: &'a watch::Sender<bool>,
+}
+
 async fn do_capture_session(
     input_capture: &InputCapture,
     session: &Session<InputCapture>,
@@ -399,9 +496,13 @@ async fn do_capture_session(
     active_clients: &[Position],
     next_barrier_id: &mut NonZeroU32,
     notify_release: &Notify,
-    cancel: (CancellationToken, CancellationToken),
+    control: CaptureSessionControl<'_>,
 ) -> Result<(), CaptureError> {
-    let (cancel_session, cancel_update) = cancel;
+    let CaptureSessionControl {
+        cancel_session,
+        cancel_update,
+        availability,
+    } = control;
     // current client
     let current_pos = Rc::new(Cell::new(None));
 
@@ -414,33 +515,10 @@ async fn do_capture_session(
 
     log::debug!("enabling session");
     input_capture.enable(session, Default::default()).await?;
+    availability.send_replace(true);
 
     // cancellation token to release session
     let release_session = Arc::new(Notify::new());
-
-    // async event task
-    let cancel_ei_handler = CancellationToken::new();
-    let event_chan = event_tx.clone();
-    let pos = current_pos.clone();
-    let cancel_session_clone = cancel_session.clone();
-    let release_session_clone = release_session.clone();
-    let cancel_ei_handler_clone = cancel_ei_handler.clone();
-    let ei_task = async move {
-        tokio::select! {
-            r = libei_event_handler(
-                ei_event_stream,
-                context,
-                event_chan,
-                release_session_clone,
-                pos,
-            ) => {
-                log::debug!("libei exited: {r:?} cancelling session task");
-                cancel_session_clone.cancel();
-            }
-            _ = cancel_ei_handler_clone.cancelled() => {},
-        }
-        Ok::<(), CaptureError>(())
-    };
 
     let capture_session_task = async {
         // receiver for activation tokens
@@ -510,13 +588,49 @@ async fn do_capture_session(
                 break;
             }
         }
-        // cancel libei task
-        log::debug!("session exited: killing libei task");
-        cancel_ei_handler.cancel();
+        log::debug!("capture session finished");
         Ok::<(), CaptureError>(())
     };
 
-    let (a, b) = tokio::join!(ei_task, capture_session_task);
+    drive_capture_session(
+        libei_event_handler(
+            ei_event_stream,
+            context,
+            event_tx.clone(),
+            release_session.clone(),
+            current_pos.clone(),
+        ),
+        capture_session_task,
+        cancel_session,
+        cancel_update,
+    )
+    .await
+}
+
+async fn drive_capture_session(
+    ei: impl Future<Output = Result<(), CaptureError>>,
+    capture: impl Future<Output = Result<(), CaptureError>>,
+    cancel_session: &CancellationToken,
+    cancel_update: &CancellationToken,
+) -> Result<(), CaptureError> {
+    let cancel_ei = CancellationToken::new();
+    let ei_task = async {
+        tokio::select! {
+            biased;
+            result = ei => {
+                cancel_session.cancel();
+                result
+            },
+            _ = cancel_ei.cancelled() => Ok(()),
+        }
+    };
+    let capture_task = async {
+        let result = capture.await;
+        cancel_ei.cancel();
+        result
+    };
+
+    let (a, b) = tokio::join!(ei_task, capture_task);
 
     cancel_update.cancel();
 
@@ -637,6 +751,10 @@ async fn handle_ei_event(
 
 #[async_trait]
 impl LanMouseInputCapture for LibeiInputCapture {
+    fn availability(&self) -> Option<watch::Receiver<bool>> {
+        Some(self.availability.clone())
+    }
+
     async fn create(&mut self, pos: Position) -> Result<(), CaptureError> {
         let _ = self
             .notify_capture
@@ -721,7 +839,13 @@ mod tests {
             pending::<Result<(), CaptureError>>().await
         };
         let cancel_update = CancellationToken::new();
-        let (result, closed) = capture_until_closed(capture, ready(()), &cancel_update).await;
+        let (result, closed) = capture_until_closed(
+            capture,
+            ready(()),
+            &cancel_update,
+            &CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(result, Err(CaptureError::ActivationClosed)) && closed);
         assert!(dropped.load(Ordering::SeqCst));
         assert!(cancel_update.is_cancelled());
@@ -731,8 +855,13 @@ mod tests {
     async fn closure_wins_over_a_concurrent_stale_session_error() {
         let cancel_update = CancellationToken::new();
         let stale_session = CaptureError::Portal(ashpd::Error::NoResponse);
-        let (result, closed) =
-            capture_until_closed(ready(Err(stale_session)), ready(()), &cancel_update).await;
+        let (result, closed) = capture_until_closed(
+            ready(Err(stale_session)),
+            ready(()),
+            &cancel_update,
+            &CancellationToken::new(),
+        )
+        .await;
         assert!(matches!(result, Err(CaptureError::ActivationClosed)) && closed);
     }
 
@@ -742,14 +871,147 @@ mod tests {
         let denied = CaptureError::Portal(ashpd::Error::Response(
             ashpd::desktop::ResponseError::Cancelled,
         ));
-        let (result, closed) =
-            capture_until_closed(ready(Err(denied)), pending::<()>(), &cancel_update).await;
+        let (result, closed) = capture_until_closed(
+            ready(Err(denied)),
+            pending::<()>(),
+            &cancel_update,
+            &CancellationToken::new(),
+        )
+        .await;
         assert!(!closed);
         assert!(matches!(
             result,
             Err(CaptureError::Portal(ashpd::Error::Response(
                 ashpd::desktop::ResponseError::Cancelled
             )))
+        ));
+    }
+
+    #[tokio::test]
+    async fn pending_authorization_is_cancelled_and_dropped() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let resource = CaptureResource(dropped.clone());
+        let create = async move {
+            let _resource = resource;
+            pending::<Result<(), ashpd::Error>>().await
+        };
+        let (_tx, mut updates) = mpsc::channel(1);
+        let mut clients = vec![Position::Right];
+        let mut zones = futures::stream::pending();
+        let cancel = CancellationToken::new();
+        let wait = await_session(create, &mut updates, &mut clients, &mut zones, &cancel);
+        tokio::pin!(wait);
+        assert!(wait.as_mut().now_or_never().is_none());
+        cancel.cancel();
+        assert!(wait.await.unwrap().is_none());
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn pending_authorization_keeps_client_updates_without_restart() {
+        let (grant, response) = tokio::sync::oneshot::channel();
+        let (tx, mut updates) = mpsc::channel(2);
+        let mut clients = vec![Position::Right];
+        let mut zones = futures::stream::pending();
+        let cancel = CancellationToken::new();
+        {
+            let wait = await_session(
+                async { Ok(response.await.unwrap()) },
+                &mut updates,
+                &mut clients,
+                &mut zones,
+                &cancel,
+            );
+            tokio::pin!(wait);
+            assert!(wait.as_mut().now_or_never().is_none());
+            tx.send(LibeiNotifyEvent::Destroy(Position::Right))
+                .await
+                .unwrap();
+            tx.send(LibeiNotifyEvent::Create(Position::Left))
+                .await
+                .unwrap();
+            assert!(wait.as_mut().now_or_never().is_none());
+            grant.send(42).unwrap();
+            assert_eq!(wait.await.unwrap(), Some(42));
+        }
+        assert_eq!(clients, [Position::Left]);
+    }
+
+    #[tokio::test]
+    async fn eis_failure_survives_session_cancellation() {
+        let cancel = CancellationToken::new();
+        let update = CancellationToken::new();
+        let session = async {
+            cancel.cancelled().await;
+            Ok(())
+        };
+        let capture = drive_capture_session(
+            ready(Err(CaptureError::EndOfStream)),
+            session,
+            &cancel,
+            &update,
+        );
+        let (result, _) = capture_until_closed(capture, pending::<()>(), &update, &cancel).await;
+        assert!(matches!(result, Err(CaptureError::EndOfStream)));
+        assert!(update.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn portal_setup_can_be_cancelled_before_eis_is_ready() {
+        let cancel = CancellationToken::new();
+        let update = CancellationToken::new();
+        let capture = capture_until_closed(
+            pending::<Result<(), CaptureError>>(),
+            pending::<()>(),
+            &update,
+            &cancel,
+        );
+        tokio::pin!(capture);
+        assert!(capture.as_mut().now_or_never().is_none());
+        cancel.cancel();
+        let (result, closed) = capture.await;
+        assert!(result.is_ok() && !closed && update.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn portal_error_drops_the_pending_eis_reader() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let resource = CaptureResource(dropped.clone());
+        let ei = async move {
+            let _resource = resource;
+            pending::<Result<(), CaptureError>>().await
+        };
+        let result = drive_capture_session(
+            ei,
+            ready(Err(CaptureError::Portal(ashpd::Error::NoResponse))),
+            &CancellationToken::new(),
+            &CancellationToken::new(),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(CaptureError::Portal(ashpd::Error::NoResponse))
+        ));
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn closed_transport_is_recoverable_but_permission_errors_are_not() {
+        for kind in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::NotConnected,
+            io::ErrorKind::UnexpectedEof,
+        ] {
+            assert!(matches!(
+                libei_stream_error(reis::Error::Io(kind.into())),
+                CaptureError::EndOfStream
+            ));
+        }
+        assert!(matches!(
+            libei_stream_error(reis::Error::Io(io::ErrorKind::PermissionDenied.into())),
+            CaptureError::Reis(reis::Error::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied
         ));
     }
 }

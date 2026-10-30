@@ -28,11 +28,19 @@ version 1 portal can still require consent for a new capture session.
 ## Input Capture Session Recovery
 
 The libei capture backend monitors the InputCapture portal's `Session.Closed`
-signal. When an established session closes, it stops using that session and
-unblocks any pending barrier updates. The daemon releases captured keys and
-leaves the remote client before recreating the backend after one second.
+signal and propagates EIS disconnects, EOF, and closed-transport errors. On
+session loss, the daemon releases captured keys and leaves the remote client
+before recreating the backend after one second.
+
+During internal session reconfiguration, capture is reported as disabled until
+the replacement session is enabled. Pending authorization remains cancellable;
+client changes are retained without restarting the authorization request.
+Manually enabling Input Capture restarts even a pending authorization. Capture
+uses a dedicated portal connection so cancelling backend creation also releases
+its outstanding portal requests without interrupting input emulation.
+
 Client removals and release-binding changes are preserved during recovery;
-shutdown cancels the pending retry.
+shutdown cancels both the pending retry and pending session creation.
 
 Removing a capture handle also discards its queued events. This prevents a
 late event from referring to a removed client during peer disconnect or

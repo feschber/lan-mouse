@@ -202,6 +202,15 @@ impl InputCapture {
         })
     }
 
+    /// Subscribe to backend availability during session reconfiguration.
+    ///
+    /// `None` means that a created backend is always available. A `false`
+    /// update means capture cannot deliver input, for example while waiting
+    /// for replacement portal-session authorization.
+    pub fn availability(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.capture.availability()
+    }
+
     /// check whether the given keys are pressed
     pub fn keys_pressed(&self, keys: &[scancode::Linux]) -> bool {
         keys.iter().all(|k| self.pressed_keys.contains(k))
@@ -279,6 +288,10 @@ impl Stream for InputCapture {
 
 #[async_trait]
 trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + Unpin {
+    fn availability(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        None
+    }
+
     /// create a new client with the given id
     async fn create(&mut self, pos: Position) -> Result<(), CaptureError>;
 
