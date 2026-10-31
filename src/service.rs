@@ -67,7 +67,8 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
-    window_identifier: Arc<Mutex<Option<input_capture::WindowIdentifier>>>,
+    capture_window_id: Arc<Mutex<Option<input_capture::WindowIdentifier>>>,
+    emulation_window_id: Arc<Mutex<Option<input_emulation::WindowIdentifier>>>,
 }
 
 #[derive(Debug)]
@@ -99,15 +100,20 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let window_identifier = Arc::new(Mutex::new(None));
+        let capture_window_id = Arc::new(Mutex::new(None));
+        let emulation_window_id = Arc::new(Mutex::new(None));
         let capture = Capture::new(
             capture_backend,
             conn,
             config.release_bind(),
-            window_identifier.clone(),
+            Arc::clone(&capture_window_id),
         );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(
+            emulation_backend,
+            listener,
+            Arc::clone(&emulation_window_id),
+        );
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -130,7 +136,8 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
-            window_identifier,
+            capture_window_id,
+            emulation_window_id,
         };
         Ok(service)
     }
@@ -228,15 +235,26 @@ impl Service {
             FrontendRequest::SaveConfiguration => self.save_config(),
             FrontendRequest::WindowIdentifier(handle) => {
                 log::info!("xdg-foreign handle: {handle:?}");
-                self.window_identifier
+                self.capture_window_id
                     .lock()
                     .unwrap()
-                    .replace(match handle {
+                    .replace(match &handle {
                         lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
-                            input_capture::WindowIdentifier::Wayland(handle)
+                            input_capture::WindowIdentifier::Wayland(handle.clone())
                         }
                         lan_mouse_ipc::WindowIdentifier::X11(xid) => {
-                            input_capture::WindowIdentifier::X11(xid)
+                            input_capture::WindowIdentifier::X11(*xid)
+                        }
+                    });
+                self.emulation_window_id
+                    .lock()
+                    .unwrap()
+                    .replace(match &handle {
+                        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+                            input_emulation::WindowIdentifier::Wayland(handle.clone())
+                        }
+                        lan_mouse_ipc::WindowIdentifier::X11(xid) => {
+                            input_emulation::WindowIdentifier::X11(*xid)
                         }
                     });
             }

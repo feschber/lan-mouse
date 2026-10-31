@@ -1,10 +1,11 @@
 use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
-use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError};
+use input_emulation::{EmulationHandle, InputEmulation, InputEmulationError, WindowIdentifier};
 use input_event::Event;
 use lan_mouse_proto::{Position, ProtoEvent};
 use local_channel::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -77,8 +78,9 @@ impl Emulation {
     pub(crate) fn new(
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
+        window_id: Arc<Mutex<Option<WindowIdentifier>>>,
     ) -> Self {
-        let emulation_proxy = EmulationProxy::new(backend);
+        let emulation_proxy = EmulationProxy::new(backend, window_id);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_task = ListenTask {
@@ -243,7 +245,10 @@ enum ProxyRequest {
 }
 
 impl EmulationProxy {
-    fn new(backend: Option<input_emulation::Backend>) -> Self {
+    fn new(
+        backend: Option<input_emulation::Backend>,
+        window_id: Arc<Mutex<Option<WindowIdentifier>>>,
+    ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_active = Rc::new(Cell::new(false));
@@ -255,6 +260,7 @@ impl EmulationProxy {
             event_tx,
             handles: Default::default(),
             next_id: 0,
+            window_id,
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -314,10 +320,12 @@ struct EmulationTask {
     event_tx: Sender<EmulationEvent>,
     handles: HashMap<SocketAddr, EmulationHandle>,
     next_id: EmulationHandle,
+    window_id: Arc<Mutex<Option<input_emulation::WindowIdentifier>>>,
 }
 
 impl EmulationTask {
     async fn run(mut self) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
             if let Err(e) = self.do_emulation().await {
                 log::warn!("input emulation exited: {e}");
@@ -340,7 +348,7 @@ impl EmulationTask {
     async fn do_emulation(&mut self) -> Result<(), InputEmulationError> {
         log::info!("creating input emulation ...");
         let mut emulation = tokio::select! {
-            r = InputEmulation::new(self.backend) => r?,
+            r = InputEmulation::new(self.backend, self.window_id.clone()) => r?,
             // allow termination event while requesting input emulation
             _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
         };

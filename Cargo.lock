@@ -1823,7 +1823,6 @@ dependencies = [
  "libadwaita",
  "log",
  "thiserror 2.0.18",
- "wayland-client",
 ]
 
 [[package]]
