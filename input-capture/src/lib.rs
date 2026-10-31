@@ -137,9 +137,9 @@ pub enum WindowIdentifier {
 }
 
 #[cfg(all(unix, feature = "libei"))]
-impl Into<ashpd::WindowIdentifier> for WindowIdentifier {
-    fn into(self) -> ashpd::WindowIdentifier {
-        match self {
+impl From<WindowIdentifier> for ashpd::WindowIdentifier {
+    fn from(val: WindowIdentifier) -> Self {
+        match val {
             WindowIdentifier::Wayland(handle) => {
                 ashpd::WindowIdentifier::from_xdg_foreign_exported(handle)
             }
