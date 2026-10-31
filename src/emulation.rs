@@ -13,6 +13,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use tokio::sync::Notify;
 use tokio::{
     select,
     task::{JoinHandle, spawn_local},
@@ -79,8 +80,9 @@ impl Emulation {
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
         window_id: Arc<Mutex<Option<WindowIdentifier>>>,
+        notify_startup: Option<Arc<Notify>>,
     ) -> Self {
-        let emulation_proxy = EmulationProxy::new(backend, window_id);
+        let emulation_proxy = EmulationProxy::new(backend, window_id, notify_startup);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_task = ListenTask {
@@ -248,6 +250,7 @@ impl EmulationProxy {
     fn new(
         backend: Option<input_emulation::Backend>,
         window_id: Arc<Mutex<Option<WindowIdentifier>>>,
+        notify_startup: Option<Arc<Notify>>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -261,6 +264,7 @@ impl EmulationProxy {
             handles: Default::default(),
             next_id: 0,
             window_id,
+            notify_startup,
         };
         let task = spawn_local(emulation_task.run());
         Self {
@@ -321,10 +325,14 @@ struct EmulationTask {
     handles: HashMap<SocketAddr, EmulationHandle>,
     next_id: EmulationHandle,
     window_id: Arc<Mutex<Option<input_emulation::WindowIdentifier>>>,
+    notify_startup: Option<Arc<Notify>>,
 }
 
 impl EmulationTask {
     async fn run(mut self) {
+        if let Some(ref notify) = self.notify_startup {
+            notify.notified().await;
+        }
         loop {
             if let Err(e) = self.do_emulation().await {
                 log::warn!("input emulation exited: {e}");

@@ -11,7 +11,7 @@ use crate::{
 use futures::StreamExt;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
-    IpcListenerCreationError, Position, Status, WindowIdentifier,
+    IpcListenerCreationError, Position, Status,
 };
 use log;
 use std::{
@@ -69,6 +69,8 @@ pub struct Service {
     next_trigger_handle: u64,
     capture_window_id: Arc<Mutex<Option<input_capture::WindowIdentifier>>>,
     emulation_window_id: Arc<Mutex<Option<input_emulation::WindowIdentifier>>>,
+    /// notified on initial window id
+    notify_window_id: Option<Arc<Notify>>,
 }
 
 #[derive(Debug)]
@@ -76,21 +78,6 @@ struct Incoming {
     fingerprint: String,
     addr: SocketAddr,
     pos: Position,
-}
-
-async fn wait_for_window_id(frontend_listener: &mut AsyncFrontendListener) -> WindowIdentifier {
-    let window_identifier: lan_mouse_ipc::WindowIdentifier = loop {
-        match frontend_listener.next().await {
-            Some(Ok(event)) => {
-                if let FrontendRequest::WindowIdentifier(handle) = event {
-                    break handle;
-                }
-            }
-            None => panic!("frontend listener died"),
-            _ => continue,
-        }
-    };
-    window_identifier
 }
 
 fn to_emulation_window_id(
@@ -127,7 +114,7 @@ impl Service {
         let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
 
         // create frontend communication adapter, exit if already running
-        let mut frontend_listener = AsyncFrontendListener::new().await?;
+        let frontend_listener = AsyncFrontendListener::new().await?;
 
         let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints()));
         // listener + connection
@@ -135,27 +122,29 @@ impl Service {
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
 
-        // wait for a window to spawn so we can overlay the capture / emulation dialogs
-        let window_id = if config.wait_for_window() {
-            Some(wait_for_window_id(&mut frontend_listener).await)
+        // input capture + emulation
+        let capture_backend = config.capture_backend().map(|b| b.into());
+        let capture_window_id = Arc::new(Mutex::new(None));
+        let emulation_window_id = Arc::new(Mutex::new(None));
+        let notify_window_id = Arc::new(Notify::new());
+        let notify_window_id = if config.wait_for_window() {
+            Some(notify_window_id)
         } else {
             None
         };
-        // input capture + emulation
-        let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture_window_id = Arc::new(Mutex::new(window_id.clone().map(to_capture_window_id)));
-        let emulation_window_id = Arc::new(Mutex::new(window_id.map(to_emulation_window_id)));
         let capture = Capture::new(
             capture_backend,
             conn,
             config.release_bind(),
             Arc::clone(&capture_window_id),
+            notify_window_id.clone(),
         );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(
             emulation_backend,
             listener,
             Arc::clone(&emulation_window_id),
+            notify_window_id.clone(),
         );
 
         // create dns resolver
@@ -181,6 +170,7 @@ impl Service {
             next_trigger_handle: 0,
             capture_window_id,
             emulation_window_id,
+            notify_window_id,
         };
         Ok(service)
     }
@@ -292,6 +282,9 @@ impl Service {
             .lock()
             .unwrap()
             .replace(to_emulation_window_id(handle));
+        if let Some(ref notify) = self.notify_window_id {
+            notify.notify_waiters();
+        }
     }
 
     fn save_config(&mut self) {
