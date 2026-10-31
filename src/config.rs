@@ -97,6 +97,11 @@ struct Args {
     #[arg(short, long)]
     port: Option<u16>,
 
+    /// wait for a window to overlay the capture / emulation dialogs
+    /// used internally
+    #[arg(short, long)]
+    pub(crate) wait_for_window: bool,
+
     /// non-default config file location
     #[arg(short, long)]
     config: Option<PathBuf>,
@@ -263,9 +268,9 @@ pub struct Config {
     config_dir: PathBuf,
     /// the (optional) toml config and it's path
     config_toml: Option<ConfigToml>,
-    // filesystem watcher
+    /// filesystem watcher
     watcher: notify::RecommendedWatcher,
-    // channel for filesystem events
+    /// channel for filesystem events
     watch_rx: tokio::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>,
 }
 
@@ -478,6 +483,10 @@ impl Config {
             .port
             .or(self.config_toml.as_ref().and_then(|c| c.port))
             .unwrap_or(DEFAULT_PORT)
+    }
+
+    pub fn wait_for_window(&self) -> bool {
+        self.args.wait_for_window
     }
 
     /// list of configured clients

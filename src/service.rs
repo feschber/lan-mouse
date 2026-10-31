@@ -11,7 +11,7 @@ use crate::{
 use futures::StreamExt;
 use lan_mouse_ipc::{
     AsyncFrontendListener, ClientHandle, FrontendEvent, FrontendRequest, IpcError,
-    IpcListenerCreationError, Position, Status,
+    IpcListenerCreationError, Position, Status, WindowIdentifier,
 };
 use log;
 use std::{
@@ -78,6 +78,43 @@ struct Incoming {
     pos: Position,
 }
 
+async fn wait_for_window_id(frontend_listener: &mut AsyncFrontendListener) -> WindowIdentifier {
+    let window_identifier: lan_mouse_ipc::WindowIdentifier = loop {
+        match frontend_listener.next().await {
+            Some(Ok(event)) => {
+                if let FrontendRequest::WindowIdentifier(handle) = event {
+                    break handle;
+                }
+            }
+            None => panic!("frontend listener died"),
+            _ => continue,
+        }
+    };
+    window_identifier
+}
+
+fn to_emulation_window_id(
+    handle: lan_mouse_ipc::WindowIdentifier,
+) -> input_emulation::WindowIdentifier {
+    match handle {
+        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+            input_emulation::WindowIdentifier::Wayland(handle)
+        }
+        lan_mouse_ipc::WindowIdentifier::X11(xid) => input_emulation::WindowIdentifier::X11(xid),
+    }
+}
+
+fn to_capture_window_id(
+    handle: lan_mouse_ipc::WindowIdentifier,
+) -> input_capture::WindowIdentifier {
+    match handle {
+        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+            input_capture::WindowIdentifier::Wayland(handle)
+        }
+        lan_mouse_ipc::WindowIdentifier::X11(xid) => input_capture::WindowIdentifier::X11(xid),
+    }
+}
+
 impl Service {
     pub async fn new(config: Config) -> Result<Self, ServiceError> {
         let client_manager = ClientManager::default();
@@ -90,7 +127,7 @@ impl Service {
         let public_key_fingerprint = crypto::certificate_fingerprint(&cert);
 
         // create frontend communication adapter, exit if already running
-        let frontend_listener = AsyncFrontendListener::new().await?;
+        let mut frontend_listener = AsyncFrontendListener::new().await?;
 
         let authorized_keys = Arc::new(RwLock::new(config.authorized_fingerprints()));
         // listener + connection
@@ -98,10 +135,16 @@ impl Service {
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
 
+        // wait for a window to spawn so we can overlay the capture / emulation dialogs
+        let window_id = if config.wait_for_window() {
+            Some(wait_for_window_id(&mut frontend_listener).await)
+        } else {
+            None
+        };
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture_window_id = Arc::new(Mutex::new(None));
-        let emulation_window_id = Arc::new(Mutex::new(None));
+        let capture_window_id = Arc::new(Mutex::new(window_id.clone().map(to_capture_window_id)));
+        let emulation_window_id = Arc::new(Mutex::new(window_id.map(to_emulation_window_id)));
         let capture = Capture::new(
             capture_backend,
             conn,
@@ -235,30 +278,20 @@ impl Service {
             FrontendRequest::SaveConfiguration => self.save_config(),
             FrontendRequest::WindowIdentifier(handle) => {
                 log::info!("xdg-foreign handle: {handle:?}");
-                self.capture_window_id
-                    .lock()
-                    .unwrap()
-                    .replace(match &handle {
-                        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
-                            input_capture::WindowIdentifier::Wayland(handle.clone())
-                        }
-                        lan_mouse_ipc::WindowIdentifier::X11(xid) => {
-                            input_capture::WindowIdentifier::X11(*xid)
-                        }
-                    });
-                self.emulation_window_id
-                    .lock()
-                    .unwrap()
-                    .replace(match &handle {
-                        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
-                            input_emulation::WindowIdentifier::Wayland(handle.clone())
-                        }
-                        lan_mouse_ipc::WindowIdentifier::X11(xid) => {
-                            input_emulation::WindowIdentifier::X11(*xid)
-                        }
-                    });
+                self.update_window_identifier(handle);
             }
         }
+    }
+
+    fn update_window_identifier(&self, handle: lan_mouse_ipc::WindowIdentifier) {
+        self.capture_window_id
+            .lock()
+            .unwrap()
+            .replace(to_capture_window_id(handle.clone()));
+        self.emulation_window_id
+            .lock()
+            .unwrap()
+            .replace(to_emulation_window_id(handle));
     }
 
     fn save_config(&mut self) {

@@ -129,6 +129,7 @@ where
 fn start_service() -> Result<Child, io::Error> {
     let child = process::Command::new(std::env::current_exe()?)
         .args(std::env::args().skip(1))
+        .arg("--wait-for-window")
         .arg("daemon")
         .spawn()?;
     Ok(child)

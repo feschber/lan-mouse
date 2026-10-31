@@ -325,7 +325,6 @@ struct EmulationTask {
 
 impl EmulationTask {
     async fn run(mut self) {
-        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
             if let Err(e) = self.do_emulation().await {
                 log::warn!("input emulation exited: {e}");

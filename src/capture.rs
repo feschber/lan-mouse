@@ -212,7 +212,6 @@ impl CaptureTask {
     }
 
     async fn run(mut self) {
-        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
             if let Err(e) = self.do_capture().await {
                 log::warn!("input capture exited: {e}");
