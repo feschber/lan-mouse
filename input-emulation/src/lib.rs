@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    sync::{Arc, Mutex},
 };
 
 use input_event::{Event, KeyboardEvent};
@@ -75,13 +76,34 @@ pub struct InputEmulation {
     pressed_keys: HashMap<EmulationHandle, HashSet<u32>>,
 }
 
+#[derive(Clone, Debug)]
+pub enum WindowIdentifier {
+    Wayland(String),
+    X11(u32),
+}
+
+#[cfg(libei)]
+impl Into<ashpd::WindowIdentifier> for WindowIdentifier {
+    fn into(self) -> ashpd::WindowIdentifier {
+        match self {
+            WindowIdentifier::Wayland(handle) => {
+                ashpd::WindowIdentifier::from_xdg_foreign_exported(handle)
+            }
+            WindowIdentifier::X11(_) => todo!(),
+        }
+    }
+}
+
 impl InputEmulation {
-    async fn with_backend(backend: Backend) -> Result<InputEmulation, EmulationCreationError> {
+    async fn with_backend(
+        backend: Backend,
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
             #[cfg(wlroots)]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(libei)]
-            Backend::Libei => Box::new(libei::LibeiEmulation::new().await?),
+            Backend::Libei => Box::new(libei::LibeiEmulation::new(window_identifier).await?),
             #[cfg(x11)]
             Backend::X11 => Box::new(x11::X11Emulation::new()?),
             #[cfg(rdp)]
@@ -99,9 +121,12 @@ impl InputEmulation {
         })
     }
 
-    pub async fn new(backend: Option<Backend>) -> Result<InputEmulation, EmulationCreationError> {
+    pub async fn new(
+        backend: Option<Backend>,
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+    ) -> Result<InputEmulation, EmulationCreationError> {
         if let Some(backend) = backend {
-            let b = Self::with_backend(backend).await;
+            let b = Self::with_backend(backend, window_identifier).await;
             if b.is_ok() {
                 log::info!("using emulation backend: {backend}");
             }
@@ -123,7 +148,7 @@ impl InputEmulation {
             Backend::MacOs,
             Backend::Dummy,
         ] {
-            match Self::with_backend(backend).await {
+            match Self::with_backend(backend, window_identifier.clone()).await {
                 Ok(b) => {
                     log::info!("using emulation backend: {backend}");
                     return Ok(b);
