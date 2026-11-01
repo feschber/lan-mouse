@@ -84,3 +84,4 @@ wlroots = [
 x11 = ["dep:x11"]
 remote_desktop_portal = ["dep:ashpd"]
 libei = ["dep:reis", "dep:ashpd"]
+wayland_window_id = ["dep:ashpd"]

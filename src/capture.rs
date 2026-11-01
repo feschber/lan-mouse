@@ -1,17 +1,22 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use futures::StreamExt;
 use input_capture::{
     CaptureError, CaptureEvent, CaptureHandle, InputCapture, InputCaptureError, Position,
+    WindowIdentifier,
 };
 use input_event::{Event, KeyboardEvent, scancode};
 use lan_mouse_proto::ProtoEvent;
 use local_channel::mpsc::{Receiver, Sender, channel};
-use tokio::task::{JoinHandle, spawn_local};
+use tokio::{
+    sync::Notify,
+    task::{JoinHandle, spawn_local},
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::LanMouseConnection;
@@ -75,6 +80,8 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+        notify_startup: Option<Arc<Notify>>,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -89,6 +96,8 @@ impl Capture {
             request_rx,
             release_bind: Rc::new(RefCell::new(release_bind)),
             state: Default::default(),
+            window_identifier,
+            notify_startup,
         };
         let task = spawn_local(capture_task.run());
         Self {
@@ -173,6 +182,8 @@ struct CaptureTask {
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
     request_rx: Receiver<CaptureRequest>,
     state: State,
+    window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+    notify_startup: Option<Arc<Notify>>,
 }
 
 impl CaptureTask {
@@ -207,6 +218,9 @@ impl CaptureTask {
     }
 
     async fn run(mut self) {
+        if let Some(notify) = self.notify_startup.clone() {
+            notify.notified().await;
+        }
         loop {
             if let Err(e) = self.do_capture().await {
                 log::warn!("input capture exited: {e}");
@@ -231,7 +245,7 @@ impl CaptureTask {
     async fn do_capture(&mut self) -> Result<(), InputCaptureError> {
         /* allow cancelling capture request */
         let mut capture = tokio::select! {
-            r = InputCapture::new(self.backend) => r?,
+            r = InputCapture::new(self.backend, self.window_identifier.clone()) => r?,
             _ = self.cancellation_token.cancelled() => return Ok(()),
         };
 

@@ -29,6 +29,9 @@ use input_emulation::{Backend, EmulationHandle, InputEmulation};
 #[cfg(wlroots)]
 use input_event::{Event, PointerEvent};
 
+#[cfg(wlroots)]
+use std::sync::{Arc, Mutex};
+
 /// number of simulated peer reconnects
 #[cfg(wlroots)]
 const ITERATIONS: u64 = 2000;
@@ -61,14 +64,15 @@ fn main() {
         .expect("failed to build runtime");
 
     runtime.block_on(async {
-        let mut emulation = match InputEmulation::new(Some(Backend::Wlroots)).await {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("could not create wlroots emulation backend: {e}");
-                eprintln!("this example requires a running wlroots compositor");
-                std::process::exit(1);
-            }
-        };
+        let mut emulation =
+            match InputEmulation::new(Some(Backend::Wlroots), Arc::new(Mutex::new(None))).await {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("could not create wlroots emulation backend: {e}");
+                    eprintln!("this example requires a running wlroots compositor");
+                    std::process::exit(1);
+                }
+            };
 
         // control mode reuses a single client, so only the event path runs.
         // if descriptors stay flat here but climb in the default mode, client

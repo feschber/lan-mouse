@@ -28,7 +28,7 @@ use reis::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::error::EmulationError;
+use crate::{WindowIdentifier, error::EmulationError};
 
 use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 
@@ -84,7 +84,9 @@ fn write_token(token: &str) -> io::Result<()> {
     Ok(())
 }
 
-async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd), ashpd::Error> {
+async fn get_ei_fd(
+    window_identifier: Option<ashpd::WindowIdentifier>,
+) -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd), ashpd::Error> {
     let remote_desktop = RemoteDesktop::new().await?;
 
     let restore_token = read_token();
@@ -101,7 +103,7 @@ async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd),
 
     log::info!("requesting permission for input emulation");
     let start_response = remote_desktop
-        .start(&session, None, Default::default())
+        .start(&session, window_identifier.as_ref(), Default::default())
         .await?
         .response()?;
 
@@ -119,8 +121,11 @@ async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd),
 }
 
 impl LibeiEmulation {
-    pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
-        let (_remote_desktop, session, eifd) = get_ei_fd().await?;
+    pub(crate) async fn new(
+        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+    ) -> Result<Self, LibeiEmulationCreationError> {
+        let window_identifier = window_identifier.lock().unwrap().clone().map(|i| i.into());
+        let (_remote_desktop, session, eifd) = get_ei_fd(window_identifier).await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;

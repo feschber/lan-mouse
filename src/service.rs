@@ -18,7 +18,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
@@ -67,6 +67,10 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    capture_window_id: Arc<Mutex<Option<input_capture::WindowIdentifier>>>,
+    emulation_window_id: Arc<Mutex<Option<input_emulation::WindowIdentifier>>>,
+    /// notified on initial window id
+    notify_window_id: Option<Arc<Notify>>,
 }
 
 #[derive(Debug)]
@@ -74,6 +78,28 @@ struct Incoming {
     fingerprint: String,
     addr: SocketAddr,
     pos: Position,
+}
+
+fn to_emulation_window_id(
+    handle: lan_mouse_ipc::WindowIdentifier,
+) -> input_emulation::WindowIdentifier {
+    match handle {
+        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+            input_emulation::WindowIdentifier::Wayland(handle)
+        }
+        lan_mouse_ipc::WindowIdentifier::X11(xid) => input_emulation::WindowIdentifier::X11(xid),
+    }
+}
+
+fn to_capture_window_id(
+    handle: lan_mouse_ipc::WindowIdentifier,
+) -> input_capture::WindowIdentifier {
+    match handle {
+        lan_mouse_ipc::WindowIdentifier::Wayland(handle) => {
+            input_capture::WindowIdentifier::Wayland(handle)
+        }
+        lan_mouse_ipc::WindowIdentifier::X11(xid) => input_capture::WindowIdentifier::X11(xid),
+    }
 }
 
 impl Service {
@@ -98,9 +124,28 @@ impl Service {
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
-        let capture = Capture::new(capture_backend, conn, config.release_bind());
+        let capture_window_id = Arc::new(Mutex::new(None));
+        let emulation_window_id = Arc::new(Mutex::new(None));
+        let notify_window_id = Arc::new(Notify::new());
+        let notify_window_id = if config.wait_for_window() {
+            Some(notify_window_id)
+        } else {
+            None
+        };
+        let capture = Capture::new(
+            capture_backend,
+            conn,
+            config.release_bind(),
+            Arc::clone(&capture_window_id),
+            notify_window_id.clone(),
+        );
         let emulation_backend = config.emulation_backend().map(|b| b.into());
-        let emulation = Emulation::new(emulation_backend, listener);
+        let emulation = Emulation::new(
+            emulation_backend,
+            listener,
+            Arc::clone(&emulation_window_id),
+            notify_window_id.clone(),
+        );
 
         // create dns resolver
         let resolver = DnsResolver::new()?;
@@ -123,6 +168,9 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            capture_window_id,
+            emulation_window_id,
+            notify_window_id,
         };
         Ok(service)
     }
@@ -218,6 +266,24 @@ impl Service {
                 self.update_leave_hook(handle, leave_hook)
             }
             FrontendRequest::SaveConfiguration => self.save_config(),
+            FrontendRequest::WindowIdentifier(handle) => {
+                log::info!("xdg-foreign handle: {handle:?}");
+                self.update_window_identifier(handle);
+            }
+        }
+    }
+
+    fn update_window_identifier(&self, handle: lan_mouse_ipc::WindowIdentifier) {
+        self.capture_window_id
+            .lock()
+            .unwrap()
+            .replace(to_capture_window_id(handle.clone()));
+        self.emulation_window_id
+            .lock()
+            .unwrap()
+            .replace(to_emulation_window_id(handle));
+        if let Some(ref notify) = self.notify_window_id {
+            notify.notify_waiters();
         }
     }
 

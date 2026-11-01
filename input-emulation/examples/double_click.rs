@@ -16,7 +16,10 @@ use input_emulation::{Backend, InputEmulation};
 #[cfg(wlroots)]
 use input_event::{BTN_LEFT, Event, PointerEvent};
 #[cfg(wlroots)]
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 #[cfg(wlroots)]
 fn main() {
@@ -26,7 +29,7 @@ fn main() {
         .expect("failed to build runtime");
 
     runtime.block_on(async {
-        let mut emulation = InputEmulation::new(Some(Backend::Wlroots))
+        let mut emulation = InputEmulation::new(Some(Backend::Wlroots), Arc::new(Mutex::new(None)))
             .await
             .expect("this example requires a running wlroots compositor");
         emulation.create(0).await;
