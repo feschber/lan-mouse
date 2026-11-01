@@ -32,6 +32,8 @@ pub(crate) fn local_commit_str() -> String {
         .to_string()
 }
 
+use lan_mouse_ipc::FrontendEvent;
+#[cfg(wayland_window_id)]
 use lan_mouse_ipc::{FrontendEvent, FrontendRequest, WindowIdentifier};
 
 use adw::Application;
@@ -41,7 +43,7 @@ use gtk::{gio, glib, prelude::ApplicationExt};
 use self::client_object::ClientObject;
 use self::key_object::KeyObject;
 
-#[cfg(all(unix, feature = "wayland_window_identifier", not(target_os = "macos")))]
+#[cfg(wayland_window_id)]
 use gdk4_wayland::WaylandToplevel;
 
 use thiserror::Error;
@@ -287,7 +289,7 @@ fn build_ui(app: &Application) {
 
     // export TopLevel handle and send it to the service so that it can put the InpuCapture / RemoteDesktop
     // windows on top of it using xdg-foreign.
-    #[cfg(all(unix, feature = "wayland_window_identifier", not(target_os = "macos")))]
+    #[cfg(wayland_window_id)]
     window.connect_show(|window| {
         // needs the surface so we have to present first!
         if let Some(surface) = window.surface() {

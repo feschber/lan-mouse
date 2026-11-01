@@ -97,13 +97,13 @@ impl From<WindowIdentifier> for ashpd::WindowIdentifier {
 impl InputEmulation {
     async fn with_backend(
         backend: Backend,
-        window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+        _window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
     ) -> Result<InputEmulation, EmulationCreationError> {
         let emulation: Box<dyn Emulation> = match backend {
             #[cfg(wlroots)]
             Backend::Wlroots => Box::new(wlroots::WlrootsEmulation::new()?),
             #[cfg(libei)]
-            Backend::Libei => Box::new(libei::LibeiEmulation::new(window_identifier).await?),
+            Backend::Libei => Box::new(libei::LibeiEmulation::new(_window_identifier).await?),
             #[cfg(x11)]
             Backend::X11 => Box::new(x11::X11Emulation::new()?),
             #[cfg(rdp)]

@@ -23,5 +23,5 @@ glib-build-tools = { version = "0.20.0" }
 
 
 [features]
-default = ["wayland_window_identifier"]
-wayland_window_identifier = ["dep:gdk4_wayland"]
+default = ["wayland_window_id"]
+wayland_window_id = ["dep:gdk4_wayland"]

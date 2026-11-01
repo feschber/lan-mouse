@@ -136,7 +136,7 @@ pub enum WindowIdentifier {
     X11(u32),
 }
 
-#[cfg(all(unix, feature = "libei"))]
+#[cfg(libei)]
 impl From<WindowIdentifier> for ashpd::WindowIdentifier {
     fn from(val: WindowIdentifier) -> Self {
         match val {
@@ -315,15 +315,12 @@ trait Capture: Stream<Item = Result<(Position, CaptureEvent), CaptureError>> + U
 
 async fn create_backend(
     backend: Backend,
-    window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
-) -> Result<
-    Box<dyn Capture<Item = Result<(Position, CaptureEvent), CaptureError>>>,
-    CaptureCreationError,
-> {
+    _window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
+) -> Result<Box<dyn Capture>, CaptureCreationError> {
     match backend {
         #[cfg(libei)]
         Backend::InputCapturePortal => Ok(Box::new(
-            libei::LibeiInputCapture::new(window_identifier).await?,
+            libei::LibeiInputCapture::new(_window_identifier).await?,
         )),
         #[cfg(layer_shell)]
         Backend::LayerShell => Ok(Box::new(layer_shell::LayerShellInputCapture::new()?)),
@@ -340,10 +337,7 @@ async fn create_backend(
 async fn create(
     backend: Option<Backend>,
     window_identifier: Arc<Mutex<Option<WindowIdentifier>>>,
-) -> Result<
-    Box<dyn Capture<Item = Result<(Position, CaptureEvent), CaptureError>>>,
-    CaptureCreationError,
-> {
+) -> Result<Box<dyn Capture>, CaptureCreationError> {
     if let Some(backend) = backend {
         let b = create_backend(backend, window_identifier).await;
         if b.is_ok() {
