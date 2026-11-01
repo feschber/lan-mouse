@@ -14,7 +14,7 @@ use local_channel::mpsc::{Receiver, Sender, channel};
 use tokio::task::{JoinHandle, spawn_local};
 use tokio_util::sync::CancellationToken;
 
-use crate::connect::LanMouseConnection;
+use crate::{clipboard::ClipboardSync, connect::LanMouseConnection};
 
 pub(crate) struct Capture {
     cancellation_token: CancellationToken,
@@ -75,6 +75,7 @@ impl Capture {
         backend: Option<input_capture::Backend>,
         conn: LanMouseConnection,
         release_bind: Vec<scancode::Linux>,
+        clipboard_enabled: bool,
     ) -> Self {
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
@@ -84,6 +85,8 @@ impl Capture {
             backend,
             cancellation_token: cancellation_token.clone(),
             captures: Default::default(),
+            clipboard: ClipboardSync::new(),
+            clipboard_enabled,
             conn,
             event_tx,
             request_rx,
@@ -168,6 +171,8 @@ struct CaptureTask {
     backend: Option<input_capture::Backend>,
     cancellation_token: CancellationToken,
     captures: Vec<(CaptureHandle, Position, CaptureType)>,
+    clipboard: ClipboardSync,
+    clipboard_enabled: bool,
     conn: LanMouseConnection,
     event_tx: Sender<ICaptureEvent>,
     release_bind: Rc<RefCell<Vec<scancode::Linux>>>,
@@ -278,6 +283,13 @@ impl CaptureTask {
                     None => return Ok(()),
                 },
                 (handle, event) = self.conn.recv() => {
+                    if let ProtoEvent::Clipboard(chunk) = event {
+                        if self.clipboard_enabled {
+                            self.clipboard.handle_incoming_chunk(chunk).await;
+                        }
+                        continue;
+                    }
+
                     if let Some(active) = self.active_client {
                         if handle != active {
                             // we only care about events coming from the client we are currently connected to
@@ -291,6 +303,9 @@ impl CaptureTask {
                         ProtoEvent::Ack(_) => {
                             log::info!("client {handle} acknowledged the connection!");
                             self.state = State::Sending;
+                            if self.clipboard_enabled {
+                                self.sync_outgoing_clipboard(handle).await;
+                            }
                         }
                         // client disconnected
                         ProtoEvent::Leave(_) => {
@@ -445,6 +460,16 @@ impl CaptureTask {
             }
         }
         capture.release().await
+    }
+
+    async fn sync_outgoing_clipboard(&mut self, handle: CaptureHandle) {
+        let chunks = self.clipboard.prepare_outgoing_chunks().await;
+        for chunk in chunks {
+            if let Err(e) = self.conn.send(ProtoEvent::Clipboard(chunk), handle).await {
+                log::warn!("failed to send clipboard chunk to client {handle}: {e}");
+                break;
+            }
+        }
     }
 }
 

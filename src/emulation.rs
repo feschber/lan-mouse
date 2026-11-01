@@ -1,3 +1,4 @@
+use crate::clipboard::ClipboardSync;
 use crate::config::local_commit;
 use crate::listen::{LanMouseListener, ListenEvent, ListenerCreationError};
 use futures::StreamExt;
@@ -77,11 +78,14 @@ impl Emulation {
     pub(crate) fn new(
         backend: Option<input_emulation::Backend>,
         listener: LanMouseListener,
+        clipboard_enabled: bool,
     ) -> Self {
         let emulation_proxy = EmulationProxy::new(backend);
         let (request_tx, request_rx) = channel();
         let (event_tx, event_rx) = channel();
         let emulation_task = ListenTask {
+            clipboard: ClipboardSync::new(),
+            clipboard_enabled,
             listener,
             emulation_proxy,
             request_rx,
@@ -130,6 +134,8 @@ impl Emulation {
 }
 
 struct ListenTask {
+    clipboard: ClipboardSync,
+    clipboard_enabled: bool,
     listener: LanMouseListener,
     emulation_proxy: EmulationProxy,
     request_rx: Receiver<EmulationRequest>,
@@ -157,10 +163,18 @@ impl ListenTask {
                                 }
                             }
                             ProtoEvent::Leave(_) => {
+                                if self.clipboard_enabled {
+                                    self.sync_reply_clipboard(addr).await;
+                                }
                                 self.emulation_proxy.remove(addr);
                                 self.listener.reply(addr, ProtoEvent::Ack(0)).await;
                             }
                             ProtoEvent::Input(event) => self.emulation_proxy.consume(event, addr),
+                            ProtoEvent::Clipboard(chunk) => {
+                                if self.clipboard_enabled {
+                                    self.clipboard.handle_incoming_chunk(chunk).await;
+                                }
+                            }
                             ProtoEvent::Ping => self.listener.reply(addr, ProtoEvent::Pong(self.emulation_proxy.emulation_active.get())).await,
                             // Peer's version handshake. Echo our own
                             // commit back so the peer's connect-side
@@ -198,7 +212,12 @@ impl ListenTask {
                     // reenable emulation
                     EmulationRequest::Reenable => self.emulation_proxy.reenable(),
                     // notify the other end that we hit a barrier (should release capture)
-                    EmulationRequest::Release(addr) => self.listener.reply(addr, ProtoEvent::Leave(0)).await,
+                    EmulationRequest::Release(addr) => {
+                        if self.clipboard_enabled {
+                            self.sync_reply_clipboard(addr).await;
+                        }
+                        self.listener.reply(addr, ProtoEvent::Leave(0)).await;
+                    }
                     EmulationRequest::ChangePort(port) => {
                         self.listener.request_port_change(port);
                         let result = self.listener.port_changed().await;
@@ -222,6 +241,13 @@ impl ListenTask {
         }
         self.listener.terminate().await;
         self.emulation_proxy.terminate().await;
+    }
+
+    async fn sync_reply_clipboard(&mut self, addr: SocketAddr) {
+        let chunks = self.clipboard.prepare_outgoing_chunks().await;
+        for chunk in chunks {
+            self.listener.reply(addr, ProtoEvent::Clipboard(chunk)).await;
+        }
     }
 }
 

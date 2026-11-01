@@ -395,6 +395,9 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# enable Deskflow-style screen-transition clipboard synchronization (defaults to true)
+enable_clipboard = true
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]
@@ -439,7 +442,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [ ] X11 Input Capture
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization
-- [ ] Clipboard support
+- [x] Clipboard support
 
 
 ## Detailed OS Support
