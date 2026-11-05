@@ -49,6 +49,9 @@ pub enum EmulationCreationError {
     #[cfg(x11)]
     #[error("x11: `{0}`")]
     X11(#[from] X11EmulationCreationError),
+    #[cfg(uinput)]
+    #[error("uinput backend: `{0}`")]
+    Uinput(#[from] UinputEmulationCreationError),
     #[cfg(target_os = "macos")]
     #[error("macos: `{0}`")]
     MacOs(#[from] MacOSEmulationCreationError),
@@ -139,6 +142,15 @@ pub enum XdpEmulationCreationError {
 pub enum X11EmulationCreationError {
     #[error("could not open display")]
     OpenDisplay,
+}
+
+#[cfg(uinput)]
+#[derive(Debug, Error)]
+pub enum UinputEmulationCreationError {
+    #[error("failed to open /dev/uinput (check permissions/udev rules): {0}")]
+    OpenDevice(std::io::Error),
+    #[error("failed to configure uinput device: {0}")]
+    SetupDevice(std::io::Error),
 }
 
 #[cfg(target_os = "macos")]

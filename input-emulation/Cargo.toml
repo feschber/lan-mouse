@@ -35,6 +35,7 @@ once_cell = "1.19.0"
 
 [target.'cfg(all(unix, not(target_os="macos")))'.dependencies]
 bitflags = "2.6.0"
+libc = { version = "0.2.148", optional = true }
 wayland-client = { version = "0.31.1", optional = true }
 wayland-protocols = { version = "0.32.1", features = [
     "client",
@@ -74,7 +75,7 @@ windows = { version = "0.61.2", features = [
 ] }
 
 [features]
-default = ["wlroots", "x11", "remote_desktop_portal", "libei"]
+default = ["wlroots", "x11", "remote_desktop_portal", "libei", "uinput"]
 wlroots = [
     "dep:wayland-client",
     "dep:wayland-protocols",
@@ -84,3 +85,4 @@ wlroots = [
 x11 = ["dep:x11"]
 remote_desktop_portal = ["dep:ashpd"]
 libei = ["dep:reis", "dep:ashpd"]
+uinput = ["dep:libc"]

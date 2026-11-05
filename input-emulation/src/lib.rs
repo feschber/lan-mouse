@@ -23,6 +23,9 @@ mod xdg_desktop_portal;
 #[cfg(libei)]
 mod libei;
 
+#[cfg(uinput)]
+mod uinput;
+
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -42,6 +45,8 @@ pub enum Backend {
     Xdp,
     #[cfg(x11)]
     X11,
+    #[cfg(uinput)]
+    Uinput,
     #[cfg(windows)]
     Windows,
     #[cfg(target_os = "macos")]
@@ -60,6 +65,8 @@ impl Display for Backend {
             Backend::Xdp => write!(f, "xdg-desktop-portal"),
             #[cfg(x11)]
             Backend::X11 => write!(f, "X11"),
+            #[cfg(uinput)]
+            Backend::Uinput => write!(f, "uinput"),
             #[cfg(windows)]
             Backend::Windows => write!(f, "windows"),
             #[cfg(target_os = "macos")]
@@ -67,6 +74,41 @@ impl Display for Backend {
             Backend::Dummy => write!(f, "dummy"),
         }
     }
+}
+
+#[cfg(uinput)]
+fn is_niri_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP")
+        .is_ok_and(|desktops| desktops.split(':').any(|d| d.eq_ignore_ascii_case("niri")))
+        || std::env::var_os("NIRI_SOCKET").is_some()
+}
+
+fn default_backends() -> Vec<Backend> {
+    let mut backends = Vec::new();
+    #[cfg(uinput)]
+    let prefer_uinput = is_niri_session();
+    #[cfg(uinput)]
+    if prefer_uinput {
+        backends.push(Backend::Uinput);
+    }
+    #[cfg(wlroots)]
+    backends.push(Backend::Wlroots);
+    #[cfg(libei)]
+    backends.push(Backend::Libei);
+    #[cfg(rdp)]
+    backends.push(Backend::Xdp);
+    #[cfg(x11)]
+    backends.push(Backend::X11);
+    #[cfg(uinput)]
+    if !prefer_uinput {
+        backends.push(Backend::Uinput);
+    }
+    #[cfg(windows)]
+    backends.push(Backend::Windows);
+    #[cfg(target_os = "macos")]
+    backends.push(Backend::MacOs);
+    backends.push(Backend::Dummy);
+    backends
 }
 
 pub struct InputEmulation {
@@ -84,6 +126,8 @@ impl InputEmulation {
             Backend::Libei => Box::new(libei::LibeiEmulation::new().await?),
             #[cfg(x11)]
             Backend::X11 => Box::new(x11::X11Emulation::new()?),
+            #[cfg(uinput)]
+            Backend::Uinput => Box::new(uinput::UinputEmulation::new()?),
             #[cfg(rdp)]
             Backend::Xdp => Box::new(xdg_desktop_portal::DesktopPortalEmulation::new().await?),
             #[cfg(windows)]
@@ -108,21 +152,7 @@ impl InputEmulation {
             return b;
         }
 
-        for backend in [
-            #[cfg(wlroots)]
-            Backend::Wlroots,
-            #[cfg(libei)]
-            Backend::Libei,
-            #[cfg(rdp)]
-            Backend::Xdp,
-            #[cfg(x11)]
-            Backend::X11,
-            #[cfg(windows)]
-            Backend::Windows,
-            #[cfg(target_os = "macos")]
-            Backend::MacOs,
-            Backend::Dummy,
-        ] {
+        for backend in default_backends() {
             match Self::with_backend(backend).await {
                 Ok(b) => {
                     log::info!("using emulation backend: {backend}");
