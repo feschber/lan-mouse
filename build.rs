@@ -17,6 +17,7 @@ fn main() {
     let x11_emulation = cfg!(feature = "x11_emulation");
     let wlroots_emulation = cfg!(feature = "wlroots_emulation");
     let rdp_emulation = cfg!(feature = "rdp_emulation");
+    let uinput_emulation = cfg!(feature = "uinput_emulation");
 
     let layer_shell_capture = unix && !macos && layer_shell_capture;
     let libei_capture = unix && !macos && libei_capture;
@@ -26,6 +27,7 @@ fn main() {
     let rdp_emulation = unix && !macos && rdp_emulation;
     let wlroots_emulation = unix && !macos && wlroots_emulation;
     let x11_emulation = unix && !macos && x11_emulation;
+    let uinput_emulation = unix && !macos && uinput_emulation;
 
     println!("cargo::rustc-check-cfg=cfg(layer_shell_capture)");
     println!("cargo::rustc-check-cfg=cfg(libei_capture)");
@@ -35,6 +37,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(rdp_emulation)");
     println!("cargo::rustc-check-cfg=cfg(wlroots_emulation)");
     println!("cargo::rustc-check-cfg=cfg(x11_emulation)");
+    println!("cargo::rustc-check-cfg=cfg(uinput_emulation)");
 
     if layer_shell_capture {
         println!("cargo::rustc-cfg=layer_shell_capture");
@@ -57,5 +60,8 @@ fn main() {
     }
     if x11_emulation {
         println!("cargo::rustc-cfg=x11_emulation");
+    }
+    if uinput_emulation {
+        println!("cargo::rustc-cfg=uinput_emulation");
     }
 }

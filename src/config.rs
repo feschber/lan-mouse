@@ -201,6 +201,9 @@ pub enum EmulationBackend {
     #[cfg(x11_emulation)]
     #[serde(rename = "x11")]
     X11,
+    #[cfg(uinput_emulation)]
+    #[serde(rename = "uinput")]
+    Uinput,
     #[cfg(windows)]
     #[serde(rename = "windows")]
     Windows,
@@ -222,6 +225,8 @@ impl From<EmulationBackend> for input_emulation::Backend {
             EmulationBackend::Xdp => Self::Xdp,
             #[cfg(x11_emulation)]
             EmulationBackend::X11 => Self::X11,
+            #[cfg(uinput_emulation)]
+            EmulationBackend::Uinput => Self::Uinput,
             #[cfg(windows)]
             EmulationBackend::Windows => Self::Windows,
             #[cfg(target_os = "macos")]
@@ -242,6 +247,8 @@ impl Display for EmulationBackend {
             EmulationBackend::Xdp => write!(f, "xdg-desktop-portal"),
             #[cfg(x11_emulation)]
             EmulationBackend::X11 => write!(f, "X11"),
+            #[cfg(uinput_emulation)]
+            EmulationBackend::Uinput => write!(f, "uinput"),
             #[cfg(windows)]
             EmulationBackend::Windows => write!(f, "windows"),
             #[cfg(target_os = "macos")]

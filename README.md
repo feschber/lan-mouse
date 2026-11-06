@@ -466,6 +466,7 @@ The following sections detail the emulation and capture backends provided by lan
 - `libei`: This backend uses [libei](https://gitlab.freedesktop.org/libinput/libei) and is supported by GNOME >= 45 or KDE Plasma >= 6.1.
 - `xdp`: This backend uses the [freedesktop remote-desktop-portal](https://flatpak.github.io/xdg-desktop-portal/#gdbus-org.freedesktop.portal.RemoteDesktop) and is supported on GNOME and Plasma.
 - `x11`: Backend for X11 sessions.
+- `uinput`: Kernel-level Linux input emulation using `/dev/uinput` (requires write access to `/dev/uinput`). Automatically preferred on `niri` so that compositor keybinds (`Mod+...`) work on the receiving machine.
 - `windows`: Backend for Windows.
 - `macos`: Backend for MacOS.
 
