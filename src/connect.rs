@@ -165,6 +165,70 @@ impl LanMouseConnection {
         }
         Err(LanMouseConnectionError::NotConnected)
     }
+
+    /// A handle that can open connections on behalf of this
+    /// [`LanMouseConnection`] from elsewhere (the service), without
+    /// going through the capture task that owns it.
+    pub(crate) fn handle(&self) -> ConnectionHandle {
+        ConnectionHandle {
+            cert: self.cert.clone(),
+            client_manager: self.client_manager.clone(),
+            conns: self.conns.clone(),
+            connecting: self.connecting.clone(),
+            recv_tx: self.recv_tx.clone(),
+            ping_response: self.ping_response.clone(),
+        }
+    }
+}
+
+/// See [`LanMouseConnection::handle`].
+#[derive(Clone)]
+pub(crate) struct ConnectionHandle {
+    cert: Certificate,
+    client_manager: ClientManager,
+    conns: Rc<Mutex<HashMap<SocketAddr, Arc<dyn Conn + Send + Sync>>>>,
+    connecting: Rc<Mutex<HashSet<ClientHandle>>>,
+    recv_tx: Sender<(ClientHandle, ProtoEvent)>,
+    ping_response: Rc<RefCell<HashSet<SocketAddr>>>,
+}
+
+impl ConnectionHandle {
+    /// Open the connection to `handle` ahead of time, in the background.
+    ///
+    /// Connections are otherwise opened lazily by the first
+    /// [`LanMouseConnection::send`], which fails with
+    /// [`LanMouseConnectionError::NotConnected`] while the DTLS handshake
+    /// is in flight. That first failure releases the capture right at the
+    /// barrier and the pointer bounces back, so a client that is crossed
+    /// into for the first time costs one enter/leave cycle. Connecting as
+    /// soon as the client is activated (and again whenever its addresses
+    /// change) avoids that. Nothing happens if the client is already
+    /// connected or a connection attempt is already running.
+    pub(crate) fn connect(&self, handle: ClientHandle) {
+        let this = self.clone();
+        spawn_local(async move {
+            if this.client_manager.active_addr(handle).is_some() {
+                return;
+            }
+            {
+                let mut connecting = this.connecting.lock().await;
+                if connecting.contains(&handle) {
+                    return;
+                }
+                connecting.insert(handle);
+            }
+            let _ = connect_to_handle(
+                this.client_manager,
+                this.cert,
+                handle,
+                this.conns,
+                this.connecting,
+                this.recv_tx,
+                this.ping_response,
+            )
+            .await;
+        });
+    }
 }
 
 async fn connect_to_handle(

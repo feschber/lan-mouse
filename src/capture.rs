@@ -44,6 +44,10 @@ pub(crate) enum ICaptureEvent {
     /// remote `Leave`, explicit `Release` request, send
     /// failure, or destroy of the active capture).
     ClientLeft(u64),
+    /// Sending to the given client failed (no connection, or the peer
+    /// went away). The capture has already been released; the service
+    /// may want to refresh the client's addresses and reconnect.
+    SendFailed(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -390,6 +394,12 @@ impl CaptureTask {
             // active_client field would stay stale until the next
             // Begin from a different handle).
             self.release_capture(capture).await?;
+            // Let the service refresh the addresses of this client and
+            // reconnect; the hostname may have resolved to nothing when
+            // the client was activated (e.g. the VPN's DNS was not up yet).
+            self.event_tx
+                .send(ICaptureEvent::SendFailed(handle))
+                .expect("channel closed");
         }
         Ok(())
     }
