@@ -19,11 +19,12 @@ use windows::core::{PCWSTR, w};
 
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DispatchMessageW, EDD_GET_DEVICE_INTERFACE_NAME, GetMessageW,
-    HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PostThreadMessageW,
-    RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_STYLE,
-    WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
+    HOOKPROC, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
+    PostThreadMessageW, RegisterClassW, SetWindowsHookExW, TranslateMessage, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WINDOW_STYLE, WM_DISPLAYCHANGE, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN,
+    WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
 
 use input_event::{
@@ -161,6 +162,14 @@ fn start_routine(
     request_buffer: Arc<Mutex<Vec<ClientUpdate>>>,
 ) {
     EVENT_TX.replace(Some(event_tx));
+
+    /* force creation of the message queue before publishing the thread id,
+     * otherwise early PostThreadMessageW calls fail with ERROR_INVALID_THREAD_ID */
+    unsafe {
+        let mut msg = std::mem::zeroed();
+        let _ = PeekMessageW(addr_of_mut!(msg), None, WM_USER, WM_USER, PM_NOREMOVE);
+    }
+
     /* communicate thread id */
     {
         let (cnd, mtx) = &*ready;
