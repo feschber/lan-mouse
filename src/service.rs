@@ -2,7 +2,7 @@ use crate::{
     capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
     config::{Config, ConfigClient},
-    connect::LanMouseConnection,
+    connect::{ConnectionHandle, LanMouseConnection},
     crypto,
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
@@ -19,6 +19,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::{process::Command, signal, sync::Notify};
@@ -67,6 +68,46 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    /// rate limit for re-resolving a client's hostname after a failed send
+    dns_retry: DnsRetry,
+    /// opens outgoing connections ahead of the first crossing
+    connection: ConnectionHandle,
+}
+
+/// Decides when a failed send to a client may trigger a fresh DNS lookup.
+///
+/// Hostnames are resolved when a client is activated and the result is
+/// kept. If the lookup happened before name resolution was usable (a VPN
+/// such as Tailscale bringing up its DNS after login, a laptop still
+/// joining its Wi-Fi), the client is left with no addresses and every
+/// crossing fails with "not connected" until the service is restarted.
+/// A failed send is the signal that the addresses are stale; this limits
+/// how often that signal may cost a lookup.
+#[derive(Debug, Default)]
+pub(crate) struct DnsRetry {
+    last: HashMap<ClientHandle, Instant>,
+}
+
+impl DnsRetry {
+    /// minimum time between two lookups for the same client
+    pub(crate) const INTERVAL: Duration = Duration::from_secs(5);
+
+    /// whether a lookup for `handle` may be started at `now`;
+    /// if so, the attempt is recorded
+    pub(crate) fn allow(&mut self, handle: ClientHandle, now: Instant) -> bool {
+        match self.last.get(&handle) {
+            Some(&last) if now < last + Self::INTERVAL => false,
+            _ => {
+                self.last.insert(handle, now);
+                true
+            }
+        }
+    }
+
+    /// forget a client (removed or deactivated)
+    pub(crate) fn forget(&mut self, handle: ClientHandle) {
+        self.last.remove(&handle);
+    }
 }
 
 #[derive(Debug)]
@@ -95,6 +136,7 @@ impl Service {
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let connection = conn.handle();
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
@@ -123,6 +165,8 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            dns_retry: Default::default(),
+            connection,
         };
         Ok(service)
     }
@@ -359,6 +403,24 @@ impl Service {
                 log::info!("leaving client {handle} ...");
                 self.spawn_hook_command(handle, HookKind::Leave);
             }
+            ICaptureEvent::SendFailed(handle) => self.retry_dns(handle),
+        }
+    }
+
+    /// A send to `handle` failed: look its hostname up again (rate
+    /// limited) so that addresses that were missing or stale when the
+    /// client was activated get refreshed. The connection is reopened
+    /// once the lookup comes back, see [`Self::handle_resolver_event`].
+    fn retry_dns(&mut self, handle: ClientHandle) {
+        let Some((config, state)) = self.client_manager.get_state(handle) else {
+            return;
+        };
+        if config.hostname.is_none() || state.resolving {
+            return;
+        }
+        if self.dns_retry.allow(handle, Instant::now()) {
+            log::info!("client {handle}: send failed, resolving its hostname again");
+            self.resolve(handle);
         }
     }
 
@@ -375,6 +437,11 @@ impl Service {
                 }
                 let ips = ips.unwrap_or_default();
                 self.client_manager.set_dns_ips(handle, ips);
+                // addresses may have changed: (re)open the connection now
+                // rather than on the next crossing
+                if self.client_manager.is_active(handle) {
+                    self.connection.connect(handle);
+                }
                 handle
             }
         };
@@ -496,6 +563,7 @@ impl Service {
 
     fn deactivate_client(&mut self, handle: ClientHandle) {
         log::debug!("deactivating client {handle}");
+        self.dns_retry.forget(handle);
         if self.client_manager.deactivate_client(handle) {
             self.capture.destroy(handle);
             self.broadcast_client(handle);
@@ -524,6 +592,9 @@ impl Service {
         if self.client_manager.activate_client(handle) {
             /* notify capture and frontends */
             self.capture.create(handle, pos, CaptureType::Default);
+            /* connect now (with the fixed ips, if any); the dns result
+             * triggers another attempt if this one finds no address */
+            self.connection.connect(handle);
             self.broadcast_client(handle);
             log::info!("activated client {handle} ({pos})");
         }
@@ -538,6 +609,7 @@ impl Service {
     }
 
     fn remove_client(&mut self, handle: ClientHandle) {
+        self.dns_retry.forget(handle);
         if self
             .client_manager
             .remove_client(handle)
@@ -636,5 +708,40 @@ impl std::fmt::Display for HookKind {
             HookKind::Enter => f.write_str("enter"),
             HookKind::Leave => f.write_str("leave"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dns_retry_allows_the_first_attempt() {
+        let mut retry = DnsRetry::default();
+        assert!(retry.allow(0, Instant::now()));
+    }
+
+    #[test]
+    fn dns_retry_rate_limits_per_client() {
+        let mut retry = DnsRetry::default();
+        let t0 = Instant::now();
+        assert!(retry.allow(0, t0));
+        // too soon for the same client
+        assert!(!retry.allow(0, t0 + Duration::from_millis(1)));
+        assert!(!retry.allow(0, t0 + DnsRetry::INTERVAL - Duration::from_millis(1)));
+        // other clients are not affected
+        assert!(retry.allow(1, t0 + Duration::from_millis(1)));
+        // allowed again once the interval is over, and the clock restarts
+        assert!(retry.allow(0, t0 + DnsRetry::INTERVAL));
+        assert!(!retry.allow(0, t0 + DnsRetry::INTERVAL + Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn dns_retry_forget_resets_the_client() {
+        let mut retry = DnsRetry::default();
+        let t0 = Instant::now();
+        assert!(retry.allow(0, t0));
+        retry.forget(0);
+        assert!(retry.allow(0, t0 + Duration::from_millis(1)));
     }
 }

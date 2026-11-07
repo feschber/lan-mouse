@@ -276,6 +276,15 @@ impl ClientManager {
             .collect()
     }
 
+    /// whether the given client is active
+    pub(crate) fn is_active(&self, handle: ClientHandle) -> bool {
+        self.clients
+            .borrow()
+            .get(handle as usize)
+            .map(|(_, s)| s.active)
+            .unwrap_or(false)
+    }
+
     /// returns all clients that are currently active
     pub(crate) fn active_clients(&self) -> Vec<ClientHandle> {
         self.clients
