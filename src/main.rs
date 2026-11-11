@@ -80,6 +80,11 @@ fn run() -> Result<(), LanMouseError> {
                 } else {
                     Some(start_service()?)
                 };
+                // the window reads LAN_MOUSE_HIDDEN (set before GTK starts any
+                // threads)
+                if config.start_minimized() {
+                    std::env::set_var("LAN_MOUSE_HIDDEN", "1");
+                }
                 let res = lan_mouse_gtk::run(config::local_commit());
                 if let Some(ref mut service) = service {
                     #[cfg(unix)]

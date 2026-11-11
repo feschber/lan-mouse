@@ -7,6 +7,7 @@ use crate::{
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
     listen::{LanMouseListener, ListenerCreationError},
+    tray::{ServiceTray, TrayCommand},
 };
 use futures::StreamExt;
 use lan_mouse_ipc::{
@@ -67,6 +68,10 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    /// tray icon (Linux / BSD; a stub elsewhere)
+    tray: ServiceTray,
+    /// devices "Stop sharing" deactivated, for "Start sharing" to restore
+    tray_paused: Vec<ClientHandle>,
 }
 
 #[derive(Debug)]
@@ -123,6 +128,8 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            tray: Default::default(),
+            tray_paused: Vec::new(),
         };
         Ok(service)
     }
@@ -140,6 +147,9 @@ impl Service {
             self.activate_client(handle);
         }
 
+        let sharing = !self.client_manager.active_clients().is_empty();
+        self.tray = ServiceTray::new(sharing).await;
+
         loop {
             tokio::select! {
                 request = self.frontend_listener.next() => self.handle_frontend_request(request),
@@ -148,11 +158,20 @@ impl Service {
                 event = self.capture.event() => self.handle_capture_event(event),
                 event = self.resolver.event() => self.handle_resolver_event(event),
                 _ = self.config.changed() => self.handle_config_change(),
+                command = self.tray.command() => {
+                    if self.handle_tray_command(command) {
+                        break;
+                    }
+                }
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
+            // keep the tray menu in step with the device switches
+            let sharing = !self.client_manager.active_clients().is_empty();
+            self.tray.set_sharing(sharing).await;
         }
 
         log::info!("terminating service ...");
+        self.tray.shutdown().await;
         log::debug!("terminating capture ...");
         self.capture.terminate().await;
         log::debug!("terminating emulation ...");
@@ -161,6 +180,40 @@ impl Service {
         self.resolver.terminate().await;
 
         Ok(())
+    }
+
+    /// Handles a request from the tray menu; returns `true` to quit.
+    ///
+    /// Stop and start are not saved to the config, so restarting lan-mouse
+    /// brings back the configured devices.
+    fn handle_tray_command(&mut self, command: TrayCommand) -> bool {
+        match command {
+            TrayCommand::SetSharing(false) => {
+                self.tray_paused = self.client_manager.active_clients();
+                log::info!("tray: stop sharing ({} devices)", self.tray_paused.len());
+                for handle in self.tray_paused.clone() {
+                    self.set_client_active(handle, false);
+                }
+            }
+            TrayCommand::SetSharing(true) => {
+                // the devices stopped from the tray, or all of them
+                let handles = if self.tray_paused.is_empty() {
+                    self.client_manager.registered_clients()
+                } else {
+                    std::mem::take(&mut self.tray_paused)
+                };
+                log::info!("tray: start sharing ({} devices)", handles.len());
+                for handle in handles {
+                    self.set_client_active(handle, true);
+                }
+            }
+            TrayCommand::Quit => {
+                log::info!("tray: quit");
+                return true;
+            }
+        }
+        self.tray.invalidate();
+        false
     }
 
     fn handle_frontend_request(&mut self, request: Option<Result<FrontendRequest, IpcError>>) {
