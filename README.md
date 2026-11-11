@@ -42,7 +42,7 @@ Most current desktop environments and operating systems are fully supported, thi
 ### Caveats / Known Issues
 
 > [!Important]
-> - **X11** currently only has support for input emulation, i.e. can only be used on the receiving end.
+> - **X11** currently only has support for input emulation and an edge-only input capture, i.e. it can be used on the receiving end (the mouse is handed back at the screen edge facing the sending device), but cannot send input yet.
 >
 > - **Sway / wlroots**: Wlroots based compositors without libei support on the receiving end currently do not handle modifier events on the client side.
 > This results in CTRL / SHIFT / ALT / SUPER keys not working with a sending device that is NOT using the `layer-shell` backend
@@ -486,4 +486,4 @@ The following sections detail the emulation and capture backends provided by lan
 - `libei`: This backend uses [libei](https://gitlab.freedesktop.org/libinput/libei) and is supported by GNOME >= 45 or KDE Plasma >= 6.1.
 - `windows`: Backend for input capture on Windows.
 - `macos`: Backend for input capture on MacOS.
-- `x11`: TODO (not yet supported)
+- `x11`: Edge detection only: reports when the pointer reaches a screen edge, which a receiving device uses to hand the mouse back. It does not grab the pointer or keyboard, so an X11 device cannot send input yet.
