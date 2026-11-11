@@ -523,6 +523,14 @@ impl Config {
             .authorized_fingerprints = Some(fingerprints);
     }
 
+    /// set the listen port
+    pub fn set_port(&mut self, port: u16) {
+        if self.config_toml.is_none() {
+            self.config_toml = Some(Default::default());
+        }
+        self.config_toml.as_mut().expect("config").port = Some(port);
+    }
+
     pub fn read_from_disk(&mut self) -> Result<bool, io::Error> {
         log::info!("reading config from {:?}", self.config_path);
 

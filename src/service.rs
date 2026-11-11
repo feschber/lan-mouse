@@ -302,8 +302,14 @@ impl Service {
             }
             EmulationEvent::PortChanged(port) => match port {
                 Ok(port) => {
+                    let changed = self.port != port;
                     self.port = port;
                     self.notify_frontend(FrontendEvent::PortChanged(port, None));
+                    // keep a port set in the window across restarts
+                    if changed {
+                        self.config.set_port(port);
+                        self.save_config();
+                    }
                 }
                 Err(e) => self
                     .notify_frontend(FrontendEvent::PortChanged(self.port, Some(format!("{e}")))),
