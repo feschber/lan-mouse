@@ -487,3 +487,15 @@ The following sections detail the emulation and capture backends provided by lan
 - `windows`: Backend for input capture on Windows.
 - `macos`: Backend for input capture on MacOS.
 - `x11`: TODO (not yet supported)
+
+## Client hooks
+
+`enter_hook` and `leave_hook` run in capture-event order across all clients.
+Each command finishes before the next starts, so a failed crossing's leave
+hook cannot overtake its enter hook. A command that exits unsuccessfully does
+not prevent later hooks from running. Hooks must exit; a hanging command delays
+all later hooks. Background processes started by a hook are not awaited.
+Pending hooks are not drained when the daemon exits.
+
+`enter_hook` is queued when a crossing is attempted, without waiting for
+acknowledgment. Hook execution does not block input handling.

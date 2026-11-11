@@ -67,6 +67,7 @@ pub struct Service {
     /// map from capture handle to connection info
     incoming_conn_info: HashMap<ClientHandle, Incoming>,
     next_trigger_handle: u64,
+    hooks: HookCommands,
 }
 
 #[derive(Debug)]
@@ -123,6 +124,7 @@ impl Service {
             incoming_conn_info: Default::default(),
             incoming_conns: Default::default(),
             next_trigger_handle: 0,
+            hooks: HookCommands::default(),
         };
         Ok(service)
     }
@@ -595,13 +597,32 @@ impl Service {
         self.notify_frontend(event);
     }
 
-    fn spawn_hook_command(&self, handle: ClientHandle, kind: HookKind) {
+    fn spawn_hook_command(&mut self, handle: ClientHandle, kind: HookKind) {
         let cmd = match kind {
             HookKind::Enter => self.client_manager.get_enter_cmd(handle),
             HookKind::Leave => self.client_manager.get_leave_cmd(handle),
         };
         let Some(cmd) = cmd else { return };
-        tokio::task::spawn_local(async move {
+        self.hooks.spawn(handle, kind, cmd);
+    }
+}
+
+#[derive(Default)]
+struct HookCommands {
+    last: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl HookCommands {
+    fn spawn(&mut self, handle: ClientHandle, kind: HookKind, cmd: String) {
+        // Capture the predecessor before spawning so execution follows event order,
+        // including leave/enter transitions between different clients.
+        let previous = self.last.take();
+        self.last = Some(tokio::task::spawn_local(async move {
+            if let Some(previous) = previous {
+                if let Err(e) = previous.await {
+                    log::warn!("previous hook task failed: {e}");
+                }
+            }
             log::info!("spawning {kind} hook for client {handle}");
             let mut child = match Command::new("sh").arg("-c").arg(cmd.as_str()).spawn() {
                 Ok(c) => c,
@@ -620,7 +641,7 @@ impl Service {
                 }
                 Err(e) => log::warn!("{kind} hook for client {handle} ({cmd}): {e}"),
             }
-        });
+        }));
     }
 }
 
@@ -636,5 +657,78 @@ impl std::fmt::Display for HookKind {
             HookKind::Enter => f.write_str("enter"),
             HookKind::Leave => f.write_str("leave"),
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod hook_tests {
+    use super::*;
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    struct Output(PathBuf);
+
+    impl Output {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "lan-mouse-hooks-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn command(&self, body: &str) -> String {
+            format!("{} >> '{}'", body, self.0.join("events").display())
+        }
+
+        fn read(&self) -> String {
+            fs::read_to_string(self.0.join("events")).unwrap()
+        }
+    }
+
+    impl Drop for Output {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn leave_waits_for_slow_enter() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let output = Output::new();
+                let mut hooks = HookCommands::default();
+                hooks.spawn(
+                    0,
+                    HookKind::Enter,
+                    output.command("sleep 0.2; printf enter"),
+                );
+                hooks.spawn(0, HookKind::Leave, output.command("printf leave"));
+                hooks.last.take().unwrap().await.unwrap();
+                assert_eq!(output.read(), "enterleave");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn failed_hook_does_not_skip_later_hooks_across_clients() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let output = Output::new();
+                let mut hooks = HookCommands::default();
+                hooks.spawn(0, HookKind::Enter, "exit 1".into());
+                hooks.spawn(0, HookKind::Leave, output.command("printf leave0"));
+                hooks.spawn(1, HookKind::Enter, output.command("printf enter1"));
+                hooks.spawn(1, HookKind::Leave, output.command("printf leave1"));
+                hooks.last.take().unwrap().await.unwrap();
+                assert_eq!(output.read(), "leave0enter1leave1");
+            })
+            .await;
     }
 }
