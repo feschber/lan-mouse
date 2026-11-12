@@ -98,10 +98,6 @@ enum ClientUpdate {
     Destroy(Position),
 }
 
-fn blocking_send_event(pos: Position, event: CaptureEvent) {
-    EVENT_TX.with_borrow_mut(|tx| tx.as_mut().unwrap().blocking_send((pos, event)).unwrap())
-}
-
 fn try_send_event(
     pos: Position,
     event: CaptureEvent,
@@ -299,7 +295,17 @@ fn check_client_activation(wparam: WPARAM, lparam: LPARAM) -> bool {
     /* notify main thread */
     log::debug!("ENTERED @ {prev_pos:?} -> {curr_pos:?}");
     let active = ACTIVE_CLIENT.get().expect("active client");
-    blocking_send_event(active, CaptureEvent::Begin);
+    // Never block inside a low-level hook: Windows runs it synchronously
+    // for every input event, including the ones Lan Mouse itself injects
+    // with SendInput on the main thread. Blocking here while the main
+    // thread is busy deadlocks both until the hook times out (seconds per
+    // event). If the queue is full, cancel this entry; the next crossing
+    // tries again.
+    if let Err(e) = try_send_event(active, CaptureEvent::Begin) {
+        log::warn!("capture busy, not entering {active}: {e}");
+        ACTIVE_CLIENT.take();
+        return false;
+    }
 
     ret
 }
