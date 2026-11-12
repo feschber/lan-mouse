@@ -104,14 +104,21 @@ impl WindowsEmulation {
 }
 
 fn send_input_safe(input: INPUT) {
-    unsafe {
-        loop {
-            /* retval = number of successfully submitted events */
-            if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) > 0 {
-                break;
-            }
+    // Windows rejects injected input while an elevated window has focus
+    // (UIPI) or the secure desktop is shown (UAC prompt, lock screen).
+    // Retrying until it succeeds blocks this thread, and with it all of
+    // Lan Mouse, for as long as that lasts: retry briefly, then drop it.
+    for _ in 0..3 {
+        /* retval = number of successfully submitted events */
+        // SAFETY: one valid INPUT
+        if unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) } > 0 {
+            return;
         }
     }
+    log::debug!(
+        "input rejected by Windows: {}",
+        windows::core::Error::from_win32()
+    );
 }
 
 fn send_mouse_input(mi: MOUSEINPUT) {
