@@ -69,6 +69,14 @@ struct ConfigToml {
     cert_path: Option<PathBuf>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
+    /// share the clipboard with connected devices (default: true)
+    clipboard: Option<bool>,
+    /// send files copied to the clipboard to connected devices (default: true)
+    file_transfer: Option<bool>,
+    /// largest total size, in MiB, of copied files that are sent automatically
+    file_auto_limit_mb: Option<u64>,
+    /// where received files are stored (default: Downloads/Lan Mouse)
+    download_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -490,6 +498,38 @@ impl Config {
             .flatten()
             .map(From::<TomlClient>::from)
             .collect()
+    }
+
+    /// share the clipboard with connected devices
+    pub fn clipboard_enabled(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.clipboard)
+            .unwrap_or(true)
+    }
+
+    /// send files copied to the clipboard to connected devices
+    pub fn file_transfer_enabled(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.file_transfer)
+            .unwrap_or(true)
+    }
+
+    /// largest total size, in bytes, of copied files sent automatically
+    pub fn file_auto_limit(&self) -> u64 {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.file_auto_limit_mb)
+            .unwrap_or(2048)
+            .saturating_mul(1024 * 1024)
+    }
+
+    /// where received files are stored
+    pub fn download_dir(&self) -> Option<PathBuf> {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.download_dir.clone())
     }
 
     /// release bind for returning control to the host
