@@ -119,6 +119,19 @@ Lan Mouse can be installed from the [winget community repositories](https://gith
 winget install lan-mouse
 ```
 
+To control UAC prompts, elevated windows (e.g. Task Manager) and the sign-in /
+lock screen from another device, run Lan Mouse as a service. In an
+administrator PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\install-service.ps1 -Exe <path to lan-mouse.exe>
+```
+
+The `LanMouse` service starts Lan Mouse in the signed-in user's session with
+system rights (like Barrier's service) and restarts it if it exits. It keeps
+using that user's configuration. Control it with `Start-Service LanMouse` /
+`Stop-Service LanMouse`; remove it with `install-service.ps1 -Uninstall`.
+
 </details>
 
 <details>
@@ -328,6 +341,8 @@ It is of the form "aa:bb:cc:..."
 Authorized devices can be persisted using the configuration file (see [Configuration](#configuration)).
 
 If the device still can not be entered, make sure you have UDP port `4242` (or the one selected) opened up in your firewall.
+Clipboard and file sharing use TCP on the same port; it is enough if one of
+the two devices accepts the connection.
 </details>
 
 <details>
@@ -395,6 +410,17 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# share the clipboard (text, rich text, images) with connected devices
+# (defaults to true)
+clipboard = true
+# send files copied in the file manager to connected devices; once
+# received they are put on the clipboard, ready to paste (defaults to true)
+file_transfer = true
+# copied files larger than this in total (MiB) are not sent (defaults to 2048)
+file_auto_limit_mb = 2048
+# where received files are stored (defaults to Downloads/Lan Mouse)
+# download_dir = "/home/me/Downloads/Lan Mouse"
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]
@@ -439,7 +465,7 @@ Where `left` can be either `left`, `right`, `top` or `bottom`.
 - [ ] X11 Input Capture
 - [ ] Latency measurement and visualization
 - [ ] Bandwidth usage measurement and visualization
-- [ ] Clipboard support
+- [x] Clipboard support
 
 
 ## Detailed OS Support

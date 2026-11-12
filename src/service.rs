@@ -96,6 +96,14 @@ impl Service {
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
 
+        // clipboard and file sharing over a separate, reliable link
+        crate::share::spawn(
+            crate::share::ShareConfig::from_config(&config),
+            cert.clone(),
+            authorized_keys.clone(),
+            client_manager.clone(),
+        );
+
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());

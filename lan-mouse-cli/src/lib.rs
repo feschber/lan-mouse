@@ -173,5 +173,12 @@ async fn execute(cmd: CliSubcommand) -> Result<(), CliError> {
         }
         CliSubcommand::SaveConfig => tx.request(FrontendRequest::SaveConfiguration).await?,
     }
+    // Read what the daemon sends before closing: closing a socket with
+    // unread data resets the connection (on Windows), and the daemon can
+    // then lose the request we just sent.
+    let _ = tokio::time::timeout(Duration::from_millis(300), async {
+        while rx.next().await.is_some() {}
+    })
+    .await;
     Ok(())
 }

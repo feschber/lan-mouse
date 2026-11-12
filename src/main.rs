@@ -41,6 +41,14 @@ enum LanMouseError {
 }
 
 fn main() {
+    // `lan-mouse.exe service`: run as the Windows service (before anything
+    // touches the configuration, which belongs to the user, not SYSTEM)
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("service") {
+        lan_mouse::winservice::main();
+        return;
+    }
+
     // init logging
     let env = Env::default().filter_or("LAN_MOUSE_LOG_LEVEL", "info");
     env_logger::init_from_env(env);

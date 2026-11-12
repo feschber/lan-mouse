@@ -103,15 +103,117 @@ impl WindowsEmulation {
     }
 }
 
-fn send_input_safe(input: INPUT) {
-    unsafe {
-        loop {
-            /* retval = number of successfully submitted events */
-            if SendInput(&[input], std::mem::size_of::<INPUT>() as i32) > 0 {
-                break;
+/// Follows the desktop that receives input, like Barrier does: the UAC
+/// prompt and the sign-in / lock screen live on a separate "Winlogon"
+/// desktop, and SendInput only reaches the desktop the calling thread is
+/// attached to. Switching needs a SYSTEM process (the Lan Mouse service).
+mod desktop {
+    use std::{cell::RefCell, time::Instant};
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, GetUserObjectInformationW,
+        HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME,
+    };
+
+    thread_local! {
+        static CURRENT: RefCell<Option<(HDESK, String, Instant)>> = const { RefCell::new(None) };
+    }
+
+    fn name_of(desk: HDESK) -> String {
+        let mut buf = [0u16; 128];
+        let mut needed = 0u32;
+        // SAFETY: valid desktop handle and buffer
+        let ok = unsafe {
+            GetUserObjectInformationW(
+                windows::Win32::Foundation::HANDLE(desk.0),
+                UOI_NAME,
+                Some(buf.as_mut_ptr().cast()),
+                (buf.len() * 2) as u32,
+                Some(&mut needed),
+            )
+        };
+        if ok.is_err() {
+            return String::new();
+        }
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..end])
+    }
+
+    /// Attach this thread to the input desktop if it changed. With
+    /// `force`, check now; otherwise at most once a second.
+    pub(super) fn follow(force: bool) {
+        CURRENT.with(|cur| {
+            let mut cur = cur.borrow_mut();
+            if !force {
+                if let Some((_, _, checked)) = cur.as_ref() {
+                    if checked.elapsed().as_millis() < 1000 {
+                        return;
+                    }
+                }
             }
+            // GENERIC_ALL
+            let access = DESKTOP_ACCESS_FLAGS(0x1000_0000);
+            // SAFETY: plain Win32 call; the handle is closed below or kept
+            let Ok(input) = (unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, access) })
+            else {
+                if let Some(c) = cur.as_mut() {
+                    c.2 = Instant::now();
+                }
+                return;
+            };
+            let name = name_of(input);
+            if cur.as_ref().is_some_and(|(_, n, _)| *n == name) {
+                // SAFETY: we own this handle and don't need it
+                unsafe {
+                    let _ = CloseDesktop(input);
+                }
+                cur.as_mut().unwrap().2 = Instant::now();
+                return;
+            }
+            // SAFETY: valid handle; fails if this thread owns windows/hooks
+            match unsafe { SetThreadDesktop(input) } {
+                Ok(()) => {
+                    log::info!("input now goes to the \"{name}\" desktop");
+                    if let Some((old, _, _)) = cur.replace((input, name, Instant::now())) {
+                        // SAFETY: previous handle, no longer used by this thread
+                        unsafe {
+                            let _ = CloseDesktop(old);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::debug!("can't switch to the \"{name}\" desktop: {e}");
+                    // SAFETY: our handle
+                    unsafe {
+                        let _ = CloseDesktop(input);
+                    }
+                    if let Some(c) = cur.as_mut() {
+                        c.2 = Instant::now();
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn send_input_safe(input: INPUT) {
+    desktop::follow(false);
+    for attempt in 0..3 {
+        /* retval = number of successfully submitted events */
+        // SAFETY: one valid INPUT
+        if unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) } > 0 {
+            return;
+        }
+        // Rejected: usually the input desktop changed (UAC prompt, sign-in
+        // screen) or an elevated window has focus. Follow the desktop and
+        // retry, but never spin forever: that would freeze Lan Mouse.
+        if attempt == 0 {
+            desktop::follow(true);
         }
     }
+    log::debug!(
+        "input rejected by Windows: {}",
+        windows::core::Error::from_win32()
+    );
 }
 
 fn send_mouse_input(mi: MOUSEINPUT) {
