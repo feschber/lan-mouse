@@ -25,6 +25,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
     WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER, WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WNDPROC,
 };
+use windows::Win32::UI::WindowsAndMessaging::{
+    DestroyWindow, SetTimer, UnhookWindowsHookEx, WM_TIMER,
+};
 
 use input_event::{
     BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Event, KeyboardEvent, PointerEvent,
@@ -169,11 +172,17 @@ fn start_routine(
     let kybrd_proc: HOOKPROC = Some(kybrd_proc);
     let window_proc: WNDPROC = Some(window_proc);
 
+    // hooks only see input on the desktop this thread is attached to, so
+    // attach to the current input desktop first (see `desktop`)
+    desktop::follow();
+
     /* register hooks */
-    unsafe {
-        let _ = SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, None, 0).unwrap();
-        let _ = SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, None, 0).unwrap();
-    }
+    let mut hooks = unsafe {
+        (
+            SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, None, 0).unwrap(),
+            SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, None, 0).unwrap(),
+        )
+    };
 
     let instance = unsafe { GetModuleHandleW(None).unwrap() };
     let instance = instance.into();
@@ -199,7 +208,7 @@ fn start_routine(
     }
 
     /* window is used ro receive WM_DISPLAYCHANGE messages */
-    unsafe {
+    let create_window = || unsafe {
         CreateWindowExW(
             Default::default(),
             w!("lan-mouse-message-window-class"),
@@ -214,13 +223,39 @@ fn start_routine(
             Some(instance),
             None,
         )
-        .expect("CreateWindowExW");
+        .expect("CreateWindowExW")
+    };
+    let mut window = create_window();
+
+    // check once a second whether input moved to another desktop
+    // (UAC prompt, sign-in screen)
+    unsafe {
+        SetTimer(None, 0, 1000, None);
     }
 
     /* run message loop */
     while let Some(msg) = get_msg() {
+        if msg.hwnd.0.is_null() && msg.message == WM_TIMER {
+            if desktop::changed() {
+                // a thread with hooks or windows can't switch desktops
+                unsafe {
+                    let _ = UnhookWindowsHookEx(hooks.0);
+                    let _ = UnhookWindowsHookEx(hooks.1);
+                    let _ = DestroyWindow(window);
+                }
+                desktop::follow();
+                hooks = unsafe {
+                    (
+                        SetWindowsHookExW(WH_MOUSE_LL, mouse_proc, None, 0).unwrap(),
+                        SetWindowsHookExW(WH_KEYBOARD_LL, kybrd_proc, None, 0).unwrap(),
+                    )
+                };
+                window = create_window();
+            }
+            continue;
+        }
         // mouse / keybrd proc do not actually return a message
-        if msg.hwnd.0.is_null() {
+        if msg.hwnd.0.is_null() && msg.message == WM_USER {
             /* messages sent via PostThreadMessage */
             match msg.wParam.0 {
                 x if x == RequestType::Exit as usize => break,
@@ -248,6 +283,82 @@ fn start_routine(
             unsafe {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+            }
+        }
+    }
+}
+
+/// The desktop that receives input changes for the UAC prompt and the
+/// sign-in / lock screen ("Winlogon"). Following it needs a SYSTEM process,
+/// i.e. Lan Mouse started by its Windows service.
+mod desktop {
+    use std::cell::RefCell;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, DESKTOP_ACCESS_FLAGS, DESKTOP_CONTROL_FLAGS, GetUserObjectInformationW,
+        HDESK, OpenInputDesktop, SetThreadDesktop, UOI_NAME,
+    };
+
+    thread_local! {
+        static CURRENT: RefCell<Option<(HDESK, String)>> = const { RefCell::new(None) };
+    }
+
+    fn open_input() -> Option<(HDESK, String)> {
+        // GENERIC_ALL
+        let access = DESKTOP_ACCESS_FLAGS(0x1000_0000);
+        let desk = unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, access) }.ok()?;
+        let mut buf = [0u16; 128];
+        let mut needed = 0u32;
+        let ok = unsafe {
+            GetUserObjectInformationW(
+                HANDLE(desk.0),
+                UOI_NAME,
+                Some(buf.as_mut_ptr().cast()),
+                (buf.len() * 2) as u32,
+                Some(&mut needed),
+            )
+        };
+        if ok.is_err() {
+            unsafe {
+                let _ = CloseDesktop(desk);
+            }
+            return None;
+        }
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        Some((desk, String::from_utf16_lossy(&buf[..end])))
+    }
+
+    /// Whether the input desktop differs from ours.
+    pub(super) fn changed() -> bool {
+        let Some((desk, name)) = open_input() else {
+            return false;
+        };
+        unsafe {
+            let _ = CloseDesktop(desk);
+        }
+        CURRENT.with_borrow(|c| c.as_ref().is_some_and(|(_, n)| *n != name))
+    }
+
+    /// Attach this thread (which must have no hooks or windows) to the
+    /// input desktop.
+    pub(super) fn follow() {
+        let Some((desk, name)) = open_input() else {
+            return;
+        };
+        match unsafe { SetThreadDesktop(desk) } {
+            Ok(()) => {
+                log::info!("capturing input on the \"{name}\" desktop");
+                if let Some((old, _)) = CURRENT.replace(Some((desk, name))) {
+                    unsafe {
+                        let _ = CloseDesktop(old);
+                    }
+                }
+            }
+            Err(e) => {
+                log::debug!("can't switch to the \"{name}\" desktop: {e}");
+                unsafe {
+                    let _ = CloseDesktop(desk);
+                }
             }
         }
     }

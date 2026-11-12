@@ -9,3 +9,5 @@ mod emulation;
 pub mod emulation_test;
 mod listen;
 pub mod service;
+#[cfg(windows)]
+pub mod winservice;

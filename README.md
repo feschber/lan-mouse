@@ -119,6 +119,19 @@ Lan Mouse can be installed from the [winget community repositories](https://gith
 winget install lan-mouse
 ```
 
+To control UAC prompts, elevated windows (e.g. Task Manager) and the sign-in /
+lock screen from another device, run Lan Mouse as a service. In an
+administrator PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\install-service.ps1 -Exe <path to lan-mouse.exe>
+```
+
+The `LanMouse` service starts Lan Mouse in the signed-in user's session with
+system rights (like Barrier's service) and restarts it if it exits. It keeps
+using that user's configuration. Control it with `Start-Service LanMouse` /
+`Stop-Service LanMouse`; remove it with `install-service.ps1 -Uninstall`.
+
 </details>
 
 <details>

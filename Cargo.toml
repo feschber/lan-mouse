@@ -71,6 +71,17 @@ notify = "8.2.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+] }
+
 [features]
 default = [
     "gtk",
