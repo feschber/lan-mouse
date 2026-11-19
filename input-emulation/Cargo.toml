@@ -83,4 +83,4 @@ wlroots = [
 ]
 x11 = ["dep:x11"]
 remote_desktop_portal = ["dep:ashpd"]
-libei = ["dep:reis", "dep:ashpd"]
+libei = ["dep:reis", "dep:ashpd", "ashpd/inhibit"]
