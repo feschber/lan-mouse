@@ -122,9 +122,14 @@ struct ConnectionWorker {
     task: JoinHandle<()>,
 }
 
-pub(crate) struct LanMouseConnection {
+/// Shared control; workers retain only their context, not this task registry.
+pub(crate) struct ConnectionHandle {
     context: Rc<ConnectionContext>,
     workers: RefCell<HashMap<ClientHandle, ConnectionWorker>>,
+}
+
+pub(crate) struct LanMouseConnection {
+    handle: Rc<ConnectionHandle>,
     recv_rx: Receiver<(ClientHandle, ProtoEvent)>,
 }
 
@@ -132,17 +137,23 @@ impl LanMouseConnection {
     pub(crate) fn new(cert: Certificate, clients: ClientManager, dns: DnsLookup) -> Self {
         let (tx, recv_rx) = channel();
         Self {
-            context: Rc::new(ConnectionContext {
-                cert,
-                clients,
-                dns,
-                tx,
-                conns: Default::default(),
-                stop: CancellationToken::new(),
+            handle: Rc::new(ConnectionHandle {
+                context: Rc::new(ConnectionContext {
+                    cert,
+                    clients,
+                    dns,
+                    tx,
+                    conns: Default::default(),
+                    stop: CancellationToken::new(),
+                }),
+                workers: Default::default(),
             }),
-            workers: Default::default(),
             recv_rx,
         }
+    }
+
+    pub(crate) fn handle(&self) -> Rc<ConnectionHandle> {
+        self.handle.clone()
     }
 
     pub(crate) async fn recv(&mut self) -> (ClientHandle, ProtoEvent) {
@@ -154,15 +165,23 @@ impl LanMouseConnection {
         event: ProtoEvent,
         handle: ClientHandle,
     ) -> Result<(), LanMouseConnectionError> {
-        let active = self.context.conns.borrow().get(&handle).and_then(|active| {
-            if active.failed.is_cancelled() || !matches!(active.settings.has_changed(), Ok(false)) {
-                None
-            } else {
-                Some((active.conn.clone(), active.failed.clone()))
-            }
-        });
+        let active = self
+            .handle
+            .context
+            .conns
+            .borrow()
+            .get(&handle)
+            .and_then(|active| {
+                if active.failed.is_cancelled()
+                    || !matches!(active.settings.has_changed(), Ok(false))
+                {
+                    None
+                } else {
+                    Some((active.conn.clone(), active.failed.clone()))
+                }
+            });
         if let Some((conn, failed)) = active {
-            if !self.context.clients.alive(handle) {
+            if !self.handle.context.clients.alive(handle) {
                 return Err(LanMouseConnectionError::TargetEmulationDisabled);
             }
             let (buf, len) = event.into();
@@ -172,11 +191,23 @@ impl LanMouseConnection {
             }
             return Ok(());
         }
-        self.ensure_worker(handle);
+        self.handle.connect(handle);
         Err(LanMouseConnectionError::NotConnected)
     }
 
-    fn ensure_worker(&self, handle: ClientHandle) {
+    pub(crate) async fn terminate(&mut self) {
+        self.handle.context.stop.cancel();
+        let workers = std::mem::take(&mut *self.handle.workers.borrow_mut());
+        for (_, worker) in workers {
+            if let Err(error) = worker.task.await {
+                log::warn!("connection worker failed: {error}");
+            }
+        }
+    }
+}
+
+impl ConnectionHandle {
+    pub(crate) fn connect(&self, handle: ClientHandle) {
         let Some(settings) = self.context.clients.connection_changes(handle) else {
             return;
         };
@@ -196,21 +227,11 @@ impl LanMouseConnection {
         ));
         workers.insert(handle, ConnectionWorker { settings, task });
     }
-
-    pub(crate) async fn terminate(&mut self) {
-        self.context.stop.cancel();
-        let workers = std::mem::take(self.workers.get_mut());
-        for (_, worker) in workers {
-            if let Err(error) = worker.task.await {
-                log::warn!("connection worker failed: {error}");
-            }
-        }
-    }
 }
 
 impl Drop for LanMouseConnection {
     fn drop(&mut self) {
-        self.context.stop.cancel();
+        self.handle.context.stop.cancel();
     }
 }
 
@@ -441,7 +462,7 @@ mod tests {
         let last_pong = Cell::new(None);
         tokio::time::timeout(
             Duration::from_secs(1),
-            receive_loop(&connection.context, handle, &reader, &last_pong),
+            receive_loop(&connection.handle.context, handle, &reader, &last_pong),
         )
         .await
         .expect("EOF did not stop the receiver");
@@ -469,7 +490,7 @@ mod tests {
         let settings = clients.connection_changes(handle).unwrap();
         clients.set_active_addr(handle, Some("127.0.0.2:4242".parse().unwrap()));
         clients.set_alive(handle, true);
-        connection.context.conns.borrow_mut().insert(
+        connection.handle.context.conns.borrow_mut().insert(
             handle,
             ActiveConnection {
                 conn: new,
@@ -477,7 +498,11 @@ mod tests {
                 settings: settings.clone(),
             },
         );
-        connection.context.disconnect(handle, &old, &settings).await;
+        connection
+            .handle
+            .context
+            .disconnect(handle, &old, &settings)
+            .await;
         connection.send(ProtoEvent::Leave(7), handle).await.unwrap();
         let mut data = [0; MAX_EVENT_SIZE];
         new_peer.recv(&mut data).await.unwrap();
@@ -489,7 +514,7 @@ mod tests {
             clients.get_state(handle).unwrap().1.active_addr,
             Some("127.0.0.2:4242".parse().unwrap())
         );
-        connection.context.conns.borrow_mut().clear();
+        connection.handle.context.conns.borrow_mut().clear();
         connection.terminate().await;
         resolver.terminate().await;
     }
@@ -507,7 +532,11 @@ mod tests {
                 let mut connection = connection(clients.clone(), &resolver);
                 let stop = CancellationToken::new();
                 let dns = spawn_local(drive_dns(resolver, clients.clone(), stop.clone()));
+                let control = connection.handle();
+                let other_control = control.clone();
                 for _ in 0..20 {
+                    control.connect(handle);
+                    other_control.connect(handle);
                     assert!(connection.send(ProtoEvent::Ping, handle).await.is_err());
                 }
                 let mut previous = query_times.recv().await.unwrap();
@@ -523,7 +552,21 @@ mod tests {
                         .is_err(),
                     "disabled client kept resolving"
                 );
+                clients.activate_client(handle);
+                control.connect(handle);
+                let restarted = query_times.recv().await.unwrap();
+                assert_eq!(
+                    query_times.recv().await.unwrap().duration_since(restarted),
+                    INITIAL_RETRY_DELAY
+                );
                 connection.terminate().await;
+                control.connect(handle);
+                assert!(
+                    tokio::time::timeout(Duration::from_secs(60), query_times.recv())
+                        .await
+                        .is_err(),
+                    "a retained control handle restarted a terminated connection"
+                );
                 stop.cancel();
                 dns.await.unwrap();
             })
@@ -561,7 +604,7 @@ mod tests {
                 let mut connection = connection(clients.clone(), &resolver);
                 let stop = CancellationToken::new();
                 let dns = spawn_local(drive_dns(resolver, clients.clone(), stop.clone()));
-                assert!(connection.send(ProtoEvent::Ping, handle).await.is_err());
+                connection.handle().connect(handle);
                 started.notified().await;
                 clients.remove_client(handle);
                 tokio::time::timeout(Duration::from_secs(1), dropped.notified())
@@ -655,15 +698,10 @@ mod tests {
                         let dns_stop = CancellationToken::new();
                         let dns =
                             spawn_local(drive_dns(resolver, clients.clone(), dns_stop.clone()));
-                        assert!(
-                            connection
-                                .send(ProtoEvent::Leave(999), handle)
-                                .await
-                                .is_err()
-                        );
+                        connection.handle().connect(handle);
                         let (old_conn, _) = old_server.accept().await.unwrap();
                         let old_stop = CancellationToken::new();
-                        let (old_task, _old_input) = respond(old_conn, old_stop.clone());
+                        let (old_task, mut old_input) = respond(old_conn, old_stop.clone());
                         assert!(matches!(connection.recv().await, (_, ProtoEvent::Ack(42))));
                         assert_eq!(
                             clients
@@ -675,6 +713,9 @@ mod tests {
                                 .ip(),
                             old_ip
                         );
+                        // The first send succeeds after activation-driven preconnection.
+                        connection.send(ProtoEvent::Leave(3), handle).await.unwrap();
+                        assert!(matches!(old_input.recv().await, Some(ProtoEvent::Leave(3))));
                         *answer.lock().unwrap() = new_ip;
                         old_stop.cancel();
                         old_task.await.unwrap();

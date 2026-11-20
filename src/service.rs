@@ -2,7 +2,7 @@ use crate::{
     capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
     config::{Config, ConfigClient},
-    connect::LanMouseConnection,
+    connect::{ConnectionHandle, LanMouseConnection},
     crypto,
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
@@ -18,6 +18,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     net::{IpAddr, SocketAddr},
+    rc::Rc,
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
@@ -44,6 +45,8 @@ pub struct Service {
     emulation: Emulation,
     /// dns resolver
     resolver: DnsResolver,
+    /// starts the same outgoing workers used by capture sends and recovery
+    connection: Rc<ConnectionHandle>,
     /// frontend listener
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
@@ -96,6 +99,7 @@ impl Service {
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
         let resolver = DnsResolver::new()?;
         let conn = LanMouseConnection::new(cert.clone(), client_manager.clone(), resolver.lookup());
+        let connection = conn.handle();
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
@@ -110,6 +114,7 @@ impl Service {
             emulation,
             frontend_listener,
             resolver,
+            connection,
             authorized_keys,
             public_key_fingerprint,
             client_manager,
@@ -512,7 +517,7 @@ impl Service {
             self.broadcast_client(handle);
             log::info!("activated client {handle} ({pos})");
         }
-        self.resolve(handle);
+        self.connection.connect(handle);
     }
 
     fn change_port(&mut self, port: u16) {

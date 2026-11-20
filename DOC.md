@@ -2,12 +2,16 @@
 
 ## Peer Address and Connection Recovery
 
-An outgoing connection starts on the first input-send attempt. One worker owns
-each client's connection, heartbeat, and recovery lifecycle.
+Activating a client starts its outgoing connection without waiting for captured
+input or capture authorization. The service and capture task share a control
+handle: activation and send fallback both ensure the same per-client worker.
+That worker owns the connection, heartbeat, and recovery lifecycle.
 
 ```mermaid
 flowchart LR
-    Input --> Resolve
+    Activate --> Worker["One worker per client"]
+    SendFallback["Send fallback"] --> Worker
+    Worker --> Resolve
     Resolve --> Connect
     Connect -->|failure| Backoff
     Backoff --> Resolve
@@ -26,6 +30,11 @@ Retries continue without further input, starting at one second and doubling to
 a maximum of thirty seconds. A responding connection resets the delay.
 `Pong(false)` means the peer's emulation is disabled, not that its transport
 should be reconnected. Input that could not be sent is not queued for replay.
+
+Preconnection reduces first-crossing delays; it does not guarantee the peer is
+ready. Sends can still fail while connection setup is pending or remote input
+emulation is disabled. Establishing a connection does not send an `Enter` or
+pointer event and does not take control of the peer.
 
 Endpoint edits restart pending work. Deactivation, deletion, and daemon shutdown
 cancel it. Late DNS results and cleanup from an old connection cannot overwrite
