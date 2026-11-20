@@ -600,6 +600,9 @@ impl Service {
             HookKind::Enter => self.client_manager.get_enter_cmd(handle),
             HookKind::Leave => self.client_manager.get_leave_cmd(handle),
         };
+        if let HookKind::Enter = kind {
+            self.spawn_clipboard_push(handle);
+        }
         let Some(cmd) = cmd else { return };
         tokio::task::spawn_local(async move {
             log::info!("spawning {kind} hook for client {handle}");
@@ -619,6 +622,21 @@ impl Service {
                     }
                 }
                 Err(e) => log::warn!("{kind} hook for client {handle} ({cmd}): {e}"),
+            }
+        });
+    }
+
+    /// Push the local clipboard to the client via SSH when the cursor
+    /// enters it. Requires key-based SSH access to the client host and
+    /// `lan-mouse-clipboard receive` on the remote side.
+    fn spawn_clipboard_push(&self, handle: ClientHandle) {
+        let Some(hostname) = self.client_manager.get_hostname(handle) else {
+            return;
+        };
+        tokio::task::spawn_local(async move {
+            log::info!("pushing clipboard to {hostname}");
+            if let Err(e) = crate::clipboard::push_clipboard_to(&hostname).await {
+                log::info!("clipboard push to {hostname} failed: {e}");
             }
         });
     }

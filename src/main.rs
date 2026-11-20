@@ -38,6 +38,8 @@ enum LanMouseError {
     Gtk(#[from] GtkError),
     #[error(transparent)]
     Cli(#[from] CliError),
+    #[error(transparent)]
+    Clipboard(#[from] lan_mouse::clipboard::ClipboardError),
 }
 
 fn main() {
@@ -58,6 +60,13 @@ fn run() -> Result<(), LanMouseError> {
             Command::TestEmulation(args) => run_async(emulation_test::run(config, args))?,
             Command::TestCapture(args) => run_async(capture_test::run(config, args))?,
             Command::Cli(cli_args) => run_async(lan_mouse_cli::run(cli_args))?,
+            Command::ReceiveClipboard => {
+                run_async(async {
+                    lan_mouse::clipboard::receive_clipboard()
+                        .await
+                        .map_err(LanMouseError::from)
+                })?;
+            }
             Command::Daemon => {
                 // if daemon is specified we run the service
                 match run_async(run_service(config)) {

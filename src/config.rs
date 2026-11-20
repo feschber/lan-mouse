@@ -128,6 +128,9 @@ pub enum Command {
     Cli(CliArgs),
     /// run in daemon mode
     Daemon,
+    /// read clipboard payload from stdin into the local clipboard
+    /// (used by the remote end of clipboard sync, invoked via SSH)
+    ReceiveClipboard,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
