@@ -72,6 +72,8 @@ pub struct Service {
     tray: ServiceTray,
     /// devices "Stop sharing" deactivated, for "Start sharing" to restore
     tray_paused: Vec<ClientHandle>,
+    /// devices connected to this one (shown by the tray icon)
+    connected_from: HashSet<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -130,6 +132,7 @@ impl Service {
             next_trigger_handle: 0,
             tray: Default::default(),
             tray_paused: Vec::new(),
+            connected_from: Default::default(),
         };
         Ok(service)
     }
@@ -147,8 +150,8 @@ impl Service {
             self.activate_client(handle);
         }
 
-        let sharing = !self.client_manager.active_clients().is_empty();
-        self.tray = ServiceTray::new(sharing).await;
+        let sharing = self.client_manager.active_clients().len();
+        self.tray = ServiceTray::new(sharing, &self.connected_from).await;
 
         loop {
             tokio::select! {
@@ -165,9 +168,9 @@ impl Service {
                 }
                 r = signal::ctrl_c() => break r.expect("failed to wait for CTRL+C"),
             }
-            // keep the tray menu in step with the device switches
-            let sharing = !self.client_manager.active_clients().is_empty();
-            self.tray.set_sharing(sharing).await;
+            // keep the tray in step with the device switches and connections
+            let sharing = self.client_manager.active_clients().len();
+            self.tray.update(sharing, &self.connected_from).await;
         }
 
         log::info!("terminating service ...");
@@ -212,7 +215,6 @@ impl Service {
                 return true;
             }
         }
-        self.tray.invalidate();
         false
     }
 
@@ -349,6 +351,7 @@ impl Service {
                 }
             }
             EmulationEvent::Disconnected { addr } => {
+                self.connected_from.remove(&addr);
                 if let Some(addr) = self.remove_incoming(addr) {
                     self.notify_frontend(FrontendEvent::IncomingDisconnected(addr));
                 }
@@ -371,6 +374,7 @@ impl Service {
             }
             EmulationEvent::ReleaseNotify => self.capture.release(),
             EmulationEvent::Connected { addr, fingerprint } => {
+                self.connected_from.insert(addr);
                 self.notify_frontend(FrontendEvent::DeviceConnected { addr, fingerprint });
             }
             EmulationEvent::PeerHello { addr, commit } => {

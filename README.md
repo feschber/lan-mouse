@@ -363,6 +363,7 @@ lan-mouse daemon
 
 On Linux and the BSDs, the service shows a tray icon (StatusNotifierItem, shown by KDE Plasma and by the Xfce panel's Status Tray plugin, among others) with "Open Lan Mouse", "Start sharing" / "Stop sharing" and "Quit Lan Mouse".
 "Stop sharing" deactivates the active clients and "Start sharing" activates them again; neither is saved to the config.
+The icon is blue while at least one client is active, grey with a blue dot while none is but another device is connected to this one (e.g. on a device that only receives input), and grey otherwise; the tooltip says which.
 
 While the icon is shown, closing the window (or minimizing it on X11) hides it to the tray instead of quitting.
 To start with only the tray icon, use `lan-mouse --minimized` (or set `LAN_MOUSE_HIDDEN=1`).

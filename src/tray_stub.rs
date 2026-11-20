@@ -2,6 +2,8 @@
 //! same interface as `tray.rs`, but nothing is shown and no request ever
 //! arrives.
 
+use std::{collections::HashSet, net::SocketAddr};
+
 /// Requests from the tray menu to the service.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -16,7 +18,7 @@ pub(crate) enum TrayCommand {
 pub(crate) struct ServiceTray;
 
 impl ServiceTray {
-    pub(crate) async fn new(_sharing: bool) -> Self {
+    pub(crate) async fn new(_sharing: usize, _connected_from: &HashSet<SocketAddr>) -> Self {
         Self
     }
 
@@ -24,9 +26,7 @@ impl ServiceTray {
         std::future::pending().await
     }
 
-    pub(crate) fn invalidate(&mut self) {}
-
-    pub(crate) async fn set_sharing(&mut self, _sharing: bool) {}
+    pub(crate) async fn update(&mut self, _sharing: usize, _connected_from: &HashSet<SocketAddr>) {}
 
     pub(crate) async fn shutdown(&mut self) {}
 }
