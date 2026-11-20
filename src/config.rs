@@ -67,6 +67,8 @@ struct ConfigToml {
     port: Option<u16>,
     release_bind: Option<Vec<scancode::Linux>>,
     cert_path: Option<PathBuf>,
+    /// opt-in clipboard sync with peers over SSH on enter/leave
+    clipboard_sync: Option<bool>,
     clients: Option<Vec<TomlClient>>,
     authorized_fingerprints: Option<HashMap<String, String>>,
 }
@@ -501,6 +503,14 @@ impl Config {
             .as_ref()
             .and_then(|c| c.release_bind.clone())
             .unwrap_or(Vec::from_iter(DEFAULT_RELEASE_KEYS.iter().cloned()))
+    }
+
+    /// whether clipboard sync over SSH is enabled (default: false)
+    pub fn clipboard_sync(&self) -> bool {
+        self.config_toml
+            .as_ref()
+            .and_then(|c| c.clipboard_sync)
+            .unwrap_or(false)
     }
 
     /// set configured clients

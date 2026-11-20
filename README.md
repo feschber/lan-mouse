@@ -395,6 +395,12 @@ release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]
 # optional port (defaults to 4242)
 port = 4242
 
+# opt-in clipboard sync: when the cursor enters a client, push the local
+# clipboard to it over SSH; when the cursor returns, pull the peer's
+# clipboard. Requires key-based SSH access to the client host (the hostname
+# from the client config is used as the SSH target). Off by default.
+# clipboard_sync = true
+
 # list of authorized tls certificate fingerprints that
 # are accepted for incoming traffic
 [authorized_fingerprints]

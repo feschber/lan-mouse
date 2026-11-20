@@ -629,6 +629,9 @@ impl Service {
     /// Requires key-based SSH access to the client host; unpatched peers
     /// are handled through OS clipboard tool fallbacks (pbcopy, wl-copy...).
     fn spawn_clipboard_transfer(&self, handle: ClientHandle, kind: HookKind) {
+        if !self.config.clipboard_sync() {
+            return;
+        }
         let Some(hostname) = self.client_manager.get_hostname(handle) else {
             return;
         };
