@@ -198,6 +198,62 @@ fn setup_menu(app: &adw::Application) {
     app.set_menubar(Some(&menu))
 }
 
+/// Whether the service's tray icon is shown right now: an item with the id
+/// "lan-mouse" is registered with the tray host
+/// (`org.kde.StatusNotifierWatcher`). Only then can the tray bring a hidden
+/// window back, so the window is only hidden in that case. Checked each time,
+/// because the service may have been started without a tray (an older build,
+/// `LAN_MOUSE_NO_TRAY`) or registers its icon after the window opened.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lan_mouse_tray_shown() -> bool {
+    if env::var_os("LAN_MOUSE_NO_TRAY").is_some() {
+        return false;
+    }
+    let Ok(bus) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return false;
+    };
+    let property = |service: &str, path: &str, interface: &str, name: &str| {
+        bus.call_sync(
+            Some(service),
+            path,
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            Some(&(interface, name).to_variant()),
+            glib::VariantTy::new("(v)").ok(),
+            gio::DBusCallFlags::NONE,
+            500,
+            gio::Cancellable::NONE,
+        )
+        .ok()
+        .and_then(|reply| reply.child_value(0).as_variant())
+    };
+    let Some(items) = property(
+        "org.kde.StatusNotifierWatcher",
+        "/StatusNotifierWatcher",
+        "org.kde.StatusNotifierWatcher",
+        "RegisteredStatusNotifierItems",
+    )
+    .and_then(|items| items.get::<Vec<String>>()) else {
+        return false;
+    };
+    // entries are "service/object/path"; the service registers under its
+    // well-known name "org.kde.StatusNotifierItem-<pid>-<n>"
+    items
+        .iter()
+        .filter_map(|item| item.split_once('/'))
+        .filter(|(service, _)| service.starts_with("org.kde.StatusNotifierItem-"))
+        .any(|(service, path)| {
+            property(
+                service,
+                &format!("/{path}"),
+                "org.kde.StatusNotifierItem",
+                "Id",
+            )
+            .and_then(|id| id.get::<String>())
+            .is_some_and(|id| id == "lan-mouse")
+        })
+}
+
 fn build_ui(app: &Application) {
     // If a window already exists (re-activation), just present it
     if let Some(window) = app.windows().first() {
@@ -246,6 +302,45 @@ fn build_ui(app: &Application) {
     });
 
     let window = Window::new(app, frontend_tx);
+    // while the service's tray icon is shown, closing the window only hides
+    // it; the tray icon brings it back and quits
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        window.connect_close_request(|window| {
+            if lan_mouse_tray_shown() {
+                window.set_visible(false);
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        // minimizing hides it too where the window system reports it (X11;
+        // Wayland does not tell clients they were minimized)
+        window.connect_realize(|window| {
+            use gtk::gdk::prelude::ToplevelExt;
+            let Some(toplevel) = window
+                .surface()
+                .and_then(|surface| surface.dynamic_cast::<gtk::gdk::Toplevel>().ok())
+            else {
+                return;
+            };
+            let window = window.downgrade();
+            toplevel.connect_state_notify(move |toplevel| {
+                if toplevel
+                    .state()
+                    .contains(gtk::gdk::ToplevelState::MINIMIZED)
+                {
+                    // hiding reports "minimized" on X11 too, hence the
+                    // visibility check
+                    if let Some(window) = window.upgrade() {
+                        if window.is_visible() && lan_mouse_tray_shown() {
+                            window.set_visible(false);
+                        }
+                    }
+                }
+            });
+        });
+    }
     #[cfg(target_os = "macos")]
     {
         window.connect_close_request(|window| {
@@ -329,7 +424,30 @@ fn build_ui(app: &Application) {
         }
     ));
 
-    #[cfg(not(target_os = "macos"))]
+    // `LAN_MOUSE_HIDDEN=1` starts with only the tray icon (e.g. from an
+    // autostart entry), as on macOS below. The service may still be starting
+    // its icon, so wait for it; if it does not appear, show the window.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if env::var_os("LAN_MOUSE_HIDDEN").is_some() {
+        let window = window.downgrade();
+        let mut tries = 0;
+        glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+            tries += 1;
+            if lan_mouse_tray_shown() {
+                return glib::ControlFlow::Break;
+            }
+            if tries >= 20 {
+                if let Some(window) = window.upgrade() {
+                    window.present();
+                }
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
+    } else {
+        window.present();
+    }
+    #[cfg(windows)]
     window.present();
 
     // On macOS, default to presenting the main window on every launch

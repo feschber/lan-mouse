@@ -113,6 +113,11 @@ struct Args {
     #[arg(long)]
     cert_path: Option<PathBuf>,
 
+    /// start the window hidden, with only the tray icon (Linux / BSD; same as
+    /// LAN_MOUSE_HIDDEN=1). The window is shown anyway if no tray icon appears.
+    #[arg(long, alias = "hidden")]
+    minimized: bool,
+
     /// subcommands
     #[command(subcommand)]
     command: Option<Command>,
@@ -456,6 +461,11 @@ impl Config {
     /// path to certificate
     pub fn cert_path(&self) -> &Path {
         &self.cert_path
+    }
+
+    /// whether the window should start hidden in the tray (`--minimized`)
+    pub fn start_minimized(&self) -> bool {
+        self.args.minimized
     }
 
     /// optional input-capture backend override

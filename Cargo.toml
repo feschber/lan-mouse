@@ -71,6 +71,9 @@ notify = "8.2.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+ksni = { version = "0.3.7", optional = true }
+
 [features]
 default = [
     "gtk",
@@ -81,8 +84,11 @@ default = [
     "libei_emulation",
     "rdp_emulation",
     "x11_emulation",
+    "tray",
 ]
 gtk = ["dep:lan-mouse-gtk"]
+# tray icon for the service (Linux / BSD)
+tray = ["dep:ksni"]
 layer_shell_capture = ["input-capture/layer_shell"]
 x11_capture = ["input-capture/x11"]
 libei_capture = ["input-event/libei", "input-capture/libei"]
