@@ -1,11 +1,12 @@
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     rc::Rc,
 };
 
 use slab::Slab;
+use tokio::sync::watch;
 
 use lan_mouse_ipc::{ClientConfig, ClientHandle, ClientState, Position};
 
@@ -14,9 +15,27 @@ use crate::config::ConfigClient;
 #[derive(Clone, Default)]
 pub struct ClientManager {
     clients: Rc<RefCell<Slab<(ClientConfig, ClientState)>>>,
+    connection_changes: Rc<RefCell<HashMap<ClientHandle, watch::Sender<bool>>>>,
 }
 
 impl ClientManager {
+    pub(crate) fn connection_changes(&self, handle: ClientHandle) -> Option<watch::Receiver<bool>> {
+        self.connection_changes
+            .borrow()
+            .get(&handle)
+            .map(watch::Sender::subscribe)
+    }
+
+    fn connection_changed(&self, handle: ClientHandle) {
+        let mut clients = self.clients.borrow_mut();
+        if let Some((_, state)) = clients.get_mut(handle as usize) {
+            state.resolving = false;
+            if let Some(changes) = self.connection_changes.borrow().get(&handle) {
+                changes.send_replace(state.active);
+            }
+        }
+    }
+
     /// get all clients
     pub fn clients(&self) -> Vec<(ClientConfig, ClientState)> {
         self.clients
@@ -48,7 +67,10 @@ impl ClientManager {
 
     /// add a new client to this manager
     pub fn add_client(&self) -> ClientHandle {
-        self.clients.borrow_mut().insert(Default::default()) as ClientHandle
+        let handle = self.clients.borrow_mut().insert(Default::default()) as ClientHandle;
+        let (changes, _) = watch::channel(false);
+        self.connection_changes.borrow_mut().insert(handle, changes);
+        handle
     }
 
     /// set the config of the given client
@@ -56,6 +78,7 @@ impl ClientManager {
         if let Some((c, _)) = self.clients.borrow_mut().get_mut(handle as usize) {
             *c = config;
         }
+        self.connection_changed(handle);
     }
 
     /// set the state of the given client
@@ -63,32 +86,45 @@ impl ClientManager {
         if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
             *s = state;
         }
+        self.connection_changed(handle);
     }
 
     /// activate the given client
     /// returns, whether the client was activated
     pub fn activate_client(&self, handle: ClientHandle) -> bool {
-        let mut clients = self.clients.borrow_mut();
-        match clients.get_mut(handle as usize) {
-            Some((_, s)) if !s.active => {
-                s.active = true;
-                true
+        let changed = {
+            let mut clients = self.clients.borrow_mut();
+            match clients.get_mut(handle as usize) {
+                Some((_, s)) if !s.active => {
+                    s.active = true;
+                    true
+                }
+                _ => false,
             }
-            _ => false,
+        };
+        if changed {
+            self.connection_changed(handle);
         }
+        changed
     }
 
     /// deactivate the given client
     /// returns, whether the client was deactivated
     pub fn deactivate_client(&self, handle: ClientHandle) -> bool {
-        let mut clients = self.clients.borrow_mut();
-        match clients.get_mut(handle as usize) {
-            Some((_, s)) if s.active => {
-                s.active = false;
-                true
+        let changed = {
+            let mut clients = self.clients.borrow_mut();
+            match clients.get_mut(handle as usize) {
+                Some((_, s)) if s.active => {
+                    s.active = false;
+                    true
+                }
+                _ => false,
             }
-            _ => false,
+        };
+        if changed {
+            self.connection_changed(handle);
         }
+        changed
     }
 
     /// find a client by its address
@@ -141,6 +177,7 @@ impl ClientManager {
     /// remove a client from the list
     pub fn remove_client(&self, client: ClientHandle) -> Option<(ClientConfig, ClientState)> {
         // remove id from occupied ids
+        self.connection_changes.borrow_mut().remove(&client);
         self.clients.borrow_mut().try_remove(client as usize)
     }
 
@@ -160,10 +197,14 @@ impl ClientManager {
 
     /// update the fix ips of the client
     pub fn set_fix_ips(&self, handle: ClientHandle, fix_ips: Vec<IpAddr>) {
-        if let Some((c, _)) = self.clients.borrow_mut().get_mut(handle as usize) {
-            c.fix_ips = fix_ips
+        if let Some((config, _)) = self.clients.borrow_mut().get_mut(handle as usize) {
+            if config.fix_ips == fix_ips {
+                return;
+            }
+            config.fix_ips = fix_ips;
         }
         self.update_ips(handle);
+        self.connection_changed(handle);
     }
 
     /// update the dns-ips of the client
@@ -200,6 +241,7 @@ impl ClientManager {
             s.dns_ips.clear();
             drop(clients);
             self.update_ips(handle);
+            self.connection_changed(handle);
             true
         } else {
             false
@@ -208,13 +250,16 @@ impl ClientManager {
 
     /// update the port of the client
     pub(crate) fn set_port(&self, handle: ClientHandle, port: u16) {
-        match self.clients.borrow_mut().get_mut(handle as usize) {
-            Some((c, s)) if c.port != port => {
-                c.port = port;
-                s.active_addr = s.active_addr.map(|a| SocketAddr::new(a.ip(), port));
+        let changed = match self.clients.borrow_mut().get_mut(handle as usize) {
+            Some((config, _)) if config.port != port => {
+                config.port = port;
+                true
             }
-            _ => {}
+            _ => false,
         };
+        if changed {
+            self.connection_changed(handle);
+        }
     }
 
     /// update the position of the client
@@ -302,13 +347,6 @@ impl ClientManager {
         if let Some((_, s)) = self.clients.borrow_mut().get_mut(handle as usize) {
             s.peer_commit = commit;
         }
-    }
-
-    pub(crate) fn active_addr(&self, handle: ClientHandle) -> Option<SocketAddr> {
-        self.clients
-            .borrow()
-            .get(handle as usize)
-            .and_then(|(_, s)| s.active_addr)
     }
 
     pub(crate) fn alive(&self, handle: ClientHandle) -> bool {

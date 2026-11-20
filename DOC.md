@@ -1,5 +1,38 @@
 # General Software Architecture
 
+## Peer Address and Connection Recovery
+
+An outgoing connection starts on the first input-send attempt. One worker owns
+each client's connection, heartbeat, and recovery lifecycle.
+
+```mermaid
+flowchart LR
+    Input --> Resolve
+    Resolve --> Connect
+    Connect -->|failure| Backoff
+    Backoff --> Resolve
+    Connect -->|success| Connected
+    Connected -->|transport lost| Backoff
+```
+
+Before every attempt, hostname clients use the existing asynchronous resolver.
+The resolver uses the operating system's name-service stack, including supported
+Bonjour/Avahi `.local` names. Fresh results replace cached DNS addresses; explicit
+fixed IPs remain additional candidates. Configure a resolvable hostname and leave
+fixed IPs empty when the peer's address is dynamic. A fixed IP alone cannot
+discover its replacement.
+
+Retries continue without further input, starting at one second and doubling to
+a maximum of thirty seconds. A responding connection resets the delay.
+`Pong(false)` means the peer's emulation is disabled, not that its transport
+should be reconnected. Input that could not be sent is not queued for replay.
+
+Endpoint edits restart pending work. Deactivation, deletion, and daemon shutdown
+cancel it. Late DNS results and cleanup from an old connection cannot overwrite
+an edited or replacement client. EOF stops both receive paths without replaying
+the previous frame. Existing protocol and certificate-authorization behavior
+are unchanged. Network recovery does not grant or restore portal permissions.
+
 ## Events
 
 Each instance of lan-mouse can emit and receive events, where
