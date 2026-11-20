@@ -600,9 +600,7 @@ impl Service {
             HookKind::Enter => self.client_manager.get_enter_cmd(handle),
             HookKind::Leave => self.client_manager.get_leave_cmd(handle),
         };
-        if let HookKind::Enter = kind {
-            self.spawn_clipboard_push(handle);
-        }
+        self.spawn_clipboard_transfer(handle, kind);
         let Some(cmd) = cmd else { return };
         tokio::task::spawn_local(async move {
             log::info!("spawning {kind} hook for client {handle}");
@@ -626,17 +624,27 @@ impl Service {
         });
     }
 
-    /// Push the local clipboard to the client via SSH when the cursor
-    /// enters it. Requires key-based SSH access to the client host and
-    /// `lan-mouse-clipboard receive` on the remote side.
-    fn spawn_clipboard_push(&self, handle: ClientHandle) {
+    /// Transfer the clipboard via SSH when the cursor enters a client
+    /// (push local clipboard to it) or returns from it (pull its clipboard).
+    /// Requires key-based SSH access to the client host; unpatched peers
+    /// are handled through OS clipboard tool fallbacks (pbcopy, wl-copy...).
+    fn spawn_clipboard_transfer(&self, handle: ClientHandle, kind: HookKind) {
         let Some(hostname) = self.client_manager.get_hostname(handle) else {
             return;
         };
         tokio::task::spawn_local(async move {
-            log::info!("pushing clipboard to {hostname}");
-            if let Err(e) = crate::clipboard::push_clipboard_to(&hostname).await {
-                log::info!("clipboard push to {hostname} failed: {e}");
+            let res = match kind {
+                HookKind::Enter => {
+                    log::info!("pushing clipboard to {hostname}");
+                    crate::clipboard::push_clipboard_to(&hostname).await
+                }
+                HookKind::Leave => {
+                    log::info!("pulling clipboard from {hostname}");
+                    crate::clipboard::pull_clipboard_from(&hostname).await
+                }
+            };
+            if let Err(e) = res {
+                log::info!("clipboard transfer with {hostname} failed: {e}");
             }
         });
     }

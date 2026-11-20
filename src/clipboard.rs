@@ -87,13 +87,17 @@ async fn write_local_clipboard(content: &str) -> Result<(), ClipboardError> {
 
 /// Push the local clipboard to a remote lan-mouse peer over SSH.
 ///
-/// The remote runs the matching `lan-mouse-clipboard receive` side, which
-/// writes the payload into the remote clipboard.
+/// The remote runs `lan-mouse receive-clipboard` (patched peers) or falls
+/// back to pbcopy/wl-copy/clip (unpatched peers).
 pub async fn push_clipboard_to(host: &str) -> Result<(), ClipboardError> {
     let content = read_local_clipboard().await?;
     if content.is_empty() {
         return Ok(());
     }
+    // Remote receiver: prefer a patched lan-mouse peer, then fall back to
+    // the OS clipboard tool so unpatched peers (e.g. macOS running upstream
+    // Lan Mouse) work out of the box.
+    const REMOTE_CMD: &str = "sh -c 'command -v lan-mouse >/dev/null 2>&1 && exec lan-mouse receive-clipboard; command -v pbcopy >/dev/null 2>&1 && exec pbcopy; command -v wl-copy >/dev/null 2>&1 && exec wl-copy; exec clip'";
     let mut ssh = Command::new("ssh");
     ssh.args([
         "-o",
@@ -101,9 +105,7 @@ pub async fn push_clipboard_to(host: &str) -> Result<(), ClipboardError> {
         "-o",
         "ConnectTimeout=5",
         host,
-        "--",
-        "lan-mouse-clipboard",
-        "receive",
+        REMOTE_CMD,
     ])
     .stdin(Stdio::piped())
     .stdout(Stdio::null())
@@ -114,7 +116,7 @@ pub async fn push_clipboard_to(host: &str) -> Result<(), ClipboardError> {
 }
 
 /// Entry point for the remote side: read payload from stdin into the local
-/// clipboard. Invoked as `lan-mouse-clipboard receive` via SSH.
+/// clipboard. Invoked via SSH from a patched sender.
 pub async fn receive_clipboard() -> Result<(), ClipboardError> {
     let mut content = String::new();
     tokio::io::stdin()
@@ -126,6 +128,33 @@ pub async fn receive_clipboard() -> Result<(), ClipboardError> {
         return Ok(());
     }
     write_local_clipboard(&content).await
+}
+
+/// Pull the clipboard from a remote peer over SSH into the local clipboard.
+/// Used when the cursor returns from a peer (Leave).
+const REMOTE_PULL_CMD: &str = "sh -c 'command -v pbpaste >/dev/null 2>&1 && exec pbpaste; command -v wl-paste >/dev/null 2>&1 && exec wl-paste --no-newline; exec powershell -noprofile -command Get-Clipboard'";
+
+pub async fn pull_clipboard_from(host: &str) -> Result<(), ClipboardError> {
+    let mut ssh = Command::new("ssh");
+    ssh.args([
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        host,
+        REMOTE_PULL_CMD,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+    let content = read_from(&mut ssh)
+        .await
+        .map_err(ClipboardError::Transport)?;
+    let content = content.trim_end_matches('\n');
+    if content.is_empty() {
+        return Ok(());
+    }
+    write_local_clipboard(content).await
 }
 
 async fn read_from(cmd: &mut Command) -> Result<String, String> {
@@ -147,6 +176,9 @@ async fn read_from(cmd: &mut Command) -> Result<String, String> {
 
 async fn write_to(cmd: &mut Command, content: &str) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
+    // the child consumes `content` via stdin — always pipe it, otherwise
+    // the child inherits our (already drained) stdin and reads EOF
+    cmd.stdin(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| {
         format!(
             "failed to spawn {}: {e}",
