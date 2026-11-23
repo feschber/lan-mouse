@@ -1,21 +1,18 @@
-use futures::{StreamExt, future};
+use futures::StreamExt;
 use std::{
-    env, fs, io,
-    os::{fd::OwnedFd, unix::net::UnixStream},
-    path::PathBuf,
+    future::Future,
+    io,
+    os::unix::net::UnixStream,
+    pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
+    task::{Context, Poll},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
 
-use ashpd::desktop::{
-    PersistMode, Session,
-    inhibit::InhibitProxy,
-    remote_desktop::{DeviceType, RemoteDesktop, SelectDevicesOptions},
-};
 use async_trait::async_trait;
 
 use reis::{
@@ -29,7 +26,7 @@ use reis::{
 
 use input_event::{Event, KeyboardEvent, PointerEvent};
 
-use crate::error::EmulationError;
+use crate::{error::EmulationError, portal::RemoteDesktopSession};
 
 use super::{Emulation, EmulationHandle, error::LibeiEmulationCreationError};
 
@@ -48,117 +45,16 @@ pub(crate) struct LibeiEmulation {
     ei_task: JoinHandle<()>,
     error: Arc<Mutex<Option<EmulationError>>>,
     libei_error: Arc<AtomicBool>,
-    _remote_desktop: RemoteDesktop,
-    session: Session<RemoteDesktop>,
-}
-
-/// Get the path to the RemoteDesktop token file
-fn get_token_file_path() -> PathBuf {
-    let cache_dir = env::var("XDG_CACHE_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home = env::var("HOME").expect("HOME not set");
-            PathBuf::from(home).join(".cache")
-        });
-
-    cache_dir.join("lan-mouse").join("remote-desktop.token")
-}
-
-/// Read the RemoteDesktop token from file
-fn read_token() -> Option<String> {
-    let token_path = get_token_file_path();
-    match fs::read_to_string(&token_path) {
-        Ok(token) => Some(token.trim().to_string()),
-        Err(_) => None,
-    }
-}
-
-/// Write the RemoteDesktop token to file
-fn write_token(token: &str) -> io::Result<()> {
-    let token_path = get_token_file_path();
-    if let Some(parent) = token_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    fs::write(&token_path, token)?;
-    Ok(())
-}
-
-async fn get_ei_fd() -> Result<(RemoteDesktop, Session<RemoteDesktop>, OwnedFd), ashpd::Error> {
-    let remote_desktop = RemoteDesktop::new().await?;
-
-    let restore_token = read_token();
-
-    log::debug!("creating session ...");
-    let session = remote_desktop.create_session(Default::default()).await?;
-
-    log::debug!("selecting devices ...");
-    let options = SelectDevicesOptions::default()
-        .set_devices(DeviceType::Keyboard | DeviceType::Pointer)
-        .set_persist_mode(PersistMode::ExplicitlyRevoked)
-        .set_restore_token(restore_token.as_deref());
-    remote_desktop.select_devices(&session, options).await?;
-
-    log::info!("requesting permission for input emulation");
-    let start_response = remote_desktop
-        .start(&session, None, Default::default())
-        .await?
-        .response()?;
-
-    // The restore token is only valid once, we need to re-save it each time
-    if let Some(token_str) = start_response.restore_token() {
-        if let Err(e) = write_token(token_str) {
-            log::warn!("failed to save RemoteDesktop token: {}", e);
-        }
-    }
-
-    let fd = remote_desktop
-        .connect_to_eis(&session, Default::default())
-        .await?;
-    Ok((remote_desktop, session, fd))
-}
-
-async fn wait_until_unlocked(
-    mut states: impl futures::Stream<Item = bool> + Unpin,
-) -> Result<(), ashpd::Error> {
-    while let Some(screensaver_active) = states.next().await {
-        if !screensaver_active {
-            return Ok(());
-        }
-        log::info!("waiting for desktop unlock before creating libei input emulation");
-    }
-    Err(ashpd::Error::NoResponse)
-}
-
-async fn wait_for_session_unlock() -> Result<(), ashpd::Error> {
-    let proxy = InhibitProxy::new().await?;
-    // Subscribe before creating the monitor so its initial state is not lost.
-    let states = proxy.receive_state_changed().await?;
-    let monitor = proxy.create_monitor(None, Default::default()).await?;
-    let result = async {
-        let mut closed = monitor.receive_closed().await?;
-        tokio::select! {
-            biased;
-            _ = closed.next() => Err(ashpd::Error::NoResponse),
-            result = wait_until_unlocked(states.map(|state| state.screensaver_active())) => result,
-        }
-    }
-    .await;
-    if let Err(error) = monitor.close().await {
-        log::debug!("failed to close session state monitor: {error}");
-    }
-    result
+    portal: RemoteDesktopSession,
 }
 
 impl LibeiEmulation {
     pub(crate) async fn new() -> Result<Self, LibeiEmulationCreationError> {
-        if let Err(error) = wait_for_session_unlock().await {
-            // Not every portal implements session monitoring. Keep the existing
-            // creation behavior there instead of making it a new requirement.
-            log::warn!("could not monitor desktop lock state before libei creation: {error}");
-        }
-        let (_remote_desktop, session, eifd) = get_ei_fd().await?;
+        let portal = RemoteDesktopSession::new().await?;
+        let eifd = portal
+            .proxy
+            .connect_to_eis(&portal.session, Default::default())
+            .await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
         let context = ei::Context::new(stream)?;
@@ -185,8 +81,7 @@ impl LibeiEmulation {
             ei_task,
             error,
             libei_error,
-            _remote_desktop,
-            session,
+            portal,
         })
     }
 }
@@ -199,6 +94,23 @@ impl Drop for LibeiEmulation {
 
 #[async_trait]
 impl Emulation for LibeiEmulation {
+    fn poll_dispatch(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), EmulationError>> {
+        if self.portal.poll_closed(cx).is_ready()
+            || self.libei_error.load(Ordering::SeqCst)
+            || Pin::new(&mut self.ei_task).poll(cx).is_ready()
+        {
+            self.libei_error.store(true, Ordering::SeqCst);
+            Poll::Ready(Err(self
+                .error
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(EmulationError::EndOfStream)))
+        } else {
+            Poll::Pending
+        }
+    }
+
     async fn consume(
         &mut self,
         event: Event,
@@ -209,10 +121,12 @@ impl Emulation for LibeiEmulation {
             .unwrap()
             .as_micros() as u64;
         if self.libei_error.load(Ordering::SeqCst) {
-            // don't break sending additional events but signal error
-            if let Some(e) = self.error.lock().unwrap().take() {
-                return Err(e);
-            }
+            return Err(self
+                .error
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(EmulationError::EndOfStream));
         }
         match event {
             Event::Pointer(p) => match p {
@@ -296,7 +210,7 @@ impl Emulation for LibeiEmulation {
     async fn destroy(&mut self, _: EmulationHandle) {}
 
     async fn terminate(&mut self) {
-        let _ = self.session.close().await;
+        self.portal.close().await;
         self.ei_task.abort();
     }
 }
@@ -331,16 +245,9 @@ async fn ei_task(
     libei_error: Arc<AtomicBool>,
     error: Arc<Mutex<Option<EmulationError>>>,
 ) {
-    loop {
-        match ei_event_handler(&mut events, &context, &devices).await {
-            Ok(()) => {}
-            Err(e) => {
-                libei_error.store(true, Ordering::SeqCst);
-                error.lock().unwrap().replace(e);
-                // wait for termination -> otherwise we will loop forever
-                future::pending::<()>().await;
-            }
-        }
+    if let Err(e) = ei_event_handler(&mut events, &context, &devices).await {
+        error.lock().unwrap().replace(e);
+        libei_error.store(true, Ordering::SeqCst);
     }
 }
 
@@ -445,7 +352,6 @@ async fn ei_event_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::FutureExt;
     use std::io::{ErrorKind, Read, Write};
 
     #[test]
@@ -492,31 +398,6 @@ mod tests {
         assert!(matches!(
             libei_stream_error(reis::Error::UnexpectedHandshakeEvent),
             EmulationError::Libei(reis::Error::UnexpectedHandshakeEvent)
-        ));
-    }
-
-    #[tokio::test]
-    async fn unlocked_desktop_allows_immediate_session_creation() {
-        let waiting = wait_until_unlocked(futures::stream::iter([false]));
-        assert!(matches!(waiting.now_or_never(), Some(Ok(()))));
-    }
-
-    #[tokio::test]
-    async fn locked_desktop_defers_creation_until_unlock() {
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let waiting = wait_until_unlocked(rx);
-        tokio::pin!(waiting);
-        tx.unbounded_send(true).expect("state receiver");
-        assert!(waiting.as_mut().now_or_never().is_none());
-        tx.unbounded_send(false).expect("state receiver");
-        assert!(matches!(waiting.as_mut().now_or_never(), Some(Ok(()))));
-    }
-
-    #[tokio::test]
-    async fn closed_monitor_does_not_report_a_locked_desktop_as_unlocked() {
-        assert!(matches!(
-            wait_until_unlocked(futures::stream::iter([true])).await,
-            Err(ashpd::Error::NoResponse)
         ));
     }
 }

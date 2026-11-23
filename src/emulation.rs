@@ -349,7 +349,7 @@ impl EmulationTask {
                     }
                 },
                 _ = &mut retry, if session_closed => {
-                    log::info!("recreating input emulation after session stream closed");
+                    log::info!("recreating input emulation after session closed");
                     return true;
                 },
             }
@@ -357,43 +357,65 @@ impl EmulationTask {
     }
 
     async fn do_emulation(&mut self) -> Result<(), InputEmulationError> {
-        log::info!("creating input emulation ...");
-        let mut emulation = tokio::select! {
-            r = InputEmulation::new(self.backend) => r?,
-            // allow termination event while requesting input emulation
-            _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
+        let mut emulation = loop {
+            log::info!("creating input emulation ...");
+            tokio::select! {
+                result = InputEmulation::new(self.backend) => break result?,
+                restart = wait_for_creation_control(&mut self.request_rx, &mut self.handles) => {
+                    if !restart {
+                        return Ok(());
+                    }
+                }
+            }
         };
 
+        if !self.create_clients(&mut emulation).await {
+            emulation.terminate().await;
+            return Ok(());
+        }
+
         // used to send enabled and disabled events
-        let _emulation_guard = DropGuard::new(
+        let emulation_guard = DropGuard::new(
             self.event_tx.clone(),
             EmulationEvent::EmulationEnabled,
             EmulationEvent::EmulationDisabled,
         );
 
-        // create active handles
-        if let Err(e) = self.create_clients(&mut emulation).await {
-            emulation.terminate().await;
-            return Err(e);
-        }
-
         let res = self.do_emulation_session(&mut emulation).await;
+        drop(emulation_guard);
         // FIXME replace with async drop when stabilized
         emulation.terminate().await;
         res
     }
 
-    async fn create_clients(
-        &mut self,
-        emulation: &mut InputEmulation,
-    ) -> Result<(), InputEmulationError> {
-        for handle in self.handles.values() {
-            tokio::select! {
-                _ = emulation.create(*handle) => {},
-                _ = wait_for_termination(&mut self.request_rx) => return Ok(()),
+    async fn create_clients(&mut self, emulation: &mut InputEmulation) -> bool {
+        // Keep a stable setup snapshot while accepting peer removals.
+        let handles: Vec<_> = self.handles.iter().map(|(&addr, &id)| (addr, id)).collect();
+        for &(addr, handle) in &handles {
+            if !self.handles.contains_key(&addr) {
+                continue;
+            }
+            let create = emulation.create(handle);
+            tokio::pin!(create);
+            loop {
+                tokio::select! {
+                    _ = &mut create => break,
+                    request = self.request_rx.recv() => match request.expect("channel closed") {
+                        ProxyRequest::Terminate => return false,
+                        ProxyRequest::Remove(addr) => {
+                            self.handles.remove(&addr);
+                        }
+                        ProxyRequest::Input(..) | ProxyRequest::Reenable => {}
+                    }
+                }
             }
         }
-        Ok(())
+        for (addr, handle) in handles {
+            if !self.handles.contains_key(&addr) {
+                emulation.destroy(handle).await;
+            }
+        }
+        true
     }
 
     async fn do_emulation_session(
@@ -402,6 +424,7 @@ impl EmulationTask {
     ) -> Result<(), InputEmulationError> {
         loop {
             tokio::select! {
+                result = emulation.dispatch() => result?,
                 e = self.request_rx.recv() => match e.expect("channel closed") {
                     ProxyRequest::Input(event, addr) => {
                         let handle = match self.handles.get(&addr) {
@@ -438,13 +461,18 @@ fn to_ipc_pos(pos: Position) -> lan_mouse_ipc::Position {
     }
 }
 
-async fn wait_for_termination(rx: &mut Receiver<ProxyRequest>) {
+async fn wait_for_creation_control(
+    rx: &mut Receiver<ProxyRequest>,
+    handles: &mut HashMap<SocketAddr, EmulationHandle>,
+) -> bool {
     loop {
         match rx.recv().await.expect("channel closed") {
-            ProxyRequest::Terminate => return,
-            ProxyRequest::Input(_, _) => continue,
-            ProxyRequest::Remove(_) => continue,
-            ProxyRequest::Reenable => continue,
+            ProxyRequest::Terminate => return false,
+            ProxyRequest::Reenable => return true,
+            ProxyRequest::Remove(addr) => {
+                handles.remove(&addr);
+            }
+            ProxyRequest::Input(..) => {}
         }
     }
 }
@@ -555,5 +583,28 @@ mod tests {
             .expect("recovery receiver closed");
         assert!(task.wait_for_recovery(closed_session()).await);
         assert!(!task.handles.contains_key(&addr));
+    }
+
+    #[tokio::test]
+    async fn peer_removal_does_not_cancel_pending_authorization() {
+        let (mut task, tx) = recovery_task();
+        let addr = SocketAddr::from(([127, 0, 0, 1], 4242));
+        task.handles.insert(addr, 7);
+        tx.send(ProxyRequest::Remove(addr)).unwrap();
+        {
+            let control = wait_for_creation_control(&mut task.request_rx, &mut task.handles);
+            tokio::pin!(control);
+            assert!(control.as_mut().now_or_never().is_none());
+            tx.send(ProxyRequest::Terminate).unwrap();
+            assert!(!control.await);
+        }
+        assert!(!task.handles.contains_key(&addr));
+    }
+
+    #[tokio::test]
+    async fn manual_reenable_restarts_pending_authorization() {
+        let (mut task, tx) = recovery_task();
+        tx.send(ProxyRequest::Reenable).unwrap();
+        assert!(wait_for_creation_control(&mut task.request_rx, &mut task.handles).await);
     }
 }

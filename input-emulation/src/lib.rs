@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    future::poll_fn,
+    task::{Context, Poll},
 };
 
 use input_event::{Event, KeyboardEvent};
@@ -22,6 +24,9 @@ mod xdg_desktop_portal;
 
 #[cfg(libei)]
 mod libei;
+
+#[cfg(any(libei, rdp))]
+mod portal;
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -136,6 +141,11 @@ impl InputEmulation {
         Err(EmulationCreationError::NoAvailableBackend)
     }
 
+    /// Drive backend lifecycle events even when no input is being received.
+    pub async fn dispatch(&mut self) -> Result<(), EmulationError> {
+        poll_fn(|cx| self.emulation.poll_dispatch(cx)).await
+    }
+
     pub async fn consume(
         &mut self,
         event: Event,
@@ -229,6 +239,10 @@ impl InputEmulation {
 
 #[async_trait]
 trait Emulation: Send {
+    fn poll_dispatch(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), EmulationError>> {
+        Poll::Pending
+    }
+
     async fn consume(
         &mut self,
         event: Event,

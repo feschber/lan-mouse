@@ -2,23 +2,27 @@
 
 ## Input Emulation Session Recovery
 
-If an established input-emulation stream closes, for example after a Wayland
-desktop session is interrupted, the daemon cleans up the old backend and
-attempts to create a new session after one second. An EIS socket reset, broken
-pipe, or other closed-connection I/O error is treated as session termination,
-just like an explicit disconnect or EOF. The libei backend can reuse its saved
-RemoteDesktop restore token.
+Both portal emulation backends monitor `Session.Closed`, including while idle.
+An EIS disconnect, EOF, closed-connection I/O error, or an established legacy
+portal session reporting `Invalid session` also signals session loss. The daemon
+reports emulation as disabled, cleans up the old backend, and attempts recovery
+after one second.
 
-When supported, the libei backend uses the portal's session-state monitor to
-wait for desktop unlock before opening a RemoteDesktop session. This avoids
-requesting a replacement while the compositor still rejects remote access.
-Monitoring does not inhibit screen locking. Portals without session monitoring
-retain the existing creation behavior, with a warning.
+When supported, both backends use the portal's session-state monitor to wait for
+desktop unlock before opening a replacement RemoteDesktop session. Monitoring
+does not inhibit screen locking. Portals without session monitoring retain the
+existing creation behavior, with a warning.
 
-Input received while recovery is pending is discarded rather than replayed.
-Disconnected peers are removed before restoring client handles. Shutdown cancels
-recovery, and manually enabling emulation can start it without waiting for the
-delay.
+Both backends reuse the saved RemoteDesktop restore token. Tokens are opaque;
+if device selection rejects a cached token with `InvalidArgument`, the rejected
+token is discarded and one fresh session is attempted without it. A replacement
+token returned by the portal is saved. Fresh permission may still require consent.
+
+Input received while recovery or authorization is pending is discarded rather
+than replayed. Disconnected peers are removed before restoring client handles.
+Shutdown cancels pending recovery and authorization; manually enabling emulation
+also restarts a pending authorization. Each attempt uses a dedicated portal
+connection, so cancellation releases its requests without interrupting capture.
 
 Creation failures, rejected authorization, and other runtime errors still
 require manually enabling Input Emulation; they do not trigger repeated
