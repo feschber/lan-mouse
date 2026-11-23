@@ -1,4 +1,4 @@
-use futures::StreamExt;
+use futures::{StreamExt, task::AtomicWaker};
 use std::{
     future::Future,
     io,
@@ -11,7 +11,10 @@ use std::{
     task::{Context, Poll},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{Interest, unix::AsyncFd},
+    task::JoinHandle,
+};
 
 use async_trait::async_trait;
 
@@ -38,8 +41,62 @@ struct Devices {
     keyboard: Arc<RwLock<Option<(ei::Device, ei::Keyboard)>>>,
 }
 
-pub(crate) struct LibeiEmulation {
+/// Flushes the shared reis queue without blocking input/control dispatch.
+struct EiWriter {
     context: ei::Context,
+    writable: AsyncFd<UnixStream>,
+    pending: AtomicBool,
+    waker: AtomicWaker,
+}
+
+impl EiWriter {
+    fn new(context: ei::Context, stream: UnixStream) -> io::Result<Self> {
+        Ok(Self {
+            context,
+            writable: AsyncFd::with_interest(stream, Interest::WRITABLE)?,
+            pending: AtomicBool::new(false),
+            waker: AtomicWaker::new(),
+        })
+    }
+
+    fn flush(&self) -> Result<(), EmulationError> {
+        if self.pending.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match self.context.flush().map_err(io::Error::from) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                // reis retains the unsent suffix, including after a partial write.
+                self.pending.store(true, Ordering::Release);
+                self.waker.wake();
+                Ok(())
+            }
+            Err(error) => Err(libei_io_error(error)),
+        }
+    }
+
+    fn poll_flush(&self, cx: &mut Context<'_>) -> Poll<Result<(), EmulationError>> {
+        // Device replies can queue writes while dispatch is otherwise idle.
+        self.waker.register(cx.waker());
+        if !self.pending.load(Ordering::Acquire) {
+            return Poll::Pending;
+        }
+        loop {
+            let mut ready = match self.writable.poll_write_ready(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(libei_io_error(error))),
+                Poll::Ready(Ok(ready)) => ready,
+            };
+            if let Ok(result) = ready.try_io(|_| self.context.flush().map_err(io::Error::from)) {
+                self.pending.store(false, Ordering::Release);
+                return Poll::Ready(result.map_err(libei_io_error));
+            }
+        }
+    }
+}
+
+pub(crate) struct LibeiEmulation {
+    writer: Arc<EiWriter>,
     conn: event::Connection,
     devices: Devices,
     ei_task: JoinHandle<()>,
@@ -57,17 +114,20 @@ impl LibeiEmulation {
             .await?;
         let stream = UnixStream::from(eifd);
         stream.set_nonblocking(true)?;
+        // reis registers the original fd for reads; use a duplicate for writes.
+        let write_stream = stream.try_clone()?;
         let context = ei::Context::new(stream)?;
         let (conn, events) = context
             .handshake_tokio("de.feschber.LanMouse", ContextType::Sender)
             .await?;
+        let writer = Arc::new(EiWriter::new(context, write_stream)?);
         let devices = Devices::default();
         let libei_error = Arc::new(AtomicBool::default());
         let error = Arc::new(Mutex::new(None));
         let ei_handler = ei_task(
             events,
             conn.clone(),
-            context.clone(),
+            writer.clone(),
             devices.clone(),
             libei_error.clone(),
             error.clone(),
@@ -75,7 +135,7 @@ impl LibeiEmulation {
         let ei_task = tokio::task::spawn_local(ei_handler);
 
         Ok(Self {
-            context,
+            writer,
             conn,
             devices,
             ei_task,
@@ -107,7 +167,7 @@ impl Emulation for LibeiEmulation {
                 .take()
                 .unwrap_or(EmulationError::EndOfStream)))
         } else {
-            Poll::Pending
+            self.writer.poll_flush(cx)
         }
     }
 
@@ -200,10 +260,7 @@ impl Emulation for LibeiEmulation {
                 KeyboardEvent::Modifiers { .. } => {}
             },
         }
-        self.context
-            .flush()
-            .map_err(|error| libei_io_error(error.into()))?;
-        Ok(())
+        self.writer.flush()
     }
 
     async fn create(&mut self, _: EmulationHandle) {}
@@ -240,12 +297,12 @@ fn libei_stream_error(error: reis::Error) -> EmulationError {
 async fn ei_task(
     mut events: EiConvertEventStream,
     _conn: Connection,
-    context: ei::Context,
+    writer: Arc<EiWriter>,
     devices: Devices,
     libei_error: Arc<AtomicBool>,
     error: Arc<Mutex<Option<EmulationError>>>,
 ) {
-    if let Err(e) = ei_event_handler(&mut events, &context, &devices).await {
+    if let Err(e) = ei_event_handler(&mut events, &writer, &devices).await {
         error.lock().unwrap().replace(e);
         libei_error.store(true, Ordering::SeqCst);
     }
@@ -253,7 +310,7 @@ async fn ei_task(
 
 async fn ei_event_handler(
     events: &mut EiConvertEventStream,
-    context: &ei::Context,
+    writer: &EiWriter,
     devices: &Devices,
 ) -> Result<(), EmulationError> {
     loop {
@@ -343,16 +400,140 @@ async fn ei_event_handler(
             // EiEvent::TouchMotion(_) => { },
             _ => unreachable!("unexpected ei event"),
         }
-        context
-            .flush()
-            .map_err(|error| libei_io_error(error.into()))?;
+        writer.flush()?;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
+    use reis::{PendingRequestResult, eis};
     use std::io::{ErrorKind, Read, Write};
+    use std::{future::poll_fn, time::Duration};
+    use tokio::io::AsyncReadExt;
+
+    fn pressured_writer() -> (Arc<EiWriter>, UnixStream, usize) {
+        let (client, server) = UnixStream::pair().expect("local EIS transport");
+        client.set_nonblocking(true).unwrap();
+        server.set_nonblocking(true).unwrap();
+        let mut writable = client.try_clone().unwrap();
+        let mut padding = 0;
+        loop {
+            match writable.write(&[0xaa; 8192]) {
+                Ok(0) => panic!("socket stopped accepting data without EAGAIN"),
+                Ok(count) => padding += count,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => panic!("filling socket: {error}"),
+            }
+        }
+        let context = ei::Context::new(client).unwrap();
+        let writer = Arc::new(EiWriter::new(context, writable).unwrap());
+        (writer, server, padding)
+    }
+
+    async fn receive_names(server: UnixStream, padding: usize, count: usize) -> Vec<String> {
+        let mut stream = tokio::net::UnixStream::from_std(server).unwrap();
+        stream.read_exact(&mut vec![0; padding]).await.unwrap();
+        let server = eis::Context::new(stream.into_std().unwrap()).unwrap();
+        let receiver = AsyncFd::with_interest(server, Interest::READABLE).unwrap();
+        let mut names = Vec::new();
+        while names.len() < count {
+            let request = poll_fn(|cx| {
+                loop {
+                    if let Some(request) = receiver.get_ref().pending_request() {
+                        return Poll::Ready(request);
+                    }
+                    let mut ready = std::task::ready!(receiver.poll_read_ready(cx)).unwrap();
+                    receiver.get_ref().read().unwrap();
+                    ready.clear_ready();
+                }
+            })
+            .await;
+            match request {
+                PendingRequestResult::Request(eis::Request::Handshake(
+                    _,
+                    eis::handshake::Request::Name { name },
+                )) => names.push(name),
+                other => panic!("unexpected EIS request: {other:?}"),
+            }
+        }
+        names
+    }
+
+    #[tokio::test]
+    async fn backpressure_wakes_idle_dispatch_and_preserves_partial_writes_in_order() {
+        let (writer, server, padding) = pressured_writer();
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let dispatch_writer = writer.clone();
+        let dispatch = tokio::spawn(async move {
+            let mut registered_tx = Some(registered_tx);
+            poll_fn(|cx| {
+                let result = dispatch_writer.poll_flush(cx);
+                if let Some(tx) = registered_tx.take() {
+                    tx.send(()).unwrap();
+                }
+                result
+            })
+            .await
+        });
+        registered_rx.await.unwrap();
+        let expected = vec![
+            "first".to_owned(),
+            "x".repeat(512 * 1024),
+            "last".to_owned(),
+        ];
+        for name in &expected {
+            writer.context.handshake().name(name);
+            writer
+                .flush()
+                .expect("backpressure must not disable emulation");
+        }
+        assert!(writer.pending.load(Ordering::Acquire));
+        let (flushed, received) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(dispatch, receive_names(server, padding, expected.len()))
+        })
+        .await
+        .expect("queued requests were not flushed without more input");
+        flushed.unwrap().unwrap();
+        assert_eq!(received, expected);
+    }
+
+    #[tokio::test]
+    async fn cancelling_dispatch_keeps_pending_output_for_the_next_poll() {
+        let (writer, server, padding) = pressured_writer();
+        writer.context.handshake().name("once");
+        writer.flush().unwrap();
+        {
+            let flush = poll_fn(|cx| writer.poll_flush(cx));
+            tokio::pin!(flush);
+            assert!(flush.as_mut().now_or_never().is_none());
+        }
+        let (flushed, received) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                poll_fn(|cx| writer.poll_flush(cx)),
+                receive_names(server, padding, 1)
+            )
+        })
+        .await
+        .expect("cancelled dispatch lost its queued output");
+        flushed.unwrap();
+        assert_eq!(received, ["once"]);
+    }
+
+    #[tokio::test]
+    async fn disconnect_during_backpressure_still_ends_the_session() {
+        let (writer, server, _padding) = pressured_writer();
+        writer.context.handshake().name("pending");
+        writer.flush().unwrap();
+        drop(server);
+        let error =
+            tokio::time::timeout(Duration::from_secs(5), poll_fn(|cx| writer.poll_flush(cx)))
+                .await
+                .expect("closed socket did not wake pending dispatch")
+                .expect_err("closed socket must not be ignored as backpressure");
+        assert!(matches!(error, EmulationError::EndOfStream));
+    }
 
     #[test]
     fn reset_eis_socket_is_reported_as_session_end() {

@@ -8,6 +8,13 @@ portal session reporting `Invalid session` also signals session loss. The daemon
 reports emulation as disabled, cleans up the old backend, and attempts recovery
 after one second.
 
+`EAGAIN` / `WouldBlock` during libei emulation is backpressure, not session loss.
+Unsent protocol data stays in the reis buffer and is flushed on socket-writable
+notifications, even without further input. Input events and device-control
+replies share this path, preserving order across partial writes. Dispatch waits
+for kernel readiness instead of spinning; input handling does not wait for a
+blocked socket, so session closure and shutdown remain responsive.
+
 When supported, both backends use the portal's session-state monitor to wait for
 desktop unlock before opening a replacement RemoteDesktop session. Monitoring
 does not inhibit screen locking. Portals without session monitoring retain the
