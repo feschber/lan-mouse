@@ -1,11 +1,73 @@
 # General Software Architecture
 
+## Input Emulation Session Recovery
+
+Both portal emulation backends monitor `Session.Closed`, including while idle.
+An EIS disconnect, EOF, closed-connection I/O error, or an established legacy
+portal session reporting `Invalid session` also signals session loss. The daemon
+reports emulation as disabled, cleans up the old backend, and attempts recovery
+after one second.
+
+`EAGAIN` / `WouldBlock` during libei emulation is backpressure, not session loss.
+Unsent protocol data stays in the reis buffer and is flushed on socket-writable
+notifications, even without further input. Input events and device-control
+replies share this path, preserving order across partial writes. Dispatch waits
+for kernel readiness instead of spinning; input handling does not wait for a
+blocked socket, so session closure and shutdown remain responsive.
+
+When supported, both backends use the portal's session-state monitor to wait for
+desktop unlock before opening a replacement RemoteDesktop session. Monitoring
+does not inhibit screen locking. Portals without session monitoring retain the
+existing creation behavior, with a warning.
+
+Both backends reuse the saved RemoteDesktop restore token. Tokens are opaque;
+if device selection rejects a cached token with `InvalidArgument`, the rejected
+token is discarded and one fresh session is attempted without it. A replacement
+token returned by the portal is saved. Fresh permission may still require consent.
+
+Input received while recovery or authorization is pending is discarded rather
+than replayed. Disconnected peers are removed before restoring client handles.
+Shutdown cancels pending recovery and authorization; manually enabling emulation
+also restarts a pending authorization. Each attempt uses a dedicated portal
+connection, so cancellation releases its requests without interrupting capture.
+
+Creation failures, rejected authorization, and other runtime errors still
+require manually enabling Input Emulation; they do not trigger repeated
+authorization requests. This does not change InputCapture authorization: the
+version 1 portal can still require consent for a new capture session.
+
+## Input Capture Session Recovery
+
+The libei capture backend monitors the InputCapture portal's `Session.Closed`
+signal and propagates EIS disconnects, EOF, and closed-transport errors. On
+session loss, the daemon releases captured keys and leaves the remote client
+before recreating the backend after one second.
+
+During internal session reconfiguration, capture is reported as disabled until
+the replacement session is enabled. Pending authorization remains cancellable;
+client changes are retained without restarting the authorization request.
+Manually enabling Input Capture restarts even a pending authorization. Capture
+uses a dedicated portal connection so cancelling backend creation also releases
+its outstanding portal requests without interrupting input emulation.
+
+Client removals and release-binding changes are preserved during recovery;
+shutdown cancels both the pending retry and pending session creation.
+
+Removing a capture handle also discards its queued events. This prevents a
+late event from referring to a removed client during peer disconnect or
+recovery, while preserving queued events for other clients on the same edge.
+
+Creation failures, rejected authorization, and unrelated runtime errors still
+require manually enabling Input Capture. InputCapture portal version 1 cannot
+persist permission, so a replacement session can still require user consent.
+
 ## Events
 
-Each instance of lan-mouse can emit and receive events, where
-an event is either a mouse or keyboard event for now.
+Each instance of lan-mouse can emit and receive events, where an event is either
+a mouse or keyboard event for now.
 
 The general Architecture is shown in the following flow chart:
+
 ```mermaid
 graph TD
     A[Wayland Backend] -->|WaylandEvent| D{Input}
@@ -20,30 +82,33 @@ graph TD
 ```
 
 ### Input
+
 The input component is responsible for translating inputs from a given backend
 to a standardized format and passing them to the event emitter.
 
 ### Emitter
-The event emitter serializes events and sends them over the network
-to the correct client.
+
+The event emitter serializes events and sends them over the network to the
+correct client.
 
 ### Receiver
-The receiver receives events over the network and deserializes them into
-the standardized event format.
+
+The receiver receives events over the network and deserializes them into the
+standardized event format.
 
 ### Dispatcher
-The dispatcher component takes events from the event receiver and passes them
-to the correct backend corresponding to the type of client.
 
+The dispatcher component takes events from the event receiver and passes them to
+the correct backend corresponding to the type of client.
 
 ## Requests
 
 // TODO this currently works differently
 
-Aside from events, requests can be sent via a simple protocol.
-For this, a simple tcp server is listening on the same port as the udp
-event receiver and accepts requests for connecting to a device or to
-request the keymap of a device.
+Aside from events, requests can be sent via a simple protocol. For this, a
+simple tcp server is listening on the same port as the udp event receiver and
+accepts requests for connecting to a device or to request the keymap of a
+device.
 
 ```mermaid
 sequenceDiagram
@@ -52,26 +117,29 @@ sequenceDiagram
 ```
 
 ## Problems
-The general Idea is to have a bidirectional connection by default, meaning
-any connected device can not only receive events but also send events back.
 
-This way when connecting e.g. a PC to a Laptop, either device can be used
-to control the other.
+The general Idea is to have a bidirectional connection by default, meaning any
+connected device can not only receive events but also send events back.
+
+This way when connecting e.g. a PC to a Laptop, either device can be used to
+control the other.
 
 It needs to be ensured, that whenever a device is controlled the controlled
-device does not transmit the events back to the original sender.
-Otherwise events are multiplied and either one of the instances crashes.
+device does not transmit the events back to the original sender. Otherwise
+events are multiplied and either one of the instances crashes.
 
-To keep the implementation of input backends simple this needs to be handled
-on the server level.
+To keep the implementation of input backends simple this needs to be handled on
+the server level.
 
 ## Device State - Active and Inactive
+
 To solve this problem, each device can be in exactly two states:
 
 Either events are sent or received.
 
 This ensures that
-- a) Events can never result in a feedback loop.
-- b) As soon as a virtual input enters another client, lan-mouse will stop receiving events,
-which ensures clients can only be controlled directly and not indirectly through other clients.
 
+- a) Events can never result in a feedback loop.
+- b) As soon as a virtual input enters another client, lan-mouse will stop
+  receiving events, which ensures clients can only be controlled directly and
+  not indirectly through other clients.
