@@ -207,7 +207,7 @@ impl CaptureTask {
     }
 
     async fn run(mut self) {
-        loop {
+        'run: loop {
             if let Err(e) = self.do_capture().await {
                 log::warn!("input capture exited: {e}");
             }
@@ -222,10 +222,11 @@ impl CaptureTask {
                             self.release_bind.borrow_mut().clone_from(&bind);
                         }
                     },
-                    _ = self.cancellation_token.cancelled() => return,
+                    _ = self.cancellation_token.cancelled() => break 'run,
                 }
             }
         }
+        self.conn.terminate().await;
     }
 
     async fn do_capture(&mut self) -> Result<(), InputCaptureError> {

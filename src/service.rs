@@ -2,7 +2,7 @@ use crate::{
     capture::{Capture, CaptureType, ICaptureEvent},
     client::ClientManager,
     config::{Config, ConfigClient},
-    connect::LanMouseConnection,
+    connect::{ConnectionHandle, LanMouseConnection},
     crypto,
     dns::{DnsEvent, DnsResolver},
     emulation::{Emulation, EmulationEvent},
@@ -18,6 +18,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     net::{IpAddr, SocketAddr},
+    rc::Rc,
     sync::{Arc, RwLock},
 };
 use thiserror::Error;
@@ -44,6 +45,8 @@ pub struct Service {
     emulation: Emulation,
     /// dns resolver
     resolver: DnsResolver,
+    /// starts the same outgoing workers used by capture sends and recovery
+    connection: Rc<ConnectionHandle>,
     /// frontend listener
     frontend_listener: AsyncFrontendListener,
     /// authorized public key sha256 fingerprints
@@ -94,16 +97,15 @@ impl Service {
         // listener + connection
         let listener =
             LanMouseListener::new(config.port(), cert.clone(), authorized_keys.clone()).await?;
-        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone());
+        let resolver = DnsResolver::new()?;
+        let conn = LanMouseConnection::new(cert.clone(), client_manager.clone(), resolver.lookup());
+        let connection = conn.handle();
 
         // input capture + emulation
         let capture_backend = config.capture_backend().map(|b| b.into());
         let capture = Capture::new(capture_backend, conn, config.release_bind());
         let emulation_backend = config.emulation_backend().map(|b| b.into());
         let emulation = Emulation::new(emulation_backend, listener);
-
-        // create dns resolver
-        let resolver = DnsResolver::new()?;
 
         let port = config.port();
         let service = Self {
@@ -112,6 +114,7 @@ impl Service {
             emulation,
             frontend_listener,
             resolver,
+            connection,
             authorized_keys,
             public_key_fingerprint,
             client_manager,
@@ -363,27 +366,17 @@ impl Service {
     }
 
     fn handle_resolver_event(&mut self, event: DnsEvent) {
-        let handle = match event {
-            DnsEvent::Resolving(handle) => {
-                self.client_manager.set_resolving(handle, true);
-                handle
-            }
-            DnsEvent::Resolved(handle, hostname, ips) => {
-                self.client_manager.set_resolving(handle, false);
-                if let Err(e) = &ips {
-                    log::warn!("could not resolve {hostname}: {e}");
-                }
-                let ips = ips.unwrap_or_default();
-                self.client_manager.set_dns_ips(handle, ips);
-                handle
-            }
-        };
-        self.broadcast_client(handle);
+        if let Some(handle) = event.apply(&self.client_manager) {
+            self.broadcast_client(handle);
+        }
     }
 
     fn resolve(&self, handle: ClientHandle) {
-        if let Some(hostname) = self.client_manager.get_hostname(handle) {
-            self.resolver.resolve(handle, hostname);
+        if let (Some(hostname), Some(settings)) = (
+            self.client_manager.get_hostname(handle),
+            self.client_manager.connection_changes(handle),
+        ) {
+            self.resolver.resolve(handle, hostname, settings);
         }
     }
 
@@ -506,9 +499,6 @@ impl Service {
     fn activate_client(&mut self, handle: ClientHandle) {
         log::debug!("activating client {handle}");
 
-        /* resolve dns on activate */
-        self.resolve(handle);
-
         /* deactivate potential other client at this position */
         let Some(pos) = self.client_manager.get_pos(handle) else {
             return;
@@ -527,6 +517,7 @@ impl Service {
             self.broadcast_client(handle);
             log::info!("activated client {handle} ({pos})");
         }
+        self.connection.connect(handle);
     }
 
     fn change_port(&mut self, port: u16) {

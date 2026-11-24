@@ -1,5 +1,47 @@
 # General Software Architecture
 
+## Peer Address and Connection Recovery
+
+Activating a client starts its outgoing connection without waiting for captured
+input or capture authorization. The service and capture task share a control
+handle: activation and send fallback both ensure the same per-client worker.
+That worker owns the connection, heartbeat, and recovery lifecycle.
+
+```mermaid
+flowchart LR
+    Activate --> Worker["One worker per client"]
+    SendFallback["Send fallback"] --> Worker
+    Worker --> Resolve
+    Resolve --> Connect
+    Connect -->|failure| Backoff
+    Backoff --> Resolve
+    Connect -->|success| Connected
+    Connected -->|transport lost| Backoff
+```
+
+Before every attempt, hostname clients use the existing asynchronous resolver.
+The resolver uses the operating system's name-service stack, including supported
+Bonjour/Avahi `.local` names. Fresh results replace cached DNS addresses; explicit
+fixed IPs remain additional candidates. Configure a resolvable hostname and leave
+fixed IPs empty when the peer's address is dynamic. A fixed IP alone cannot
+discover its replacement.
+
+Retries continue without further input, starting at one second and doubling to
+a maximum of thirty seconds. A responding connection resets the delay.
+`Pong(false)` means the peer's emulation is disabled, not that its transport
+should be reconnected. Input that could not be sent is not queued for replay.
+
+Preconnection reduces first-crossing delays; it does not guarantee the peer is
+ready. Sends can still fail while connection setup is pending or remote input
+emulation is disabled. Establishing a connection does not send an `Enter` or
+pointer event and does not take control of the peer.
+
+Endpoint edits restart pending work. Deactivation, deletion, and daemon shutdown
+cancel it. Late DNS results and cleanup from an old connection cannot overwrite
+an edited or replacement client. EOF stops both receive paths without replaying
+the previous frame. Existing protocol and certificate-authorization behavior
+are unchanged. Network recovery does not grant or restore portal permissions.
+
 ## Events
 
 Each instance of lan-mouse can emit and receive events, where

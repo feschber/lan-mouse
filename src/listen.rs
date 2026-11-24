@@ -253,7 +253,12 @@ async fn read_loop(
 ) -> Result<(), Error> {
     let mut b = [0u8; MAX_EVENT_SIZE];
 
-    while conn.recv(&mut b).await.is_ok() {
+    loop {
+        let len = match conn.recv(&mut b).await {
+            Ok(0) | Err(_) => break,
+            Ok(len) => len,
+        };
+        b[len..].fill(0);
         match b.try_into() {
             Ok(event) => dtls_tx
                 .send(ListenEvent::Msg { event, addr })
@@ -274,10 +279,58 @@ async fn read_loop(
     }
     log::info!("dtls client disconnected {addr:?}");
     let mut conns = conns.lock().await;
-    let index = conns
+    if let Some(index) = conns
         .iter()
-        .position(|(a, _)| *a == addr)
-        .expect("connection not found");
-    conns.remove(index);
+        .position(|(_, current)| Arc::ptr_eq(current, &conn))
+    {
+        conns.remove(index);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use webrtc_util::conn::conn_pipe::pipe;
+
+    #[tokio::test]
+    async fn eof_does_not_replay_input_or_remove_a_replacement_connection() {
+        let (old, peer) = pipe();
+        let old: ArcConn = Arc::new(old);
+        let (replacement, _replacement_peer) = pipe();
+        let replacement: ArcConn = Arc::new(replacement);
+        let addr = "127.0.0.1:4242".parse().unwrap();
+        let conns = Rc::new(AsyncMutex::new(vec![
+            (addr, old.clone()),
+            (addr, replacement.clone()),
+        ]));
+        let (tx, mut rx) = channel();
+        let (data, len) = ProtoEvent::Leave(7).into();
+        peer.send(&data[..len]).await.unwrap();
+        peer.send(&[]).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            read_loop(conns.clone(), addr, old, tx),
+        )
+        .await
+        .expect("EOF did not stop the reader")
+        .unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(ListenEvent::Msg {
+                event: ProtoEvent::Leave(7),
+                ..
+            })
+        ));
+        assert!(
+            rx.recv().await.is_none(),
+            "EOF replayed the previous packet"
+        );
+        let conns = conns.lock().await;
+        assert!(
+            conns
+                .iter()
+                .any(|(_, conn)| Arc::ptr_eq(conn, &replacement))
+        );
+    }
 }
